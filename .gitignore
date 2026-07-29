@@ -1,0 +1,53 @@
+# Cargo
+/target/
+**/*.rs.bk
+
+# Editor
+*.swp
+*.swo
+*~
+
+# macOS
+.DS_Store
+
+# Local state (vault files, registries — never commit secrets)
+*.kdbx
+*.kdbx.bak
+*.keyfile
+vaults.toml
+
+# Local config overrides (keep .cargo/config.toml committed; ignore user overrides)
+/.cargo/config.toml.local
+
+# s3-sync integration fixtures — generated MinIO endpoint/credentials env file
+/tools/sync-tests/fixtures/.minio-env
+
+# ignore the demo database lock file
+test-vaults/demo.kdbx.lock
+
+# Flutter app: build outputs are covered by the template's own nested
+# .gitignore files (app/.gitignore, app/linux/.gitignore, ...). Only rules with
+# no nested equivalent belong here. Generated bindings in app/lib/src/bridge/
+# are COMMITTED (codegen output, not ephemeral).
+#
+# Cargokit build artifacts (inside the Flutter build tree)
+app/rust_builder/target/
+
+# Pub vendor cache — per-checkout state only.
+#
+# `active_roots/` genuinely holds absolute paths (a package_config.json URI),
+# so it must not be committed.
+#
+# `hosted-hashes/` is COMMITTED, deliberately: each file is a bare 64-char
+# sha256 matching pubspec.lock, with no paths and no per-checkout state.
+# Excluding it made `dart pub get --offline --enforce-lockfile` report a
+# content-hash mismatch for EVERY package on every fresh clone and every CI
+# run — while still exiting 0 — which is both permanent false-alarm noise and
+# the loss of the one lockfile/cache consistency check pub actually performs.
+#
+# `_temp/` is pub's download staging area; an interrupted `make pub-vendor`
+# would otherwise leave archives there to be committed.
+app/vendor-pub/active_roots/
+app/vendor-pub/_temp/
+app/rust_builder/cargokit/build_tool/vendor-pub/active_roots/
+app/rust_builder/cargokit/build_tool/vendor-pub/_temp/

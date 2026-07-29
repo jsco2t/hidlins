@@ -1,0 +1,90 @@
+# Reviewed Dart dependency allowlist (NFR-013 / curated-set policy).
+#
+# tools/dev/boundary-check.sh asserts that EVERY package in the resolved
+# closure (app/pubspec.lock) appears here — direct and transitive. A denylist
+# cannot enforce a curated-allowlist policy: the previous gate named `http`
+# and still passed while http sat in the production closure via file_selector.
+#
+# Adding a package means adding it here in the same change, with a review row
+# in CONTRIBUTING.md. Network-capable packages (http, dio, web_socket_channel,
+# grpc, googleapis, firebase_*, sentry, posthog, connectivity_plus, ...) must
+# NOT be added without an explicit NFR-013 decision.
+#
+# Regenerate the candidate list with:
+#   grep -E '^  [a-z0-9_]+:$' app/pubspec.lock | sed 's/^  //; s/:$//' | sort -u
+analyzer
+args
+async
+boolean_selector
+build
+build_cli_annotations
+build_config
+build_daemon
+build_runner
+built_collection
+built_value
+characters
+checked_yaml
+clock
+collection
+convert
+crypto
+dart_style
+fake_async
+_fe_analyzer_shared
+file
+fixnum
+flutter
+flutter_lints
+flutter_localizations
+flutter_riverpod
+flutter_rust_bridge
+flutter_test
+flutter_web_plugins
+freezed
+freezed_annotation
+glob
+go_router
+graphs
+http_multi_server
+http_parser
+intl
+io
+json_annotation
+leak_tracker
+leak_tracker_flutter_testing
+leak_tracker_testing
+lints
+logging
+matcher
+material_color_utilities
+meta
+mime
+package_config
+path
+plugin_platform_interface
+pool
+pub_semver
+pubspec_parse
+riverpod
+rust_lib_app
+shelf
+shelf_web_socket
+sky_engine
+source_gen
+source_span
+stack_trace
+state_notifier
+stream_channel
+stream_transform
+string_scanner
+term_glyph
+test_api
+typed_data
+vector_math
+vm_service
+watcher
+web
+web_socket
+web_socket_channel
+yaml

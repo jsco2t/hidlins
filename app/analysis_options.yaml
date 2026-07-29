@@ -1,0 +1,16 @@
+include: package:flutter_lints/flutter.yaml
+
+analyzer:
+  exclude:
+    - vendor-pub/**
+    - build/**
+    - rust_builder/**
+
+linter:
+  rules:
+    # flutter_lints is the generic baseline and omits these. Both matter for a
+    # secrets manager: a dropped Future silently swallows a failed bridge call
+    # (e.g. session.shutdown()), and the analyzer is the only thing that
+    # catches it — `dart analyze --fatal-infos` runs in `make app-analyze`.
+    unawaited_futures: true
+    discarded_futures: true

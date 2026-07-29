@@ -1,0 +1,45 @@
+name: app
+description: "Hidlins — offline-first secrets manager. Thin Flutter UI over the Rust core via the hidlins-api FFI boundary."
+publish_to: 'none'
+version: 0.1.0+1
+
+environment:
+  sdk: ^3.12.2
+
+# Curated allowlist — see CONTRIBUTING.md "Flutter app Dart dependencies".
+#
+# Dependencies are added in the task that first IMPORTS them, not ahead of
+# need: every entry here is vendored into app/vendor-pub/ and committed, so an
+# unused package costs repo size, licence-audit surface, and (for plugins)
+# native code linked into the binary. Re-add each at first use, with its
+# review row in CONTRIBUTING.md.
+dependencies:
+  flutter:
+    sdk: flutter
+  # T3.1: l10n scaffolding (NFR-014). SDK package — no vendoring.
+  flutter_localizations:
+    sdk: flutter
+  flutter_rust_bridge: 2.12.0
+  # T3.2: routing with lock redirect (design §2.2.3).
+  # BSD-3-Clause · Flutter-team maintained · no transitives beyond Flutter SDK.
+  go_router: ^14.8.1
+  # T3.2: state management (design §2.2.3 — "no codegen" variant).
+  # MIT · Remi Rousselet · brings riverpod + state_notifier transitives.
+  flutter_riverpod: ^2.6.1
+  freezed_annotation: ^3.1.0
+  # T3.1: l10n ARB code generation runtime. MIT · Dart-team maintained.
+  intl: ^0.20.2
+  rust_lib_app:
+    path: rust_builder
+
+dev_dependencies:
+  flutter_test:
+    sdk: flutter
+  flutter_lints: ^6.0.0
+  # Required by the frb codegen pipeline (generates the sealed DTO classes).
+  freezed: ^3.0.0
+  build_runner: ^2.15.1
+
+flutter:
+  generate: true
+  uses-material-design: true

@@ -1,0 +1,51 @@
+<?xml version="1.0" encoding="utf-8"?>
+<!--
+  A secrets manager must never let its data directory leave the device by a
+  path the user did not configure. `android:allowBackup="false"` covers cloud
+  backup, but on API 31+ device-to-device transfer is governed separately by
+  this file, so both are required.
+
+  The vault (.kdbx), the vault registry (vaults.toml), and ui-prefs.toml all
+  live under the app-private data dir. The KDBX is ciphertext, but exporting it
+  plus the registry hands an attacker an offline-KDF target and the user's
+  vault names, paths, and sync endpoints.
+
+  Syntax notes (developer.android.com/identity/data/autobackup#xml-syntax-
+  android-12, cross-checked against the platform parser): domains are
+  DISJOINT — the backup engine walks files/, databases/, shared_prefs/,
+  external storage, and their device-protected mirrors as their own domains,
+  so the previous `<exclude domain="root"/>` excluded only the data-dir root
+  and left the `file` domain (where the vault, registry, and prefs actually
+  live) fully transferable. Every credential- and device-protected domain is
+  therefore excluded explicitly, in both sections. `path="."` names the
+  domain's whole tree; the parser treats a missing `path` the same way
+  (FullBackup.extractCanonicalFile maps null to ""), but it is spelled out so
+  the intent doesn't ride on that parser fallback.
+
+  The two <exclude> lists below MUST stay identical — a domain dropped from
+  one section silently re-permits that transfer path. Edit both together.
+-->
+<data-extraction-rules>
+    <cloud-backup>
+        <exclude domain="root" path="." />
+        <exclude domain="file" path="." />
+        <exclude domain="database" path="." />
+        <exclude domain="sharedpref" path="." />
+        <exclude domain="external" path="." />
+        <exclude domain="device_root" path="." />
+        <exclude domain="device_file" path="." />
+        <exclude domain="device_database" path="." />
+        <exclude domain="device_sharedpref" path="." />
+    </cloud-backup>
+    <device-transfer>
+        <exclude domain="root" path="." />
+        <exclude domain="file" path="." />
+        <exclude domain="database" path="." />
+        <exclude domain="sharedpref" path="." />
+        <exclude domain="external" path="." />
+        <exclude domain="device_root" path="." />
+        <exclude domain="device_file" path="." />
+        <exclude domain="device_database" path="." />
+        <exclude domain="device_sharedpref" path="." />
+    </device-transfer>
+</data-extraction-rules>

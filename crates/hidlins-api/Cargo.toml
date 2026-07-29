@@ -1,0 +1,49 @@
+[package]
+name = "hidlins-api"
+description = "FFI boundary crate for the Hidlins Flutter app"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+authors.workspace = true
+repository.workspace = true
+rust-version.workspace = true
+
+[lib]
+name = "hidlins_api"
+crate-type = ["lib", "cdylib", "staticlib"]
+
+[dependencies]
+hidlins-core = { path = "../hidlins-core", version = "0.1" }
+hidlins-genpw = { path = "../hidlins-genpw", version = "0.1" }
+hidlins-sync = { path = "../hidlins-sync", version = "0.1" }
+hidlins-security = { path = "../hidlins-security", version = "0.1" }
+chrono = { version = "0.4", default-features = false, features = ["clock", "std"] }
+flutter_rust_bridge = "=2.12.0"
+thiserror = "2.0"
+secrecy = "0.10"
+tempfile = { version = "3", optional = true }
+toml = "0.8"
+zeroize = { version = "1", features = ["derive"] }
+
+[features]
+default = ["desktop"]
+test-fixtures = ["dep:tempfile"]
+desktop = ["hidlins-security/desktop"]
+logind = ["hidlins-security/logind"]
+iokit = ["hidlins-security/iokit"]
+
+[[bin]]
+name = "api-test-driver"
+path = "tests/bin/api_test_driver.rs"
+required-features = ["test-fixtures"]
+
+[dev-dependencies]
+# `version` is required: without it this is a wildcard dependency and
+# `cargo deny`'s `wildcards = "deny"` rejects it. Matches the established
+# self-dev-dep idiom in hidlins-sync (test-helpers).
+hidlins-api = { path = ".", version = "0.1", features = ["test-fixtures"] }
+tempfile = "3"
+toml = "0.8"
+
+[lints]
+workspace = true

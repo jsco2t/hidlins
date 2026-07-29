@@ -1,0 +1,8 @@
+app/rust_builder/cargokit/build_pod.sh
+app/rust_builder/cargokit/build_tool/lib/src/artifacts_provider.dart
+app/rust_builder/cargokit/build_tool/lib/src/builder.dart
+app/rust_builder/cargokit/build_tool/lib/src/build_pod.dart
+app/rust_builder/cargokit/build_tool/lib/src/cargo.dart
+app/rust_builder/cargokit/build_tool/lib/src/precompile_binaries.dart
+app/rust_builder/cargokit/build_tool/lib/src/verify_binaries.dart
+app/rust_builder/cargokit/run_build_tool.sh
