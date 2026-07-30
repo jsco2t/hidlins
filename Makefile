@@ -52,7 +52,7 @@ help:  ## Show this help.
 # One-time environment setup — run this first on a fresh machine.
 # ---------------------------------------------------------------------------
 
-toolchain:  ## Install all dev tooling (Rust toolchain, keepassxc-cli, cargo-deny/audit). Run first on a new machine.
+toolchain:  ## Install all dev tooling (Rust, keepassxc-cli, MinIO mc, cargo-deny/audit). Run first on a new machine.
 	# Cross-platform bootstrap (Linux + macOS). Idempotent — re-running
 	# skips already-installed tools. Tool versions are pinned to match CI
 	# (.github/workflows/ci.yml). After this, `make check` works offline.

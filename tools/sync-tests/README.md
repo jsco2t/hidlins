@@ -13,8 +13,8 @@ not AWS, is the PR-CI backend (see the implementation plan §8.4.2).
 ## Prerequisites
 
 - **Docker** (or Podman) — to run the MinIO server container.
-- **`mc`** (the MinIO client) — to create test buckets.
-  Install: <https://min.io/docs/minio/linux/reference/minio-mc.html>
+- **`mc`** (the MinIO client) — to create test buckets. Installed by
+  `make toolchain` through MinIO's cross-platform `minio/stable/mc` formula.
 - The MinIO image tag is pinned — see [`fixtures/MINIO_VERSION.md`](fixtures/MINIO_VERSION.md).
 
 ## Local workflow
@@ -27,7 +27,7 @@ make minio-down            # stop + remove the container
 
 `make minio-up` runs `fixtures/start_minio.sh`, which:
 
-- starts `minio/minio:<pinned>` bound to `127.0.0.1:9000`
+- starts `docker.io/minio/minio:<pinned>` bound to `127.0.0.1:9000`
   (override the port with `HIDLINS_MINIO_PORT=NNNN make minio-up`),
 - waits for the `/minio/health/live` probe,
 - writes `fixtures/.minio-env` (git-ignored) with the endpoint + the

@@ -106,7 +106,39 @@ else
 fi
 
 # --------------------------------------------------------------------------
-# 3. cargo-deny / cargo-audit — supply-chain gates (make deny / make audit).
+# 3. MinIO Client — required to provision buckets for the S3 live-wire
+#    integration suite. MinIO's `minio/stable/mc` formula supports both
+#    macOS and Linux and installs the `mc` executable.
+# --------------------------------------------------------------------------
+log "MinIO Client (S3 integration bucket provisioning)"
+is_minio_mc() {
+  have mc && mc --version 2>/dev/null | grep -q '^mc version RELEASE\.'
+}
+
+if is_minio_mc; then
+  ok "$(mc --version 2>/dev/null | head -n1) already installed"
+else
+  if have mc; then
+    err "'mc' is installed but is not MinIO Client (it may be Midnight Commander)."
+    err "MinIO's Homebrew formula conflicts with other packages that provide 'mc'."
+    exit 1
+  fi
+  if ! have brew; then
+    err "Homebrew not found. Install it from https://brew.sh, then re-run 'make toolchain'."
+    err "Hidlins uses 'brew install minio/stable/mc' on both Linux and macOS."
+    exit 1
+  fi
+  brew install minio/stable/mc
+  if is_minio_mc; then
+    ok "$(mc --version 2>/dev/null | head -n1) installed"
+  else
+    err "Homebrew completed, but the MinIO 'mc' executable is not available on PATH."
+    exit 1
+  fi
+fi
+
+# --------------------------------------------------------------------------
+# 4. cargo-deny / cargo-audit — supply-chain gates (make deny / make audit).
 #
 # `cargo install` must run OUTSIDE the repo: the project's
 # .cargo/config.toml forces offline builds against the vendored tree, which
@@ -127,7 +159,7 @@ cargo_install_global cargo-deny  "$CARGO_DENY_VERSION"
 cargo_install_global cargo-audit "$CARGO_AUDIT_VERSION"
 
 # --------------------------------------------------------------------------
-# 4. oathtool — OPTIONAL. Used by the entry-management TOTP interop test
+# 5. oathtool — OPTIONAL. Used by the entry-management TOTP interop test
 #    (make interop-entry) to cross-check generated codes. Best-effort: a
 #    failure here does not fail the bootstrap.
 # --------------------------------------------------------------------------
@@ -144,7 +176,7 @@ else
 fi
 
 # --------------------------------------------------------------------------
-# 5. Flutter SDK — REQUIRED for app/ development. Not auto-installed;
+# 6. Flutter SDK — REQUIRED for app/ development. Not auto-installed;
 #    the developer must install it themselves (mirrors the keepassxc-cli
 #    pattern for missing-but-recommended tools, except Flutter is too
 #    large to auto-install). Warns and continues if missing — Rust-only
@@ -156,7 +188,7 @@ log "Flutter SDK (pinned by .flutter-version)"
 "$SCRIPT_DIR/flutter-version-check.sh" || true
 
 # --------------------------------------------------------------------------
-# 6. flutter_rust_bridge codegen tool — generates the Dart↔Rust bindings.
+# 7. flutter_rust_bridge codegen tool — generates the Dart↔Rust bindings.
 #    Installed via cargo install (same pattern as cargo-deny/audit).
 #    Required for `make api-gen`; without it, codegen cannot run.
 # --------------------------------------------------------------------------
@@ -181,7 +213,7 @@ else
 fi
 
 # --------------------------------------------------------------------------
-# 7. CocoaPods — REQUIRED for macOS Flutter builds. Cargokit hooks into
+# 8. CocoaPods — REQUIRED for macOS Flutter builds. Cargokit hooks into
 #    the macOS build via a CocoaPods script_phase (the podspec at
 #    app/rust_builder/macos/rust_lib_app.podspec). Without `pod`, the
 #    macOS build chain in T2.6 cannot produce a .app bundle. Linux
@@ -205,7 +237,7 @@ if [ "$OS" = "Darwin" ]; then
 fi
 
 # --------------------------------------------------------------------------
-# 8. Flutter analytics — NFR-013: no telemetry. Disable both Flutter and
+# 9. Flutter analytics — NFR-013: no telemetry. Disable both Flutter and
 #    Dart analytics if Flutter is present. Idempotent and silent if
 #    analytics are already disabled.
 # --------------------------------------------------------------------------

@@ -18,7 +18,9 @@
 set -euo pipefail
 
 # --- Pinned configuration (OQ-2; see MINIO_VERSION.md) ---------------------
-MINIO_IMAGE="minio/minio:RELEASE.2025-09-07T16-13-09Z"
+# Keep the registry explicit so Docker and Podman resolve the same image
+# non-interactively, without relying on host-specific short-name aliases.
+MINIO_IMAGE="docker.io/minio/minio:RELEASE.2025-09-07T16-13-09Z"
 CONTAINER="hidlins-minio"
 ACCESS_KEY="hidlins-test"
 SECRET_KEY="hidlins-test-secret"

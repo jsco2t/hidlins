@@ -45,16 +45,17 @@ On a fresh machine (Linux or macOS), install all required tooling with one
 command:
 
 ```sh
-make toolchain     # Rust toolchain (via rustup), keepassxc-cli, cargo-deny, cargo-audit
+make toolchain     # Rust, keepassxc-cli, MinIO mc, cargo-deny/audit, Flutter bridge tools
 ```
 
 It is cross-platform and idempotent — it uses `rustup` for the pinned Rust
 toolchain (per `rust-toolchain.toml`), the native package manager for
 `keepassxc-cli` (Homebrew on macOS; apt/dnf/pacman/zypper on Linux), and
-`cargo install` for the supply-chain tools, at the same versions CI uses. It
-skips anything already installed. `rustup` itself is the one prerequisite
-(see <https://rustup.rs>). After it finishes, the offline `make` loop below
-works from a clean clone.
+Homebrew on both platforms for the MinIO `mc` client. It uses `cargo install`
+for the supply-chain and Flutter bridge tools, at the same versions CI uses,
+and skips anything already installed. `rustup` (see <https://rustup.rs>) and
+Homebrew (see <https://brew.sh>) are the bootstrap prerequisites. After it
+finishes, the offline `make` loop below works from a clean clone.
 
 ## Building and testing
 

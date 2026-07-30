@@ -8,22 +8,23 @@ ETag format) from turning a green CI run red without a corresponding commit.
 
 | Field | Value |
 | ----- | ----- |
-| Image | `minio/minio:RELEASE.2025-09-07T16-13-09Z` |
+| Image | `docker.io/minio/minio:RELEASE.2025-09-07T16-13-09Z` |
 | `mc` (client) | `RELEASE.2025-08-13T08-35-41Z` or newer (used only to create buckets) |
 | Pinned on | 2026-05-29 (s3-sync T6.1) |
 | Resolves OQ-2 | follow-ups/open-items.md |
 
-The tag is referenced in:
+The tag is defined in:
 
 - `tools/sync-tests/fixtures/start_minio.sh` (`MINIO_IMAGE`)
-- `.github/workflows/ci.yml` (the `integration-s3` job's service image)
+
+The `integration-s3` CI job invokes `make minio-up`, so local and CI runs
+consume that same definition.
 
 ## Upgrade procedure
 
 1. Pick the new tag from <https://hub.docker.com/r/minio/minio/tags> (use the
    `RELEASE.<date>` form, not `:latest`).
-2. Update `MINIO_IMAGE` in `start_minio.sh` **and** the image in
-   `.github/workflows/ci.yml` — they must match.
+2. Update `MINIO_IMAGE` in `start_minio.sh`.
 3. Update the table above (Image + Pinned-on date).
 4. Run `make minio-up && make test-s3-integration && make minio-down`
    locally; all MINIO-* tests must stay green.
