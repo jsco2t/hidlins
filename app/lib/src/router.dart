@@ -10,6 +10,9 @@ import 'features/generator/generator_page.dart';
 import 'features/lock/unlock_screen.dart';
 import 'features/search/search_page.dart';
 import 'features/settings/settings_page.dart';
+import 'features/sync/sync_event_listener.dart';
+import 'features/sync/sync_page.dart';
+import 'features/sync/sync_status_button.dart';
 import 'providers/lock_state_provider.dart';
 import 'providers/providers.dart';
 import 'ui/adaptive_scaffold.dart';
@@ -79,12 +82,7 @@ final routerProvider = Provider<GoRouter>((ref) {
           ),
           GoRoute(
             path: '/sync',
-            builder: (context, state) => LockGuard(
-              child: Builder(
-                builder: (context) =>
-                    Center(child: Text(AppLocalizations.of(context)!.navSync)),
-              ),
-            ),
+            builder: (context, state) => const LockGuard(child: SyncPage()),
           ),
           GoRoute(
             path: '/settings',
@@ -106,17 +104,26 @@ class _ShellWrapper extends ConsumerWidget {
   Widget build(BuildContext context, WidgetRef ref) {
     final index = _indexForLocation(location);
     final prefs = ref.watch(prefsProvider).valueOrNull;
-    return AdaptiveScaffold(
-      selectedIndex: index,
-      onDestinationSelected: (i) {
-        final path = _locationForIndex(i);
-        context.go(path);
-      },
-      body: child,
-      initialListPaneWidth: prefs?.listPaneWidth,
-      onListPaneWidthChanged: (width) {
-        unawaited(ref.read(prefsProvider.notifier).setListPaneWidth(width));
-      },
+    final l10n = AppLocalizations.of(context)!;
+    return SyncEventListener(
+      child: AdaptiveScaffold(
+        selectedIndex: index,
+        onDestinationSelected: (i) {
+          final path = _locationForIndex(i);
+          context.go(path);
+        },
+        appBar: AppBar(
+          title: Text(_titleForIndex(l10n, index)),
+          actions: [
+            SyncStatusButton(onNotConfigured: () => context.go('/sync')),
+          ],
+        ),
+        body: child,
+        initialListPaneWidth: prefs?.listPaneWidth,
+        onListPaneWidthChanged: (width) {
+          unawaited(ref.read(prefsProvider.notifier).setListPaneWidth(width));
+        },
+      ),
     );
   }
 
@@ -137,6 +144,17 @@ class _ShellWrapper extends ConsumerWidget {
       3 => '/sync',
       4 => '/settings',
       _ => '/entries',
+    };
+  }
+
+  static String _titleForIndex(AppLocalizations l10n, int index) {
+    return switch (index) {
+      0 => l10n.navEntries,
+      1 => l10n.navSearch,
+      2 => l10n.navGenerator,
+      3 => l10n.navSync,
+      4 => l10n.navSettings,
+      _ => l10n.appTitle,
     };
   }
 }

@@ -128,6 +128,9 @@ class AppLocalizationsEn extends AppLocalizations {
   String get actionClose => 'Close';
 
   @override
+  String get actionRetry => 'Retry';
+
+  @override
   String copiedSnackbar(int seconds) {
     return 'Copied — clears in ${seconds}s';
   }
@@ -300,6 +303,13 @@ class AppLocalizationsEn extends AppLocalizations {
 
   @override
   String get entryEditDiscard => 'Discard';
+
+  @override
+  String get entryEditReloadAfterSync =>
+      'The vault changed during sync. Close and reopen this editor before saving.';
+
+  @override
+  String get entryRefreshInProgress => 'Refreshing entry after sync';
 
   @override
   String get entryEditKindCredential => 'Credential';
@@ -548,4 +558,64 @@ class AppLocalizationsEn extends AppLocalizations {
 
   @override
   String get syncErrorAuthFailed => 'S3 authentication failed';
+
+  @override
+  String get syncTitle => 'Vault sync';
+
+  @override
+  String get syncNow => 'Sync now';
+
+  @override
+  String get syncNotConfigured => 'Sync is not configured';
+
+  @override
+  String get syncConfigureTitle => 'S3 configuration';
+
+  @override
+  String get syncConfigureSuccess => 'Sync configuration saved';
+
+  @override
+  String get syncCredentialSourceLabel => 'Credential storage';
+
+  @override
+  String get syncCredentialSourceEncrypted => 'Encrypted in the vault registry';
+
+  @override
+  String get syncBusyBanner =>
+      'Syncing in the background. Cached entries remain available.';
+
+  @override
+  String get syncActionsDisabled => 'Changes are disabled until sync finishes';
+
+  @override
+  String get syncOutcomeAlreadyInSync => 'Vault is already in sync';
+
+  @override
+  String get syncOutcomePushed => 'Local changes uploaded';
+
+  @override
+  String get syncOutcomeFastReplaced => 'Vault updated from remote';
+
+  @override
+  String get syncOutcomeMerged => 'Local and remote changes merged';
+
+  @override
+  String get syncOutcomeUnknown => 'Sync completed';
+
+  @override
+  String get syncConflictTitle => 'Sync needs attention';
+
+  @override
+  String get syncConflictMessage =>
+      'The conflict could not be merged automatically. Both sides were preserved and the pre-merge vault was saved as a backup.';
+
+  @override
+  String get syncConflictBackupLabel => 'Backup:';
+
+  @override
+  String get syncFailureGeneric =>
+      'Sync failed. Your local vault is still available.';
+
+  @override
+  String get syncEndpointDefault => 'remote';
 }

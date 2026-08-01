@@ -15,8 +15,9 @@ class FakeSessionRepository implements SessionRepository {
   bool unlockCalled = false;
   String? lastUnlockName;
   String? lastUnlockPassword;
-  AppFailure? unlockError;
+  Object? unlockError;
   VaultTree? unlockResult;
+  Completer<VaultTree>? unlockCompleter;
   bool lockNowCalled = false;
   bool shutdownCalled = false;
 
@@ -34,7 +35,10 @@ class FakeSessionRepository implements SessionRepository {
   AppFailure? changePasswordError;
 
   bool bootstrapCalled = false;
-  AppFailure? bootstrapError;
+  Object? bootstrapError;
+  String? lastBootstrapName;
+  S3ConfigDto? lastBootstrapConfig;
+  String? lastBootstrapPassword;
 
   @override
   Future<VaultTree> unlock(
@@ -46,6 +50,11 @@ class FakeSessionRepository implements SessionRepository {
     lastUnlockName = name;
     lastUnlockPassword = masterPassword;
     if (unlockError != null) throw unlockError!;
+    if (unlockCompleter case final completer?) {
+      final result = await completer.future;
+      emitLockState(LockEvent.unlocked);
+      return result;
+    }
     emitLockState(LockEvent.unlocked);
     return unlockResult ?? _defaultTree;
   }
@@ -139,6 +148,9 @@ class FakeSessionRepository implements SessionRepository {
     KeyfileRef? keyfile,
   }) async {
     bootstrapCalled = true;
+    lastBootstrapName = name;
+    lastBootstrapConfig = config;
+    lastBootstrapPassword = masterPassword;
     if (bootstrapError != null) throw bootstrapError!;
     final vault = VaultSummary(
       name: name,
@@ -160,6 +172,8 @@ class FakeEntryRepository implements EntryRepository {
   final Map<String, EntryDetail> details = {};
   final Map<String, List<HistorySummary>> histories = {};
   final Map<String, List<AttachmentMeta>> attachmentMap = {};
+  int entryDetailCalls = 0;
+  Completer<EntryDetail>? entryDetailRefreshCompleter;
 
   bool createEntryCalled = false;
   String? lastCreateGroup;
@@ -203,6 +217,12 @@ class FakeEntryRepository implements EntryRepository {
 
   @override
   Future<EntryDetail> entryDetail(String uuid) async {
+    entryDetailCalls++;
+    if (entryDetailCalls > 1) {
+      if (entryDetailRefreshCompleter case final completer?) {
+        return completer.future;
+      }
+    }
     return details[uuid] ?? _defaultDetail(uuid);
   }
 
@@ -324,16 +344,27 @@ class FakeSecretsRepository implements SecretsRepository {
   String? lastRevealUuid;
   RevealField? lastRevealField;
   String revealResult = 'revealed-secret';
+  final Map<String, String> revealResultsByField = {};
+  int revealCallCount = 0;
+  Completer<String>? revealCompleter;
+  Object? revealError;
 
   bool copyCalled = false;
   String? lastCopyUuid;
   CopyField? lastCopyField;
+  Object? copyError;
 
   @override
   Future<String> revealField(String uuid, RevealField field) async {
     revealCalled = true;
+    revealCallCount++;
     lastRevealUuid = uuid;
     lastRevealField = field;
+    if (revealError != null) throw revealError!;
+    if (revealCompleter case final completer?) return completer.future;
+    if (field case RevealFieldCustom(:final name)) {
+      return revealResultsByField[name] ?? revealResult;
+    }
     return revealResult;
   }
 
@@ -342,6 +373,7 @@ class FakeSecretsRepository implements SecretsRepository {
     copyCalled = true;
     lastCopyUuid = uuid;
     lastCopyField = field;
+    if (copyError != null) throw copyError!;
   }
 }
 
@@ -402,9 +434,16 @@ class FakeSyncRepository implements SyncRepository {
     configured: false,
     inFlight: false,
   );
+  Completer<SyncStatusDto>? statusCompleter;
   bool syncNowCalled = false;
+  int syncNowCallCount = 0;
   bool configureCalled = false;
   S3ConfigDto? lastConfig;
+  Object? syncNowError;
+  SyncEvent? syncNowEvent;
+  AppFailure? configureError;
+  Completer<void>? configureCompleter;
+  Completer<void>? syncNowCompleter;
 
   final StreamController<SyncEvent> syncController =
       StreamController<SyncEvent>.broadcast();
@@ -413,17 +452,35 @@ class FakeSyncRepository implements SyncRepository {
       StreamController<ClipboardEvent>.broadcast();
 
   @override
-  Future<SyncStatusDto> syncStatus() async => status;
+  Future<SyncStatusDto> syncStatus() async {
+    if (statusCompleter case final completer?) return completer.future;
+    return status;
+  }
 
   @override
   Future<void> configureSync(S3ConfigDto config) async {
     configureCalled = true;
     lastConfig = config;
+    if (configureError != null) throw configureError!;
+    if (configureCompleter case final completer?) {
+      await completer.future;
+    }
+    status = SyncStatusDto(
+      configured: true,
+      inFlight: false,
+      lastOutcome: status.lastOutcome,
+    );
   }
 
   @override
   Future<void> syncNow() async {
     syncNowCalled = true;
+    syncNowCallCount++;
+    if (syncNowEvent case final event?) syncController.add(event);
+    if (syncNowError case final error?) throw error;
+    if (syncNowCompleter case final completer?) {
+      await completer.future;
+    }
   }
 
   @override

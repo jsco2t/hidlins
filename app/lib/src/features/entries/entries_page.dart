@@ -41,18 +41,21 @@ class _EntriesPageState extends ConsumerState<EntriesPage> {
   @override
   Widget build(BuildContext context) {
     final treeAsync = ref.watch(vaultTreeProvider);
+    final syncState = ref.watch(syncUiStateProvider).valueOrNull;
     final l10n = AppLocalizations.of(context)!;
     final width = MediaQuery.sizeOf(context).width;
     final isExpanded = width >= HidlinsBreakpoints.medium;
+    final isSyncing = syncState?.inFlight ?? false;
 
     return treeAsync.when(
       loading: () => const Center(child: CircularProgressIndicator()),
       error: (e, _) => Center(child: Text(l10n.errorGeneric)),
       data: (tree) {
         final filteredEntries = _filterEntries(tree);
+        late final Widget workspace;
 
         if (isExpanded) {
-          return _ExpandedLayout(
+          workspace = _ExpandedLayout(
             tree: tree,
             entries: filteredEntries,
             selectedGroupUuid: _selectedGroupUuid,
@@ -64,20 +67,45 @@ class _EntriesPageState extends ConsumerState<EntriesPage> {
             onCopyUsername: (uuid) => _copyField(uuid, CopyField.username),
             onCopyPassword: (uuid) => _copyField(uuid, CopyField.password),
           );
-        }
-
-        if (_selectedEntryUuid != null) {
-          return _CompactDetail(
+        } else if (_selectedEntryUuid != null) {
+          workspace = _CompactDetail(
             uuid: _selectedEntryUuid!,
             onBack: () => setState(() => _selectedEntryUuid = null),
           );
+        } else {
+          workspace = _CompactList(
+            entries: filteredEntries,
+            onEntrySelected: (uuid) =>
+                setState(() => _selectedEntryUuid = uuid),
+            onCopyUsername: (uuid) => _copyField(uuid, CopyField.username),
+            onCopyPassword: (uuid) => _copyField(uuid, CopyField.password),
+          );
         }
 
-        return _CompactList(
-          entries: filteredEntries,
-          onEntrySelected: (uuid) => setState(() => _selectedEntryUuid = uuid),
-          onCopyUsername: (uuid) => _copyField(uuid, CopyField.username),
-          onCopyPassword: (uuid) => _copyField(uuid, CopyField.password),
+        if (!isSyncing) return workspace;
+        return Column(
+          children: [
+            Container(
+              key: const Key('sync-busy-banner'),
+              width: double.infinity,
+              color: Theme.of(context).colorScheme.tertiaryContainer,
+              padding: const EdgeInsets.symmetric(
+                horizontal: HidlinsSpacing.md,
+                vertical: HidlinsSpacing.sm,
+              ),
+              child: Row(
+                children: [
+                  const SizedBox.square(
+                    dimension: 18,
+                    child: CircularProgressIndicator(strokeWidth: 2),
+                  ),
+                  const SizedBox(width: HidlinsSpacing.sm),
+                  Expanded(child: Text(l10n.syncBusyBanner)),
+                ],
+              ),
+            ),
+            Expanded(child: workspace),
+          ],
         );
       },
     );
@@ -100,7 +128,10 @@ class _EntriesPageState extends ConsumerState<EntriesPage> {
         context,
       ).showSnackBar(SnackBar(content: Text(l10n.copiedSnackbar(30))));
     } on Exception {
-      // ignore
+      if (!mounted) return;
+      ScaffoldMessenger.of(
+        context,
+      ).showSnackBar(SnackBar(content: Text(l10n.errorGeneric)));
     }
   }
 }

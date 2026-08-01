@@ -44,6 +44,7 @@
   "actionDetach": "Remove",
   "actionSaveAs": "Save as…",
   "actionClose": "Close",
+  "actionRetry": "Retry",
   "copiedSnackbar": "Copied — clears in {seconds}s",
   "@copiedSnackbar": {
     "placeholders": {
@@ -110,6 +111,8 @@
   "entryEditUnsavedTitle": "Unsaved changes",
   "entryEditUnsavedMessage": "Discard changes?",
   "entryEditDiscard": "Discard",
+  "entryEditReloadAfterSync": "The vault changed during sync. Close and reopen this editor before saving.",
+  "entryRefreshInProgress": "Refreshing entry after sync",
   "entryEditKindCredential": "Credential",
   "entryEditKindSecureNote": "Secure note",
   "entryEditKindTotp": "TOTP",
@@ -208,5 +211,24 @@
       "endpoint": { "type": "String" }
     }
   },
-  "syncErrorAuthFailed": "S3 authentication failed"
+  "syncErrorAuthFailed": "S3 authentication failed",
+  "syncTitle": "Vault sync",
+  "syncNow": "Sync now",
+  "syncNotConfigured": "Sync is not configured",
+  "syncConfigureTitle": "S3 configuration",
+  "syncConfigureSuccess": "Sync configuration saved",
+  "syncCredentialSourceLabel": "Credential storage",
+  "syncCredentialSourceEncrypted": "Encrypted in the vault registry",
+  "syncBusyBanner": "Syncing in the background. Cached entries remain available.",
+  "syncActionsDisabled": "Changes are disabled until sync finishes",
+  "syncOutcomeAlreadyInSync": "Vault is already in sync",
+  "syncOutcomePushed": "Local changes uploaded",
+  "syncOutcomeFastReplaced": "Vault updated from remote",
+  "syncOutcomeMerged": "Local and remote changes merged",
+  "syncOutcomeUnknown": "Sync completed",
+  "syncConflictTitle": "Sync needs attention",
+  "syncConflictMessage": "The conflict could not be merged automatically. Both sides were preserved and the pre-merge vault was saved as a backup.",
+  "syncConflictBackupLabel": "Backup:",
+  "syncFailureGeneric": "Sync failed. Your local vault is still available.",
+  "syncEndpointDefault": "remote"
 }

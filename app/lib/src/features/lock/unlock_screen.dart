@@ -44,6 +44,7 @@ class _UnlockScreenState extends ConsumerState<UnlockScreen> {
       _errorMessage = null;
       _showOfflineWarning = false;
     });
+    ref.read(unlockSyncWarningProvider.notifier).clear();
 
     try {
       final repo = ref.read(sessionRepositoryProvider);
@@ -55,8 +56,10 @@ class _UnlockScreenState extends ConsumerState<UnlockScreen> {
       _passwordController.clear();
     } on AppFailure catch (e) {
       if (!mounted) return;
+      ref.read(unlockSyncWarningProvider.notifier).clear();
       setState(() {
         _state = _UnlockState.idle;
+        _showOfflineWarning = false;
         _errorMessage = switch (e) {
           BadCredentials() => l10n.lockScreenWrongPassword,
           VaultContended(:final holderPid) => l10n.lockScreenVaultContended(
@@ -67,10 +70,12 @@ class _UnlockScreenState extends ConsumerState<UnlockScreen> {
           _ => l10n.errorGeneric,
         };
       });
-    } on Exception {
+    } on Object {
       if (!mounted) return;
+      ref.read(unlockSyncWarningProvider.notifier).clear();
       setState(() {
         _state = _UnlockState.idle;
+        _showOfflineWarning = false;
         _errorMessage = l10n.errorGeneric;
       });
     }
@@ -78,6 +83,21 @@ class _UnlockScreenState extends ConsumerState<UnlockScreen> {
 
   @override
   Widget build(BuildContext context) {
+    ref.listen(syncEventsProvider, (_, next) {
+      final event = next.valueOrNull;
+      if (!mounted || event == null || _state == _UnlockState.idle) return;
+      switch (event) {
+        case SyncEvent_Started() || SyncEvent_Activity():
+          if (_state != _UnlockState.syncing) {
+            setState(() => _state = _UnlockState.syncing);
+          }
+        case SyncEvent_Done():
+          break;
+        case SyncEvent_Failed():
+          ref.read(unlockSyncWarningProvider.notifier).show();
+          setState(() => _showOfflineWarning = true);
+      }
+    });
     final l10n = AppLocalizations.of(context)!;
     final colorScheme = Theme.of(context).colorScheme;
     final vaults = ref.watch(vaultListProvider);

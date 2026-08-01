@@ -9,6 +9,7 @@ class AdaptiveScaffold extends StatefulWidget {
     required this.selectedIndex,
     required this.onDestinationSelected,
     required this.body,
+    this.appBar,
     this.secondaryBody,
     this.initialListPaneWidth,
     this.onListPaneWidthChanged,
@@ -17,6 +18,7 @@ class AdaptiveScaffold extends StatefulWidget {
   final int selectedIndex;
   final ValueChanged<int> onDestinationSelected;
   final Widget body;
+  final PreferredSizeWidget? appBar;
   final Widget? secondaryBody;
   final double? initialListPaneWidth;
   final ValueChanged<double>? onListPaneWidthChanged;
@@ -73,6 +75,7 @@ class _AdaptiveScaffoldState extends State<AdaptiveScaffold> {
         onDestinationSelected: widget.onDestinationSelected,
         destinations: destinations,
         body: widget.body,
+        appBar: widget.appBar,
       );
     }
 
@@ -82,6 +85,7 @@ class _AdaptiveScaffoldState extends State<AdaptiveScaffold> {
         onDestinationSelected: widget.onDestinationSelected,
         destinations: destinations,
         body: widget.body,
+        appBar: widget.appBar,
         secondaryBody: widget.secondaryBody,
       );
     }
@@ -91,6 +95,7 @@ class _AdaptiveScaffoldState extends State<AdaptiveScaffold> {
       onDestinationSelected: widget.onDestinationSelected,
       destinations: destinations,
       body: widget.body,
+      appBar: widget.appBar,
       secondaryBody: widget.secondaryBody,
       listPaneWidth: _listPaneWidth,
       onDividerDrag: (dx) {
@@ -121,16 +126,19 @@ class _CompactLayout extends StatelessWidget {
     required this.onDestinationSelected,
     required this.destinations,
     required this.body,
+    this.appBar,
   });
 
   final int selectedIndex;
   final ValueChanged<int> onDestinationSelected;
   final List<_Destination> destinations;
   final Widget body;
+  final PreferredSizeWidget? appBar;
 
   @override
   Widget build(BuildContext context) {
     return Scaffold(
+      appBar: appBar,
       body: body,
       bottomNavigationBar: NavigationBar(
         selectedIndex: selectedIndex,
@@ -150,6 +158,7 @@ class _MediumLayout extends StatelessWidget {
     required this.onDestinationSelected,
     required this.destinations,
     required this.body,
+    this.appBar,
     this.secondaryBody,
   });
 
@@ -157,11 +166,13 @@ class _MediumLayout extends StatelessWidget {
   final ValueChanged<int> onDestinationSelected;
   final List<_Destination> destinations;
   final Widget body;
+  final PreferredSizeWidget? appBar;
   final Widget? secondaryBody;
 
   @override
   Widget build(BuildContext context) {
     return Scaffold(
+      appBar: appBar,
       body: Row(
         children: [
           NavigationRail(
@@ -194,6 +205,7 @@ class _ExpandedLayout extends StatelessWidget {
     required this.onDestinationSelected,
     required this.destinations,
     required this.body,
+    this.appBar,
     this.secondaryBody,
     required this.listPaneWidth,
     required this.onDividerDrag,
@@ -204,6 +216,7 @@ class _ExpandedLayout extends StatelessWidget {
   final ValueChanged<int> onDestinationSelected;
   final List<_Destination> destinations;
   final Widget body;
+  final PreferredSizeWidget? appBar;
   final Widget? secondaryBody;
   final double listPaneWidth;
   final void Function(double dx) onDividerDrag;
@@ -212,6 +225,7 @@ class _ExpandedLayout extends StatelessWidget {
   @override
   Widget build(BuildContext context) {
     return Scaffold(
+      appBar: appBar,
       body: Row(
         children: [
           NavigationRail(

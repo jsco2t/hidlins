@@ -328,6 +328,12 @@ abstract class AppLocalizations {
   /// **'Close'**
   String get actionClose;
 
+  /// No description provided for @actionRetry.
+  ///
+  /// In en, this message translates to:
+  /// **'Retry'**
+  String get actionRetry;
+
   /// No description provided for @copiedSnackbar.
   ///
   /// In en, this message translates to:
@@ -663,6 +669,18 @@ abstract class AppLocalizations {
   /// In en, this message translates to:
   /// **'Discard'**
   String get entryEditDiscard;
+
+  /// No description provided for @entryEditReloadAfterSync.
+  ///
+  /// In en, this message translates to:
+  /// **'The vault changed during sync. Close and reopen this editor before saving.'**
+  String get entryEditReloadAfterSync;
+
+  /// No description provided for @entryRefreshInProgress.
+  ///
+  /// In en, this message translates to:
+  /// **'Refreshing entry after sync'**
+  String get entryRefreshInProgress;
 
   /// No description provided for @entryEditKindCredential.
   ///
@@ -1137,6 +1155,120 @@ abstract class AppLocalizations {
   /// In en, this message translates to:
   /// **'S3 authentication failed'**
   String get syncErrorAuthFailed;
+
+  /// No description provided for @syncTitle.
+  ///
+  /// In en, this message translates to:
+  /// **'Vault sync'**
+  String get syncTitle;
+
+  /// No description provided for @syncNow.
+  ///
+  /// In en, this message translates to:
+  /// **'Sync now'**
+  String get syncNow;
+
+  /// No description provided for @syncNotConfigured.
+  ///
+  /// In en, this message translates to:
+  /// **'Sync is not configured'**
+  String get syncNotConfigured;
+
+  /// No description provided for @syncConfigureTitle.
+  ///
+  /// In en, this message translates to:
+  /// **'S3 configuration'**
+  String get syncConfigureTitle;
+
+  /// No description provided for @syncConfigureSuccess.
+  ///
+  /// In en, this message translates to:
+  /// **'Sync configuration saved'**
+  String get syncConfigureSuccess;
+
+  /// No description provided for @syncCredentialSourceLabel.
+  ///
+  /// In en, this message translates to:
+  /// **'Credential storage'**
+  String get syncCredentialSourceLabel;
+
+  /// No description provided for @syncCredentialSourceEncrypted.
+  ///
+  /// In en, this message translates to:
+  /// **'Encrypted in the vault registry'**
+  String get syncCredentialSourceEncrypted;
+
+  /// No description provided for @syncBusyBanner.
+  ///
+  /// In en, this message translates to:
+  /// **'Syncing in the background. Cached entries remain available.'**
+  String get syncBusyBanner;
+
+  /// No description provided for @syncActionsDisabled.
+  ///
+  /// In en, this message translates to:
+  /// **'Changes are disabled until sync finishes'**
+  String get syncActionsDisabled;
+
+  /// No description provided for @syncOutcomeAlreadyInSync.
+  ///
+  /// In en, this message translates to:
+  /// **'Vault is already in sync'**
+  String get syncOutcomeAlreadyInSync;
+
+  /// No description provided for @syncOutcomePushed.
+  ///
+  /// In en, this message translates to:
+  /// **'Local changes uploaded'**
+  String get syncOutcomePushed;
+
+  /// No description provided for @syncOutcomeFastReplaced.
+  ///
+  /// In en, this message translates to:
+  /// **'Vault updated from remote'**
+  String get syncOutcomeFastReplaced;
+
+  /// No description provided for @syncOutcomeMerged.
+  ///
+  /// In en, this message translates to:
+  /// **'Local and remote changes merged'**
+  String get syncOutcomeMerged;
+
+  /// No description provided for @syncOutcomeUnknown.
+  ///
+  /// In en, this message translates to:
+  /// **'Sync completed'**
+  String get syncOutcomeUnknown;
+
+  /// No description provided for @syncConflictTitle.
+  ///
+  /// In en, this message translates to:
+  /// **'Sync needs attention'**
+  String get syncConflictTitle;
+
+  /// No description provided for @syncConflictMessage.
+  ///
+  /// In en, this message translates to:
+  /// **'The conflict could not be merged automatically. Both sides were preserved and the pre-merge vault was saved as a backup.'**
+  String get syncConflictMessage;
+
+  /// No description provided for @syncConflictBackupLabel.
+  ///
+  /// In en, this message translates to:
+  /// **'Backup:'**
+  String get syncConflictBackupLabel;
+
+  /// No description provided for @syncFailureGeneric.
+  ///
+  /// In en, this message translates to:
+  /// **'Sync failed. Your local vault is still available.'**
+  String get syncFailureGeneric;
+
+  /// No description provided for @syncEndpointDefault.
+  ///
+  /// In en, this message translates to:
+  /// **'remote'**
+  String get syncEndpointDefault;
 }
 
 class _AppLocalizationsDelegate

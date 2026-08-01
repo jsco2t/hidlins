@@ -112,5 +112,30 @@ void main() {
 
       expect(find.text('Master password'), findsOneWidget);
     });
+
+    testWidgets('recovers from a non-Exception error', (tester) async {
+      final session = FakeSessionRepository()
+        ..vaults = [testVault]
+        ..unlockError = StateError('bridge runtime failure');
+      addTearDown(session.dispose);
+      await tester.pumpWidget(buildApp(session));
+      await tester.pumpAndSettle();
+
+      final passwordField = find.byWidgetPredicate(
+        (w) => w is TextField && w.obscureText == true,
+      );
+      await tester.enterText(passwordField, 'password');
+      await tester.tap(find.text('Unlock'));
+      await tester.pumpAndSettle();
+
+      expect(find.text('An error occurred'), findsOneWidget);
+      // Should be back in idle state — Unlock button re-enabled
+      final unlockButton = tester.widget<FilledButton>(
+        find.widgetWithText(FilledButton, 'Unlock'),
+      );
+      expect(unlockButton.onPressed, isNotNull);
+      // With the old `on Exception` catch, a StateError would escape.
+      expect(tester.takeException(), isNull);
+    });
   });
 }

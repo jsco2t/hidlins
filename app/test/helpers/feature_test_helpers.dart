@@ -38,8 +38,9 @@ extension FeatureTesterExtensions on WidgetTester {
   Future<TestHarness> pumpFeature(
     Widget child, {
     Brightness brightness = Brightness.light,
+    TestHarness? testHarness,
   }) async {
-    final harness = TestHarness();
+    final harness = testHarness ?? TestHarness();
     await pumpWidget(
       ProviderScope(
         overrides: harness.overrides,

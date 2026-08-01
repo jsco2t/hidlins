@@ -123,6 +123,7 @@ class _ConnectSyncDialogState extends ConsumerState<ConnectSyncDialog> {
                       ),
                       const SizedBox(height: HidlinsSpacing.md),
                       TextFormField(
+                        key: const Key('connect-sync-secret-key-field'),
                         controller: _secretKeyCtrl,
                         obscureText: true,
                         autocorrect: false,
@@ -180,18 +181,22 @@ class _ConnectSyncDialogState extends ConsumerState<ConnectSyncDialog> {
 
     try {
       final repo = ref.read(sessionRepositoryProvider);
+      final config = S3ConfigDto(
+        bucket: _bucketCtrl.text,
+        key: _keyCtrl.text,
+        region: _regionCtrl.text,
+        endpoint: _endpointCtrl.text.isEmpty ? null : _endpointCtrl.text,
+        pathStyle: _pathStyle,
+        accessKeyId: _accessKeyCtrl.text,
+        secretAccessKey: _secretKeyCtrl.text,
+      );
+      final password = _passwordCtrl.text;
+      _secretKeyCtrl.clear();
+      _passwordCtrl.clear();
       await repo.bootstrapFromRemote(
         name: _nameCtrl.text,
-        config: S3ConfigDto(
-          bucket: _bucketCtrl.text,
-          key: _keyCtrl.text,
-          region: _regionCtrl.text,
-          endpoint: _endpointCtrl.text.isEmpty ? null : _endpointCtrl.text,
-          pathStyle: _pathStyle,
-          accessKeyId: _accessKeyCtrl.text,
-          secretAccessKey: _secretKeyCtrl.text,
-        ),
-        masterPassword: _passwordCtrl.text,
+        config: config,
+        masterPassword: password,
       );
       if (mounted) Navigator.of(context).pop(true);
     } on AppFailure catch (e) {
@@ -206,13 +211,13 @@ class _ConnectSyncDialogState extends ConsumerState<ConnectSyncDialog> {
           ),
           PathAlreadyExists() => l10n.errorVaultAlreadyExists,
           SyncUnreachable(:final endpoint) => l10n.syncErrorUnreachable(
-            endpoint ?? 'remote',
+            endpoint ?? l10n.syncEndpointDefault,
           ),
           SyncAuthFailure() => l10n.syncErrorAuthFailed,
           _ => l10n.errorGeneric,
         };
       });
-    } on Exception {
+    } on Object {
       if (!mounted) return;
       setState(() {
         _working = false;

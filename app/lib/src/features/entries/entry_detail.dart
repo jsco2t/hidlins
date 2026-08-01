@@ -10,6 +10,7 @@ import '../../ui/widgets/copy_row.dart';
 import '../../ui/widgets/section_card.dart';
 import '../../ui/widgets/secret_text.dart';
 import '../entries/totp_block.dart';
+import 'entry_edit.dart';
 
 typedef FilePickerCallback = Future<String?> Function();
 
@@ -33,8 +34,12 @@ class EntryDetailPane extends ConsumerWidget {
           style: TextStyle(color: colorScheme.error),
         ),
       ),
-      data: (detail) =>
-          _DetailContent(detail: detail, uuid: uuid, onPickFile: onPickFile),
+      data: (detail) => _DetailContent(
+        detail: detail,
+        uuid: uuid,
+        onPickFile: onPickFile,
+        mutationsEnabled: !detailAsync.isRefreshing && !detailAsync.isReloading,
+      ),
     );
   }
 }
@@ -43,11 +48,13 @@ class _DetailContent extends ConsumerStatefulWidget {
   const _DetailContent({
     required this.detail,
     required this.uuid,
+    required this.mutationsEnabled,
     this.onPickFile,
   });
 
   final EntryDetail detail;
   final String uuid;
+  final bool mutationsEnabled;
   final FilePickerCallback? onPickFile;
 
   @override
@@ -61,6 +68,16 @@ class _DetailContentState extends ConsumerState<_DetailContent> {
   Widget build(BuildContext context) {
     final l10n = AppLocalizations.of(context)!;
     final detail = widget.detail;
+    final syncState = ref.watch(syncUiStateProvider);
+    final syncUnavailable = !syncState.hasValue;
+    final isSyncing = syncState.valueOrNull?.inFlight ?? false;
+    final mutationsEnabled =
+        widget.mutationsEnabled && !syncUnavailable && !isSyncing;
+    final mutationTooltip = syncUnavailable || isSyncing
+        ? l10n.syncActionsDisabled
+        : !widget.mutationsEnabled
+        ? l10n.entryRefreshInProgress
+        : l10n.actionEdit;
 
     return ListView(
       padding: const EdgeInsets.all(HidlinsSpacing.md),
@@ -84,6 +101,14 @@ class _DetailContentState extends ConsumerState<_DetailContent> {
                   ).isBefore(DateTime.now()),
                 ),
               ),
+            Tooltip(
+              message: mutationTooltip,
+              child: IconButton(
+                key: const Key('entry-edit-action'),
+                icon: const Icon(Icons.edit_outlined),
+                onPressed: mutationsEnabled ? () => _openEdit(detail) : null,
+              ),
+            ),
           ],
         ),
         const SizedBox(height: HidlinsSpacing.md),
@@ -212,6 +237,7 @@ class _DetailContentState extends ConsumerState<_DetailContent> {
           uuid: widget.uuid,
           attachments: detail.attachments,
           onPickFile: widget.onPickFile,
+          mutationsEnabled: mutationsEnabled,
         ),
 
         // Timestamps
@@ -266,6 +292,24 @@ class _DetailContentState extends ConsumerState<_DetailContent> {
       ).showSnackBar(SnackBar(content: Text(l10n.errorGeneric)));
     }
   }
+
+  Future<void> _openEdit(EntryDetail detail) async {
+    final currentDetail = ref.read(entryDetailProvider(widget.uuid));
+    final syncState = ref.read(syncUiStateProvider);
+    if (currentDetail.isRefreshing ||
+        currentDetail.isReloading ||
+        !syncState.hasValue ||
+        (syncState.valueOrNull?.inFlight ?? false)) {
+      return;
+    }
+    final changed = await Navigator.of(context).push<bool>(
+      MaterialPageRoute(builder: (_) => EntryEditDialog(detail: detail)),
+    );
+    if (changed == true) {
+      ref.invalidate(vaultTreeProvider);
+      ref.invalidate(entryDetailProvider(widget.uuid));
+    }
+  }
 }
 
 class _CustomFieldRow extends ConsumerWidget {
@@ -308,6 +352,14 @@ class _CustomFieldRow extends ConsumerWidget {
                           RevealFieldCustom(name),
                         );
                       } on Exception {
+                        if (!context.mounted) return null;
+                        ScaffoldMessenger.of(context).showSnackBar(
+                          SnackBar(
+                            content: Text(
+                              AppLocalizations.of(context)!.errorRevealFailed,
+                            ),
+                          ),
+                        );
                         return null;
                       }
                     },
@@ -354,11 +406,13 @@ class _AttachmentSection extends ConsumerStatefulWidget {
   const _AttachmentSection({
     required this.uuid,
     required this.attachments,
+    required this.mutationsEnabled,
     this.onPickFile,
   });
 
   final String uuid;
   final List<AttachmentMeta> attachments;
+  final bool mutationsEnabled;
   final FilePickerCallback? onPickFile;
 
   @override
@@ -386,10 +440,15 @@ class _AttachmentSectionState extends ConsumerState<_AttachmentSection> {
               dense: true,
               contentPadding: EdgeInsets.zero,
               trailing: Tooltip(
-                message: l10n.actionDetach,
+                message: widget.mutationsEnabled
+                    ? l10n.actionDetach
+                    : l10n.syncActionsDisabled,
                 child: IconButton(
+                  key: Key('attachment-detach-${a.name}'),
                   icon: const Icon(Icons.close, size: 18),
-                  onPressed: () async => _confirmDetach(a.name),
+                  onPressed: widget.mutationsEnabled
+                      ? () async => _confirmDetach(a.name)
+                      : null,
                 ),
               ),
             ),
@@ -402,7 +461,8 @@ class _AttachmentSectionState extends ConsumerState<_AttachmentSection> {
           Padding(
             padding: const EdgeInsets.only(top: HidlinsSpacing.sm),
             child: TextButton.icon(
-              onPressed: _attach,
+              key: const Key('attachment-add-action'),
+              onPressed: widget.mutationsEnabled ? _attach : null,
               icon: const Icon(Icons.add, size: 18),
               label: Text(l10n.actionAttach),
             ),

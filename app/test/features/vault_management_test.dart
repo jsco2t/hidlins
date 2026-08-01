@@ -211,6 +211,30 @@ void main() {
       expect(harness.session.bootstrapCalled, isFalse);
       expect(find.text('Required'), findsWidgets);
     });
+
+    testWidgets('recovers from a non-Exception error', (tester) async {
+      final harness = await tester.pumpFeature(const ConnectSyncDialog());
+      addTearDown(harness.dispose);
+      await tester.pumpAndSettle();
+
+      harness.session.bootstrapError = StateError('bridge runtime failure');
+
+      await fillConnectForm(tester);
+
+      await tester.scrollUntilVisible(
+        find.text('Confirm'),
+        100,
+        scrollable: find.byType(Scrollable).first,
+      );
+      await tester.tap(find.text('Confirm'));
+      await tester.pumpAndSettle();
+
+      expect(find.text('An error occurred'), findsOneWidget);
+      // Form should be interactive again (not stuck in _working state)
+      expect(find.text('Confirm'), findsOneWidget);
+      // With the old `on Exception` catch, a StateError would escape.
+      expect(tester.takeException(), isNull);
+    });
   });
 
   group('ChangePasswordDialog', () {
