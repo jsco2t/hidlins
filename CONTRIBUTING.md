@@ -241,7 +241,8 @@ CI gates merge on `make deny` (license + advisory + bans) and
 
 Direct dependencies added through the workflow above, newest first. Each line
 records the review at its add point; transitive crates are covered en masse by
-`make deny` (license + bans) over the four Phase-0 targets.
+`make deny` (license + bans) over all eight configured targets (four desktop
+and four mobile triples).
 
 #### hidlins-api — Android TLS verifier JNI init (flutter-app T6.2, 2026-08-01)
 
@@ -253,7 +254,7 @@ init (spike memo: `notebook/.../features/flutter-app/research/android-verifier-s
 
 | Crate | Constraint | License | Maintenance / popularity | Hand-roll assessment |
 | --- | --- | --- | --- | --- |
-| `rustls-platform-verifier` | `0.6` (lock: 0.6.2) | MIT OR Apache-2.0 | rustls org; the crate our TLS stack already trusts for verification | Not viable — it IS the component being initialized. The caret req **must** resolve to the same instance `ureq` links: the init writes a process-global `OnceCell` inside the crate, and a semver-split (0.6 vs a future ureq 0.7 bump) would compile cleanly but leave the sync stack reading an uninitialized global. `cargo deny`'s `multiple-versions = "warn"` flags a split but does not fail CI — bump to a hard gate with the T8.1 productionized build. |
+| `rustls-platform-verifier` | `0.6` (lock: 0.6.2) | MIT OR Apache-2.0 | rustls org; the crate our TLS stack already trusts for verification | Not viable — it IS the component being initialized. The caret req **must** resolve to the same instance `ureq` links: the init writes a process-global `OnceCell` inside the crate, and a semver-split (0.6 vs a future ureq 0.7 bump) would compile cleanly but leave the sync stack reading an uninitialized global. `cargo deny`'s `multiple-versions = "warn"` flags a split but does not fail CI, so `make build-android` carries the hard single-instance gate; T8.1 must preserve it when productionizing the Gradle build. |
 | `jni` | `0.21` (lock: 0.21.1) | MIT OR Apache-2.0 | The de-facto Rust JNI binding (`jni-rs` org); already vendored via the verifier's Android support | Not viable — hand-rolling JNI marshalling is exactly the unsafe surface the safe wrapper exists to avoid. Used only for the `initVerifier` export's env/object types. |
 
 *(Amends the Phase-2b row below: `rustls-platform-verifier` moved 0.5 → 0.6.2

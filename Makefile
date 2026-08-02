@@ -37,7 +37,7 @@ UNAME_S        := $(shell uname -s)
 
 .PHONY: help toolchain build test test-ignored test-all test-update-snapshots test-clipboard test-os-events \
         test-sigv4 minio-up minio-down minio-native-up minio-native-down test-s3-integration interop-sync \
-        fmt fmt-check lint lint-fix check-feature-gates check-android build-android ndk-preflight \
+        fmt fmt-check lint lint-fix check-feature-gates check-android-guards check-android build-android ndk-preflight \
         check verify interop interop-entry bench bench-search bench-search-gate bench-search-gate-ci \
         vendor deny audit doc clean completions completions-check run-tui \
         snapshots-check \
@@ -296,7 +296,7 @@ check-macos:  ## Type-check hidlins-security against macOS targets (Level-1 cros
 	$(CARGO) check --target aarch64-apple-darwin --offline --locked -p hidlins-security --features iokit
 	$(CARGO) check --target x86_64-apple-darwin  --offline --locked -p hidlins-security --features iokit
 
-check-feature-gates:  ## Type-check feature-gated test suites the runtime CI sweeps never compile (clipboard, OS-event helpers).
+check-feature-gates: check-android-guards  ## Type-check feature-gated suites/mobile stubs and enforce Android API-floor parity.
 	# Compile-only drift gate. The display-dependent clipboard suites
 	# (`clipboard-tests`) and the OS-event helper binaries are excluded
 	# from every runtime CI sweep by design — but without this gate they
@@ -317,15 +317,6 @@ check-feature-gates:  ## Type-check feature-gated test suites the runtime CI swe
 	# keeps default features, so --tests would re-enable `desktop` via
 	# feature unification and check nothing.
 	$(CARGO) check -p hidlins-api --offline --locked --no-default-features
-	# API-floor lockstep (design D-10): the NDK clang wrapper encodes
-	# ANDROID_API_LEVEL, so if it and the app's minSdk diverge, the cdylib
-	# is linked against a different minimum than the APK declares — an
-	# install-then-UnsatisfiedLinkError on older devices that no compile
-	# gate would otherwise see. NDK-free, so it runs on every machine.
-	@grep -q "minSdk = $(ANDROID_API_LEVEL)$$" app/android/app/build.gradle.kts || { \
-		echo "error: Makefile ANDROID_API_LEVEL ($(ANDROID_API_LEVEL)) != app/android/app/build.gradle.kts minSdk." >&2; \
-		echo "       Keep the D-10 Android floor in lockstep (see the ANDROID_API_LEVEL comment)." >&2; \
-		exit 1; }
 ifeq ($(UNAME_S),Darwin)
 	# iokit compiles natively here; logind's zbus tree is Linux-only.
 	$(CARGO) check -p hidlins-security --offline --locked --features test-binaries,iokit --tests
@@ -385,6 +376,10 @@ check-android build-android: export AR_x86_64_linux_android  := $(NDK_BIN)/llvm-
 # cfg(target_os = "android") JNI module.
 ANDROID_CARGO_FLAGS := -p hidlins-api --no-default-features --offline --locked
 
+check-android-guards:  ## Test Android guard logic and enforce Makefile/Gradle API-floor lockstep (NDK-free).
+	tools/dev/android-build-guards.sh self-test
+	tools/dev/android-build-guards.sh api-floor app/android/app/build.gradle.kts $(ANDROID_API_LEVEL)
+
 ifdef ANDROID_NDK_HOME
 check-android: ndk-preflight  ## Type-check hidlins-api + deps for both Android triples (needs $ANDROID_NDK_HOME; ring's build.rs compiles C).
 	$(CARGO) check $(ANDROID_CARGO_FLAGS) --target aarch64-linux-android
@@ -398,10 +393,7 @@ build-android: ndk-preflight  ## Build hidlins-api (cdylib) for both Android tri
 	# catches an accidental rename/removal of the Kotlin-facing ABI.
 	@for so in "$${CARGO_TARGET_DIR:-target}"/aarch64-linux-android/debug/libhidlins_api.so \
 	           "$${CARGO_TARGET_DIR:-target}"/x86_64-linux-android/debug/libhidlins_api.so; do \
-		"$(NDK_BIN)/llvm-nm" -D --defined-only "$$so" \
-			| grep -q Java_app_hidlins_HidlinsNative_initVerifier || { \
-			echo "error: JNI export Java_app_hidlins_HidlinsNative_initVerifier missing from $$so" >&2; \
-			exit 1; }; \
+		tools/dev/android-build-guards.sh jni-symbol "$(NDK_BIN)/llvm-nm" "$$so"; \
 	done
 	@echo "  OK: JNI verifier-init export present in both Android cdylibs"
 	# Single-copy invariant: hidlins-api's direct rustls-platform-verifier
