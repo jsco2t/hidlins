@@ -213,10 +213,12 @@ jobs:
           test -n "$ANDROID_NDK_HOME" || { echo "runner image no longer presets ANDROID_NDK_HOME" >&2; exit 1; }
           cat "$ANDROID_NDK_HOME/source.properties"
 
-      - name: Android cross-compile check (both triples)
-        run: make check-android HIDLINS_ANDROID_STRICT=1
-
-      - name: Android cross-compile build (ring compile + link gate)
+      # build-android alone: it is a strict superset of check-android
+      # (cargo check shares no artifacts with cargo build, so running both
+      # would compile the whole graph twice per triple for no added
+      # coverage), and it carries the JNI-export symbol assertion + the
+      # single-verifier-instance gate.
+      - name: Android cross-compile build (ring compile + link + ABI gates)
         run: make build-android HIDLINS_ANDROID_STRICT=1
 
   # Flutter app — analyze, format, build, codegen + supply-chain gates on

@@ -130,7 +130,14 @@ never requires it. To enable them:
    `$HOME/Android/Sdk/ndk/...` on Linux).
 3. `make check-android` type-checks `hidlins-api` for both triples;
    `make build-android` is the full proof — `ring`'s build script compiles
-   C/asm with the NDK clang and the cdylib links.
+   C/asm with the NDK clang, the cdylib links, the JNI export symbol is
+   asserted, and the Android graph is checked for a single
+   `rustls-platform-verifier` instance.
+
+Note the gate's NDK is deliberately **not** the `flutter.ndkVersion` the
+Flutter Android build will resolve (`app/android/app/build.gradle.kts`) —
+reconciling the two into one source is part of the productionized Android
+build (T8.1).
 
 The NDK linker and C toolchain are resolved **in the Makefile** via
 `CARGO_TARGET_<TRIPLE>_LINKER` / `CC_<triple>` / `AR_<triple>` environment

@@ -317,6 +317,15 @@ check-feature-gates:  ## Type-check feature-gated test suites the runtime CI swe
 	# keeps default features, so --tests would re-enable `desktop` via
 	# feature unification and check nothing.
 	$(CARGO) check -p hidlins-api --offline --locked --no-default-features
+	# API-floor lockstep (design D-10): the NDK clang wrapper encodes
+	# ANDROID_API_LEVEL, so if it and the app's minSdk diverge, the cdylib
+	# is linked against a different minimum than the APK declares — an
+	# install-then-UnsatisfiedLinkError on older devices that no compile
+	# gate would otherwise see. NDK-free, so it runs on every machine.
+	@grep -q "minSdk = $(ANDROID_API_LEVEL)$$" app/android/app/build.gradle.kts || { \
+		echo "error: Makefile ANDROID_API_LEVEL ($(ANDROID_API_LEVEL)) != app/android/app/build.gradle.kts minSdk." >&2; \
+		echo "       Keep the D-10 Android floor in lockstep (see the ANDROID_API_LEVEL comment)." >&2; \
+		exit 1; }
 ifeq ($(UNAME_S),Darwin)
 	# iokit compiles natively here; logind's zbus tree is Linux-only.
 	$(CARGO) check -p hidlins-security --offline --locked --features test-binaries,iokit --tests
@@ -395,6 +404,21 @@ build-android: ndk-preflight  ## Build hidlins-api (cdylib) for both Android tri
 			exit 1; }; \
 	done
 	@echo "  OK: JNI verifier-init export present in both Android cdylibs"
+	# Single-copy invariant: hidlins-api's direct rustls-platform-verifier
+	# dep must be the SAME instance ureq links — the JNI init writes a
+	# process-global inside the crate, and a semver split (e.g. a future
+	# ureq bump to 0.7) would compile cleanly while the sync stack reads a
+	# second, uninitialized global. cargo-deny only WARNS on duplicate
+	# versions, so this is the hard gate.
+	@count="$$($(CARGO) tree -p hidlins-api --no-default-features --offline --locked \
+		--target aarch64-linux-android -i rustls-platform-verifier 2>/dev/null \
+		| grep -c '^rustls-platform-verifier v')"; \
+	if [ "$$count" != "1" ]; then \
+		echo "error: expected exactly one rustls-platform-verifier in the Android graph, found $$count." >&2; \
+		echo "       A version split leaves the TLS verifier global uninitialized on Android." >&2; \
+		exit 1; \
+	fi
+	@echo "  OK: single rustls-platform-verifier instance in the Android graph"
 
 # Internal helper (deliberately not in `make help`): fail fast with an
 # actionable message when ANDROID_NDK_HOME does not point at a usable
@@ -594,7 +618,11 @@ check: fmt-check lint build test check-macos check-feature-gates  ## fmt-check +
 # fail the integrity gate without ever having run.
 app-check: flutter-version-check telemetry-check app-deps pub-vendor-check app-analyze app-fmt-check app-test app-test-bridge app-test-integration api-gen-check  ## Flutter-side gates (requires the Flutter SDK + Rust toolchain).
 
-verify: check check-android app-check test-ignored doc deny audit interop interop-entry interop-sync interop-app test-minio-managed boundary-check  ## Full verification gate (Rust + Flutter + interop + managed MinIO; Android cross-check skips without an NDK).
+# build-android (not check-android): the JNI-export symbol assertion and
+# the single-verifier-instance gate live in the build recipe, and they are
+# the only guards on the Kotlin-facing ABI — the full gate must run them.
+# Still skips gracefully on machines without an NDK.
+verify: check build-android app-check test-ignored doc deny audit interop interop-entry interop-sync interop-app test-minio-managed boundary-check  ## Full verification gate (Rust + Flutter + interop + managed MinIO; Android build skips without an NDK).
 
 interop:  ## Run vault-core KeePassXC interop shell tests (requires keepassxc-cli).
 	$(CARGO) build -p hidlins-core --bin hidlins-test-driver --offline --locked
