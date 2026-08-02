@@ -37,7 +37,7 @@ UNAME_S        := $(shell uname -s)
 
 .PHONY: help toolchain build test test-ignored test-all test-update-snapshots test-clipboard test-os-events \
         test-sigv4 minio-up minio-down minio-native-up minio-native-down test-s3-integration interop-sync \
-        fmt fmt-check lint lint-fix check-feature-gates \
+        fmt fmt-check lint lint-fix check-feature-gates check-android build-android ndk-preflight \
         check verify interop interop-entry bench bench-search bench-search-gate bench-search-gate-ci \
         vendor deny audit doc clean completions completions-check run-tui \
         snapshots-check \
@@ -313,6 +313,81 @@ ifeq ($(UNAME_S),Darwin)
 	$(CARGO) check -p hidlins-security --offline --locked --features test-binaries,iokit --tests
 else
 	$(CARGO) check -p hidlins-security --offline --locked --features test-binaries,logind --tests
+endif
+
+# ---------------------------------------------------------------------------
+# Android cross-compilation (flutter-app P6 spike T6.1; productionized in P8).
+#
+# Cargo's `config.toml` `linker` key is a static path and cannot expand
+# `$ANDROID_NDK_HOME` (design D-7 as amended / review A9), so the NDK
+# linker + C toolchain env vars are exported HERE, where host-OS path
+# resolution is possible. Cargokit does its own NDK resolution for the
+# Gradle-driven app build (T8.1); these targets cover the Rust-only gate.
+#
+# API level 29 matches the D-10 Android floor: the NDK's clang wrappers
+# encode the minimum API in their filename (aarch64-linux-android29-clang),
+# and `ring`'s build script compiles its C/asm sources with the same
+# wrapper via the `CC_<triple>` / `AR_<triple>` env vars the `cc` crate
+# reads. The NDK prebuilt host tag is darwin-x86_64 on macOS even for
+# Apple Silicon hosts (the binaries are universal); there is no
+# linux-arm64 host NDK, hence only the two tags below.
+# ---------------------------------------------------------------------------
+
+ANDROID_API      := 29
+ifeq ($(UNAME_S),Darwin)
+NDK_HOST_TAG     := darwin-x86_64
+else
+NDK_HOST_TAG     := linux-x86_64
+endif
+NDK_BIN           = $(ANDROID_NDK_HOME)/toolchains/llvm/prebuilt/$(NDK_HOST_TAG)/bin
+
+# Target-scoped exports: only the android targets see these, and only for
+# these recipes — no other make target's environment is polluted. The
+# underscore forms (CC_aarch64_linux_android) are the `cc` crate's
+# documented per-target override names; CARGO_TARGET_* is cargo's own
+# linker override, equivalent to a config.toml `linker` key but computed
+# at make time so $ANDROID_NDK_HOME expansion works.
+check-android build-android: export CARGO_TARGET_AARCH64_LINUX_ANDROID_LINKER = $(NDK_BIN)/aarch64-linux-android$(ANDROID_API)-clang
+check-android build-android: export CARGO_TARGET_X86_64_LINUX_ANDROID_LINKER  = $(NDK_BIN)/x86_64-linux-android$(ANDROID_API)-clang
+check-android build-android: export CC_aarch64_linux_android = $(NDK_BIN)/aarch64-linux-android$(ANDROID_API)-clang
+check-android build-android: export CC_x86_64_linux_android  = $(NDK_BIN)/x86_64-linux-android$(ANDROID_API)-clang
+check-android build-android: export AR_aarch64_linux_android = $(NDK_BIN)/llvm-ar
+check-android build-android: export AR_x86_64_linux_android  = $(NDK_BIN)/llvm-ar
+
+# `--no-default-features` is load-bearing: hidlins-api's default `desktop`
+# feature forwards to hidlins-security's desktop stack (arboard,
+# signal-hook, OS event sources), none of which exist for Android. The
+# mobile build compiles only the OS-agnostic security pieces plus the
+# cfg(target_os = "android") JNI module.
+ANDROID_CARGO_ARGS := -p hidlins-api --no-default-features --offline --locked
+
+ifdef ANDROID_NDK_HOME
+check-android: ndk-preflight  ## Type-check hidlins-api + deps for both Android triples (needs $$ANDROID_NDK_HOME; ring's build.rs compiles C).
+	$(CARGO) check $(ANDROID_CARGO_ARGS) --target aarch64-linux-android
+	$(CARGO) check $(ANDROID_CARGO_ARGS) --target x86_64-linux-android
+
+build-android: ndk-preflight  ## Build hidlins-api (cdylib) for both Android triples — the full ring compile+link gate.
+	$(CARGO) build $(ANDROID_CARGO_ARGS) --target aarch64-linux-android
+	$(CARGO) build $(ANDROID_CARGO_ARGS) --target x86_64-linux-android
+
+ndk-preflight:
+	@test -x "$(NDK_BIN)/aarch64-linux-android$(ANDROID_API)-clang" || { \
+		echo "error: NDK clang not found at $(NDK_BIN)/aarch64-linux-android$(ANDROID_API)-clang" >&2; \
+		echo "       ANDROID_NDK_HOME=$(ANDROID_NDK_HOME) does not look like an NDK root (r23+ expected)." >&2; \
+		exit 1; }
+else
+# Graceful skip so desktop-only contributors are never blocked by a
+# missing NDK (Phase-1 doc acceptance item). CI sets ANDROID_STRICT=1 so
+# a runner-image change that drops the NDK fails loudly instead of
+# silently skipping the gate.
+check-android build-android:
+	@if [ "$(ANDROID_STRICT)" = "1" ]; then \
+		echo "error: ANDROID_NDK_HOME is not set but ANDROID_STRICT=1 (CI must not skip the Android gate)." >&2; \
+		exit 1; \
+	fi
+	@echo "skipping $@: ANDROID_NDK_HOME is not set (Android NDK required)."
+	@echo "  Install the NDK (Android Studio SDK Manager, or \`sdkmanager 'ndk;<version>'\`)"
+	@echo "  and export ANDROID_NDK_HOME=<sdk>/ndk/<version>, then re-run."
 endif
 
 test:  ## Run default-parallel tests (offline, vendored).

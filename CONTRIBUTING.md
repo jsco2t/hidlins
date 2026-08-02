@@ -112,6 +112,35 @@ change. This is a project rule — see [`CLAUDE.md`](CLAUDE.md)
   `make pub-vendor`, update the curated allowlist and review log, and commit
   the cache integrity manifest.
 
+### Android cross-compilation (`make check-android` / `make build-android`)
+
+The Rust side cross-compiles for `aarch64-linux-android` and
+`x86_64-linux-android` (both targets are declared in `rust-toolchain.toml`
+and installed by `make toolchain`). The Android NDK is **optional** — the
+targets skip with a clear message when it is absent, so desktop-only work
+never requires it. To enable them:
+
+1. Install an NDK (Android Studio SDK Manager, or
+   `sdkmanager 'ndk;<version>'`). CI pins `30.0.14904198`; any r26+ NDK is
+   expected to work.
+2. `export ANDROID_NDK_HOME=<sdk>/ndk/<version>` (e.g.
+   `$HOME/Library/Android/sdk/ndk/30.0.14904198` on macOS,
+   `$HOME/Android/Sdk/ndk/...` on Linux).
+3. `make check-android` type-checks `hidlins-api` for both triples;
+   `make build-android` is the full proof — `ring`'s build script compiles
+   C/asm with the NDK clang and the cdylib links.
+
+The NDK linker and C toolchain are resolved **in the Makefile** via
+`CARGO_TARGET_<TRIPLE>_LINKER` / `CC_<triple>` / `AR_<triple>` environment
+variables (API level 29, the Android floor): Cargo's `config.toml` `linker`
+key is a static path and cannot expand `$ANDROID_NDK_HOME`, and the NDK's
+host-prebuilt directory differs per OS (`darwin-x86_64` / `linux-x86_64`),
+so make is where the resolution lives. Works from both macOS and Linux
+hosts; CI runs the ubuntu leg with `ANDROID_STRICT=1` so the gate can never
+silently skip. Android builds use `--no-default-features` on `hidlins-api`
+(the `desktop` feature and its `arboard`/`signal-hook` stack do not exist
+on mobile).
+
 ### Mobile ecosystem supply-chain exception
 
 Gradle/Maven artifacts and CocoaPods cannot currently be vendored like Rust

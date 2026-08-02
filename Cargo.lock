@@ -1460,6 +1460,8 @@ dependencies = [
  "hidlins-genpw",
  "hidlins-security",
  "hidlins-sync",
+ "jni",
+ "rustls-platform-verifier",
  "secrecy",
  "tempfile",
  "thiserror 2.0.18",

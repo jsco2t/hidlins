@@ -16,7 +16,13 @@ crate-type = ["lib", "cdylib", "staticlib"]
 hidlins-core = { path = "../hidlins-core", version = "0.1" }
 hidlins-genpw = { path = "../hidlins-genpw", version = "0.1" }
 hidlins-sync = { path = "../hidlins-sync", version = "0.1" }
-hidlins-security = { path = "../hidlins-security", version = "0.1" }
+# `default-features = false` is load-bearing (design §2.2.1): security's
+# own default is `desktop` (arboard + signal-hook), which cannot compile
+# for Android/iOS. This crate's `desktop` default feature re-enables it,
+# so desktop builds see an identical graph; mobile builds
+# (`--no-default-features`, `make check-android`) compile only the
+# OS-agnostic pieces (auto_lock, vault_lock, clock, harden).
+hidlins-security = { path = "../hidlins-security", version = "0.1", default-features = false }
 chrono = { version = "0.4", default-features = false, features = ["clock", "std"] }
 flutter_rust_bridge = "=2.12.0"
 thiserror = "2.0"
@@ -24,6 +30,18 @@ secrecy = "0.10"
 tempfile = { version = "3", optional = true }
 toml = "0.8"
 zeroize = { version = "1", features = ["derive"] }
+
+# Android-only: the JNI-exported one-time init for the platform TLS
+# verifier (src/android.rs, design A9). Both crates are ALREADY in the
+# vendored tree as hidlins-sync transitives (ureq → rustls-platform-verifier
+# → jni), so this adds no new vendored sources. The caret reqs resolve to
+# the same locked instances ureq uses — REQUIRED for correctness: the init
+# sets a process-global inside rustls-platform-verifier, and a second
+# semver-distinct copy of the crate would hold a separate, uninitialized
+# global that the sync stack would then read.
+[target.'cfg(target_os = "android")'.dependencies]
+rustls-platform-verifier = "0.6"
+jni = "0.21"
 
 [features]
 default = ["desktop"]

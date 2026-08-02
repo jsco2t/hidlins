@@ -237,9 +237,44 @@ if [ "$OS" = "Darwin" ]; then
 fi
 
 # --------------------------------------------------------------------------
-# 9. Flutter analytics — NFR-013: no telemetry. Disable both Flutter and
-#    Dart analytics if Flutter is present. Idempotent and silent if
-#    analytics are already disabled.
+# 9. Android NDK — OPTIONAL. Only needed for the Android cross-compile
+#    targets (`make check-android` / `make build-android`; flutter-app P6+).
+#    Never auto-installed (it is a ~1 GB SDK component, like Flutter):
+#    detect-and-instruct only, and never fail the bootstrap — desktop-only
+#    development must not require it (the make targets skip gracefully).
+# --------------------------------------------------------------------------
+log "Android NDK (optional — Android cross-compile targets)"
+if [ -n "${ANDROID_NDK_HOME:-}" ] && [ -d "${ANDROID_NDK_HOME}/toolchains/llvm/prebuilt" ]; then
+  ok "ANDROID_NDK_HOME=${ANDROID_NDK_HOME}"
+else
+  if [ -n "${ANDROID_NDK_HOME:-}" ]; then
+    warn "ANDROID_NDK_HOME=${ANDROID_NDK_HOME} does not look like an NDK root (toolchains/llvm/prebuilt missing)."
+  fi
+  # Common SDK locations: Android Studio's default install path per OS,
+  # or $ANDROID_HOME when the user manages the SDK themselves.
+  case "$OS" in
+    Darwin) sdk_default="$HOME/Library/Android/sdk" ;;
+    *)      sdk_default="$HOME/Android/Sdk" ;;
+  esac
+  ndk_root="${ANDROID_HOME:-$sdk_default}/ndk"
+  ndk_candidate=""
+  if [ -d "$ndk_root" ]; then
+    # Highest installed version wins (directories are version-named).
+    ndk_candidate="$(ls "$ndk_root" 2>/dev/null | sort -V | tail -n1)"
+  fi
+  if [ -n "$ndk_candidate" ]; then
+    warn "Android NDK found but ANDROID_NDK_HOME is not set. To enable Android builds:"
+    warn "  export ANDROID_NDK_HOME=\"$ndk_root/$ndk_candidate\""
+  else
+    warn "Android NDK not found (optional). Install via Android Studio's SDK Manager"
+    warn "or \`sdkmanager 'ndk;<version>'\`, then export ANDROID_NDK_HOME=<sdk>/ndk/<version>."
+  fi
+fi
+
+# --------------------------------------------------------------------------
+# 10. Flutter analytics — NFR-013: no telemetry. Disable both Flutter and
+#     Dart analytics if Flutter is present. Idempotent and silent if
+#     analytics are already disabled.
 # --------------------------------------------------------------------------
 log "Disabling Flutter/Dart analytics (NFR-013)"
 # Asserts the persisted telemetry config rather than parsing `flutter config`

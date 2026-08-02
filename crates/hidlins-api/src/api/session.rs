@@ -739,6 +739,14 @@ impl AppSession {
         // will be wired when ClipboardPort exposes guard-expiry callbacks.
     }
 
+    #[cfg(not(feature = "desktop"))]
+    pub fn clipboard_events(&self, _sink: crate::frb_generated::StreamSink<ClipboardEvent>) {
+        // Mobile no-op (design §2.2.1): clipboard auto-clear runs in the
+        // platform shims, not Rust, so nothing is ever pushed here. The
+        // symbol must exist because the committed frb glue (generated on a
+        // desktop host) references it unconditionally.
+    }
+
     pub fn startup_warnings(&self) -> Vec<String> {
         let state = self.lock_state();
         state.startup_warnings.clone()
