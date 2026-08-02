@@ -59,7 +59,15 @@ kotlin {
 
 val copyRustLib by tasks.registering(Copy::class) {
     val workspaceTarget = rootDir.resolve("../../target")
-    from(workspaceTarget.resolve("aarch64-linux-android/debug/libhidlins_api.so"))
+    val soFile = workspaceTarget.resolve("aarch64-linux-android/debug/libhidlins_api.so")
+    // Fail fast: a Copy with a missing source is a silent NO-SOURCE
+    // success, which would ship an APK with no .so and surface only as
+    // an UnsatisfiedLinkError on-device — the one failure mode this
+    // harness must never leave ambiguous.
+    doFirst {
+        require(soFile.exists()) { "missing $soFile — run `make build-android` at the worktree root first" }
+    }
+    from(soFile)
     into(layout.buildDirectory.dir("rustJniLibs/arm64-v8a"))
 }
 

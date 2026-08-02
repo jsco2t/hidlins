@@ -121,8 +121,10 @@ targets skip with a clear message when it is absent, so desktop-only work
 never requires it. To enable them:
 
 1. Install an NDK (Android Studio SDK Manager, or
-   `sdkmanager 'ndk;<version>'`). CI pins `30.0.14904198`; any r26+ NDK is
-   expected to work.
+   `sdkmanager 'ndk;<version>'`). The spike validated r30-beta1
+   (`30.0.14904198`); any r26+ NDK is expected to work. CI uses the runner
+   image's preinstalled NDK (its version is echoed in every run's log); an
+   exact CI pin lands with the productionized Android build (T8.1).
 2. `export ANDROID_NDK_HOME=<sdk>/ndk/<version>` (e.g.
    `$HOME/Library/Android/sdk/ndk/30.0.14904198` on macOS,
    `$HOME/Android/Sdk/ndk/...` on Linux).
@@ -136,10 +138,11 @@ variables (API level 29, the Android floor): Cargo's `config.toml` `linker`
 key is a static path and cannot expand `$ANDROID_NDK_HOME`, and the NDK's
 host-prebuilt directory differs per OS (`darwin-x86_64` / `linux-x86_64`),
 so make is where the resolution lives. Works from both macOS and Linux
-hosts; CI runs the ubuntu leg with `ANDROID_STRICT=1` so the gate can never
-silently skip. Android builds use `--no-default-features` on `hidlins-api`
-(the `desktop` feature and its `arboard`/`signal-hook` stack do not exist
-on mobile).
+hosts; CI runs the ubuntu leg with `HIDLINS_ANDROID_STRICT=1` so the gate
+can never silently skip. Android builds use `--no-default-features` on
+`hidlins-api` (the `desktop` feature and its `arboard`/`signal-hook` stack
+do not exist on mobile); the host-side counterpart stubs are additionally
+compiled by `make check-feature-gates` on every machine, NDK or not.
 
 ### Mobile ecosystem supply-chain exception
 
@@ -232,6 +235,24 @@ CI gates merge on `make deny` (license + advisory + bans) and
 Direct dependencies added through the workflow above, newest first. Each line
 records the review at its add point; transitive crates are covered en masse by
 `make deny` (license + bans) over the four Phase-0 targets.
+
+#### hidlins-api — Android TLS verifier JNI init (flutter-app T6.2, 2026-08-01)
+
+Two Android-only direct dependencies (`[target.'cfg(target_os = "android")'
+.dependencies]`), both **already in the vendored tree** as `ureq` transitives —
+zero new vendored directories, zero new `Cargo.lock` packages; this change only
+promotes them to direct so `hidlins-api` can call the one-time JNI verifier
+init (spike memo: `notebook/.../features/flutter-app/research/android-verifier-spike.md`).
+
+| Crate | Constraint | License | Maintenance / popularity | Hand-roll assessment |
+| --- | --- | --- | --- | --- |
+| `rustls-platform-verifier` | `0.6` (lock: 0.6.2) | MIT OR Apache-2.0 | rustls org; the crate our TLS stack already trusts for verification | Not viable — it IS the component being initialized. The caret req **must** resolve to the same instance `ureq` links: the init writes a process-global `OnceCell` inside the crate, and a semver-split (0.6 vs a future ureq 0.7 bump) would compile cleanly but leave the sync stack reading an uninitialized global. `cargo deny`'s `multiple-versions = "warn"` flags a split but does not fail CI — bump to a hard gate with the T8.1 productionized build. |
+| `jni` | `0.21` (lock: 0.21.1) | MIT OR Apache-2.0 | The de-facto Rust JNI binding (`jni-rs` org); already vendored via the verifier's Android support | Not viable — hand-rolling JNI marshalling is exactly the unsafe surface the safe wrapper exists to avoid. Used only for the `initVerifier` export's env/object types. |
+
+*(Amends the Phase-2b row below: `rustls-platform-verifier` moved 0.5 → 0.6.2
+with the `ureq` 3.3 upgrade; its "runtime JVM-init = a Phase-2 Flutter-bridge
+detail" note is resolved by this entry — the init is now implemented in
+`crates/hidlins-api/src/android.rs`.)*
 
 #### Flutter app Dart dependencies (flutter-app T2.4, 2026-07-24)
 

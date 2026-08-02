@@ -68,11 +68,15 @@ impl AppSession {
     // this door, so reaching it is a UI-layer bug reported as `Internal`.
     #[cfg(not(feature = "desktop"))]
     #[allow(clippy::unused_self, clippy::needless_pass_by_value)]
-    pub fn copy_entry_field(&self, _uuid: String, _field: CopyField) -> Result<(), HidlinsApiError> {
-        Err(HidlinsApiError::Internal {
-            context: "copy_entry_field is desktop-only; mobile uses take_secret_for_clipboard"
-                .to_string(),
-        })
+    pub fn copy_entry_field(
+        &self,
+        _uuid: String,
+        _field: CopyField,
+    ) -> Result<(), HidlinsApiError> {
+        Err(super::desktop_only(
+            "copy_entry_field",
+            "mobile uses take_secret_for_clipboard",
+        ))
     }
 
     #[cfg(not(feature = "desktop"))]

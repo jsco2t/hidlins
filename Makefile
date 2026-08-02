@@ -308,6 +308,15 @@ check-feature-gates:  ## Type-check feature-gated test suites the runtime CI swe
 	$(CARGO) check -p hidlins-cli --offline --locked --features clipboard-tests --tests
 	$(CARGO) check -p hidlins-security --offline --locked --no-default-features
 	$(CARGO) check -p hidlins-api --offline --locked --features test-fixtures --tests
+	# Mobile-cfg parity gate (flutter-app P6): compiles the
+	# cfg(not(feature = "desktop")) counterpart stubs against the committed
+	# desktop-shaped frb glue on the HOST target — no NDK needed — so
+	# signature drift between the desktop doors and their mobile twins
+	# fails every contributor's `make check`, not just the NDK-gated CI
+	# android job. Deliberately lib-only (no --tests): the self dev-dep
+	# keeps default features, so --tests would re-enable `desktop` via
+	# feature unification and check nothing.
+	$(CARGO) check -p hidlins-api --offline --locked --no-default-features
 ifeq ($(UNAME_S),Darwin)
 	# iokit compiles natively here; logind's zbus tree is Linux-only.
 	$(CARGO) check -p hidlins-security --offline --locked --features test-binaries,iokit --tests
@@ -333,13 +342,19 @@ endif
 # linux-arm64 host NDK, hence only the two tags below.
 # ---------------------------------------------------------------------------
 
-ANDROID_API      := 29
+# API level 29 = the design D-10 Android floor. Keep in lockstep with
+# `minSdk` in app/android/app/build.gradle.kts — the NDK clang wrapper
+# name embeds this minimum, so a floor change that updates only one side
+# ships a cdylib built against a different minimum than the APK declares.
+ANDROID_API_LEVEL := 29
 ifeq ($(UNAME_S),Darwin)
-NDK_HOST_TAG     := darwin-x86_64
+NDK_HOST_TAG      := darwin-x86_64
 else
-NDK_HOST_TAG     := linux-x86_64
+NDK_HOST_TAG      := linux-x86_64
 endif
-NDK_BIN           = $(ANDROID_NDK_HOME)/toolchains/llvm/prebuilt/$(NDK_HOST_TAG)/bin
+NDK_BIN           := $(ANDROID_NDK_HOME)/toolchains/llvm/prebuilt/$(NDK_HOST_TAG)/bin
+NDK_CC_AARCH64    := $(NDK_BIN)/aarch64-linux-android$(ANDROID_API_LEVEL)-clang
+NDK_CC_X86_64     := $(NDK_BIN)/x86_64-linux-android$(ANDROID_API_LEVEL)-clang
 
 # Target-scoped exports: only the android targets see these, and only for
 # these recipes — no other make target's environment is polluted. The
@@ -347,42 +362,67 @@ NDK_BIN           = $(ANDROID_NDK_HOME)/toolchains/llvm/prebuilt/$(NDK_HOST_TAG)
 # documented per-target override names; CARGO_TARGET_* is cargo's own
 # linker override, equivalent to a config.toml `linker` key but computed
 # at make time so $ANDROID_NDK_HOME expansion works.
-check-android build-android: export CARGO_TARGET_AARCH64_LINUX_ANDROID_LINKER = $(NDK_BIN)/aarch64-linux-android$(ANDROID_API)-clang
-check-android build-android: export CARGO_TARGET_X86_64_LINUX_ANDROID_LINKER  = $(NDK_BIN)/x86_64-linux-android$(ANDROID_API)-clang
-check-android build-android: export CC_aarch64_linux_android = $(NDK_BIN)/aarch64-linux-android$(ANDROID_API)-clang
-check-android build-android: export CC_x86_64_linux_android  = $(NDK_BIN)/x86_64-linux-android$(ANDROID_API)-clang
-check-android build-android: export AR_aarch64_linux_android = $(NDK_BIN)/llvm-ar
-check-android build-android: export AR_x86_64_linux_android  = $(NDK_BIN)/llvm-ar
+check-android build-android: export CARGO_TARGET_AARCH64_LINUX_ANDROID_LINKER := $(NDK_CC_AARCH64)
+check-android build-android: export CARGO_TARGET_X86_64_LINUX_ANDROID_LINKER  := $(NDK_CC_X86_64)
+check-android build-android: export CC_aarch64_linux_android := $(NDK_CC_AARCH64)
+check-android build-android: export CC_x86_64_linux_android  := $(NDK_CC_X86_64)
+check-android build-android: export AR_aarch64_linux_android := $(NDK_BIN)/llvm-ar
+check-android build-android: export AR_x86_64_linux_android  := $(NDK_BIN)/llvm-ar
 
 # `--no-default-features` is load-bearing: hidlins-api's default `desktop`
 # feature forwards to hidlins-security's desktop stack (arboard,
 # signal-hook, OS event sources), none of which exist for Android. The
 # mobile build compiles only the OS-agnostic security pieces plus the
 # cfg(target_os = "android") JNI module.
-ANDROID_CARGO_ARGS := -p hidlins-api --no-default-features --offline --locked
+ANDROID_CARGO_FLAGS := -p hidlins-api --no-default-features --offline --locked
 
 ifdef ANDROID_NDK_HOME
-check-android: ndk-preflight  ## Type-check hidlins-api + deps for both Android triples (needs $$ANDROID_NDK_HOME; ring's build.rs compiles C).
-	$(CARGO) check $(ANDROID_CARGO_ARGS) --target aarch64-linux-android
-	$(CARGO) check $(ANDROID_CARGO_ARGS) --target x86_64-linux-android
+check-android: ndk-preflight  ## Type-check hidlins-api + deps for both Android triples (needs $ANDROID_NDK_HOME; ring's build.rs compiles C).
+	$(CARGO) check $(ANDROID_CARGO_FLAGS) --target aarch64-linux-android
+	$(CARGO) check $(ANDROID_CARGO_FLAGS) --target x86_64-linux-android
 
 build-android: ndk-preflight  ## Build hidlins-api (cdylib) for both Android triples — the full ring compile+link gate.
-	$(CARGO) build $(ANDROID_CARGO_ARGS) --target aarch64-linux-android
-	$(CARGO) build $(ANDROID_CARGO_ARGS) --target x86_64-linux-android
+	$(CARGO) build $(ANDROID_CARGO_FLAGS) --target aarch64-linux-android
+	$(CARGO) build $(ANDROID_CARGO_FLAGS) --target x86_64-linux-android
+	# The JNI export is referenced by nothing on the Rust side (Kotlin
+	# resolves it by name at runtime), so only a symbol-table assertion
+	# catches an accidental rename/removal of the Kotlin-facing ABI.
+	@for so in "$${CARGO_TARGET_DIR:-target}"/aarch64-linux-android/debug/libhidlins_api.so \
+	           "$${CARGO_TARGET_DIR:-target}"/x86_64-linux-android/debug/libhidlins_api.so; do \
+		"$(NDK_BIN)/llvm-nm" -D --defined-only "$$so" \
+			| grep -q Java_app_hidlins_HidlinsNative_initVerifier || { \
+			echo "error: JNI export Java_app_hidlins_HidlinsNative_initVerifier missing from $$so" >&2; \
+			exit 1; }; \
+	done
+	@echo "  OK: JNI verifier-init export present in both Android cdylibs"
 
+# Internal helper (deliberately not in `make help`): fail fast with an
+# actionable message when ANDROID_NDK_HOME does not point at a usable
+# NDK, instead of a raw clang/linker error from deep inside cargo.
 ndk-preflight:
-	@test -x "$(NDK_BIN)/aarch64-linux-android$(ANDROID_API)-clang" || { \
-		echo "error: NDK clang not found at $(NDK_BIN)/aarch64-linux-android$(ANDROID_API)-clang" >&2; \
-		echo "       ANDROID_NDK_HOME=$(ANDROID_NDK_HOME) does not look like an NDK root (r23+ expected)." >&2; \
-		exit 1; }
+ifneq ($(UNAME_S),Darwin)
+	@if [ "$$(uname -m)" != "x86_64" ]; then \
+		echo "error: no NDK host toolchain exists for linux-$$(uname -m)." >&2; \
+		echo "       Cross-compile from an x86_64 Linux or a macOS host." >&2; \
+		exit 1; \
+	fi
+endif
+	@for cc in "$(NDK_CC_AARCH64)" "$(NDK_CC_X86_64)"; do \
+		test -x "$$cc" || { \
+			echo "error: NDK clang not found at $$cc" >&2; \
+			echo "       ANDROID_NDK_HOME=$(ANDROID_NDK_HOME) does not look like a usable NDK root (r26+ expected)." >&2; \
+			exit 1; }; \
+	done
 else
 # Graceful skip so desktop-only contributors are never blocked by a
-# missing NDK (Phase-1 doc acceptance item). CI sets ANDROID_STRICT=1 so
-# a runner-image change that drops the NDK fails loudly instead of
-# silently skipping the gate.
+# missing NDK (Phase-1 doc acceptance item). CI sets
+# HIDLINS_ANDROID_STRICT=1 so a runner-image change that drops the NDK
+# fails loudly instead of silently skipping the gate. Any non-empty
+# value counts as strict — an exact-literal match would fail open on
+# "true"/"yes".
 check-android build-android:
-	@if [ "$(ANDROID_STRICT)" = "1" ]; then \
-		echo "error: ANDROID_NDK_HOME is not set but ANDROID_STRICT=1 (CI must not skip the Android gate)." >&2; \
+	@if [ -n "$(strip $(HIDLINS_ANDROID_STRICT))" ]; then \
+		echo "error: ANDROID_NDK_HOME is not set but HIDLINS_ANDROID_STRICT is (CI must not skip the Android gate)." >&2; \
 		exit 1; \
 	fi
 	@echo "skipping $@: ANDROID_NDK_HOME is not set (Android NDK required)."
@@ -554,7 +594,7 @@ check: fmt-check lint build test check-macos check-feature-gates  ## fmt-check +
 # fail the integrity gate without ever having run.
 app-check: flutter-version-check telemetry-check app-deps pub-vendor-check app-analyze app-fmt-check app-test app-test-bridge app-test-integration api-gen-check  ## Flutter-side gates (requires the Flutter SDK + Rust toolchain).
 
-verify: check app-check test-ignored doc deny audit interop interop-entry interop-sync interop-app test-minio-managed boundary-check  ## Full verification gate (Rust + Flutter + interop + managed MinIO).
+verify: check check-android app-check test-ignored doc deny audit interop interop-entry interop-sync interop-app test-minio-managed boundary-check  ## Full verification gate (Rust + Flutter + interop + managed MinIO; Android cross-check skips without an NDK).
 
 interop:  ## Run vault-core KeePassXC interop shell tests (requires keepassxc-cli).
 	$(CARGO) build -p hidlins-core --bin hidlins-test-driver --offline --locked

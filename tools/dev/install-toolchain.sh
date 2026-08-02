@@ -260,7 +260,10 @@ else
   ndk_candidate=""
   if [ -d "$ndk_root" ]; then
     # Highest installed version wins (directories are version-named).
-    ndk_candidate="$(ls "$ndk_root" 2>/dev/null | sort -V | tail -n1)"
+    # `|| true`: under `set -euo pipefail` an unreadable dir would
+    # otherwise abort the whole bootstrap, breaking this section's
+    # never-fail promise.
+    ndk_candidate="$(ls "$ndk_root" 2>/dev/null | sort -V | tail -n1 || true)"
   fi
   if [ -n "$ndk_candidate" ]; then
     warn "Android NDK found but ANDROID_NDK_HOME is not set. To enable Android builds:"

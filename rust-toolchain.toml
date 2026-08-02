@@ -9,9 +9,11 @@ profile = "minimal"
 # `cargo check` only; no link, no SDK required. See Makefile
 # `check-macos` for the invocation.
 #
-# Flutter app mobile targets (D2 iOS + D3 Android). These enable
-# `make check-feature-gates` to `cargo check` hidlins-api for
-# mobile triples; actual linking requires the iOS SDK / Android NDK.
+# Flutter app mobile targets (D2 iOS + D3 Android). The Android pair
+# is exercised by `make check-android` / `make build-android` (NDK
+# required; see CONTRIBUTING.md "Android cross-compilation"). The iOS
+# pair is declared ahead of D2's build-chain task (T7.1); actual
+# linking requires the iOS SDK / Android NDK.
 targets = [
     "x86_64-unknown-linux-gnu",
     "aarch64-unknown-linux-gnu",

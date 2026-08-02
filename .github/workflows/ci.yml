@@ -193,10 +193,11 @@ jobs:
   # (sdkmanager cannot reliably install a specific NDK across channels, and
   # a hard-coded version would break whenever the image retires it). The
   # version-echo step keeps the exact NDK used in every run's log.
-  # ANDROID_STRICT=1 turns the make targets' graceful NDK-unset skip into a
-  # hard failure so an image/tooling change can never silently skip this
-  # gate. `build-android` (not just check) is deliberate: it is the full
-  # `ring` C-compile + cdylib link proof.
+  # HIDLINS_ANDROID_STRICT=1 turns the make targets' graceful NDK-unset
+  # skip into a hard failure so an image/tooling change can never silently
+  # skip this gate. `build-android` (not just check) is deliberate: it is
+  # the full `ring` C-compile + cdylib link proof plus the JNI-export
+  # symbol assertion.
   check-android:
     name: check-android (ubuntu)
     runs-on: ubuntu-latest
@@ -213,10 +214,10 @@ jobs:
           cat "$ANDROID_NDK_HOME/source.properties"
 
       - name: Android cross-compile check (both triples)
-        run: make check-android ANDROID_STRICT=1
+        run: make check-android HIDLINS_ANDROID_STRICT=1
 
       - name: Android cross-compile build (ring compile + link gate)
-        run: make build-android ANDROID_STRICT=1
+        run: make build-android HIDLINS_ANDROID_STRICT=1
 
   # Flutter app — analyze, format, build, codegen + supply-chain gates on
   # both supported desktop platforms. Goldens execute on the Linux leg only.

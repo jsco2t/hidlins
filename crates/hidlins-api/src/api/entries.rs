@@ -446,14 +446,18 @@ impl AppSession {
 
     #[cfg(not(feature = "desktop"))]
     #[allow(clippy::unused_self, clippy::needless_pass_by_value)]
-    pub fn add_attachment(&self, _uuid: String, _source_path: String) -> Result<(), HidlinsApiError> {
-        Err(desktop_only("add_attachment"))
+    pub fn add_attachment(
+        &self,
+        _uuid: String,
+        _source_path: String,
+    ) -> Result<(), HidlinsApiError> {
+        Err(super::desktop_only("add_attachment", "FR-016"))
     }
 
     #[cfg(not(feature = "desktop"))]
     #[allow(clippy::unused_self, clippy::needless_pass_by_value)]
     pub fn remove_attachment(&self, _uuid: String, _key: String) -> Result<(), HidlinsApiError> {
-        Err(desktop_only("remove_attachment"))
+        Err(super::desktop_only("remove_attachment", "FR-016"))
     }
 
     #[cfg(not(feature = "desktop"))]
@@ -464,13 +468,6 @@ impl AppSession {
         _key: String,
         _dest_path: String,
     ) -> Result<(), HidlinsApiError> {
-        Err(desktop_only("save_attachment_to"))
-    }
-}
-
-#[cfg(not(feature = "desktop"))]
-fn desktop_only(operation: &str) -> HidlinsApiError {
-    HidlinsApiError::Internal {
-        context: format!("{operation} is desktop-only in the alpha (FR-016)"),
+        Err(super::desktop_only("save_attachment_to", "FR-016"))
     }
 }
