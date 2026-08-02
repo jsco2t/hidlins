@@ -10,6 +10,9 @@ shipped. Proves the two Android TLS claims for the go/no-go memo
 2. A missing init fails immediately with a clear error (no hang), and an
    R8-minified release build keeps working with the documented ProGuard
    keep rules.
+3. The production init export's invalid-context path drains the pending Java
+   exception, throws `IllegalStateException`, remains alive under CheckJNI,
+   and permits an immediate valid retry in the same process.
 
 ## Prerequisites
 
@@ -57,6 +60,15 @@ sleep 15 && adb logcat -d -s HidlinsSpike
 # PASS iff: "initVerifier: SKIPPED" and a prompt "SPIKE_RESULT: PANIC:"
 # (or "ERR:") line — an "OK" here means the process was NOT fresh
 # (force-stop failed) and the control proved nothing.
+
+# Final production failure path (invalid context → exception → valid retry):
+adb shell am force-stop app.hidlins.spike
+adb logcat -c
+adb shell am start -n app.hidlins.spike/.MainActivity --ez verify_init_failure true
+sleep 15 && adb logcat -d -s HidlinsSpike
+# PASS iff: "INIT_FAILURE_RESULT: OK: IllegalStateException",
+# "INIT_RETRY_RESULT: OK", and the normal TLS "SPIKE_RESULT: OK" line all
+# appear, with no process abort or hang.
 
 # Release leg (R8-minified; must reproduce the positive result):
 adb shell am force-stop app.hidlins.spike

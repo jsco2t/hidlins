@@ -11,11 +11,30 @@
 //! the exact production client, not a lookalike. It is committed only on the
 //! spike branch and MUST NOT be merged to `flutter-app`.
 
-use jni::objects::{JClass, JString};
-use jni::sys::jstring;
+use jni::objects::{JClass, JObject, JString};
+use jni::sys::{jboolean, jstring, JNI_FALSE};
 use jni::JNIEnv;
 
 use hidlins_sync::s3::http::{HttpBackend, HttpClient};
+
+/// Exercise the production init export's final failure handling with an
+/// object that is deliberately not an Android `Context`.
+///
+/// The production export must drain the `NoSuchMethodError` left pending by
+/// `getClassLoader`, replace it with `IllegalStateException`, and leave the
+/// verifier's `OnceCell` empty so the harness can immediately retry with a
+/// real application context.
+#[no_mangle]
+pub extern "system" fn Java_app_hidlins_spike_SpikeNative_probeInitFailure<'local>(
+    env: JNIEnv<'local>,
+    class: JClass<'local>,
+) -> jboolean {
+    let invalid_context = match env.new_string("not-an-android-context") {
+        Ok(value) => JObject::from(value),
+        Err(_) => return JNI_FALSE,
+    };
+    crate::android::Java_app_hidlins_HidlinsNative_initVerifier(env, class, invalid_context)
+}
 
 /// JNI entry point bound to `app.hidlins.spike.SpikeNative.probeTls(String)`.
 ///

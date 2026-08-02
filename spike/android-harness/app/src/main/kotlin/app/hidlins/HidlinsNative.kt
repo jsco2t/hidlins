@@ -9,5 +9,6 @@ import android.content.Context
  * what the real app's `Application` subclass will use in T8.2.
  */
 object HidlinsNative {
+    @JvmStatic
     external fun initVerifier(context: Context): Boolean
 }

@@ -8,5 +8,9 @@ package app.hidlins.spike
  * one-line outcome string.
  */
 object SpikeNative {
+    @JvmStatic
     external fun probeTls(url: String): String
+
+    @JvmStatic
+    external fun probeInitFailure(): Boolean
 }

@@ -32,7 +32,11 @@ class MainActivity : Activity() {
         setContentView(ScrollView(this).apply { addView(text) })
 
         val skipInit = intent.getBooleanExtra("skip_init", false)
-        val report = StringBuilder("hidlins android TLS spike\nskip_init=$skipInit\n\n")
+        val verifyInitFailure = intent.getBooleanExtra("verify_init_failure", false)
+        val report = StringBuilder(
+            "hidlins android TLS spike\nskip_init=$skipInit\n" +
+                "verify_init_failure=$verifyInitFailure\n\n",
+        )
         text.text = report.toString()
 
         // The probe blocks on network I/O — keep it off the main thread
@@ -48,7 +52,21 @@ class MainActivity : Activity() {
                 System.loadLibrary("hidlins_api")
                 emit("loadLibrary(hidlins_api): OK")
 
-                if (!skipInit) {
+                if (verifyInitFailure) {
+                    try {
+                        val unexpected = SpikeNative.probeInitFailure()
+                        error("invalid-context init returned $unexpected instead of throwing")
+                    } catch (e: IllegalStateException) {
+                        check(e.message?.startsWith("hidlins: rustls-platform-verifier init failed:") == true) {
+                            "unexpected init exception: $e"
+                        }
+                        emit("INIT_FAILURE_RESULT: OK: ${e::class.java.simpleName}")
+                    }
+
+                    val retryOk = HidlinsNative.initVerifier(applicationContext)
+                    check(retryOk) { "valid verifier retry returned false" }
+                    emit("INIT_RETRY_RESULT: OK")
+                } else if (!skipInit) {
                     val ok = try {
                         HidlinsNative.initVerifier(applicationContext)
                     } catch (e: Exception) {
