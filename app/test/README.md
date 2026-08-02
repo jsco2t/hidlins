@@ -43,3 +43,17 @@ rubber stamp.
 golden, the test fails. Generate the golden first with the update command above.
 
 Golden files live in `test/goldens/` and are committed to the repo.
+
+The matrix contains lock, list/detail, generator, and settings at compact,
+medium, and expanded breakpoints in light and dark themes (24 files). Linux CI
+must pass the same committed set twice before a release-candidate tag.
+
+## Real-bridge integration
+
+`make app-test-integration` builds and loads the actual `hidlins-api` cdylib.
+It covers create/unlock/edit/search/lock, a one-second idle-lock configuration,
+and the 5,000-entry p95 search budget. It does not use repository fakes.
+
+`make app-test-integration-minio` adds two independent app sessions against the
+pinned MinIO fixture, covering disjoint merge and the real generated
+unresolvable-conflict error/dialog path. See `tools/sync-tests/README.md`.

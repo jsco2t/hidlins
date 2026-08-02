@@ -1,3 +1,5 @@
+import 'dart:async';
+
 import 'package:flutter/material.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 
@@ -7,6 +9,7 @@ import 'providers/activity_provider.dart';
 import 'providers/providers.dart';
 import 'router.dart';
 import 'ui/activity_capture.dart';
+import 'ui/shortcuts.dart';
 import 'ui/theme.dart';
 
 export 'ui/activity_capture.dart' show ActivityCapture;
@@ -28,6 +31,7 @@ class _AppContent extends ConsumerWidget {
   @override
   Widget build(BuildContext context, WidgetRef ref) {
     final router = ref.watch(routerProvider);
+    final prefs = ref.watch(prefsProvider).valueOrNull;
     ref.watch(vaultCacheInvalidationProvider);
     return ActivityCapture(
       onActivity: () {
@@ -42,7 +46,21 @@ class _AppContent extends ConsumerWidget {
         title: 'Hidlins',
         theme: hidlinsLightTheme(),
         darkTheme: hidlinsDarkTheme(),
-        themeMode: ThemeMode.system,
+        themeMode: switch (prefs?.themeMode) {
+          'light' => ThemeMode.light,
+          'dark' => ThemeMode.dark,
+          _ => ThemeMode.system,
+        },
+        builder: (context, child) => HidlinsShortcuts(
+          onSearch: () => router.go('/search'),
+          onLock: () {
+            unawaited(ref.read(sessionRepositoryProvider).lockNow());
+          },
+          onDismiss: () {
+            if (router.canPop()) router.pop();
+          },
+          child: child ?? const SizedBox.shrink(),
+        ),
         routerConfig: router,
         localizationsDelegates: AppLocalizations.localizationsDelegates,
         supportedLocales: AppLocalizations.supportedLocales,

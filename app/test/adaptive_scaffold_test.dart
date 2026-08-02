@@ -60,6 +60,38 @@ void main() {
       expect(find.text('Entries'), findsOneWidget);
     });
 
+    testWidgets('expanded single-pane body fills available workspace', (
+      tester,
+    ) async {
+      tester.view.physicalSize = const Size(1200, 800);
+      tester.view.devicePixelRatio = 1.0;
+      addTearDown(tester.view.resetPhysicalSize);
+      addTearDown(tester.view.resetDevicePixelRatio);
+
+      await tester.pumpApp(
+        AdaptiveScaffold(
+          selectedIndex: 0,
+          onDestinationSelected: (_) {},
+          body: const ColoredBox(
+            key: Key('single-pane-body'),
+            color: Colors.red,
+          ),
+        ),
+      );
+
+      expect(
+        find.byWidgetPredicate(
+          (w) =>
+              w is MouseRegion && w.cursor == SystemMouseCursors.resizeColumn,
+        ),
+        findsNothing,
+      );
+      expect(
+        tester.getSize(find.byKey(const Key('single-pane-body'))).width,
+        greaterThan(800),
+      );
+    });
+
     testWidgets('body content preserved across resize', (tester) async {
       tester.view.physicalSize = const Size(1200, 800);
       tester.view.devicePixelRatio = 1.0;

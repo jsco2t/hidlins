@@ -7,9 +7,12 @@
 # hashes in hosted-hashes/, so a modified source file inside
 # app/vendor-pub/hosted/... would execute in CI with every pub gate green.
 # This manifest closes that gap: `generate` (run by `make pub-vendor`) records
-# every file in both committed cache trees; `verify` (run by
-# `make pub-vendor-check`) regenerates and diffs, so modification, addition,
-# and removal all fail loudly.
+# every Git-tracked file in both committed cache trees; `verify` (run by
+# `make pub-vendor-check`) regenerates and diffs, so modification and removal
+# fail loudly. A separate Git query rejects untracked, non-ignored additions.
+# Pub creates ignored package-local runtime files during resolution; those are
+# deliberately excluded because they do not exist in a fresh checkout and are
+# not supply-chain inputs.
 #
 # Only hosted/ and hosted-hashes/ are covered — the runtime dirs pub creates
 # locally (_temp/, active_roots/) are machine state and not committed.
@@ -65,12 +68,37 @@ reject_symlinks() {
   fi
 }
 
+reject_untracked_files() {
+  local extras
+  extras=$(cd "$REPO_ROOT" && git ls-files --others --exclude-standard -- "${TREES[@]}" | head -20 || true)
+  if [ -n "$extras" ]; then
+    echo "FAIL: untracked file(s) inside a vendored pub cache:" >&2
+    printf '%s\n' "$extras" | sed 's/^/       /' >&2
+    echo "       Run \`make pub-vendor\` and commit intentional cache changes." >&2
+    exit 1
+  fi
+}
+
 hash_trees() {
-  # Repo-relative paths + LC_ALL=C sort make the manifest stable across
-  # machines; -print0 survives any filename pub can produce.
+  local mode="${1:-tracked}"
+  # Hash the committed cache, not package-local runtime files created by pub.
+  # Repo-relative paths + LC_ALL=C sort keep the manifest stable across hosts.
   (
     cd "$REPO_ROOT"
-    find "${TREES[@]}" -type f -print0 | LC_ALL=C sort -z | xargs -0 "${HASH_CMD[@]}"
+    if [ "$mode" = "include-untracked" ]; then
+      # `--cached` also reports tracked paths deleted from the working tree.
+      # Generation must be able to bless dependency removals, so retain only
+      # regular files that currently exist. Verification intentionally uses
+      # the strict tracked-only branch below so a removal remains a failure.
+      git ls-files -z --cached --others --exclude-standard -- "${TREES[@]}" |
+        while IFS= read -r -d '' path; do
+          if [ -f "$path" ]; then
+            printf '%s\0' "$path"
+          fi
+        done
+    else
+      git ls-files -z -- "${TREES[@]}"
+    fi | LC_ALL=C sort -z | xargs -0 "${HASH_CMD[@]}"
   )
 }
 
@@ -82,7 +110,9 @@ case "${1:-}" in
     # manifest behind (same discipline the vault writer follows).
     tmp="$(mktemp "$MANIFEST.XXXXXX")"
     trap 'rm -f "$tmp"' EXIT
-    hash_trees > "$tmp"
+    # A dependency add is necessarily untracked until the caller commits it;
+    # generation blesses those non-ignored files into the reviewable manifest.
+    hash_trees include-untracked > "$tmp"
     mv "$tmp" "$MANIFEST"
     trap - EXIT
     echo "  OK: wrote $(wc -l < "$MANIFEST") entries to ${MANIFEST#"$REPO_ROOT"/}"
@@ -94,6 +124,7 @@ case "${1:-}" in
     fi
     require_trees
     reject_symlinks
+    reject_untracked_files
     current="$(mktemp)"
     trap 'rm -f "$current"' EXIT
     hash_trees > "$current"

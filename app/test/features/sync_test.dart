@@ -1013,7 +1013,7 @@ void main() {
       await tester.pumpAndSettle();
 
       // Tap the password copy button on the entry row
-      await tester.tap(find.byTooltip('Password').first);
+      await tester.tap(find.byTooltip('Copy password').first);
       await tester.pump();
       await tester.pump();
 

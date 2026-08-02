@@ -168,11 +168,14 @@ class _CreateVaultDialogState extends ConsumerState<CreateVaultDialog> {
       _error = null;
     });
 
+    final masterPassword = _passwordCtrl.text;
+    _passwordCtrl.clear();
+    _confirmCtrl.clear();
     try {
       final repo = ref.read(sessionRepositoryProvider);
       await repo.createVault(
         name: _nameCtrl.text,
-        masterPassword: _passwordCtrl.text,
+        masterPassword: masterPassword,
         confirmedNoRecovery: true,
       );
       if (mounted) Navigator.of(context).pop(true);

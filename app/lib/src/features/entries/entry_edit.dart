@@ -402,6 +402,7 @@ class _EntryEditDialogState extends ConsumerState<EntryEditDialog> {
             ),
             IconButton(
               icon: const Icon(Icons.close, size: 18),
+              tooltip: l10n.actionRemove,
               onPressed: () => setState(() {
                 _customFields.removeAt(i);
                 _dirty = true;
@@ -471,38 +472,44 @@ class _EntryEditDialogState extends ConsumerState<EntryEditDialog> {
     try {
       final repo = ref.read(entryRepositoryProvider);
       if (widget.isCreate) {
-        await repo.createEntry(
-          widget.groupUuid ?? 'root-uuid',
-          EntryDraftDto(
-            kind: _kind,
-            title: _titleCtrl.text,
-            username: _usernameCtrl.text.isEmpty ? null : _usernameCtrl.text,
-            password: _passwordCtrl.text.isEmpty ? null : _passwordCtrl.text,
-            url: _urlCtrl.text.isEmpty ? null : _urlCtrl.text,
-            notes: _notesCtrl.text.isEmpty ? null : _notesCtrl.text,
-            tags: tags,
-            customFields: customFields,
-            totpUri: _totpUriCtrl.text.isEmpty ? null : _totpUriCtrl.text,
-          ),
+        final draft = EntryDraftDto(
+          kind: _kind,
+          title: _titleCtrl.text,
+          username: _usernameCtrl.text.isEmpty ? null : _usernameCtrl.text,
+          password: _passwordCtrl.text.isEmpty ? null : _passwordCtrl.text,
+          url: _urlCtrl.text.isEmpty ? null : _urlCtrl.text,
+          notes: _notesCtrl.text.isEmpty ? null : _notesCtrl.text,
+          tags: tags,
+          customFields: customFields,
+          totpUri: _totpUriCtrl.text.isEmpty ? null : _totpUriCtrl.text,
         );
+        _clearSecretControllers();
+        await repo.createEntry(widget.groupUuid ?? 'root-uuid', draft);
       } else {
-        await repo.updateEntry(
-          widget.detail!.uuid,
-          EntryEditDto(
-            title: _titleCtrl.text,
-            username: _usernameCtrl.text,
-            password: _passwordCtrl.text.isEmpty ? null : _passwordCtrl.text,
-            url: _urlCtrl.text,
-            notes: _notesCtrl.text,
-            tags: tags,
-            customFields: customFields,
-            totpUri: _totpUriCtrl.text.isEmpty ? null : _totpUriCtrl.text,
-          ),
+        final edit = EntryEditDto(
+          title: _titleCtrl.text,
+          username: _usernameCtrl.text,
+          password: _passwordCtrl.text.isEmpty ? null : _passwordCtrl.text,
+          url: _urlCtrl.text,
+          notes: _notesCtrl.text,
+          tags: tags,
+          customFields: customFields,
+          totpUri: _totpUriCtrl.text.isEmpty ? null : _totpUriCtrl.text,
         );
+        _clearSecretControllers();
+        await repo.updateEntry(widget.detail!.uuid, edit);
       }
       if (mounted) Navigator.of(context).pop(true);
     } on Exception {
       if (mounted) setState(() => _saving = false);
+    }
+  }
+
+  void _clearSecretControllers() {
+    _passwordCtrl.clear();
+    _totpUriCtrl.clear();
+    for (final field in _customFields.where((field) => field.protected)) {
+      field.valueCtrl.clear();
     }
   }
 

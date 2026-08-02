@@ -2,6 +2,7 @@ import 'dart:async';
 
 import 'package:flutter/material.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
+import 'package:go_router/go_router.dart';
 
 import '../../data/models.dart';
 import '../../l10n/app_localizations.dart';
@@ -95,12 +96,14 @@ class _SearchPageState extends ConsumerState<SearchPage> {
                   child: SearchBar(
                     controller: _searchController,
                     focusNode: _focusNode,
+                    autoFocus: true,
                     hintText: l10n.searchHintText,
                     leading: const Icon(Icons.search),
                     trailing: [
                       if (_searchController.text.isNotEmpty)
                         IconButton(
                           icon: const Icon(Icons.close),
+                          tooltip: l10n.actionClose,
                           onPressed: () {
                             _searchController.clear();
                             _onQueryChanged('');
@@ -207,6 +210,7 @@ class _SearchResultRow extends StatelessWidget {
         .firstOrNull;
 
     return ListTile(
+      onTap: () => context.go('/entries/${entry.uuid}'),
       leading: EntryAvatar(title: entry.title),
       title: titleMatch != null && titleMatch.ranges.isNotEmpty
           ? _HighlightedText(text: entry.title, ranges: titleMatch.ranges)

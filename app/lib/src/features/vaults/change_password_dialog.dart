@@ -150,9 +150,14 @@ class _ChangePasswordDialogState extends ConsumerState<ChangePasswordDialog> {
       _registryRemediation = false;
     });
 
+    final currentPassword = _currentCtrl.text;
+    final newPassword = _newCtrl.text;
+    _currentCtrl.clear();
+    _newCtrl.clear();
+    _confirmCtrl.clear();
     try {
       final repo = ref.read(sessionRepositoryProvider);
-      await repo.changeMasterPassword(_currentCtrl.text, _newCtrl.text);
+      await repo.changeMasterPassword(currentPassword, newPassword);
       if (mounted) {
         ScaffoldMessenger.of(context).showSnackBar(
           SnackBar(

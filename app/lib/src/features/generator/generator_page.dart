@@ -132,14 +132,21 @@ class _GeneratorPageState extends ConsumerState<GeneratorPage>
             Row(
               mainAxisAlignment: MainAxisAlignment.center,
               children: [
-                RotationTransition(
-                  turns: _rotateCtrl,
-                  child: IconButton.filled(
-                    icon: const Icon(Icons.refresh),
-                    tooltip: l10n.generatorRegenerate,
-                    onPressed: _generating ? null : _generate,
-                  ),
-                ),
+                MediaQuery.disableAnimationsOf(context)
+                    ? IconButton.filled(
+                        icon: const Icon(Icons.refresh),
+                        tooltip: l10n.generatorRegenerate,
+                        onPressed: _generating ? null : _generate,
+                      )
+                    : RotationTransition(
+                        key: const Key('generator-rotation'),
+                        turns: _rotateCtrl,
+                        child: IconButton.filled(
+                          icon: const Icon(Icons.refresh),
+                          tooltip: l10n.generatorRegenerate,
+                          onPressed: _generating ? null : _generate,
+                        ),
+                      ),
                 const SizedBox(width: HidlinsSpacing.md),
                 IconButton.filled(
                   icon: const Icon(Icons.copy),

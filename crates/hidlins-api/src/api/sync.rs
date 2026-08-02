@@ -20,7 +20,9 @@ use crate::error::HidlinsApiError;
 #[allow(clippy::needless_pass_by_value)]
 impl AppSession {
     pub fn configure_sync(&self, cfg: S3ConfigDto) -> Result<(), HidlinsApiError> {
-        let plaintext = zeroize::Zeroizing::new(cfg.secret_access_key.clone());
+        // Scrub the complete inbound DTO on every exit. Borrow the secret
+        // directly so no second unsanitized String is left behind.
+        let cfg = zeroize::Zeroizing::new(cfg);
 
         let mut guard = self.lock_state();
         let state = &mut *guard;
@@ -45,7 +47,7 @@ impl AppSession {
                 context: "unlocked vault is not registered".to_string(),
             })?;
 
-        let encrypted = hidlins_sync::encrypt_credential(&plaintext, &creds.master)
+        let encrypted = hidlins_sync::encrypt_credential(&cfg.secret_access_key, &creds.master)
             .map_err(|e| HidlinsApiError::from(hidlins_sync::SyncError::Auth(e)))?;
 
         let mut s3_config = S3Config::new(

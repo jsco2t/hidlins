@@ -1,4 +1,4 @@
-import 'package:flutter/animation.dart';
+import 'package:flutter/widgets.dart';
 
 abstract final class HidlinsSpacing {
   static const double xs = 4;
@@ -22,4 +22,8 @@ abstract final class HidlinsBreakpoints {
 
 abstract final class HidlinsCountdown {
   static const int amberThresholdSecs = 5;
+}
+
+Duration hidlinsMotionDuration(BuildContext context, Duration duration) {
+  return MediaQuery.disableAnimationsOf(context) ? Duration.zero : duration;
 }

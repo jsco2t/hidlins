@@ -1,3 +1,5 @@
+import 'package:flutter/gestures.dart';
+import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
 import 'package:flutter_test/flutter_test.dart';
 
@@ -93,6 +95,64 @@ void main() {
 
       await tester.tap(find.text('GitHub'));
       expect(selected, 'entry-1');
+    });
+
+    testWidgets('right-click menu opens entry and copies fields', (
+      tester,
+    ) async {
+      String? copiedPassword;
+      await tester.pumpFeature(
+        EntryList(
+          entries: entries,
+          selectedUuid: null,
+          onEntrySelected: (_) {},
+          onCopyUsername: (_) {},
+          onCopyPassword: (uuid) => copiedPassword = uuid,
+        ),
+      );
+      await tester.pumpAndSettle();
+
+      await tester.tap(
+        find.text('GitHub'),
+        kind: PointerDeviceKind.mouse,
+        buttons: kSecondaryMouseButton,
+      );
+      await tester.pumpAndSettle();
+
+      expect(find.text('Open'), findsOneWidget);
+      expect(find.text('Copy username'), findsOneWidget);
+      await tester.tap(
+        find.widgetWithText(MenuItemButton, 'Copy password').last,
+      );
+      await tester.pumpAndSettle();
+      expect(copiedPassword, 'entry-1');
+      expect(
+        find.widgetWithText(MenuItemButton, 'Copy password'),
+        findsNothing,
+      );
+    });
+
+    testWidgets('hover animation is disabled under reduced motion', (
+      tester,
+    ) async {
+      await tester.pumpFeature(
+        MediaQuery(
+          data: const MediaQueryData(disableAnimations: true),
+          child: EntryList(
+            entries: entries,
+            selectedUuid: 'entry-1',
+            onEntrySelected: (_) {},
+            onCopyUsername: (_) {},
+            onCopyPassword: (_) {},
+          ),
+        ),
+      );
+      await tester.pump();
+
+      final opacity = tester.widget<AnimatedOpacity>(
+        find.byType(AnimatedOpacity).first,
+      );
+      expect(opacity.duration, Duration.zero);
     });
 
     testWidgets('shows empty state when no entries', (tester) async {

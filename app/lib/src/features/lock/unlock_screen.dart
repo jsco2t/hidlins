@@ -45,6 +45,7 @@ class _UnlockScreenState extends ConsumerState<UnlockScreen> {
       _showOfflineWarning = false;
     });
     ref.read(unlockSyncWarningProvider.notifier).clear();
+    _passwordController.clear();
 
     try {
       final repo = ref.read(sessionRepositoryProvider);
@@ -53,7 +54,6 @@ class _UnlockScreenState extends ConsumerState<UnlockScreen> {
         password,
         keyfile: _keyfilePath != null ? KeyfileRef.path(_keyfilePath!) : null,
       );
-      _passwordController.clear();
     } on AppFailure catch (e) {
       if (!mounted) return;
       ref.read(unlockSyncWarningProvider.notifier).clear();

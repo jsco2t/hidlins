@@ -10,7 +10,9 @@ const goldenSizeCompact = Size(400, 800);
 const goldenSizeMedium = Size(720, 800);
 const goldenSizeExpanded = Size(1200, 800);
 
-bool get _isLinux => Platform.isLinux;
+bool get _canRenderGoldens =>
+    Platform.isLinux ||
+    Platform.environment['HIDLINS_ALLOW_NON_LINUX_GOLDENS'] == '1';
 
 Future<void> expectGolden(
   WidgetTester tester,
@@ -19,7 +21,7 @@ Future<void> expectGolden(
   Size size = goldenSizeExpanded,
   Brightness brightness = Brightness.light,
 }) async {
-  if (!_isLinux) {
+  if (!_canRenderGoldens) {
     markTestSkipped('Golden tests run on Linux only (deterministic rendering)');
     return;
   }

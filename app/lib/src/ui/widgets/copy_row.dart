@@ -57,7 +57,7 @@ class _CopyRowState extends State<CopyRow> {
             ),
             AnimatedOpacity(
               opacity: _hovered ? 1.0 : 0.0,
-              duration: const Duration(milliseconds: 150),
+              duration: hidlinsMotionDuration(context, HidlinsMotion.fast),
               child: IconButton(
                 icon: const Icon(Icons.copy, size: 18),
                 tooltip: widget.copyTooltip,

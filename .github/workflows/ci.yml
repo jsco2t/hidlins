@@ -36,8 +36,13 @@ jobs:
       - name: Install KeePassXC CLI (Ubuntu)
         if: runner.os == 'Linux'
         run: |
-          sudo apt-get update
-          sudo apt-get install -y keepassxc
+          curl -fsSL https://github.com/keepassxreboot/keepassxc/releases/download/2.7.12/KeePassXC-2.7.12-x86_64.AppImage -o "$RUNNER_TEMP/keepassxc.AppImage"
+          echo "564fe8b751b9ef7aa057e4d3d0b2878db24eaa0f6b1c855c82e699ab0913ae49  $RUNNER_TEMP/keepassxc.AppImage" | sha256sum -c -
+          chmod +x "$RUNNER_TEMP/keepassxc.AppImage"
+          cd "$RUNNER_TEMP"
+          ./keepassxc.AppImage --appimage-extract >/dev/null
+          sudo mv squashfs-root /opt/keepassxc-2.7.12
+          sudo ln -s /opt/keepassxc-2.7.12/usr/bin/keepassxc-cli /usr/local/bin/keepassxc-cli
 
       - name: Install KeePassXC CLI (macOS)
         if: runner.os == 'macOS'
@@ -120,6 +125,9 @@ jobs:
       - name: KeePassXC interop (sync merge / US-044)
         run: make interop-sync
 
+      - name: KeePassXC interop (desktop API boundary)
+        run: make interop-app
+
       - name: NFR-002 search benchmark gate
         # Hosted runners gate the median with hardware/noise headroom and
         # report p99. Controlled local hardware retains the strict p99 gate.
@@ -145,9 +153,16 @@ jobs:
       - name: Install pinned toolchain
         run: rustup show
 
+      - name: Install Flutter SDK
+        uses: subosito/flutter-action@1a449444c387b1966244ae4d4f8c696479add0b2 # v2.23.0
+        with:
+          flutter-version-file: .flutter-version
+          channel: stable
+
       - name: Install MinIO client (mc)
         run: |
-          curl -fsSL https://dl.min.io/client/mc/release/linux-amd64/mc -o "$RUNNER_TEMP/mc"
+          curl -fsSL https://dl.min.io/client/mc/release/linux-amd64/archive/mc.RELEASE.2025-08-13T08-35-41Z -o "$RUNNER_TEMP/mc"
+          echo "01f866e9c5f9b87c2b09116fa5d7c06695b106242d829a8bb32990c00312e891  $RUNNER_TEMP/mc" | sha256sum -c -
           chmod +x "$RUNNER_TEMP/mc"
           sudo mv "$RUNNER_TEMP/mc" /usr/local/bin/mc
           mc --version
@@ -158,19 +173,29 @@ jobs:
       - name: S3 integration tests (MINIO-*)
         run: make test-s3-integration
 
+      - name: Disable Flutter telemetry
+        run: tools/dev/telemetry-check.sh --write
+
+      - name: Desktop two-session sync integration
+        run: make app-test-integration-minio
+
       - name: Stop MinIO
         if: always()
         run: make minio-down
 
-  # Flutter app — analyze, format, build, codegen + supply-chain gates.
-  # Linux-only for now; macOS build added when T2.6 is verified.
+  # Flutter app — analyze, format, build, codegen + supply-chain gates on
+  # both supported desktop platforms. Goldens execute on the Linux leg only.
   #
   # Every assertion runs through a `make` target so CI and `make app-check`
   # cannot drift (CLAUDE.md build-system rule). Only runner provisioning is
   # raw, matching the precedent set by the vault-core job.
   flutter-app:
-    name: flutter-app (ubuntu)
-    runs-on: ubuntu-latest
+    name: flutter-app (${{ matrix.os }})
+    runs-on: ${{ matrix.os }}
+    strategy:
+      fail-fast: false
+      matrix:
+        os: [ubuntu-latest, macos-latest]
 
     steps:
       - uses: actions/checkout@v4
@@ -192,6 +217,7 @@ jobs:
           channel: stable
 
       - name: Install build dependencies
+        if: runner.os == 'Linux'
         run: |
           sudo apt-get update
           sudo apt-get install -y ninja-build clang libgtk-3-dev
@@ -215,8 +241,50 @@ jobs:
       - name: Flutter gates
         run: make app-check
 
+      - name: Install pinned native MinIO tools (macOS)
+        if: runner.os == 'macOS'
+        run: |
+          case "$(uname -m)" in
+            arm64)
+              minio_arch=arm64
+              minio_sha256=7c3b3039b76e55a1b80935848ed83998d5e8d317374f87851f46a019ff5c0aa4
+              mc_sha256=a877fd0c183409da9f20f9d6e1811987298bbbca1aa03428eebdffba79fb9445
+              ;;
+            x86_64)
+              minio_arch=amd64
+              minio_sha256=4759080aeef7385aaceaac1131c30aaeb99605921553967dc6d3ef4e16ac64f9
+              mc_sha256=2862c79cce11b09be9a8911a279b2e9465bebf74b9f01abca9c348a0d795f0cb
+              ;;
+            *) echo "unsupported macOS architecture" >&2; exit 1 ;;
+          esac
+          curl -fsSL "https://dl.min.io/server/minio/release/darwin-${minio_arch}/archive/minio.RELEASE.2025-09-07T16-13-09Z" -o "$RUNNER_TEMP/minio"
+          curl -fsSL "https://dl.min.io/client/mc/release/darwin-${minio_arch}/archive/mc.RELEASE.2025-08-13T08-35-41Z" -o "$RUNNER_TEMP/mc"
+          echo "${minio_sha256}  $RUNNER_TEMP/minio" | shasum -a 256 -c -
+          echo "${mc_sha256}  $RUNNER_TEMP/mc" | shasum -a 256 -c -
+          chmod +x "$RUNNER_TEMP/minio" "$RUNNER_TEMP/mc"
+          sudo mv "$RUNNER_TEMP/minio" "$RUNNER_TEMP/mc" /usr/local/bin/
+          minio --version
+          mc --version
+
+      - name: Start native MinIO (macOS)
+        if: runner.os == 'macOS'
+        run: make minio-native-up
+
+      - name: Desktop two-session sync integration (macOS)
+        if: runner.os == 'macOS'
+        run: make app-test-integration-minio
+
+      - name: Stop native MinIO (macOS)
+        if: always() && runner.os == 'macOS'
+        run: make minio-native-down
+
       - name: Build Linux app
+        if: runner.os == 'Linux'
         run: make app-build-linux
+
+      - name: Build macOS app
+        if: runner.os == 'macOS'
+        run: make app-build-macos
 
       - name: Boundary check
         run: make boundary-check

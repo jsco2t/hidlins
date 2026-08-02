@@ -18,7 +18,7 @@ When implementing a feature, the corresponding `plans/implementation-plan.md` an
 
 ## Architecture posture
 
-- **Rust core, thin UIs.** All business logic and crypto live in the Rust core library. CLI and TUI are presentation layers over the same core. Future Flutter UIs (Phase 1+) bind to the same core via FFI. No UI-layer logic leaks into the core.
+- **Rust core, thin UIs.** All business logic and crypto live in the Rust core library. CLI, TUI, and the Flutter desktop app are presentation layers over the same core. Flutter binds exclusively through `hidlins-api` and generated `flutter_rust_bridge` code. No UI-layer logic leaks into the core.
 - **TUI is the reference UX.** Every feature lands in the TUI with full keyboard parity before any GUI work begins. CLI provides one-shot scriptable access to every core operation.
 - **Offline-first.** Every feature works without network. Sync is opt-in and operates on top of the offline core — never a precondition.
 - **Sync trait abstraction.** Phase 0 sync is **S3-compatible object storage** per PRD §6.5 v1.1 (2026-05-27 — replaces the originally-planned git transport, which was abandoned mid-implementation; see notebook `features/archive/sync-git/` and PRD §C decision #17). Later transports (NFS, Samba, WebDAV, possibly a reconsidered git transport) implement the same `SyncTransport` trait. CRUD and merge logic stay transport-agnostic. The gix-based scaffolding and its vendored deps were removed in `features/s3-sync/` T1; the S3 transport (hand-rolled SigV4 + `ureq`, design.md ADR-1) lands across `features/s3-sync/` Phases 2–6.
@@ -92,11 +92,22 @@ The canonical targets:
 | `make lint`         | `cargo clippy ... -- -D warnings` (CI gate)                                                             |
 | `make lint-fix`     | Apply safe clippy suggestions                                                                           |
 | `make check`        | `fmt-check` + `lint` + `build` + `test` (the full local CI gate)                                        |
+| `make app-check`    | Flutter version/telemetry/dependency/analyze/format/unit/bridge/integration/codegen gates               |
+| `make app-run`      | Launch the Flutter app on the default desktop device                                                     |
+| `make app-test-integration` | Real-cdylib lifecycle, idle-lock, and 5,000-entry search tests                                 |
+| `make app-test-integration-minio` | Two-session merge and real conflict-dialog tests against local MinIO                     |
+| `make test-minio-managed` | Start MinIO if needed, run Rust + app live-wire suites, stop only an owned fixture              |
+| `make minio-native-up/down` | Start/stop the pinned native MinIO fallback used by macOS CI                                  |
+| `make interop-app`  | Desktop API-boundary KDBX round-trip through KeePassXC 2.7.12+                                           |
 | `make deny`         | `cargo deny check` (license + advisory + bans)                                                          |
 | `make audit`        | `cargo audit` (RustSec advisories)                                                                      |
 | `make doc`          | Generate API docs (`cargo doc --no-deps --offline`)                                                     |
 | `make vendor`       | Re-vendor deps (the only target that needs network)                                                     |
 | `make clean`        | Remove build artifacts                                                                                  |
+| `make verify`       | Full Rust, Flutter, supply-chain, interop, and managed-MinIO gate (Docker/Podman required)              |
+
+Flutter uses platform-default UI and monospace faces only. Do not bundle
+fonts, add OFL to the license allowlist, or use runtime font fetchers.
 
 ### Keeping the Makefile up to date — a project rule
 

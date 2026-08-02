@@ -289,6 +289,8 @@ pub fn init_app(cfg: AppInitConfig) -> Result<AppSession, HidlinsApiError> {
     let session_paths = paths.clone();
     let registry = VaultRegistry::load(paths)?;
 
+    // Mutated only on platform/feature combinations with an OS event source.
+    #[allow(unused_mut)]
     let mut controller = AutoLockController::new(AutoLockConfig::default()).map_err(|e| {
         HidlinsApiError::Internal {
             context: format!("auto-lock controller init: {e}"),
@@ -299,6 +301,8 @@ pub fn init_app(cfg: AppInitConfig) -> Result<AppSession, HidlinsApiError> {
     // CONSUMER of LogindSource/IoKitSource/SigstopSource. Startup failure
     // degrades to idle-only locking and records a warning retrievable via
     // `startup_warnings()` (FR-052 best-effort).
+    // Populated only by the cfg-gated OS event source blocks below.
+    #[allow(unused_mut)]
     let mut startup_warnings: Vec<String> = Vec::new();
     #[cfg(all(target_os = "linux", feature = "desktop"))]
     {

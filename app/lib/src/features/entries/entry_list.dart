@@ -139,100 +139,142 @@ class _EntryRowState extends State<_EntryRow> {
   Widget build(BuildContext context) {
     final colorScheme = Theme.of(context).colorScheme;
     final l10n = AppLocalizations.of(context)!;
+    final actionsVisible = _hovered || widget.isSelected;
 
-    return MouseRegion(
-      onEnter: (_) => setState(() => _hovered = true),
-      onExit: (_) => setState(() => _hovered = false),
-      child: Material(
-        color: widget.isSelected
-            ? colorScheme.secondaryContainer
-            : Colors.transparent,
-        child: InkWell(
-          onTap: widget.onTap,
-          child: Padding(
-            padding: const EdgeInsets.symmetric(
-              horizontal: HidlinsSpacing.md,
-              vertical: HidlinsSpacing.sm,
-            ),
-            child: Row(
-              children: [
-                EntryAvatar(title: widget.entry.title),
-                const SizedBox(width: HidlinsSpacing.md),
-                Expanded(
-                  child: Column(
-                    crossAxisAlignment: CrossAxisAlignment.start,
-                    mainAxisSize: MainAxisSize.min,
+    return MenuAnchor(
+      menuChildren: [
+        MenuItemButton(
+          leadingIcon: const Icon(Icons.open_in_new),
+          onPressed: widget.onTap,
+          child: Text(l10n.entryContextOpen),
+        ),
+        if (widget.entry.username.isNotEmpty)
+          MenuItemButton(
+            leadingIcon: const Icon(Icons.person_outline),
+            onPressed: widget.onCopyUsername,
+            child: Text(l10n.entryContextCopyUsername),
+          ),
+        MenuItemButton(
+          leadingIcon: const Icon(Icons.copy),
+          onPressed: widget.onCopyPassword,
+          child: Text(l10n.entryContextCopyPassword),
+        ),
+      ],
+      builder: (context, controller, child) => MouseRegion(
+        onEnter: (_) => setState(() => _hovered = true),
+        onExit: (_) => setState(() => _hovered = false),
+        child: Material(
+          color: widget.isSelected
+              ? colorScheme.secondaryContainer
+              : Colors.transparent,
+          child: InkWell(
+            onTap: widget.onTap,
+            onSecondaryTap: controller.open,
+            child: child,
+          ),
+        ),
+      ),
+      child: Padding(
+        padding: const EdgeInsets.symmetric(
+          horizontal: HidlinsSpacing.md,
+          vertical: HidlinsSpacing.sm,
+        ),
+        child: Row(
+          children: [
+            EntryAvatar(title: widget.entry.title),
+            const SizedBox(width: HidlinsSpacing.md),
+            Expanded(
+              child: Column(
+                crossAxisAlignment: CrossAxisAlignment.start,
+                mainAxisSize: MainAxisSize.min,
+                children: [
+                  Row(
                     children: [
-                      Row(
-                        children: [
-                          Expanded(
-                            child: Text(
-                              widget.entry.title,
-                              style: Theme.of(context).textTheme.bodyMedium
-                                  ?.copyWith(fontWeight: FontWeight.w500),
-                              overflow: TextOverflow.ellipsis,
-                            ),
+                      Expanded(
+                        child: Text(
+                          widget.entry.title,
+                          style: Theme.of(context).textTheme.bodyMedium
+                              ?.copyWith(fontWeight: FontWeight.w500),
+                          overflow: TextOverflow.ellipsis,
+                        ),
+                      ),
+                      if (widget.entry.isExpired)
+                        Padding(
+                          padding: const EdgeInsets.only(
+                            left: HidlinsSpacing.xs,
                           ),
-                          if (widget.entry.isExpired)
-                            Padding(
-                              padding: const EdgeInsets.only(
-                                left: HidlinsSpacing.xs,
-                              ),
-                              child: Semantics(
-                                label: l10n.entryDetailExpired,
-                                child: Badge(
-                                  backgroundColor: colorScheme.error,
-                                  label: Text(
-                                    l10n.entryDetailExpired,
-                                    style: TextStyle(
-                                      color: colorScheme.onError,
-                                      fontSize: 10,
-                                    ),
-                                  ),
+                          child: Semantics(
+                            label: l10n.entryDetailExpired,
+                            child: Badge(
+                              backgroundColor: colorScheme.error,
+                              label: Text(
+                                l10n.entryDetailExpired,
+                                style: TextStyle(
+                                  color: colorScheme.onError,
+                                  fontSize: 10,
                                 ),
                               ),
                             ),
-                        ],
-                      ),
-                      if (widget.entry.username.isNotEmpty)
-                        Text(
-                          widget.entry.username,
-                          style: Theme.of(context).textTheme.bodySmall
-                              ?.copyWith(color: colorScheme.onSurfaceVariant),
-                          overflow: TextOverflow.ellipsis,
-                        ),
-                    ],
-                  ),
-                ),
-                AnimatedOpacity(
-                  opacity: _hovered ? 1.0 : 0.0,
-                  duration: HidlinsMotion.fast,
-                  child: Row(
-                    mainAxisSize: MainAxisSize.min,
-                    children: [
-                      if (widget.entry.username.isNotEmpty)
-                        Tooltip(
-                          message: l10n.entryDetailUsername,
-                          child: IconButton(
-                            icon: const Icon(Icons.person_outline, size: 18),
-                            onPressed: widget.onCopyUsername,
-                            visualDensity: VisualDensity.compact,
                           ),
                         ),
-                      Tooltip(
-                        message: l10n.entryDetailPassword,
-                        child: IconButton(
-                          icon: const Icon(Icons.copy, size: 18),
-                          onPressed: widget.onCopyPassword,
-                          visualDensity: VisualDensity.compact,
-                        ),
-                      ),
                     ],
                   ),
-                ),
-              ],
+                  if (widget.entry.username.isNotEmpty)
+                    Text(
+                      widget.entry.username,
+                      style: Theme.of(context).textTheme.bodySmall?.copyWith(
+                        color: colorScheme.onSurfaceVariant,
+                      ),
+                      overflow: TextOverflow.ellipsis,
+                    ),
+                ],
+              ),
             ),
-          ),
+            IgnorePointer(
+              ignoring: !actionsVisible,
+              child: ExcludeFocus(
+                excluding: !actionsVisible,
+                child: ExcludeSemantics(
+                  excluding: !actionsVisible,
+                  child: AnimatedOpacity(
+                    opacity: actionsVisible ? 1.0 : 0.0,
+                    duration: hidlinsMotionDuration(
+                      context,
+                      HidlinsMotion.fast,
+                    ),
+                    child: Row(
+                      mainAxisSize: MainAxisSize.min,
+                      children: [
+                        if (widget.entry.username.isNotEmpty)
+                          Semantics(
+                            label: l10n.entryContextCopyUsername,
+                            button: true,
+                            onTap: widget.onCopyUsername,
+                            excludeSemantics: true,
+                            child: IconButton(
+                              icon: const Icon(Icons.person_outline, size: 18),
+                              tooltip: l10n.entryContextCopyUsername,
+                              onPressed: widget.onCopyUsername,
+                            ),
+                          ),
+                        Semantics(
+                          label: l10n.entryContextCopyPassword,
+                          button: true,
+                          onTap: widget.onCopyPassword,
+                          excludeSemantics: true,
+                          child: IconButton(
+                            icon: const Icon(Icons.copy, size: 18),
+                            tooltip: l10n.entryContextCopyPassword,
+                            onPressed: widget.onCopyPassword,
+                          ),
+                        ),
+                      ],
+                    ),
+                  ),
+                ),
+              ),
+            ),
+          ],
         ),
       ),
     );

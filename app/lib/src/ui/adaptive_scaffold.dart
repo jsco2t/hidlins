@@ -241,9 +241,16 @@ class _ExpandedLayout extends StatelessWidget {
             ],
           ),
           const VerticalDivider(thickness: 1, width: 1),
-          SizedBox(width: listPaneWidth, child: body),
-          _DraggableDivider(onDrag: onDividerDrag, onDragEnd: onDividerDragEnd),
-          Expanded(child: secondaryBody ?? const SizedBox.shrink()),
+          if (secondaryBody == null)
+            Expanded(child: body)
+          else ...[
+            SizedBox(width: listPaneWidth, child: body),
+            _DraggableDivider(
+              onDrag: onDividerDrag,
+              onDragEnd: onDividerDragEnd,
+            ),
+            Expanded(child: secondaryBody!),
+          ],
         ],
       ),
     );

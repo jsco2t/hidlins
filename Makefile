@@ -36,13 +36,14 @@ UNAME_S        := $(shell uname -s)
 .DEFAULT_GOAL := help
 
 .PHONY: help toolchain build test test-ignored test-all test-update-snapshots test-clipboard test-os-events \
-        test-sigv4 minio-up minio-down test-s3-integration interop-sync \
+        test-sigv4 minio-up minio-down minio-native-up minio-native-down test-s3-integration interop-sync \
         fmt fmt-check lint lint-fix check-feature-gates \
         check verify interop interop-entry bench bench-search bench-search-gate bench-search-gate-ci \
         vendor deny audit doc clean completions completions-check run-tui \
         snapshots-check \
         api-gen api-gen-check app-build-linux app-build-macos app-analyze app-fmt app-fmt-check \
-        app-test app-goldens-update app-test-bridge app-deps app-run boundary-check pub-vendor pub-vendor-check \
+        app-test app-goldens-update app-test-bridge app-test-integration app-test-integration-minio test-minio-managed \
+        interop-app app-deps app-run boundary-check pub-vendor pub-vendor-check \
         flutter-version-check telemetry-check app-check check-macos test-merge-properties
 
 help:  ## Show this help.
@@ -147,7 +148,10 @@ app-goldens-update: app-deps  ## Regenerate Flutter golden files (requires HIDLI
 	@if [ "$${HIDLINS_UPDATE_GOLDENS}" != "1" ]; then \
 		echo "error: set HIDLINS_UPDATE_GOLDENS=1 to confirm golden regeneration." >&2; \
 		echo "       Review the diff before committing." >&2; exit 1; fi
-	cd app && flutter test --update-goldens --no-pub
+	@if [ "$(UNAME_S)" != "Linux" ]; then \
+		echo "error: committed Flutter goldens must be regenerated on Linux." >&2; \
+		echo "       Use the pinned Linux Flutter environment used by CI." >&2; exit 1; fi
+	cd app && flutter test --update-goldens --no-pub test/goldens_test.dart
 
 # The cdylib the smoke test loads. `flutter test` runs on the host VM, so
 # this is always the host target dir; only the extension is platform-bound.
@@ -164,7 +168,53 @@ endif
 # and the lock-event stream without a display or device.
 app-test-bridge: app-deps  ## Build the hidlins-api cdylib and run the headless Dart↔Rust bridge smoke tests.
 	$(CARGO) build -p hidlins-api --offline --locked
-	cd app && HIDLINS_API_LIB=$(HIDLINS_API_LIB) flutter test --no-pub test_bridge
+	cd app && HIDLINS_API_LIB=$(HIDLINS_API_LIB) flutter test --no-pub \
+		test_bridge/bridge_smoke_test.dart
+
+HIDLINS_API_TEST_DRIVER := $(CURDIR)/target/debug/api-test-driver
+
+app-test-integration: app-deps  ## Run real-bridge lifecycle, auto-lock, and 5k-search integration tests.
+	$(CARGO) build -p hidlins-api --features test-fixtures --offline --locked
+	@set -euo pipefail; \
+	idle_dir="$$(mktemp -d "$${TMPDIR:-/tmp}/hidlins-app-idle.XXXXXX")"; \
+	perf_dir="$$(mktemp -d "$${TMPDIR:-/tmp}/hidlins-app-perf.XXXXXX")"; \
+	cleanup() { rm -rf -- "$$idle_dir" "$$perf_dir"; }; \
+	trap cleanup EXIT INT TERM; \
+	printf '%s\n' test-password | $(HIDLINS_API_TEST_DRIVER) create-vault "$$idle_dir" idle >/dev/null; \
+	$(HIDLINS_API_TEST_DRIVER) set-lock-timeout "$$idle_dir" idle 1 >/dev/null; \
+	printf '%s\n' test-password | $(HIDLINS_API_TEST_DRIVER) create-vault "$$perf_dir" performance >/dev/null; \
+	printf '%s\n' test-password | $(HIDLINS_API_TEST_DRIVER) seed-search-corpus "$$perf_dir" performance 5000 >/dev/null; \
+	cd app && HIDLINS_API_LIB=$(HIDLINS_API_LIB) \
+		HIDLINS_APP_IDLE_STATE_DIR="$$idle_dir" HIDLINS_APP_PERF_STATE_DIR="$$perf_dir" \
+		flutter test --no-pub test_bridge/integration/lifecycle_test.dart
+
+app-test-integration-minio: app-deps  ## Run real-bridge two-session sync/conflict tests (run `make minio-up` first).
+	@if [ ! -f tools/sync-tests/fixtures/.minio-env ]; then \
+		echo "error: MinIO not running — run \`make minio-up\` first." >&2; exit 1; fi
+	$(CARGO) build -p hidlins-api --features test-fixtures --offline --locked
+	. tools/sync-tests/fixtures/.minio-env && cd app && \
+		HIDLINS_API_LIB=$(HIDLINS_API_LIB) \
+		flutter test --no-pub test_bridge/integration/sync_test.dart
+	. tools/sync-tests/fixtures/.minio-env && cd app && \
+		HIDLINS_API_LIB=$(HIDLINS_API_LIB) \
+		flutter test --no-pub test_bridge/integration/sync_conflict_test.dart
+
+test-minio-managed:  ## Start MinIO if needed, run all Rust + app live-wire suites, then stop only fixtures this target owns.
+	@set -euo pipefail; \
+	already_running=0; \
+	for engine in docker podman; do \
+		if command -v "$$engine" >/dev/null 2>&1 && \
+			[ "$$($$engine inspect -f '{{.State.Running}}' hidlins-minio 2>/dev/null)" = "true" ]; then \
+			already_running=1; break; \
+		fi; \
+	done; \
+	cleanup() { \
+		if [ "$$already_running" -eq 0 ]; then $(MAKE) --no-print-directory minio-down; fi; \
+	}; \
+	trap cleanup EXIT INT TERM; \
+	$(MAKE) --no-print-directory minio-up; \
+	$(MAKE) --no-print-directory test-s3-integration; \
+	$(MAKE) --no-print-directory app-test-integration-minio
 
 app-deps:  ## Install pub dependencies (offline from the vendored cache).
 	@log="$$(mktemp)"; trap 'rm -f "$$log"' EXIT; \
@@ -339,6 +389,12 @@ minio-up:  ## Start the pinned MinIO container for s3-sync integration tests (re
 minio-down:  ## Stop + remove the MinIO container started by `make minio-up`.
 	tools/sync-tests/fixtures/stop_minio.sh
 
+minio-native-up:  ## Start pinned native MinIO binaries (macOS CI fallback; requires minio + mc on PATH).
+	tools/sync-tests/fixtures/start_minio_native.sh
+
+minio-native-down:  ## Stop + clean the native MinIO fixture started by `make minio-native-up`.
+	tools/sync-tests/fixtures/stop_minio_native.sh
+
 test-s3-integration:  ## Run the #[ignore]-gated MinIO live-wire tests (run `make minio-up` first).
 	# Sources the endpoint + test credentials start_minio.sh wrote, then
 	# runs ONLY the minio_integration test binary's #[ignore]-gated cases.
@@ -421,9 +477,9 @@ check: fmt-check lint build test check-macos check-feature-gates  ## fmt-check +
 # pub-vendor-check runs right after app-deps, BEFORE anything executes
 # vendored Dart (flutter test, build_runner): tampered cache bytes should
 # fail the integrity gate without ever having run.
-app-check: flutter-version-check telemetry-check app-deps pub-vendor-check app-analyze app-fmt-check app-test app-test-bridge api-gen-check  ## Flutter-side gates (requires the Flutter SDK + Rust toolchain).
+app-check: flutter-version-check telemetry-check app-deps pub-vendor-check app-analyze app-fmt-check app-test app-test-bridge app-test-integration api-gen-check  ## Flutter-side gates (requires the Flutter SDK + Rust toolchain).
 
-verify: check app-check test-ignored doc deny audit interop interop-entry interop-sync boundary-check  ## Full verification gate (Rust + Flutter + interop).
+verify: check app-check test-ignored doc deny audit interop interop-entry interop-sync interop-app test-minio-managed boundary-check  ## Full verification gate (Rust + Flutter + interop + managed MinIO).
 
 interop:  ## Run vault-core KeePassXC interop shell tests (requires keepassxc-cli).
 	$(CARGO) build -p hidlins-core --bin hidlins-test-driver --offline --locked
@@ -450,6 +506,10 @@ interop-entry:  ## Run entry-management KeePassXC interop shell tests (requires 
 		echo "==> $$script"; \
 		HIDLINS_TEST_DRIVER=target/debug/hidlins-test-driver "$$script" || exit $$?; \
 	done
+
+interop-app:  ## Run desktop app/API KDBX round-trip against KeePassXC 2.7.12+.
+	$(CARGO) build -p hidlins-api --features test-fixtures --bin api-test-driver --offline --locked
+	HIDLINS_API_TEST_DRIVER=$(HIDLINS_API_TEST_DRIVER) tools/interop-tests/app_us-09x.sh
 
 bench:  ## Run informational benchmarks.
 	$(CARGO) bench -p hidlins-core --bench vault_open --offline --locked

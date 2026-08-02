@@ -16,6 +16,21 @@ is directly interoperable with KeePassXC, KeeWeb, KeePass2, and other
 standards-compliant KDBX clients. Sync transport is S3-compatible object storage,
 with in-app three-way merge at the entry level.
 
+The Flutter desktop app is D1 code-complete for macOS and Linux: adaptive
+lock/list-detail/generator/settings surfaces, keyboard shortcuts, reduced
+motion, real Rust-bridge lifecycle/auto-lock coverage, MinIO two-session sync,
+and KeePassXC 2.7.12 interop. Human screen-reader and keyboard-only sign-off is
+tracked separately from code completion.
+
+## Desktop app preview
+
+| List + detail (light) | Generator (dark) |
+| --- | --- |
+| ![Expanded list and entry detail](app/test/goldens/list_detail_light_expanded.png) | ![Expanded password generator](app/test/goldens/generator_dark_expanded.png) |
+
+The committed golden matrix contains 24 compact/medium/expanded light/dark
+states under [`app/test/goldens/`](app/test/goldens/).
+
 ## !!WARNING!! PLEASE READ
 
 This repository is a hobby project of a single person (or at best a few people). The author(s) of
@@ -45,6 +60,8 @@ this project wish to make the following **VERY** clear:
 | `hidlins-cli`     | Binary: one-shot scriptable CLI (`hidlins`)                        |
 | `hidlins-tui`     | Binary: interactive terminal UI (`hidlins-tui`)                    |
 | `hidlins-agent`   | Binary: (placeholder) optional long-running unlock agent           |
+| `hidlins-api`     | Library: sole Flutter FFI boundary and session owner                |
+| `app/`            | Flutter desktop UI for macOS and Linux                              |
 
 ## Supported platforms
 
@@ -153,10 +170,13 @@ to use your terminal's native text selection. Disable with `--no-mouse` or
 make build              # cargo build --workspace --offline --locked
 make test               # default-parallel tests
 make check              # Rust gate: fmt-check + lint + build + test (no Flutter needed)
-make app-check          # Flutter gates: version/telemetry/pub integrity/analyze/format/test/bridge smoke/codegen drift (needs Flutter SDK + Rust toolchain)
-make verify             # everything: check + app-check + ignored tests + docs + supply-chain + interop + boundary-check
+make app-check          # Flutter gates: analyze/format/unit/goldens/real bridge/integration/codegen drift
+make verify             # everything, including managed MinIO live-wire suites (Docker/Podman required)
 make interop            # vault-core KeePassXC interop tests; requires keepassxc-cli >= 2.7
 make interop-entry      # entry-management KeePassXC interop tests (TOTP cross-checks with oathtool if present)
+make interop-app        # desktop API-boundary KDBX round-trip; KeePassXC 2.7.12+
+make app-test-integration-minio # two real desktop sessions against local MinIO
+make test-minio-managed # own MinIO lifecycle and run Rust + desktop live-wire suites
 make bench-search-gate  # NFR-002 gate: fails if search exceeds the latency budget
 ```
 

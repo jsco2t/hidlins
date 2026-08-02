@@ -1,6 +1,8 @@
 import 'package:flutter/material.dart';
+import 'package:flutter/services.dart';
 import 'package:flutter_test/flutter_test.dart';
 
+import 'package:app/src/app.dart';
 import 'package:app/src/data/models.dart';
 import 'package:app/src/features/search/search_page.dart';
 import '../helpers/feature_test_helpers.dart';
@@ -92,6 +94,50 @@ void main() {
       await tester.pumpAndSettle();
 
       expect(harness.search.lastOptions?.mode, SearchModeDto.fuzzy);
+    });
+
+    testWidgets('tapping a result routes to the actual entry detail', (
+      tester,
+    ) async {
+      final harness = TestHarness();
+      addTearDown(harness.dispose);
+      harness.session.currentLockState = LockEvent.unlocked;
+      harness.search.results = [
+        SearchHit(
+          entry: EntrySummary(
+            uuid: 'entry-1',
+            title: 'GitHub',
+            username: 'octocat',
+            url: '',
+            kind: EntryKindDto.credential,
+            hasTotp: false,
+            hasAttachments: false,
+            isExpired: false,
+            groupUuid: 'root-uuid',
+            tags: const [],
+          ),
+          matches: const [],
+        ),
+      ];
+      tester.view.physicalSize = const Size(1400, 900);
+      tester.view.devicePixelRatio = 1;
+      addTearDown(tester.view.resetPhysicalSize);
+      addTearDown(tester.view.resetDevicePixelRatio);
+      await tester.pumpWidget(HidlinsApp(overrides: harness.overrides));
+      await tester.pumpAndSettle();
+
+      await tester.sendKeyDownEvent(LogicalKeyboardKey.controlLeft);
+      await tester.sendKeyEvent(LogicalKeyboardKey.keyF);
+      await tester.sendKeyUpEvent(LogicalKeyboardKey.controlLeft);
+      await tester.pumpAndSettle();
+      await tester.enterText(find.byType(SearchBar), 'git');
+      await tester.pump(const Duration(milliseconds: 350));
+      await tester.pumpAndSettle();
+      await tester.tap(find.text('octocat'));
+      await tester.pumpAndSettle();
+
+      expect(harness.entries.entryDetailCalls, greaterThan(0));
+      expect(find.text('https://github.com'), findsOneWidget);
     });
   });
 }

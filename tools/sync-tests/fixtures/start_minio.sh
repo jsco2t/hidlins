@@ -12,7 +12,9 @@
 # Usage:
 #   tools/sync-tests/fixtures/start_minio.sh [--port N]
 #
-# Honours the HIDLINS_MINIO_PORT env var as an alternative to --port.
+# Honours HIDLINS_MINIO_PORT, HIDLINS_MINIO_BIND, and HIDLINS_MINIO_HOST. The
+# bind controls the listen interface; host is the reachable name/address
+# advertised to clients (for example, the development machine's LAN address).
 # Idempotent: if a container named "$CONTAINER" is already running it is
 # left in place and the env file is (re)written.
 set -euo pipefail
@@ -28,6 +30,13 @@ REGION="us-east-1"
 
 # Port: --port wins over HIDLINS_MINIO_PORT wins over the 9000 default.
 PORT="${HIDLINS_MINIO_PORT:-9000}"
+BIND="${HIDLINS_MINIO_BIND:-127.0.0.1}"
+if [ "$BIND" = "0.0.0.0" ] || [ "$BIND" = "::" ]; then
+	DEFAULT_HOST="127.0.0.1"
+else
+	DEFAULT_HOST="$BIND"
+fi
+HOST="${HIDLINS_MINIO_HOST:-$DEFAULT_HOST}"
 while [ "$#" -gt 0 ]; do
 	case "$1" in
 		--port) PORT="$2"; shift 2 ;;
@@ -38,7 +47,8 @@ done
 
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 ENV_FILE="${SCRIPT_DIR}/.minio-env"
-ENDPOINT="http://127.0.0.1:${PORT}"
+ENDPOINT="http://${HOST}:${PORT}"
+HEALTH_ENDPOINT="http://${DEFAULT_HOST}:${PORT}"
 
 # --- Container engine: docker or podman ------------------------------------
 if command -v docker >/dev/null 2>&1; then
@@ -52,14 +62,20 @@ fi
 
 # --- Start (or reuse) the container ----------------------------------------
 if "$ENGINE" ps --format '{{.Names}}' | grep -qx "$CONTAINER"; then
+	published="$($ENGINE port "$CONTAINER" 9000/tcp | head -1)"
+	if [ "$published" != "${BIND}:${PORT}" ]; then
+		echo "start_minio.sh: running '$CONTAINER' publishes '$published', expected '${BIND}:${PORT}'." >&2
+		echo "start_minio.sh: run 'make minio-down', then start it with the requested bind/port." >&2
+		exit 1
+	fi
 	echo "start_minio.sh: container '$CONTAINER' already running; reusing it."
 else
 	# Remove any stopped container with the same name so the run is clean.
 	"$ENGINE" rm -f "$CONTAINER" >/dev/null 2>&1 || true
-	echo "start_minio.sh: starting $MINIO_IMAGE on 127.0.0.1:${PORT} ..."
+	echo "start_minio.sh: starting $MINIO_IMAGE on ${BIND}:${PORT} ..."
 	"$ENGINE" run -d \
 		--name "$CONTAINER" \
-		-p "127.0.0.1:${PORT}:9000" \
+		-p "${BIND}:${PORT}:9000" \
 		-e "MINIO_ROOT_USER=${ACCESS_KEY}" \
 		-e "MINIO_ROOT_PASSWORD=${SECRET_KEY}" \
 		"$MINIO_IMAGE" server /data >/dev/null
@@ -70,7 +86,7 @@ fi
 echo -n "start_minio.sh: waiting for MinIO to become healthy"
 ready=""
 for _ in $(seq 1 60); do
-	if curl -fsS -o /dev/null "${ENDPOINT}/minio/health/live" 2>/dev/null; then
+	if curl -fsS -o /dev/null "${HEALTH_ENDPOINT}/minio/health/live" 2>/dev/null; then
 		ready="yes"
 		break
 	fi
@@ -92,6 +108,11 @@ export HIDLINS_MINIO_ENDPOINT="${ENDPOINT}"
 export HIDLINS_MINIO_ACCESS_KEY="${ACCESS_KEY}"
 export HIDLINS_MINIO_SECRET_KEY="${SECRET_KEY}"
 export HIDLINS_MINIO_REGION="${REGION}"
+export HIDLINS_MINIO_BUCKET="${HIDLINS_MINIO_BUCKET:-hidlins-app-integration}"
 EOF
+
+# Bootstrap the stable app-integration bucket with an independent S3 client.
+# Rust live-wire tests still create their own uniquely named buckets.
+"${SCRIPT_DIR}/make_bucket.sh" "${HIDLINS_MINIO_BUCKET:-hidlins-app-integration}"
 
 echo "start_minio.sh: ready. endpoint=${ENDPOINT} (env written to ${ENV_FILE})"

@@ -57,6 +57,15 @@ and skips anything already installed. `rustup` (see <https://rustup.rs>) and
 Homebrew (see <https://brew.sh>) are the bootstrap prerequisites. After it
 finishes, the offline `make` loop below works from a clean clone.
 
+Flutter itself is intentionally not auto-installed by the bootstrap script.
+Install the exact SDK version named by [`.flutter-version`](.flutter-version),
+put `flutter` on `PATH`, and rerun `make toolchain` to disable telemetry and
+verify the pin. Then `make app-deps`, `make app-check`, and `make app-run`
+provide the clone-to-running-app path using the committed offline pub cache.
+Linux also needs `clang`, `cmake`, `ninja`, `pkg-config`, and GTK 3 development
+headers; on macOS, `make toolchain` checks/installs CocoaPods after Flutter is
+present. CI provisions the same host requirements.
+
 ## Building and testing
 
 **Everything goes through `make`** — `make` is the build system of record
@@ -70,8 +79,10 @@ make test-ignored  # serial run of env-mutating / fault-injection tests
 make fmt           # auto-format
 make lint          # clippy with `-D warnings`
 make check         # Rust gate: fmt-check + lint + build + test (no Flutter needed)
-make app-check     # Flutter gates: version/telemetry/pub integrity/analyze/format/test/bridge smoke/codegen drift (needs Flutter SDK + Rust toolchain)
-make verify        # everything: check + app-check + ignored tests + docs + supply-chain + interop + boundary-check
+make app-check     # Flutter gates, including real cdylib lifecycle/auto-lock/performance tests
+make verify        # everything incl. KeePassXC + managed MinIO (Docker/Podman required)
+make app-test-integration-minio # two-session desktop sync after `make minio-up`
+make test-minio-managed # start/stop MinIO as needed and run every live-wire suite
 make deny          # cargo-deny (license + advisory + bans)
 make vendor        # re-vendor dependencies (the only target that needs network)
 ```
@@ -85,6 +96,31 @@ authoritative.
 step, harness, or CI step, add the matching `make` target in the same
 change. This is a project rule — see [`CLAUDE.md`](CLAUDE.md)
 §"Keeping the Makefile up to date" for the rationale.
+
+### Flutter conventions
+
+- All user-facing strings go through `AppLocalizations`; edit
+  `app/l10n/app_en.arb`. Hard-coded feature-widget text is a review blocker.
+- Dart tests follow [`app/test/README.md`](app/test/README.md). Headless
+  real-cdylib tests live in `app/test_bridge/integration/`, using the existing
+  SDK `flutter_test` dependency rather than adding a WebDriver stack.
+- Use platform-default typography only. Do not bundle fonts, add an OFL
+  license exception, or use `google_fonts`/another runtime font fetcher.
+  Goldens use FlutterTest's deterministic face for layout/color/spacing.
+- Run Flutter/pub operations through `make`; `app-deps` uses
+  `dart pub get --offline --enforce-lockfile`. Intentional package changes use
+  `make pub-vendor`, update the curated allowlist and review log, and commit
+  the cache integrity manifest.
+
+### Mobile ecosystem supply-chain exception
+
+Gradle/Maven artifacts and CocoaPods cannot currently be vendored like Rust
+crates and pub packages. This is a documented exception to clean-clone offline
+builds for mobile only. Mitigations are committed `Podfile.lock` and Gradle
+lockfiles, Gradle dependency-verification hashes, pinned pod sources, and a
+minimal-dependencies rule. The permissive license allowlist still applies;
+the exception permits locked retrieval, not broader licenses or unverified
+artifacts.
 
 ---
 
@@ -181,7 +217,9 @@ committed, so an unused package costs repo size, licence-audit surface, and
 | `freezed_annotation` | `^3.1.0` | MIT | Flutter-ecosystem standard, actively maintained | Not viable — required *by* frb codegen for the sealed DTO classes |
 
 **Dev-only:** `flutter_lints` (BSD-3-Clause), `freezed` (MIT), `build_runner`
-(BSD-3-Clause) — the frb codegen pipeline; not shipped in the app binary.
+(BSD-3-Clause) — the frb codegen pipeline; not shipped in the app binary. The
+headless real-cdylib integration suite intentionally uses `flutter_test` and
+adds no device-protocol or WebDriver dependency.
 
 **Removed in the T2.x review** as declared-but-never-imported: `file_selector`,
 `flutter_riverpod`, `go_router`, `intl`, `flutter_localizations`,

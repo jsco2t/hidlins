@@ -153,14 +153,15 @@ impl AppSession {
         master_password: String,
         keyfile: Option<KeyfileRef>,
     ) -> Result<VaultSummary, HidlinsApiError> {
-        super::vaults::validate_vault_name(&name)?;
-
+        // Take ownership of every inbound secret before any fallible work so
+        // early validation/guard returns wipe the original DTO and password.
+        let cfg = Zeroizing::new(cfg);
         let master = MasterPassword::new(master_password);
-        let plaintext_secret = Zeroizing::new(cfg.secret_access_key.clone());
         let kf = keyfile.map(|kr| match kr {
             KeyfileRef::Path(p) => Keyfile::Path(PathBuf::from(p)),
             KeyfileRef::Bytes(b) => Keyfile::Bytes(b),
         });
+        super::vaults::validate_vault_name(&name)?;
 
         // Step 1: guards (under session lock)
         let vault_path;
@@ -193,9 +194,9 @@ impl AppSession {
             }
 
             // Seal credentials
-            let encrypted_secret = hidlins_sync::encrypt_credential(&plaintext_secret, &master)
-                .map_err(|e| HidlinsApiError::from(SyncError::Auth(e)))?;
-            drop(plaintext_secret);
+            let encrypted_secret =
+                hidlins_sync::encrypt_credential(&cfg.secret_access_key, &master)
+                    .map_err(|e| HidlinsApiError::from(SyncError::Auth(e)))?;
 
             let cred = CredentialSource::RstCred1 {
                 access_key_id: cfg.access_key_id.clone(),

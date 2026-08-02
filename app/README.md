@@ -14,8 +14,9 @@ Nothing here may import `hidlins-core`/`-sync`/`-security`/`-genpw`, use
 | Path | Contents |
 | --- | --- |
 | `lib/src/bridge/` | **Generated — do not edit.** Regenerate with `make api-gen`. |
-| `lib/main.dart` | Bridge probe screen (T2.3 scaffold; replaced by the real shell in T3.2) |
+| `lib/main.dart` | Production desktop entry point and real bridge initialization |
 | `test/` | Widget/unit tests, run by `make app-test` |
+| `test_bridge/integration/` | Headless real-cdylib lifecycle, auto-lock, search, and MinIO sync tests |
 | `rust_builder/` | Cargokit glue — see `tools/dev/cargokit-patches/README.md` |
 | `vendor-pub/` | Committed pub cache; builds resolve offline from it |
 | `allowed-packages.txt` | Reviewed dependency allowlist, enforced by `make boundary-check` |
@@ -25,11 +26,21 @@ Nothing here may import `hidlins-core`/`-sync`/`-security`/`-genpw`, use
 Everything goes through `make` from the repo root — see `make help`.
 
 ```sh
-make app-check         # version + telemetry + analyze + format + test + codegen drift
+make app-check         # full Flutter gate, including real-bridge integration
 make app-build-linux   # build the Linux desktop app
+make app-build-macos   # build the macOS desktop app
+make app-test-integration-minio # real two-session sync (after make minio-up)
+make test-minio-managed # start/stop MinIO as needed; run Rust + app live-wire suites
+make interop-app       # API-boundary KDBX round-trip through KeePassXC
 make app-run           # run on the default device
 make api-gen           # regenerate the bridge bindings after changing hidlins-api
 ```
 
 Adding a pub dependency requires: a review row in `CONTRIBUTING.md`, an entry in
 `allowed-packages.txt`, and `make pub-vendor` to re-vendor.
+
+The UI keeps secrets only for the shortest interaction that needs them. Password
+controllers are cleared immediately after dispatch, generated/revealed values
+remain transient, and business logic plus durable secret ownership stays in
+Rust. Dart garbage collection cannot promise deterministic zeroization; see the
+memory-hygiene knowledge-base note for that explicit boundary.

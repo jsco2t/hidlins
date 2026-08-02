@@ -618,4 +618,43 @@ class AppLocalizationsEn extends AppLocalizations {
 
   @override
   String get syncEndpointDefault => 'remote';
+
+  @override
+  String get actionNewEntry => 'New entry';
+
+  @override
+  String get actionRemove => 'Remove';
+
+  @override
+  String get groupAllEntries => 'All entries';
+
+  @override
+  String get groupContextShowEntries => 'Show entries';
+
+  @override
+  String get entryContextOpen => 'Open';
+
+  @override
+  String get entryContextCopyUsername => 'Copy username';
+
+  @override
+  String get entryContextCopyPassword => 'Copy password';
+
+  @override
+  String get settingsKeyboardShortcuts => 'Keyboard shortcuts';
+
+  @override
+  String get shortcutSearch => 'Search';
+
+  @override
+  String get shortcutNewEntry => 'New entry';
+
+  @override
+  String get shortcutLock => 'Lock vault';
+
+  @override
+  String get shortcutCopyPassword => 'Copy selected password';
+
+  @override
+  String get shortcutDismiss => 'Dismiss';
 }

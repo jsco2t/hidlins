@@ -16,6 +16,7 @@ ETag format) from turning a green CI run red without a corresponding commit.
 The tag is defined in:
 
 - `tools/sync-tests/fixtures/start_minio.sh` (`MINIO_IMAGE`)
+- `.github/workflows/ci.yml` (the matching native macOS server archive)
 
 The `integration-s3` CI job invokes `make minio-up`, so local and CI runs
 consume that same definition.

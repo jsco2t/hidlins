@@ -82,6 +82,40 @@ class SettingsPage extends ConsumerWidget {
         ),
         const SizedBox(height: HidlinsSpacing.sm),
 
+        Card(
+          child: Padding(
+            padding: const EdgeInsets.all(HidlinsSpacing.md),
+            child: Column(
+              crossAxisAlignment: CrossAxisAlignment.start,
+              children: [
+                Row(
+                  children: [
+                    const Icon(Icons.keyboard_outlined),
+                    const SizedBox(width: HidlinsSpacing.sm),
+                    Text(
+                      l10n.settingsKeyboardShortcuts,
+                      style: Theme.of(context).textTheme.titleSmall,
+                    ),
+                  ],
+                ),
+                const SizedBox(height: HidlinsSpacing.sm),
+                _ShortcutRow(
+                  keys: 'Ctrl/⌘ F',
+                  description: l10n.shortcutSearch,
+                ),
+                _ShortcutRow(keys: 'N', description: l10n.shortcutNewEntry),
+                _ShortcutRow(keys: 'L', description: l10n.shortcutLock),
+                _ShortcutRow(
+                  keys: 'Ctrl/⌘ C',
+                  description: l10n.shortcutCopyPassword,
+                ),
+                _ShortcutRow(keys: 'Esc', description: l10n.shortcutDismiss),
+              ],
+            ),
+          ),
+        ),
+        const SizedBox(height: HidlinsSpacing.sm),
+
         // About
         Card(
           child: Column(
@@ -103,6 +137,29 @@ class SettingsPage extends ConsumerWidget {
           ),
         ),
       ],
+    );
+  }
+}
+
+class _ShortcutRow extends StatelessWidget {
+  const _ShortcutRow({required this.keys, required this.description});
+
+  final String keys;
+  final String description;
+
+  @override
+  Widget build(BuildContext context) {
+    return Padding(
+      padding: const EdgeInsets.symmetric(vertical: HidlinsSpacing.xs),
+      child: Row(
+        children: [
+          SizedBox(
+            width: 96,
+            child: Text(keys, style: Theme.of(context).textTheme.labelLarge),
+          ),
+          Expanded(child: Text(description)),
+        ],
+      ),
     );
   }
 }

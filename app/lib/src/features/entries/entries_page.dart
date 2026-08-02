@@ -1,3 +1,5 @@
+import 'dart:async';
+
 import 'package:flutter/material.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 
@@ -5,8 +7,10 @@ import '../../data/models.dart';
 import '../../l10n/app_localizations.dart';
 import '../../providers/providers.dart';
 import '../../ui/tokens.dart';
+import '../../ui/shortcuts.dart';
 import '../../ui/widgets/empty_state.dart';
 import 'entry_detail.dart';
+import 'entry_edit.dart';
 import 'entry_list.dart';
 import 'group_tree.dart';
 
@@ -66,46 +70,79 @@ class _EntriesPageState extends ConsumerState<EntriesPage> {
                 setState(() => _selectedEntryUuid = uuid),
             onCopyUsername: (uuid) => _copyField(uuid, CopyField.username),
             onCopyPassword: (uuid) => _copyField(uuid, CopyField.password),
+            onCreateEntry: _openCreateEntry,
           );
         } else if (_selectedEntryUuid != null) {
-          workspace = _CompactDetail(
-            uuid: _selectedEntryUuid!,
-            onBack: () => setState(() => _selectedEntryUuid = null),
+          workspace = AnimatedSwitcher(
+            duration: hidlinsMotionDuration(context, HidlinsMotion.standard),
+            child: _CompactDetail(
+              key: ValueKey('detail-$_selectedEntryUuid'),
+              uuid: _selectedEntryUuid!,
+              onBack: () => setState(() => _selectedEntryUuid = null),
+            ),
           );
         } else {
-          workspace = _CompactList(
-            entries: filteredEntries,
-            onEntrySelected: (uuid) =>
-                setState(() => _selectedEntryUuid = uuid),
-            onCopyUsername: (uuid) => _copyField(uuid, CopyField.username),
-            onCopyPassword: (uuid) => _copyField(uuid, CopyField.password),
+          workspace = AnimatedSwitcher(
+            duration: hidlinsMotionDuration(context, HidlinsMotion.standard),
+            child: _CompactList(
+              key: const ValueKey('entry-list'),
+              entries: filteredEntries,
+              onEntrySelected: (uuid) =>
+                  setState(() => _selectedEntryUuid = uuid),
+              onCopyUsername: (uuid) => _copyField(uuid, CopyField.username),
+              onCopyPassword: (uuid) => _copyField(uuid, CopyField.password),
+            ),
           );
         }
 
-        if (!isSyncing) return workspace;
-        return Column(
-          children: [
-            Container(
-              key: const Key('sync-busy-banner'),
-              width: double.infinity,
-              color: Theme.of(context).colorScheme.tertiaryContainer,
-              padding: const EdgeInsets.symmetric(
-                horizontal: HidlinsSpacing.md,
-                vertical: HidlinsSpacing.sm,
-              ),
-              child: Row(
+        final content = !isSyncing
+            ? workspace
+            : Column(
                 children: [
-                  const SizedBox.square(
-                    dimension: 18,
-                    child: CircularProgressIndicator(strokeWidth: 2),
+                  Container(
+                    key: const Key('sync-busy-banner'),
+                    width: double.infinity,
+                    color: Theme.of(context).colorScheme.tertiaryContainer,
+                    padding: const EdgeInsets.symmetric(
+                      horizontal: HidlinsSpacing.md,
+                      vertical: HidlinsSpacing.sm,
+                    ),
+                    child: Row(
+                      children: [
+                        const SizedBox.square(
+                          dimension: 18,
+                          child: CircularProgressIndicator(strokeWidth: 2),
+                        ),
+                        const SizedBox(width: HidlinsSpacing.sm),
+                        Expanded(child: Text(l10n.syncBusyBanner)),
+                      ],
+                    ),
                   ),
-                  const SizedBox(width: HidlinsSpacing.sm),
-                  Expanded(child: Text(l10n.syncBusyBanner)),
+                  Expanded(child: workspace),
                 ],
-              ),
+              );
+        return Actions(
+          actions: {
+            NewEntryIntent: NonEditingCallbackAction<NewEntryIntent>(
+              onInvoke: (_) {
+                unawaited(
+                  _openCreateEntry(_selectedGroupUuid ?? tree.root.uuid),
+                );
+                return null;
+              },
             ),
-            Expanded(child: workspace),
-          ],
+            CopySelectedPasswordIntent:
+                NonEditingCallbackAction<CopySelectedPasswordIntent>(
+                  onInvoke: (_) {
+                    final uuid = _selectedEntryUuid;
+                    if (uuid != null) {
+                      unawaited(_copyField(uuid, CopyField.password));
+                    }
+                    return null;
+                  },
+                ),
+          },
+          child: content,
         );
       },
     );
@@ -134,6 +171,28 @@ class _EntriesPageState extends ConsumerState<EntriesPage> {
       ).showSnackBar(SnackBar(content: Text(l10n.errorGeneric)));
     }
   }
+
+  Future<void> _openCreateEntry(String groupUuid) async {
+    final syncState = ref.read(syncUiStateProvider).valueOrNull;
+    if (syncState?.inFlight ?? false) {
+      if (!mounted) return;
+      ScaffoldMessenger.of(context).showSnackBar(
+        SnackBar(
+          content: Text(AppLocalizations.of(context)!.syncActionsDisabled),
+        ),
+      );
+      return;
+    }
+    final created = await Navigator.of(context).push<bool>(
+      MaterialPageRoute(
+        builder: (_) => EntryEditDialog(groupUuid: groupUuid),
+        fullscreenDialog: true,
+      ),
+    );
+    if (created == true) {
+      ref.invalidate(vaultTreeProvider);
+    }
+  }
 }
 
 class _ExpandedLayout extends StatelessWidget {
@@ -146,6 +205,7 @@ class _ExpandedLayout extends StatelessWidget {
     required this.onEntrySelected,
     required this.onCopyUsername,
     required this.onCopyPassword,
+    required this.onCreateEntry,
   });
 
   final VaultTree tree;
@@ -156,6 +216,7 @@ class _ExpandedLayout extends StatelessWidget {
   final ValueChanged<String> onEntrySelected;
   final ValueChanged<String> onCopyUsername;
   final ValueChanged<String> onCopyPassword;
+  final ValueChanged<String> onCreateEntry;
 
   @override
   Widget build(BuildContext context) {
@@ -169,6 +230,7 @@ class _ExpandedLayout extends StatelessWidget {
             root: tree.root,
             selectedGroupUuid: selectedGroupUuid,
             onGroupSelected: onGroupSelected,
+            onCreateEntry: onCreateEntry,
           ),
         ),
         const VerticalDivider(thickness: 1, width: 1),
@@ -199,6 +261,7 @@ class _ExpandedLayout extends StatelessWidget {
 
 class _CompactList extends StatelessWidget {
   const _CompactList({
+    super.key,
     required this.entries,
     required this.onEntrySelected,
     required this.onCopyUsername,
@@ -223,7 +286,7 @@ class _CompactList extends StatelessWidget {
 }
 
 class _CompactDetail extends StatelessWidget {
-  const _CompactDetail({required this.uuid, required this.onBack});
+  const _CompactDetail({super.key, required this.uuid, required this.onBack});
 
   final String uuid;
   final VoidCallback onBack;

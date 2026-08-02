@@ -1269,6 +1269,84 @@ abstract class AppLocalizations {
   /// In en, this message translates to:
   /// **'remote'**
   String get syncEndpointDefault;
+
+  /// No description provided for @actionNewEntry.
+  ///
+  /// In en, this message translates to:
+  /// **'New entry'**
+  String get actionNewEntry;
+
+  /// No description provided for @actionRemove.
+  ///
+  /// In en, this message translates to:
+  /// **'Remove'**
+  String get actionRemove;
+
+  /// No description provided for @groupAllEntries.
+  ///
+  /// In en, this message translates to:
+  /// **'All entries'**
+  String get groupAllEntries;
+
+  /// No description provided for @groupContextShowEntries.
+  ///
+  /// In en, this message translates to:
+  /// **'Show entries'**
+  String get groupContextShowEntries;
+
+  /// No description provided for @entryContextOpen.
+  ///
+  /// In en, this message translates to:
+  /// **'Open'**
+  String get entryContextOpen;
+
+  /// No description provided for @entryContextCopyUsername.
+  ///
+  /// In en, this message translates to:
+  /// **'Copy username'**
+  String get entryContextCopyUsername;
+
+  /// No description provided for @entryContextCopyPassword.
+  ///
+  /// In en, this message translates to:
+  /// **'Copy password'**
+  String get entryContextCopyPassword;
+
+  /// No description provided for @settingsKeyboardShortcuts.
+  ///
+  /// In en, this message translates to:
+  /// **'Keyboard shortcuts'**
+  String get settingsKeyboardShortcuts;
+
+  /// No description provided for @shortcutSearch.
+  ///
+  /// In en, this message translates to:
+  /// **'Search'**
+  String get shortcutSearch;
+
+  /// No description provided for @shortcutNewEntry.
+  ///
+  /// In en, this message translates to:
+  /// **'New entry'**
+  String get shortcutNewEntry;
+
+  /// No description provided for @shortcutLock.
+  ///
+  /// In en, this message translates to:
+  /// **'Lock vault'**
+  String get shortcutLock;
+
+  /// No description provided for @shortcutCopyPassword.
+  ///
+  /// In en, this message translates to:
+  /// **'Copy selected password'**
+  String get shortcutCopyPassword;
+
+  /// No description provided for @shortcutDismiss.
+  ///
+  /// In en, this message translates to:
+  /// **'Dismiss'**
+  String get shortcutDismiss;
 }
 
 class _AppLocalizationsDelegate

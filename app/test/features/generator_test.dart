@@ -65,5 +65,21 @@ void main() {
 
       expect(usedValue, harness.generator.passwordResult.value);
     });
+
+    testWidgets('reduced motion removes the regenerate rotation', (
+      tester,
+    ) async {
+      final harness = await tester.pumpFeature(
+        const MediaQuery(
+          data: MediaQueryData(disableAnimations: true),
+          child: GeneratorPage(),
+        ),
+      );
+      addTearDown(harness.dispose);
+      await tester.pumpAndSettle();
+
+      expect(find.byKey(const Key('generator-rotation')), findsNothing);
+      expect(find.byTooltip('Regenerate'), findsOneWidget);
+    });
   });
 }

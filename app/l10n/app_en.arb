@@ -230,5 +230,18 @@
   "syncConflictMessage": "The conflict could not be merged automatically. Both sides were preserved and the pre-merge vault was saved as a backup.",
   "syncConflictBackupLabel": "Backup:",
   "syncFailureGeneric": "Sync failed. Your local vault is still available.",
-  "syncEndpointDefault": "remote"
+  "syncEndpointDefault": "remote",
+  "actionNewEntry": "New entry",
+  "actionRemove": "Remove",
+  "groupAllEntries": "All entries",
+  "groupContextShowEntries": "Show entries",
+  "entryContextOpen": "Open",
+  "entryContextCopyUsername": "Copy username",
+  "entryContextCopyPassword": "Copy password",
+  "settingsKeyboardShortcuts": "Keyboard shortcuts",
+  "shortcutSearch": "Search",
+  "shortcutNewEntry": "New entry",
+  "shortcutLock": "Lock vault",
+  "shortcutCopyPassword": "Copy selected password",
+  "shortcutDismiss": "Dismiss"
 }

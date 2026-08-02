@@ -13,6 +13,17 @@ Run from the repository root:
 make interop
 ```
 
+The Flutter desktop/API boundary round-trip is a separate discoverable target:
+
+```sh
+make interop-app
+```
+
+It requires KeePassXC 2.7.12 or newer in the 2.x line. The harness creates a
+fast-KDF vault through `hidlins-api`, alternates writes with `keepassxc-cli`,
+then compares normalized XML exports with `lib/kpxc-diff.py`. Secrets and the
+temporary vault live only in a `mktemp` directory removed on exit.
+
 `make interop` builds the `hidlins-test-driver` helper and runs:
 
 - `us_090_rust_to_kpxc.sh`: Hidlins-created vault opens in KeePassXC.

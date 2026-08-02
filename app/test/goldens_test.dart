@@ -1,51 +1,114 @@
 import 'package:flutter/material.dart';
+import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:flutter_test/flutter_test.dart';
 
+import 'package:app/src/data/models.dart';
+import 'package:app/src/features/entries/entries_page.dart';
+import 'package:app/src/features/generator/generator_page.dart';
+import 'package:app/src/features/lock/unlock_screen.dart';
+import 'package:app/src/features/settings/settings_page.dart';
+import 'helpers/feature_test_helpers.dart';
 import 'helpers/golden.dart';
 
 void main() {
-  group('seed goldens', () {
-    testWidgets('placeholder screen light', (tester) async {
-      await expectGolden(
-        tester,
-        const _PlaceholderScreen(),
-        name: 'placeholder_light',
-        brightness: Brightness.light,
-      );
-    });
+  const sizes = <String, Size>{
+    'compact': goldenSizeCompact,
+    'medium': goldenSizeMedium,
+    'expanded': goldenSizeExpanded,
+  };
+  const brightnesses = <String, Brightness>{
+    'light': Brightness.light,
+    'dark': Brightness.dark,
+  };
 
-    testWidgets('placeholder screen dark', (tester) async {
-      await expectGolden(
-        tester,
-        const _PlaceholderScreen(),
-        name: 'placeholder_dark',
-        brightness: Brightness.dark,
-      );
-    });
-  });
+  for (final brightness in brightnesses.entries) {
+    for (final size in sizes.entries) {
+      testWidgets('lock ${brightness.key} ${size.key}', (tester) async {
+        final harness = _goldenHarness(locked: true);
+        addTearDown(harness.dispose);
+        await expectGolden(
+          tester,
+          ProviderScope(
+            overrides: harness.overrides,
+            child: const UnlockScreen(),
+          ),
+          name: 'lock_${brightness.key}_${size.key}',
+          size: size.value,
+          brightness: brightness.value,
+        );
+      });
+
+      testWidgets('list detail ${brightness.key} ${size.key}', (tester) async {
+        final harness = _goldenHarness();
+        addTearDown(harness.dispose);
+        await expectGolden(
+          tester,
+          ProviderScope(
+            overrides: harness.overrides,
+            child: const EntriesPage(initialUuid: 'entry-1'),
+          ),
+          name: 'list_detail_${brightness.key}_${size.key}',
+          size: size.value,
+          brightness: brightness.value,
+        );
+      });
+
+      testWidgets('generator ${brightness.key} ${size.key}', (tester) async {
+        final harness = _goldenHarness();
+        addTearDown(harness.dispose);
+        await expectGolden(
+          tester,
+          ProviderScope(
+            overrides: harness.overrides,
+            child: const GeneratorPage(),
+          ),
+          name: 'generator_${brightness.key}_${size.key}',
+          size: size.value,
+          brightness: brightness.value,
+        );
+      });
+
+      testWidgets('settings ${brightness.key} ${size.key}', (tester) async {
+        final harness = _goldenHarness();
+        addTearDown(harness.dispose);
+        await expectGolden(
+          tester,
+          ProviderScope(
+            overrides: harness.overrides,
+            child: const SettingsPage(),
+          ),
+          name: 'settings_${brightness.key}_${size.key}',
+          size: size.value,
+          brightness: brightness.value,
+        );
+      });
+    }
+  }
 }
 
-class _PlaceholderScreen extends StatelessWidget {
-  const _PlaceholderScreen();
-
-  @override
-  Widget build(BuildContext context) {
-    final colorScheme = Theme.of(context).colorScheme;
-    return Scaffold(
-      appBar: AppBar(title: const Text('Hidlins')),
-      body: Center(
-        child: Column(
-          mainAxisAlignment: MainAxisAlignment.center,
-          children: [
-            Icon(Icons.lock, size: 48, color: colorScheme.primary),
-            const SizedBox(height: 16),
-            Text(
-              'Vault locked',
-              style: Theme.of(context).textTheme.headlineMedium,
-            ),
-          ],
-        ),
-      ),
-    );
-  }
+TestHarness _goldenHarness({bool locked = false}) {
+  final harness = TestHarness();
+  harness.session.currentLockState = locked
+      ? LockEvent.locked
+      : LockEvent.unlocked;
+  harness.session.vaults = const [
+    VaultSummary(
+      name: 'Personal',
+      path: '/vaults/personal.kdbx',
+      hasKeyfile: false,
+      hasSync: true,
+    ),
+  ];
+  harness.totp.codes['entry-1'] = const TotpCode(
+    code: '123456',
+    remainingSecs: 17,
+    period: 30,
+  );
+  harness.sync.status = const SyncStatusDto(
+    configured: true,
+    inFlight: false,
+    lastOutcome: SyncOutcomeDto.alreadyInSync,
+  );
+  harness.prefs.prefs = const UiPrefs(themeMode: 'system');
+  return harness;
 }

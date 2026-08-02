@@ -101,13 +101,11 @@ class _DetailContentState extends ConsumerState<_DetailContent> {
                   ).isBefore(DateTime.now()),
                 ),
               ),
-            Tooltip(
-              message: mutationTooltip,
-              child: IconButton(
-                key: const Key('entry-edit-action'),
-                icon: const Icon(Icons.edit_outlined),
-                onPressed: mutationsEnabled ? () => _openEdit(detail) : null,
-              ),
+            IconButton(
+              key: const Key('entry-edit-action'),
+              icon: const Icon(Icons.edit_outlined),
+              tooltip: mutationTooltip,
+              onPressed: mutationsEnabled ? () => _openEdit(detail) : null,
             ),
           ],
         ),
@@ -439,17 +437,15 @@ class _AttachmentSectionState extends ConsumerState<_AttachmentSection> {
               subtitle: Text(l10n.attachmentBytes('${a.sizeBytes}')),
               dense: true,
               contentPadding: EdgeInsets.zero,
-              trailing: Tooltip(
-                message: widget.mutationsEnabled
+              trailing: IconButton(
+                key: Key('attachment-detach-${a.name}'),
+                icon: const Icon(Icons.close, size: 18),
+                tooltip: widget.mutationsEnabled
                     ? l10n.actionDetach
                     : l10n.syncActionsDisabled,
-                child: IconButton(
-                  key: Key('attachment-detach-${a.name}'),
-                  icon: const Icon(Icons.close, size: 18),
-                  onPressed: widget.mutationsEnabled
-                      ? () async => _confirmDetach(a.name)
-                      : null,
-                ),
+                onPressed: widget.mutationsEnabled
+                    ? () async => _confirmDetach(a.name)
+                    : null,
               ),
             ),
           ),
