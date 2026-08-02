@@ -60,6 +60,25 @@ impl AppSession {
         self.clipboard_copy(text)
     }
 
+    // Mobile counterpart for the desktop copy door: the committed frb
+    // bindings are generated on a desktop host, so the glue references
+    // `copy_entry_field` unconditionally and mobile builds must provide a
+    // same-signature symbol. The REAL mobile copy path is
+    // `take_secret_for_clipboard` (design D-2); the mobile UI never calls
+    // this door, so reaching it is a UI-layer bug reported as `Internal`.
+    #[cfg(not(feature = "desktop"))]
+    #[allow(clippy::unused_self, clippy::needless_pass_by_value)]
+    pub fn copy_entry_field(
+        &self,
+        _uuid: String,
+        _field: CopyField,
+    ) -> Result<(), HidlinsApiError> {
+        Err(super::desktop_only(
+            "copy_entry_field",
+            "mobile uses take_secret_for_clipboard",
+        ))
+    }
+
     #[cfg(not(feature = "desktop"))]
     #[allow(clippy::needless_pass_by_value)]
     pub fn take_secret_for_clipboard(

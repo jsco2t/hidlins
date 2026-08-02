@@ -183,6 +183,44 @@ jobs:
         if: always()
         run: make minio-down
 
+  # Android cross-compile gate (flutter-app P6 / T6.1). This ubuntu job is
+  # the Linux-host half of the both-hosts requirement (spike go/no-go
+  # criterion WM-8); the macOS half is validated on developer machines and
+  # recorded in the spike memo. The NDK is the runner image's preinstalled
+  # default (ANDROID_NDK_HOME is preset on ubuntu images) — the spike
+  # validated NDK r30-beta1 locally and any r26+ is expected to work; an
+  # exact NDK pin is deferred to T8.1 with the productionized Android build
+  # (sdkmanager cannot reliably install a specific NDK across channels, and
+  # a hard-coded version would break whenever the image retires it). The
+  # version-echo step keeps the exact NDK used in every run's log.
+  # HIDLINS_ANDROID_STRICT=1 turns the make targets' graceful NDK-unset
+  # skip into a hard failure so an image/tooling change can never silently
+  # skip this gate. `build-android` (not just check) is deliberate: it is
+  # the full `ring` C-compile + cdylib link proof plus the JNI-export
+  # symbol assertion.
+  check-android:
+    name: check-android (ubuntu)
+    runs-on: ubuntu-latest
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Install pinned toolchain
+        run: rustup show
+
+      - name: Report NDK version
+        run: |
+          test -n "$ANDROID_NDK_HOME" || { echo "runner image no longer presets ANDROID_NDK_HOME" >&2; exit 1; }
+          cat "$ANDROID_NDK_HOME/source.properties"
+
+      # build-android alone: it is a strict superset of check-android
+      # (cargo check shares no artifacts with cargo build, so running both
+      # would compile the whole graph twice per triple for no added
+      # coverage), and it carries the JNI-export symbol assertion + the
+      # single-verifier-instance gate.
+      - name: Android cross-compile build (ring compile + link + ABI gates)
+        run: make build-android HIDLINS_ANDROID_STRICT=1
+
   # Flutter app — analyze, format, build, codegen + supply-chain gates on
   # both supported desktop platforms. Goldens execute on the Linux leg only.
   #

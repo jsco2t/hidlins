@@ -4,6 +4,14 @@
 // here. A crate-wide `allow(unexpected_cfgs)` would disable typo detection for
 // every hand-written `#[cfg]` in the boundary crate.
 
+// Android-only JNI export for the one-time rustls-platform-verifier init
+// (design A9). The single `#[no_mangle]` item inside carries its own
+// scoped `#[allow(unsafe_code)]` (that attribute is what trips the
+// workspace lint); the rest of the module stays under the crate-wide
+// deny — unlike `frb_generated` below, this is hand-written code, so the
+// allowance is kept as narrow as the one item that needs it.
+#[cfg(target_os = "android")]
+pub mod android;
 pub mod api;
 pub mod clipboard_port;
 pub mod dto;
