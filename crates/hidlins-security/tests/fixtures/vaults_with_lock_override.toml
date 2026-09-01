@@ -3,7 +3,7 @@
 # (Phase 4 T4.2 un-ignores that case). The schema is the same one
 # `hidlins-cli vault set-lock --timeout 30` writes today via
 # `RegisteredVault::extra`; `vault_lock::VaultLockConfig::from_extra`
-# arrives in Phase 4 to read it back as a typed value.
+# is read back as a typed per-vault override.
 
 version = 1
 

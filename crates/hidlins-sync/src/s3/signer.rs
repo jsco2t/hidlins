@@ -270,7 +270,8 @@ impl Signer {
             &self.service,
         );
 
-        let signature = hex::encode(*hmac_sha256(&*signing_key, string_to_sign.as_bytes()));
+        let signature =
+            crate::encoding::encode_lower(&*hmac_sha256(&*signing_key, string_to_sign.as_bytes()));
 
         // 5. Add the Authorization header.
         let authorization = format!(
@@ -323,7 +324,8 @@ impl Signer {
             &self.region,
             &self.service,
         );
-        let signature = hex::encode(*hmac_sha256(&*signing_key, string_to_sign.as_bytes()));
+        let signature =
+            crate::encoding::encode_lower(&*hmac_sha256(&*signing_key, string_to_sign.as_bytes()));
 
         (canonical_request, string_to_sign, signature)
     }
@@ -514,7 +516,7 @@ const fn hex_upper(n: u8) -> char {
 fn hex_sha256(bytes: &[u8]) -> String {
     let mut hasher = Sha256::new();
     hasher.update(bytes);
-    hex::encode(hasher.finalize())
+    crate::encoding::encode_lower(&hasher.finalize())
 }
 
 /// HMAC-SHA256 over `data`, keyed by `key`. Returns the raw 32-byte MAC
@@ -711,6 +713,22 @@ mod tests {
         );
     }
 
+    #[test]
+    fn lowercase_hex_encoding_covers_every_nibble() {
+        assert_eq!(
+            crate::encoding::encode_lower(&[
+                0x01, 0x23, 0x45, 0x67, 0x89, 0xab, 0xcd, 0xef, 0xf0, 0xde, 0xbc, 0x9a, 0x78, 0x56,
+                0x34, 0x12,
+            ]),
+            "0123456789abcdeff0debc9a78563412"
+        );
+    }
+
+    #[test]
+    fn lowercase_hex_encoding_handles_empty_input() {
+        assert_eq!(crate::encoding::encode_lower(&[]), "");
+    }
+
     // -- TC-SIG-010 ---------------------------------------------------------
     // AWS published reference: GET / on examplebucket.s3.amazonaws.com.
     // Source: https://docs.aws.amazon.com/general/latest/gr/sigv4-signed-request-examples.html
@@ -720,7 +738,7 @@ mod tests {
             derive_signing_key(TEST_SECRET_KEY, "20130524", TEST_REGION, DEFAULT_SERVICE);
         // The hex-encoded kSigning AWS publishes for this date+region+service.
         let expected = "dbb893acc010964918f1fd433add87c70e8b0db6be30c1fbeafefa5ec6ba8378";
-        assert_eq!(hex::encode(signing_key), expected);
+        assert_eq!(crate::encoding::encode_lower(&*signing_key), expected);
     }
 
     // -- TC-SIG-011 ---------------------------------------------------------

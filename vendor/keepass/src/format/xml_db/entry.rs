@@ -5,12 +5,15 @@ use thiserror::Error;
 
 use serde::{Deserialize, Serialize};
 
+#[cfg(feature = "save_kdbx4")]
+use crate::format::xml_db::tags::join_tags;
 use crate::{
     crypt::{ciphers::Cipher, CryptographyError},
-    db::{AttachmentId, Color, EntryId},
+    db::{AttachmentId, Color, EntryId, EntryMut, GroupId},
     format::xml_db::{
-        custom_serde::{cs_bool, cs_opt_fromstr, cs_opt_intbool, cs_opt_string},
+        custom_serde::{cs_bool, cs_opt_bool, cs_opt_fromstr, cs_opt_string},
         meta::CustomData,
+        tags::split_tags,
         times::Times,
         UUID,
     },
@@ -67,12 +70,18 @@ pub struct Entry {
 
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub custom_data: Option<CustomData>,
+
+    #[serde(default, with = "cs_opt_bool", skip_serializing_if = "Option::is_none")]
+    pub quality_check: Option<bool>,
+
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub previous_parent_group: Option<UUID>,
 }
 
 impl Entry {
     pub(crate) fn xml_to_db_handle(
         self,
-        mut target: crate::db::EntryMut,
+        mut target: crate::db::EntryMut<'_>,
         attachments: &HashMap<crate::db::AttachmentId, crate::db::Attachment>,
         custom_icons: &HashMap<crate::db::CustomIconId, crate::db::CustomIcon>,
         inner_decryptor: &mut dyn Cipher,
@@ -89,26 +98,22 @@ impl Entry {
         target.foreground_color = self.foreground_color;
         target.background_color = self.background_color;
         target.override_url = self.override_url;
-        target.tags = self
-            .tags
-            .map(|t| t.split(',').map(|s| s.to_string()).collect())
-            .unwrap_or_default();
+        target.tags = self.tags.as_deref().map(split_tags).unwrap_or_default();
 
         target.times = self.times.map(|t| t.into()).unwrap_or_default();
 
         for field in self.string_fields {
-            if let Some(fval) = &field.value.value {
-                let value = if field.value.protected {
-                    let fval = base64_engine::STANDARD.decode(fval)?;
-                    let fval = inner_decryptor.decrypt(&fval)?;
-                    let fval = String::from_utf8_lossy(&fval).to_string();
+            let fval = field.value.value.unwrap_or_default();
+            let value = if field.value.protected {
+                let fval = base64_engine::STANDARD.decode(fval)?;
+                let fval = inner_decryptor.decrypt(&fval)?;
+                let fval = String::from_utf8_lossy(&fval).to_string();
 
-                    crate::db::Value::protected(fval)
-                } else {
-                    crate::db::Value::unprotected(fval)
-                };
-                target.fields.insert(field.key, value);
-            }
+                crate::db::Value::protected(fval)
+            } else {
+                crate::db::Value::unprotected(fval)
+            };
+            target.fields.insert(field.key, value);
         }
 
         for field in self.binary_fields {
@@ -124,16 +129,17 @@ impl Entry {
             target.history = Some(crate::db::History { entries: Vec::new() });
 
             for (i, e) in h.entries.into_iter().enumerate() {
-                let mut he = crate::db::Entry::with_id(EntryId::from_uuid(e.uuid.0), target.parent);
-                he.history = None; // history entries cannot have their own history
-                target.history.as_mut().unwrap().entries.push(he);
+                let id = EntryId::from_uuid(e.uuid.0);
 
-                e.xml_to_db_handle(
-                    target.historical(i).unwrap(),
-                    attachments,
-                    custom_icons,
-                    inner_decryptor,
-                )?;
+                let mut he = crate::db::Entry::with_id(id, target.parent);
+                he.history = None; // history entries cannot have their own history
+
+                if let Some(h) = target.history.as_mut() {
+                    h.entries.push(he);
+                }
+
+                let historical = EntryMut::new_historical(target.database_mut(), id, Some(i));
+                e.xml_to_db_handle(historical, attachments, custom_icons, inner_decryptor)?;
             }
         }
 
@@ -141,12 +147,16 @@ impl Entry {
             target.custom_data = cd.into();
         }
 
+        target.quality_check = self.quality_check.unwrap_or(true);
+
+        target.previous_parent_group = self.previous_parent_group.map(|g| GroupId::from_uuid(g.0));
+
         Ok(())
     }
 
     #[cfg(feature = "save_kdbx4")]
     pub(crate) fn db_to_xml(
-        db: crate::db::EntryRef,
+        db: crate::db::EntryRef<'_>,
         inner_encryptor: &mut dyn Cipher,
     ) -> Result<Self, CryptographyError> {
         let (icon_id, custom_icon_uuid) = match db.icon {
@@ -190,7 +200,7 @@ impl Entry {
 
         let history = if let Some(h) = db.history.as_ref() {
             let entries = (0..h.entries.len())
-                .map(|i| Entry::db_to_xml(db.historical(i).unwrap(), inner_encryptor))
+                .filter_map(|i| Some(Entry::db_to_xml(db.historical(i)?, inner_encryptor)))
                 .collect::<Result<Vec<_>, CryptographyError>>()?;
 
             Some(History { entries })
@@ -211,13 +221,15 @@ impl Entry {
             foreground_color: db.foreground_color.clone(),
             background_color: db.background_color.clone(),
             override_url: db.override_url.clone(),
-            tags: db.tags.iter().cloned().reduce(|a, b| format!("{a},{b}")),
+            tags: join_tags(&db.tags),
             times: Some(db.times.clone().into()),
             string_fields,
             binary_fields,
             auto_type: db.autotype.as_ref().map(|at| at.clone().into()),
             history,
             custom_data,
+            quality_check: Some(db.quality_check),
+            previous_parent_group: db.previous_parent_group.map(|g| UUID(g.uuid())),
         })
     }
 }
@@ -233,6 +245,14 @@ pub enum UnprotectError {
 
     #[error(transparent)]
     Io(#[from] std::io::Error),
+
+    /// the XML database contains two entries with the same UUID
+    #[error(transparent)]
+    DuplicateEntryId(#[from] crate::db::DuplicateEntryIdError),
+
+    /// the XML database contains two groups with the same UUID
+    #[error(transparent)]
+    DuplicateGroupId(#[from] crate::db::DuplicateGroupIdError),
 }
 
 #[derive(Debug, Serialize, Deserialize)]
@@ -305,8 +325,8 @@ pub struct AutoType {
     #[serde(default, with = "cs_bool")]
     pub enabled: bool,
 
-    #[serde(default, with = "cs_opt_intbool", skip_serializing_if = "Option::is_none")]
-    pub data_transfer_obfuscation: Option<bool>,
+    #[serde(default, with = "cs_opt_fromstr", skip_serializing_if = "Option::is_none")]
+    pub data_transfer_obfuscation: Option<usize>,
 
     #[serde(default, with = "cs_opt_string", skip_serializing_if = "Option::is_none")]
     pub default_sequence: Option<String>,
@@ -320,7 +340,10 @@ impl From<AutoType> for crate::db::AutoType {
         crate::db::AutoType {
             enabled: value.enabled,
             default_sequence: value.default_sequence,
-            data_transfer_obfuscation: value.data_transfer_obfuscation,
+            data_transfer_obfuscation: value
+                .data_transfer_obfuscation
+                .map(|d| d.into())
+                .unwrap_or_default(),
             associations: value.associations.into_iter().map(|a| a.into()).collect(),
         }
     }
@@ -330,9 +353,28 @@ impl From<crate::db::AutoType> for AutoType {
     fn from(value: crate::db::AutoType) -> Self {
         Self {
             enabled: value.enabled,
-            data_transfer_obfuscation: value.data_transfer_obfuscation,
+            data_transfer_obfuscation: Some(value.data_transfer_obfuscation.into()),
             default_sequence: value.default_sequence,
             associations: value.associations.into_iter().map(|a| a.into()).collect(),
+        }
+    }
+}
+
+impl From<usize> for crate::db::DataTransferObfuscation {
+    fn from(value: usize) -> Self {
+        match value {
+            0 => Self::None,
+            1 => Self::UseClipboard,
+            _ => Self::None, // default to None for unknown values
+        }
+    }
+}
+
+impl From<crate::db::DataTransferObfuscation> for usize {
+    fn from(value: crate::db::DataTransferObfuscation) -> Self {
+        match value {
+            crate::db::DataTransferObfuscation::None => 0,
+            crate::db::DataTransferObfuscation::UseClipboard => 1,
         }
     }
 }
@@ -369,6 +411,7 @@ pub struct History {
     pub entries: Vec<Entry>,
 }
 
+#[allow(clippy::indexing_slicing, clippy::unwrap_used)]
 #[cfg(test)]
 mod tests {
 
@@ -387,7 +430,7 @@ mod tests {
         let deserialized: Test<StringField> = quick_xml::de::from_str(xml).unwrap();
         assert_eq!(deserialized.0.key, "Title");
         assert_eq!(deserialized.0.value.value.unwrap(), "Example Title");
-        assert_eq!(deserialized.0.value.protected, false);
+        assert!(!deserialized.0.value.protected);
 
         let xml_protected = r#"<String>
             <Key>Password</Key>
@@ -397,7 +440,7 @@ mod tests {
         let deserialized_protected: Test<StringField> = quick_xml::de::from_str(xml_protected).unwrap();
         assert_eq!(deserialized_protected.0.key, "Password");
         assert_eq!(deserialized_protected.0.value.value.unwrap(), "cGFzc3dvcmQ=");
-        assert_eq!(deserialized_protected.0.value.protected, true);
+        assert!(deserialized_protected.0.value.protected);
     }
 
     #[test]
@@ -465,8 +508,8 @@ mod tests {
         </AutoType>"#;
 
         let deserialized: Test<AutoType> = quick_xml::de::from_str(xml).unwrap();
-        assert_eq!(deserialized.0.enabled, true);
-        assert_eq!(deserialized.0.data_transfer_obfuscation.unwrap(), false);
+        assert!(deserialized.0.enabled);
+        assert_eq!(deserialized.0.data_transfer_obfuscation, Some(0));
         assert_eq!(
             deserialized.0.default_sequence.unwrap(),
             "{USERNAME}{TAB}{PASSWORD}{ENTER}"
@@ -477,7 +520,7 @@ mod tests {
     fn test_serialize_autotype() {
         let autotype = AutoType {
             enabled: true,
-            data_transfer_obfuscation: Some(false),
+            data_transfer_obfuscation: Some(0),
             default_sequence: Some("{USERNAME}{TAB}{PASSWORD}{ENTER}".to_string()),
             associations: vec![AutoTypeAssociation {
                 window: "Example Window".to_string(),
@@ -546,8 +589,8 @@ mod tests {
         assert_eq!(deserialized.0.binary_fields[0].value.value_ref, 1);
         assert!(deserialized.0.auto_type.is_some());
         let autotype = deserialized.0.auto_type.unwrap();
-        assert_eq!(autotype.enabled, true);
-        assert_eq!(autotype.data_transfer_obfuscation.unwrap(), false);
+        assert!(autotype.enabled);
+        assert_eq!(autotype.data_transfer_obfuscation, Some(0));
         assert_eq!(
             autotype.default_sequence.unwrap(),
             "{USERNAME}{TAB}{PASSWORD}{ENTER}"

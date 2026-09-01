@@ -1,0 +1,15 @@
+                           ┌ Hidlins startup ──────────────┐
+        .--------.         │HIDLINS                        │
+      .'          '.       │Please select a vault:         │
+     /    .----.    \      │Selected: alpha                │
+    |    |      |    |     │Vault: beta                    │
+.---'----'------'----'---. │Vault: gamma                   │
+| o      HIDLINS      o  | │                               │
+|                        | │                               │
+|       HH     HH        | │                               │
+|       HH     HH        | │                               │
+|       HHHHHHHHH        | │Status: Ready                  │
+|       HH     HH        | │                               │
+| o     HH     HH     o  | │Up/Down or j/k: Select         │
+'------------------------' │Enter: Continue   Ctrl+Q: Exit │
+                           └───────────────────────────────┘

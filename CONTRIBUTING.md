@@ -34,7 +34,7 @@ hidlins/
 │   ├── hidlins-tui/          # TUI frontend
 │   └── hidlins-agent/        # placeholder binary
 └── tools/
-    └── interop-tests/        # bash harness, arrives in Phase 6
+    └── interop-tests/        # committed KeePassXC interop harnesses
 ```
 
 ---
@@ -95,8 +95,8 @@ supply-chain policy, Rule 4). Document each step in the PR description.
 ### 1. License check
 
 The dependency's license **must be one of**: `MIT`, `Apache-2.0`,
-`Apache-2.0 WITH LLVM-exception`, `BSD-2-Clause`, `BSD-3-Clause`, `ISC`,
-`Zlib`, `Unicode-3.0`, `Unicode-DFS-2016`, `Unlicense`, `CC0-1.0`.
+`BSD-2-Clause`, `BSD-3-Clause`, `ISC`, `Zlib`, `Unicode-3.0`,
+`Unicode-DFS-2016`, `Unlicense`, `CC0-1.0`.
 
 The following are **forbidden**, including via transitive deps:
 `GPL-*`, `LGPL-*`, `AGPL-*`, `SSPL-*`, `Commons Clause`,
@@ -303,24 +303,26 @@ handler) was already vendored.
 
 | Crate | Ver | License | Maintenance / popularity | Notes |
 | --- | --- | --- | --- | --- |
-| `ratatui` | 0.30.0 | MIT | The maintained `tui-rs` successor; the de-facto Rust TUI framework. | Default features (`crossterm`, `all-widgets`, `macros`, `layout-cache`, `underline-color`). 0.30 split into `ratatui-core` / `ratatui-crossterm` / `ratatui-widgets` (all MIT). **Vendor footprint is larger than the original "~10–15" estimate (~60 new dirs)** — ratatui's color/layout tree (`csscolorparser`, `kasuari`, `compact_str`, …) plus its *optional* `termion`/`termwiz` backends, which are vendored-but-never-compiled (default features select crossterm only; off-target/optional cost per CLAUDE.md "off-target vendored sources"). |
+| `ratatui` | 0.30.2 | MIT | The maintained `tui-rs` successor; the de-facto Rust TUI framework. | Default features (`crossterm`, `all-widgets`, `macros`, `layout-cache`, `underline-color`). 0.30 split into `ratatui-core` / `ratatui-crossterm` / `ratatui-widgets` (all MIT). **Vendor footprint is larger than the original "~10–15" estimate (~60 new dirs)** — ratatui's color/layout tree plus optional/off-target backends that Cargo vendors even when the production crossterm build does not compile them. Task 001 selected 0.30.2 because its component graph resolves the patched `lru 0.18.3`. |
 | `crossterm` | 0.29.0 | MIT | The standard cross-platform terminal backend; ratatui's default. | Declared directly for raw-mode / alternate-screen (`terminal_guard`) and the `KeyEvent` types (`keys`). Single version in the tree (ratatui 0.30 rides crossterm 0.29). |
 | `tui-input` | 0.15.3 | MIT | Small input-widget primitive. | `features = ["crossterm"]` (vendor the full tree once; wired by the Phase-2 `PasswordInput`). 0.15.3 targets crossterm 0.29 + ratatui 0.30 + unicode-width 0.2. |
 | `unicode-width` | 0.2.2 | MIT OR Apache-2.0 | Unicode TR-11 display widths; ubiquitous. | Display-width-correct tab-label / detail truncation (Phase-2 T2.4 / OQ-N6). |
 
-**Incidental supply-chain fix (separate from the TUI deps):** the re-vendor
+**Historical incidental supply-chain fix (separate from the TUI deps):** the re-vendor
 surfaced that `aes 0.9.0` — a transitive of `keepass 0.12.9` (`hidlins-core`) —
 was **yanked** upstream (after the 2026-05-31 `s3-sync` merge, so not caught
 then), which `deny.toml`'s `yanked = "deny"` rejects. Resolved with the
 registry's intended replacement via `cargo update -p aes --precise 0.9.1`
 (satisfies keepass's `^0.9`; **no keepass change**). KDBX crypto behaviour
 unchanged — verified by `cargo test -p hidlins-core -p hidlins-sync` (incl. the
-`merge_semantics.rs` characterization suite). `make deny` + `make audit` green.
+`merge_semantics.rs` characterization suite). The current graph supersedes this
+historical stopgap with `keepass 0.13.25` and `aes 0.9.1`; `make deny` and
+`make audit` are green.
 
 #### `keepass` `_merge` feature enabled (Phase 4, 2026-05-26)
 
 **No new crate.** A feature flag on the already-vendored, exact-pinned
-`keepass = "=0.12.9"` (in `hidlins-core`): `features = ["save_kdbx4", "_merge"]`.
+`keepass = "=0.13.25"` (in `hidlins-core`): `features = ["save_kdbx4", "_merge"]`.
 `_merge` (an empty feature, `_merge = []`) compiles the crate's UUID-keyed
 two-way `Database::merge`, which the sync layer reuses behind
 `hidlins_sync::merge::reconcile` (design ADR-008). No dependency-graph, license,
@@ -389,7 +391,7 @@ non-permissive licenses in the tree — `BSL-1.0` for `clipboard-win`,
 | Crate | Ver | License | Maintenance / popularity | Notes |
 | --- | --- | --- | --- | --- |
 | `gix` | 0.78 | MIT OR Apache-2.0 | `Byron/gitoxide`, very active; the pure-Rust git impl chosen over `libgit2`/`git2` (CLAUDE.md). | `default-features=false`; only `blocking-network-client` + `revision`. **Spike (T2.2) found gix 0.78 cannot push.** _(The original remedy here — git-CLI shell-out / T3.6 — was **superseded same-day by ADR-007**: push is a pure-Rust smart-HTTP send-pack, and the rustls HTTPS stack landed in Phase 2b above. See that entry.)_ |
-| `argon2` | 0.5 | MIT OR Apache-2.0 | RustCrypto; foundational, widely used. | RST-CRED-1 KDF (design §2.2.3). **Duplicates `rust-argon2`** (keepass's KDBX KDF). T3.5 should decide whether to reuse `rust-argon2` and drop this — see follow-ups. |
+| `argon2` | 0.5 | MIT OR Apache-2.0 | RustCrypto; foundational, widely used. | RST-CRED-1 KDF (design §2.2.3). This remains separate from `rust-argon2`, which is selected by `keepass` for the KDBX KDF; the final dependency review retains both rather than coupling the independent credential-container and KDBX cryptographic implementations. |
 | `chacha20poly1305` | 0.10 | Apache-2.0 OR MIT | RustCrypto; foundational. | RST-CRED-1 AEAD. |
 | `base64` | 0.22 | MIT OR Apache-2.0 | `marshallpierce/rust-base64`; ubiquitous. | Already vendored transitively; now a direct dep for the credential container encoding. |
 | `gethostname` | 1.1 | Apache-2.0 | `swsnr/gethostname`; small, stable, Unix+Windows. | Commit-message host line (design §2.6). |
@@ -499,10 +501,8 @@ binary from racing each other inside the kernel's process-global
 signal state. Tests that do NOT touch signal disposition do not need
 the guard. The pattern mirrors `hidlins-core`'s `EnvGuard` for `HOME`.
 
-Phase 1 of the `security-behaviors` feature lands the guard; Phase 4
-is the first phase whose tests consume it. The early landing is
-intentional — adding the helper alongside its first consumer would be
-a churn-y forwarding PR.
+The guard is shared by the shipped signal and OS-lock integration tests so
+every process-global signal mutation follows the same serialization rule.
 
 ### Clipboard / OS-events test invocation (`make test-clipboard`, `make test-os-events`)
 
@@ -513,10 +513,10 @@ Wayland, or macOS Pasteboard) so they're `#[ignore]`d by default.
   (`--test-threads=1`). On Linux CI, wrap the invocation in
   `xvfb-run -a make test-clipboard` so an X11-headed display is
   available. The matching test filter is `us_053_clipboard`.
-- `make test-os-events` is a post-MVP placeholder. In MVP it runs zero
-  tests (no matching test names exist); when `LogindSource` (Linux DBus)
-  and `IoKitSource` (macOS) land in Phase 5 they will add tests under
-  the `us_052_post_mvp` filter.
+- `make test-os-events` runs the shipped `LogindSource` integration on Linux
+  and the shipped `IoKitSource` integration on macOS, serially under the
+  `us_052_post_mvp` test targets. Each path requires its native desktop/session
+  services; the compile-only cross-target coverage remains in `make check`.
 
 Both targets are wrappers over `cargo test`; the actual `#[ignore]`
 filtering happens in code. The Makefile targets exist primarily for

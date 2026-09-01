@@ -11,11 +11,8 @@
 //! 3. `format` — `OutputFormatter` (JSON vs. human). Pure formatting.
 //! 4. `prompt` — secure master-password prompt (FR-061).
 //! 5. `agent` — `AgentClient` trait + `NoAgentClient` MVP impl.
-//! 6. `commands` — per-subcommand dispatch functions. Phase 1: all stubs.
-//! 7. `views` — per-subcommand serializable view structs. Phase 1: empty.
-//!
-//! Phase 1 ships the no-business-logic foundation. Phases 2–4 fill in
-//! `commands/` and `views/`.
+//! 6. `commands` — implemented per-subcommand dispatch functions.
+//! 7. `views` — the shipped per-subcommand serializable output contracts.
 
 // `deny` (not `forbid`): the one production opt-out is the audited
 // async-signal-safe echo-restore handler in `prompt::echo_signals`

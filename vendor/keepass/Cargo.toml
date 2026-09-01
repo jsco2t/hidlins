@@ -13,7 +13,7 @@
 edition = "2018"
 rust-version = "1.85.1"
 name = "keepass"
-version = "0.12.9"
+version = "0.13.25"
 authors = ["Stefan Seemayer <stefan@seemayer.de>"]
 build = false
 include = [
@@ -30,6 +30,16 @@ description = "KeePass .kdbx database file parser"
 homepage = "https://github.com/sseemayer/keepass-rs"
 documentation = "https://docs.rs/keepass"
 readme = "README.md"
+keywords = [
+    "keepass",
+    "kdbx",
+    "kdb",
+    "password",
+]
+categories = [
+    "parser-implementations",
+    "security",
+]
 license = "MIT"
 repository = "https://github.com/sseemayer/keepass-rs"
 
@@ -131,7 +141,7 @@ required-features = [
 ]
 
 [dependencies.aes]
-version = "0.9"
+version = "<0.9.3"
 
 [dependencies.anyhow]
 version = "1"
@@ -142,7 +152,7 @@ version = "0.5"
 optional = true
 
 [dependencies.base64]
-version = "0.22"
+version = "0.23"
 
 [dependencies.block-modes]
 version = "0.9"
@@ -190,9 +200,6 @@ version = "1"
 version = "0.4"
 features = ["std"]
 
-[dependencies.hex]
-version = "0.4"
-
 [dependencies.hex-literal]
 version = "1"
 
@@ -202,8 +209,12 @@ version = "0.13"
 [dependencies.hybrid-array]
 version = "0.4"
 
+[dependencies.indexmap]
+version = "2"
+features = ["serde"]
+
 [dependencies.quick-xml]
-version = "0.40"
+version = "0.41"
 features = ["serialize"]
 
 [dependencies.rpassword]
@@ -274,7 +285,7 @@ features = ["js"]
 version = "0.3"
 
 [target.'cfg(not(target_arch = "wasm32"))'.dev-dependencies.rand]
-version = "0.8"
+version = "0.10"
 
 [target.'cfg(not(target_arch = "wasm32"))'.dev-dependencies.rustfmt]
 version = "0.10"
@@ -283,9 +294,24 @@ version = "0.10"
 version = "3"
 
 [target.'cfg(not(target_arch = "wasm32"))'.dev-dependencies.test-with]
-version = "0.16"
+version = "0.17"
 features = ["executable"]
 default-features = false
+
+[lints.clippy]
+cast_lossless = "deny"
+expect_used = "deny"
+indexing_slicing = "deny"
+missing_panics_doc = "deny"
+unwrap_used = "deny"
+
+[lints.clippy.cargo]
+level = "warn"
+priority = -1
+
+[lints.rust]
+missing_docs = "warn"
+rust_2018_idioms = "warn"
 
 [lints.rust.unexpected_cfgs]
 level = "warn"

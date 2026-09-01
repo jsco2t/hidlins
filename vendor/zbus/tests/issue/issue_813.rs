@@ -79,7 +79,12 @@ fn issue_813() {
         let client = async move {
             let commands = format!(
                 "\0AUTH EXTERNAL {}\r\nNEGOTIATE_UNIX_FD\r\nBEGIN\r\n",
-                hex::encode(geteuid().as_raw().to_string())
+                geteuid()
+                    .as_raw()
+                    .to_string()
+                    .bytes()
+                    .map(|byte| format!("{byte:02x}"))
+                    .collect::<String>()
             );
             let mut bytes: Vec<u8> = commands.bytes().collect();
             let fd = std::io::stdin();

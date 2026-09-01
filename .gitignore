@@ -51,3 +51,11 @@ app/vendor-pub/active_roots/
 app/vendor-pub/_temp/
 app/rust_builder/cargokit/build_tool/vendor-pub/active_roots/
 app/rust_builder/cargokit/build_tool/vendor-pub/_temp/
+
+# local agent instructions
+.agent-context.local.md
+
+# Codex feature workflow runtime state
+.ai/workflow/state.json
+.ai/workflow/status.md
+.ai/workflow/evidence/

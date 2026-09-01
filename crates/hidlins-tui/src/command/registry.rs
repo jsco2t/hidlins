@@ -160,10 +160,11 @@ impl Contexts {
     pub const PALETTE: Contexts = Contexts(1 << 11);
     pub const SYNC_UNLOCK: Contexts = Contexts(1 << 12);
     pub const SYNC_CONFIG: Contexts = Contexts(1 << 13);
+    pub const VAULT_ONBOARDING: Contexts = Contexts(1 << 14);
 
     /// Bit count — every declared context bit above. Used by tests to iterate
     /// over the full context space.
-    const BIT_COUNT: u16 = 14;
+    const BIT_COUNT: u16 = 15;
 
     /// The four persistent workspace tabs (Secrets tree + detail, a pinned tab,
     /// Settings) — the surfaces where tab motion and workspace-global keys apply.
@@ -207,7 +208,7 @@ impl Contexts {
     /// order. Used by `--dump-keys=json` to render a command's `contexts` array
     /// (T3.2). Names are part of the documented JSON contract — keep stable.
     pub(crate) fn names(self) -> Vec<&'static str> {
-        const NAMES: [(Contexts, &str); 14] = [
+        const NAMES: [(Contexts, &str); 15] = [
             (Contexts::UNLOCK_LIST, "unlock-list"),
             (Contexts::UNLOCK_PROMPT, "unlock-prompt"),
             (Contexts::LOCK_SCREEN, "lock-screen"),
@@ -222,6 +223,7 @@ impl Contexts {
             (Contexts::PALETTE, "palette"),
             (Contexts::SYNC_UNLOCK, "sync-unlock"),
             (Contexts::SYNC_CONFIG, "sync-config"),
+            (Contexts::VAULT_ONBOARDING, "vault-onboarding"),
         ];
         NAMES
             .iter()
@@ -342,6 +344,7 @@ pub(crate) static COMMANDS: &[CommandSpec] = &[
         group: Group::Global,
         contexts: Contexts::SECRETS_TREE
             .or(Contexts::UNLOCK_LIST)
+            .or(Contexts::VAULT_ONBOARDING)
             .or(Contexts::SETTINGS_TAB)
             .or(Contexts::SEARCH)
             .or(Contexts::EDIT)

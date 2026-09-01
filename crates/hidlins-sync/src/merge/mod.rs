@@ -35,8 +35,8 @@
 //! # Attachment handling
 //!
 //! Upstream `Database::merge` does not merge the attachment binary pool
-//! (`merge.rs` has an explicit `TODO`). Two consequences are repaired here and
-//! two are documented as limitations:
+//! (`merge.rs` has an explicit `TODO`). Hidlins repairs all three affected
+//! surfaces here:
 //!
 //! - **Repaired: entries newly added from `remote`.** Upstream clones a
 //!   source-only entry wholesale — including its attachment map, whose values
@@ -57,8 +57,15 @@
 //!   attachment map by pool id). This is last-writer-wins at *entry*
 //!   granularity: an attachment edit still loses if the other side has a newer
 //!   *field* edit on the same entry.
+//! - **Repaired: loser and pre-existing history versions.** Both sides are
+//!   snapshotted with their resolved attachment bytes before the merge. After
+//!   history merge/backfill, every matching historical version is reconciled
+//!   to those bytes through a narrow, version-pinned Keepass API patch. The
+//!   patch makes historical mutation history-index-aware and causes unresolved
+//!   pool references to fail closed instead of producing a dereference panic.
+//!   Snapshot bytes are held in [`zeroize::Zeroizing`] buffers.
 //!
-//! ## Remaining Phase-0 limitations (acceptable; tracked as follow-ups)
+//! ## Remaining merge limitation
 //!
 //! - **Cross-device pool-id divergence can surface `Unresolvable`.** Because the
 //!   repaired/added attachment gets a fresh local pool id, two devices whose
@@ -69,18 +76,8 @@
 //!   is strictly better than the pre-fix behaviour, which silently dropped the
 //!   attachment. Removals converge cleanly (an empty map equals an empty map
 //!   regardless of ids). Shared with `repair_added_entry_attachments`; folded
-//!   into the `merge-history-attachment-loss` upstream follow-up (make keepass
-//!   attachment handling merge-aware: content-based comparison / a real pool
-//!   merge).
-//! - **History entries do not capture attachment bytes.** Versions preserved
-//!   into history (by upstream's history merge or our backfill) keep their
-//!   field content, but their attachment references cannot be rewritten from
-//!   this crate (`Entry::attachments` is `pub(crate)` upstream), so a
-//!   remote-side historical version's attachment bytes are not carried into
-//!   the local pool. The pre-merge state survives one generation in
-//!   `.kdbx.bak`. (The backfill's content comparison also cannot inspect the
-//!   attachment pool, so attachment-bearing entries may gain an extra history
-//!   entry; this fails safe, i.e. it over-preserves, never drops.)
+//!   into the long-term upstream improvement (make Keepass attachment handling
+//!   merge-aware through content-based comparison / a real pool merge).
 //! - **Same-second divergence is unresolvable.** Two devices editing the same
 //!   entry within KDBX's one-second timestamp granularity, with differing
 //!   content, cannot be auto-ordered — surfaced as [`MergeError::Unresolvable`]
@@ -91,10 +88,49 @@
 //! (`tests/merge_semantics.rs`) so a future `keepass-rs` bump that changes it
 //! fails CI loudly.
 
-use std::collections::BTreeMap;
+use std::{collections::BTreeMap, sync::Arc};
 
 use chrono::NaiveDateTime;
-use hidlins_core::{Database, Entry, GroupRef, Times, Uuid};
+use hidlins_core::{Database, Entry, EntryRef, GroupRef, Times, Uuid, Value};
+use zeroize::Zeroizing;
+
+#[derive(Clone, PartialEq, Eq)]
+struct AttachmentSnapshot {
+    name: String,
+    data: Arc<AttachmentSnapshotData>,
+}
+
+#[derive(PartialEq, Eq)]
+struct AttachmentSnapshotData {
+    protected: bool,
+    bytes: Zeroizing<Vec<u8>>,
+}
+
+impl AttachmentSnapshot {
+    fn value(&self) -> Value<Vec<u8>> {
+        if self.data.protected {
+            Value::protected(self.data.bytes.as_slice().to_vec())
+        } else {
+            Value::unprotected(self.data.bytes.as_slice().to_vec())
+        }
+    }
+}
+
+struct VersionSnapshot {
+    entry: Entry,
+    attachments: Vec<AttachmentSnapshot>,
+}
+
+struct EntrySnapshot {
+    current: VersionSnapshot,
+    history: Vec<VersionSnapshot>,
+}
+
+impl EntrySnapshot {
+    fn versions(&self) -> impl Iterator<Item = &VersionSnapshot> {
+        std::iter::once(&self.current).chain(self.history.iter())
+    }
+}
 
 /// Entries added / removed / modified on `local` by a [`reconcile`] call.
 #[derive(Debug, Default, Clone)]
@@ -162,6 +198,12 @@ pub fn reconcile(local: &mut Database, remote: &Database) -> Result<MergeSummary
     let local_pre = collect_live_entries(local);
     let remote_pre = collect_live_entries(remote);
 
+    // Numeric attachment ids are local to a database. If two replicas claim
+    // the exact same KDBX version metadata but resolve those references to
+    // different bytes, no ordering rule can choose safely. Detect that case
+    // before upstream mistakes equal pool ids for equal content.
+    ensure_unambiguous_attachment_versions(&local_pre, &remote_pre)?;
+
     // Relies on entry-management's UUID-stability contract (US-011): entries
     // never silently regenerate their UUIDs, so UUID identity equals
     // logical-entry identity for the merge. The upstream `Database::merge`
@@ -180,17 +222,25 @@ pub fn reconcile(local: &mut Database, remote: &Database) -> Result<MergeSummary
     // value must survive as a history entry under the same UUID.
     backfill_lost_versions(local, &local_pre);
     backfill_lost_versions(local, &remote_pre);
+    local.rebuild_attachment_references();
+
+    // Repair history while its non-attachment version metadata still matches
+    // the pre-merge snapshots. This includes both newly-backfilled losers and
+    // pre-existing histories merged from either replica.
+    repair_history_attachments(local, &local_pre);
+    repair_history_attachments(local, &remote_pre);
 
     // AFTER the backfills (their content comparison must see the merged
     // entries exactly as `Database::merge` left them): copy attachment
     // bytes for entries newly added from `remote` — see the module docs'
     // "Attachment handling" section.
-    repair_added_entry_attachments(local, remote, &local_pre, &remote_pre);
+    repair_added_entry_attachments(local, &local_pre, &remote_pre);
 
     // Propagate attachment add/replace/remove for entries present on BOTH
     // sides where `remote` won — the complement of the added-entry repair
     // above. Same "AFTER the backfills" ordering requirement.
-    propagate_both_side_attachments(local, remote, &local_pre, &remote_pre);
+    propagate_both_side_attachments(local, &local_pre, &remote_pre);
+    local.rebuild_attachment_references();
 
     let after = entry_times(local);
     Ok(MergeSummary {
@@ -200,17 +250,43 @@ pub fn reconcile(local: &mut Database, remote: &Database) -> Result<MergeSummary
 
 /// Clone every live entry reachable from the database root. Used to capture a
 /// side's pre-merge state for the no-data-loss backfill.
-fn collect_live_entries(db: &Database) -> Vec<Entry> {
-    fn walk(group: &GroupRef<'_>, out: &mut Vec<Entry>) {
+fn collect_live_entries(db: &Database) -> Vec<EntrySnapshot> {
+    fn snapshot_version(
+        entry: &EntryRef<'_>,
+        pool: &mut BTreeMap<usize, Arc<AttachmentSnapshotData>>,
+    ) -> VersionSnapshot {
+        VersionSnapshot {
+            entry: (**entry).clone(),
+            attachments: snapshot_attachments(entry, pool),
+        }
+    }
+
+    fn walk(
+        group: &GroupRef<'_>,
+        pool: &mut BTreeMap<usize, Arc<AttachmentSnapshotData>>,
+        out: &mut Vec<EntrySnapshot>,
+    ) {
         for entry in group.entries() {
-            out.push((*entry).clone());
+            let history_len = entry
+                .history
+                .as_ref()
+                .map_or(0, |history| history.get_entries().len());
+            let history = (0..history_len)
+                .filter_map(|index| entry.historical(index))
+                .map(|historical| snapshot_version(&historical, pool))
+                .collect();
+            out.push(EntrySnapshot {
+                current: snapshot_version(&entry, pool),
+                history,
+            });
         }
         for sub in group.groups() {
-            walk(&sub, out);
+            walk(&sub, pool, out);
         }
     }
     let mut out = Vec::new();
-    walk(&db.root(), &mut out);
+    let mut pool = BTreeMap::new();
+    walk(&db.root(), &mut pool, &mut out);
     out
 }
 
@@ -223,11 +299,14 @@ fn collect_live_entries(db: &Database) -> Vec<Entry> {
 /// remote tombstone) are intentionally skipped — those are deletions, not
 /// dropped content. Idempotent: a version already preserved is detected by the
 /// dedup check and not re-added, so repeated syncs do not grow history.
-fn backfill_lost_versions(local: &mut Database, pre_entries: &[Entry]) {
+fn backfill_lost_versions(local: &mut Database, pre_entries: &[EntrySnapshot]) {
     for pre in pre_entries {
-        let id = pre.id();
+        let version = &pre.current;
+        let id = version.entry.id();
         let should_backfill = match local.entry(id) {
-            Some(merged) => content_diverged(&merged, pre) && !history_has_version(&merged, pre),
+            Some(merged) => {
+                content_diverged(&merged, version) && !history_has_version(&merged, version)
+            }
             None => false,
         };
         if should_backfill {
@@ -235,7 +314,90 @@ fn backfill_lost_versions(local: &mut Database, pre_entries: &[Entry]) {
                 merged
                     .history
                     .get_or_insert_default()
-                    .add_entry(pre.clone());
+                    .add_entry(version.entry.clone());
+            }
+        }
+    }
+}
+
+fn ensure_unambiguous_attachment_versions(
+    local: &[EntrySnapshot],
+    remote: &[EntrySnapshot],
+) -> Result<(), MergeError> {
+    let mut remote_by_uuid: BTreeMap<Uuid, Vec<&VersionSnapshot>> = BTreeMap::new();
+    for version in remote.iter().flat_map(EntrySnapshot::versions) {
+        remote_by_uuid
+            .entry(version.entry.id().uuid())
+            .or_default()
+            .push(version);
+    }
+
+    for left in local.iter().flat_map(EntrySnapshot::versions) {
+        let Some(remote_versions) = remote_by_uuid.get(&left.entry.id().uuid()) else {
+            continue;
+        };
+        for right in remote_versions {
+            if same_non_attachment_version(&left.entry, &right.entry)
+                && left.attachments != right.attachments
+            {
+                return Err(MergeError::Unresolvable {
+                    reason: format!(
+                        "entry {} has identical version metadata but different attachment bytes",
+                        left.entry.id()
+                    ),
+                });
+            }
+        }
+    }
+    Ok(())
+}
+
+fn repair_history_attachments(local: &mut Database, snapshots: &[EntrySnapshot]) {
+    for snapshot in snapshots.iter().flat_map(EntrySnapshot::versions) {
+        let id = snapshot.entry.id();
+        let indices: Vec<usize> = match local.entry(id) {
+            Some(entry) => {
+                let history_len = entry
+                    .history
+                    .as_ref()
+                    .map_or(0, |history| history.get_entries().len());
+                (0..history_len)
+                    .filter(|&index| {
+                        entry.historical(index).is_some_and(|historical| {
+                            same_non_attachment_version(&historical, &snapshot.entry)
+                        })
+                    })
+                    .collect()
+            }
+            None => continue,
+        };
+
+        for index in indices {
+            let already_matches = if let Some(entry) = local.entry(id) {
+                entry.historical(index).is_some_and(|historical| {
+                    attachment_state_matches(&historical, &snapshot.attachments)
+                })
+            } else {
+                false
+            };
+            if already_matches {
+                continue;
+            }
+
+            if let Some(mut entry) = local.entry_mut(id) {
+                if let Some(mut historical) = entry.historical(index) {
+                    let names: Vec<String> = historical
+                        .as_ref()
+                        .attachment_names()
+                        .map(str::to_string)
+                        .collect();
+                    for name in names {
+                        historical.remove_attachment_by_name(&name);
+                    }
+                    for attachment in &snapshot.attachments {
+                        historical.add_attachment(attachment.name.clone(), attachment.value());
+                    }
+                }
             }
         }
     }
@@ -253,9 +415,8 @@ fn backfill_lost_versions(local: &mut Database, pre_entries: &[Entry]) {
 /// from the pool gracefully, and an aliased id's other referents are left
 /// untouched — only this entry's reference is replaced).
 ///
-/// Reading `remote`'s attachment data is panic-free here because `remote`
-/// is a parsed database: the KDBX parser only retains attachment references
-/// that resolve in the file's own binary pool.
+/// Attachment bytes come from the fail-closed, pre-merge remote snapshot, so
+/// pool-id aliasing introduced by `Database::merge` cannot affect the source.
 ///
 /// The repair advances the entry's `last_modification` (content change ⇒
 /// timestamp bump, upstream's own merge invariant), so a later merge
@@ -266,31 +427,36 @@ fn backfill_lost_versions(local: &mut Database, pre_entries: &[Entry]) {
 /// appears in `local_pre` and is skipped.
 fn repair_added_entry_attachments(
     local: &mut Database,
-    remote: &Database,
-    local_pre: &[Entry],
-    remote_pre: &[Entry],
+    local_pre: &[EntrySnapshot],
+    remote_pre: &[EntrySnapshot],
 ) {
-    let local_pre_uuids: std::collections::BTreeSet<Uuid> =
-        local_pre.iter().map(|e| e.id().uuid()).collect();
+    let local_pre_uuids: std::collections::BTreeSet<Uuid> = local_pre
+        .iter()
+        .map(|e| e.current.entry.id().uuid())
+        .collect();
 
     for pre in remote_pre {
-        let id = pre.id();
+        let id = pre.current.entry.id();
         if local_pre_uuids.contains(&id.uuid()) {
             continue;
         }
-        let Some(remote_ref) = remote.entry(id) else {
-            continue;
-        };
-        let attachments: Vec<(String, _)> = remote_ref
-            .attachments_named()
-            .map(|(name, att)| (name.to_string(), att.data.clone()))
-            .collect();
-        if attachments.is_empty() {
+        let already_matches = local
+            .entry(id)
+            .is_some_and(|entry| attachment_state_matches(&entry, &pre.current.attachments));
+        if already_matches {
             continue;
         }
         if let Some(mut merged) = local.entry_mut(id) {
-            for (name, data) in attachments {
-                merged.add_attachment(name, data);
+            let names: Vec<String> = merged
+                .as_ref()
+                .attachment_names()
+                .map(str::to_string)
+                .collect();
+            for name in names {
+                merged.remove_attachment_by_name(&name);
+            }
+            for attachment in &pre.current.attachments {
+                merged.add_attachment(attachment.name.clone(), attachment.value());
             }
             // Re-pointing the references changed the entry's content
             // (`Entry::eq` includes the attachment map), and upstream's
@@ -323,23 +489,27 @@ fn repair_added_entry_attachments(
 /// `// TODO: attachments`). So when `remote` wins a both-sides entry, the merged
 /// current value carries `remote`'s fields but `local`'s (stale) attachments.
 /// This pass reconciles the merged entry's attachment set to `remote`'s:
-/// attachments only on `local` are removed, and `remote`'s are (re-)added with
-/// bytes read from `remote`'s own (resolvable) pool.
+/// attachments only on `local` are removed, and `remote`'s are (re-)added from
+/// the resolved, zeroizing pre-merge snapshot.
 fn propagate_both_side_attachments(
     local: &mut Database,
-    remote: &Database,
-    local_pre: &[Entry],
-    remote_pre: &[Entry],
+    local_pre: &[EntrySnapshot],
+    remote_pre: &[EntrySnapshot],
 ) {
     // uuid -> local pre-merge last_modification; drives both the both-sides
     // membership test and the winner comparison.
     let local_pre_lm: BTreeMap<Uuid, Option<NaiveDateTime>> = local_pre
         .iter()
-        .map(|e| (e.id().uuid(), e.times.last_modification))
+        .map(|e| {
+            (
+                e.current.entry.id().uuid(),
+                e.current.entry.times.last_modification,
+            )
+        })
         .collect();
 
     for pre in remote_pre {
-        let id = pre.id();
+        let id = pre.current.entry.id();
         // Only entries present on BOTH sides (the complement of
         // `repair_added_entry_attachments`, which handles remote-only adds).
         let Some(&local_lm) = local_pre_lm.get(&id.uuid()) else {
@@ -347,57 +517,27 @@ fn propagate_both_side_attachments(
         };
         // Act only when `remote` STRICTLY won; when `local` won (or tied), the
         // merged entry already carries `local`'s attachments and is correct.
-        if pre.times.last_modification <= local_lm {
+        if pre.current.entry.times.last_modification <= local_lm {
             continue;
         }
-        // Compute the mutation plan from immutable borrows of `remote`/`local`;
-        // the block scopes those borrows so they end before the mutable
-        // `entry_mut` below. A missing live entry on either side skips this UUID.
-        let (to_remove, to_add) = {
-            let (Some(remote_ref), Some(merged_ref)) = (remote.entry(id), local.entry(id)) else {
-                continue;
-            };
-
-            // `remote`'s desired named-attachment bytes vs the merged entry's
-            // current set, keyed by name for an order-independent comparison.
-            let desired: BTreeMap<String, Vec<u8>> = remote_ref
-                .attachments_named()
-                .map(|(name, att)| (name.to_string(), att.data.as_slice().to_vec()))
-                .collect();
-            let current: BTreeMap<String, Vec<u8>> = merged_ref
-                .attachments_named()
-                .map(|(name, att)| (name.to_string(), att.data.as_slice().to_vec()))
-                .collect();
-
-            // Compare-before-mutate: nothing to do when the sets already match.
-            // `add_attachment` allocates a fresh `AttachmentId` per call, so an
-            // unconditional re-add would churn pool ids every sync and the vault
-            // would never quiesce.
-            if desired == current {
-                continue;
-            }
-
-            // Names on the merged entry but not on `remote` → remove.
-            let to_remove: Vec<String> = current
-                .keys()
-                .filter(|name| !desired.contains_key(*name))
-                .cloned()
-                .collect();
-            // `remote`'s attachments as owned `Value`s, to (re-)add by name.
-            let to_add: Vec<(String, _)> = remote_ref
-                .attachments_named()
-                .map(|(name, att)| (name.to_string(), att.data.clone()))
-                .collect();
-
-            (to_remove, to_add)
-        };
+        let already_matches = local
+            .entry(id)
+            .is_some_and(|entry| attachment_state_matches(&entry, &pre.current.attachments));
+        if already_matches {
+            continue;
+        }
 
         if let Some(mut merged) = local.entry_mut(id) {
-            for name in &to_remove {
-                merged.remove_attachment_by_name(name);
+            let names: Vec<String> = merged
+                .as_ref()
+                .attachment_names()
+                .map(str::to_string)
+                .collect();
+            for name in names {
+                merged.remove_attachment_by_name(&name);
             }
-            for (name, data) in to_add {
-                merged.add_attachment(name, data);
+            for attachment in &pre.current.attachments {
+                merged.add_attachment(attachment.name.clone(), attachment.value());
             }
             // Advance `last_modification` whenever the pass mutates (added or
             // removed anything) — REQUIRED, not cosmetic. keepass's
@@ -422,30 +562,86 @@ fn propagate_both_side_attachments(
     }
 }
 
-/// An entry with its `times` and `history` cleared, for content-only equality.
-/// `id` and `parent` are retained, so a group move (parent change) counts as a
-/// genuine content change worth preserving.
-fn content_only(entry: &Entry) -> Entry {
-    let mut copy = entry.clone();
-    copy.times = Times::default();
-    copy.history = None;
-    copy
+fn snapshot_attachments(
+    entry: &EntryRef<'_>,
+    pool: &mut BTreeMap<usize, Arc<AttachmentSnapshotData>>,
+) -> Vec<AttachmentSnapshot> {
+    let mut attachments: Vec<_> = entry
+        .attachments_named()
+        .map(|(name, attachment)| {
+            let id = attachment.id().id();
+            let data = pool
+                .entry(id)
+                .or_insert_with(|| {
+                    Arc::new(AttachmentSnapshotData {
+                        protected: attachment.data.is_protected(),
+                        bytes: Zeroizing::new(attachment.data.as_slice().to_vec()),
+                    })
+                })
+                .clone();
+            AttachmentSnapshot {
+                name: name.to_string(),
+                data,
+            }
+        })
+        .collect();
+    attachments.sort_by(|left, right| left.name.cmp(&right.name));
+    attachments
 }
 
-/// Whether two entries differ in content (ignoring timestamps and history).
-fn content_diverged(a: &Entry, b: &Entry) -> bool {
-    content_only(a) != content_only(b)
+fn attachment_state_matches(entry: &EntryRef<'_>, expected: &[AttachmentSnapshot]) -> bool {
+    entry.attachment_names().count() == expected.len()
+        && expected.iter().all(|snapshot| {
+            entry
+                .attachment_by_name(&snapshot.name)
+                .is_some_and(|attachment| {
+                    attachment.data.is_protected() == snapshot.data.protected
+                        && attachment.data.as_slice() == snapshot.data.bytes.as_slice()
+                })
+        })
+}
+
+/// Compare all entry content except timestamps, history, and pool-local
+/// attachment ids. Parent identity remains content so moves are preserved.
+fn same_non_attachment_content(a: &Entry, b: &Entry) -> bool {
+    a.id() == b.id()
+        && a.parent_id() == b.parent_id()
+        && a.previous_parent_id() == b.previous_parent_id()
+        && a.fields == b.fields
+        && a.autotype == b.autotype
+        && a.tags == b.tags
+        && a.custom_data == b.custom_data
+        && a.icon() == b.icon()
+        && a.foreground_color == b.foreground_color
+        && a.background_color == b.background_color
+        && a.override_url == b.override_url
+        && a.quality_check == b.quality_check
+}
+
+fn same_non_attachment_version(a: &Entry, b: &Entry) -> bool {
+    same_non_attachment_content(a, b) && a.times == b.times
+}
+
+/// Whether the merged current value differs semantically from a snapshot,
+/// ignoring timestamps/history and comparing attachment bytes rather than ids.
+fn content_diverged(entry: &EntryRef<'_>, candidate: &VersionSnapshot) -> bool {
+    !same_non_attachment_content(entry, &candidate.entry)
+        || !attachment_state_matches(entry, &candidate.attachments)
 }
 
 /// Whether `candidate`'s version is already present in `entry`'s history,
 /// matched by both `last_modification` and content (second-precision
 /// timestamps mean two same-second-but-different versions can legitimately
 /// coexist, so neither key alone is sufficient).
-fn history_has_version(entry: &Entry, candidate: &Entry) -> bool {
-    entry.history.as_ref().is_some_and(|history| {
-        history.get_entries().iter().any(|past| {
-            past.times.last_modification == candidate.times.last_modification
-                && content_only(past) == content_only(candidate)
+fn history_has_version(entry: &EntryRef<'_>, candidate: &VersionSnapshot) -> bool {
+    let history_len = entry
+        .history
+        .as_ref()
+        .map_or(0, |history| history.get_entries().len());
+    (0..history_len).any(|index| {
+        entry.historical(index).is_some_and(|past| {
+            same_non_attachment_version(&past, &candidate.entry)
+                && attachment_state_matches(&past, &candidate.attachments)
         })
     })
 }

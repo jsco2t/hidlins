@@ -5,6 +5,8 @@ use quote::quote;
 use quote::ToTokens;
 use syn::{ImplItem, Item, ItemImpl};
 
+use super::encoding::encode_lower;
+
 // This is surely executed - otherwise how can one use any `#[frb]` macro
 // but coverage tool does not think so, possibly because it is done in build time
 // frb-coverage:ignore-start
@@ -52,7 +54,7 @@ fn compute_dummy_struct_ty(original_self_ty: &syn::Type, item_string: &str) -> s
 
     let dummy_struct_name = format!(
         "{DUMMY_STRUCT_PREFIX}{}{}",
-        hex::encode(original_self_ty_string),
+        encode_lower(original_self_ty_string),
         item_string_md5_value,
     );
     syn::parse_str(&dummy_struct_name).unwrap()

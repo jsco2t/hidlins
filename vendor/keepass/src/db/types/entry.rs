@@ -22,17 +22,29 @@ use crate::{
 pub struct EntryId(Uuid);
 
 impl EntryId {
-    pub(crate) fn new() -> Self {
+    /// Generate a new random `EntryId`.
+    pub fn new() -> Self {
         Self(Uuid::new_v4())
     }
 
-    pub(crate) const fn from_uuid(uuid: Uuid) -> Self {
+    /// Build an `EntryId` from an existing [Uuid].
+    ///
+    /// Useful when an entry's identifier needs to be pinned (e.g. test fixtures or migrations).
+    /// Pair with [Group::add_entry_with_id][crate::db::GroupMut::add_entry_with_id] to insert
+    /// an entry under a chosen identifier.
+    pub const fn from_uuid(uuid: Uuid) -> Self {
         Self(uuid)
     }
 
     /// Get the Uuid contained inside
     pub fn uuid(&self) -> Uuid {
         self.0
+    }
+}
+
+impl From<Uuid> for EntryId {
+    fn from(uuid: Uuid) -> Self {
+        Self::from_uuid(uuid)
     }
 }
 
@@ -43,24 +55,44 @@ pub struct Entry {
     pub(crate) id: EntryId,
     pub(crate) parent: GroupId,
 
+    /// the key-value fields of this entry, such as username and password.
+    ///
+    /// Common field names are available in [crate::db::fields].
     pub fields: HashMap<String, Value<String>>,
+
+    /// AutoType settings for this entry
     pub autotype: Option<AutoType>,
+
+    /// tags associated with this entry
     pub tags: Vec<String>,
 
+    /// timestamps for this entry
     pub times: Times,
 
+    /// custom data items associated with this entry
     pub custom_data: HashMap<String, CustomDataItem>,
 
     pub(crate) icon: Option<Icon>,
 
+    /// foreground color for this entry
     pub foreground_color: Option<Color>,
+
+    /// background color for this entry
     pub background_color: Option<Color>,
 
+    /// URL override for this entry
     pub override_url: Option<String>,
-    pub quality_check: Option<bool>,
 
+    /// whether to enable password quality check for this entry
+    pub quality_check: bool,
+
+    /// attachments associated with this entry, mapped by attachment name to attachment ID
     pub(crate) attachments: HashMap<String, AttachmentId>,
 
+    /// Identifier of the group that the Entry was previously contained in
+    pub(crate) previous_parent_group: Option<GroupId>,
+
+    /// history of this entry
     pub history: Option<History>,
 }
 
@@ -82,15 +114,26 @@ impl Entry {
             foreground_color: None,
             background_color: None,
             override_url: None,
-            quality_check: None,
+            quality_check: true,
             attachments: HashMap::new(),
             history: Some(History::default()),
+            previous_parent_group: None,
         }
     }
 
     /// Get the unique identifier for the [Entry]
     pub fn id(&self) -> EntryId {
         self.id
+    }
+
+    /// Get the identifier of the group containing this entry.
+    pub fn parent_id(&self) -> GroupId {
+        self.parent
+    }
+
+    /// Get the previous parent-group identifier, if one is recorded.
+    pub fn previous_parent_id(&self) -> Option<GroupId> {
+        self.previous_parent_group
     }
 
     /// Get the icon of this entry, if it exists
@@ -103,6 +146,7 @@ impl Entry {
         self.fields.get(key).map(|v| v.as_str())
     }
 
+    /// Set a field's value by name
     pub fn set(&mut self, key: impl Into<String>, value: Value<String>) {
         self.fields.insert(key.into(), value);
     }
@@ -183,6 +227,12 @@ impl EntryRef<'_> {
         self.database.group(self.parent).unwrap()
     }
 
+    /// Get a reference to the previous parent group, if any
+    pub fn previous_parent(&self) -> Option<GroupRef<'_>> {
+        self.previous_parent_group
+            .and_then(|id| self.database().group(id))
+    }
+
     /// Gets an [EntryRef] to a historical version of the [Entry], if it exists
     pub fn historical(&self, index: usize) -> Option<EntryRef<'_>> {
         if let Some(h) = &self.history {
@@ -210,34 +260,50 @@ impl EntryRef<'_> {
         self.attachments
             .values()
             .find(|&attachment_id| *attachment_id == id)
-            .cloned()
+            .filter(|attachment_id| self.database.attachments.contains_key(attachment_id))
+            .copied()
             .map(move |attachment_id| AttachmentRef::new(self.database, attachment_id))
     }
 
-    /// Get a reference to an attachment by name, if it exists.
+    /// Get a reference to an attachment by name, if it exists and resolves in
+    /// this database's binary pool.
     pub fn attachment_by_name(&self, name: &str) -> Option<AttachmentRef<'_>> {
         self.attachments
             .get(name)
-            .cloned()
+            .filter(|attachment_id| self.database.attachments.contains_key(attachment_id))
+            .copied()
             .map(move |attachment_id| AttachmentRef::new(self.database, attachment_id))
     }
 
-    /// Get an iterator over the attachments of this entry.
+    /// Get an iterator over the attachments of this entry that resolve in this
+    /// database's binary pool.
     pub fn attachments(&self) -> impl Iterator<Item = AttachmentRef<'_>> {
-        self.attachments
-            .values()
-            .cloned()
-            .map(move |attachment_id| AttachmentRef::new(self.database, attachment_id))
+        self.attachments.values().filter_map(move |attachment_id| {
+            self.database
+                .attachments
+                .contains_key(attachment_id)
+                .then(|| AttachmentRef::new(self.database, *attachment_id))
+        })
     }
 
-    /// Get an iterator over the (name, attachment) pairs of this entry.
+    /// Get an iterator over every attachment name, including references that
+    /// do not currently resolve in this database's binary pool.
+    pub fn attachment_names(&self) -> impl Iterator<Item = &str> {
+        self.attachments.keys().map(String::as_str)
+    }
+
+    /// Get an iterator over the resolved (name, attachment) pairs of this entry.
     ///
     /// Useful when callers need both the attachment's filename (the key under
     /// which it is stored on the entry) and its data, since [`AttachmentRef`]
-    /// itself does not expose the per-entry name.
+    /// itself does not expose the per-entry name. Unresolved pool references
+    /// are skipped instead of constructing an [`AttachmentRef`] that would
+    /// panic when dereferenced.
     pub fn attachments_named(&self) -> impl Iterator<Item = (&str, AttachmentRef<'_>)> {
-        self.attachments.iter().map(move |(name, &attachment_id)| {
-            (name.as_str(), AttachmentRef::new(self.database, attachment_id))
+        self.attachments.iter().filter_map(move |(name, attachment_id)| {
+            self.database.attachments.contains_key(attachment_id).then(|| {
+                (name.as_str(), AttachmentRef::new(self.database, *attachment_id))
+            })
         })
     }
 
@@ -261,6 +327,7 @@ impl Deref for EntryRef<'_> {
 
         if let Some(n) = self.history_index {
             // UNWRAP safety: history existance checked on EntryRef creation
+            #[allow(clippy::unwrap_used, clippy::indexing_slicing)]
             &entry.history.as_ref().unwrap().entries[n]
         } else {
             entry
@@ -297,17 +364,13 @@ impl EntryMut<'_> {
     }
 
     /// Gets an [EntryMut] to a historical version of the [Entry], if it exists
-    pub(crate) fn historical(&mut self, index: usize) -> Option<EntryMut<'_>> {
-        if let Some(h) = &self.history {
-            if index < h.entries.len() {
-                Some(EntryMut {
-                    database: self.database,
-                    id: self.id,
-                    history_index: Some(index),
-                })
-            } else {
-                None
-            }
+    pub fn historical(&mut self, index: usize) -> Option<EntryMut<'_>> {
+        if index < self.history.as_ref()?.entries.len() {
+            Some(EntryMut {
+                database: self.database,
+                id: self.id,
+                history_index: Some(index),
+            })
         } else {
             None
         }
@@ -360,6 +423,12 @@ impl EntryMut<'_> {
         self.database.group_mut(self.parent).unwrap()
     }
 
+    /// Get a mutable reference to the previous parent group, if any
+    pub fn previous_parent_mut(&mut self) -> Option<GroupMut<'_>> {
+        self.previous_parent_group
+            .and_then(move |id| self.database_mut().group_mut(id))
+    }
+
     /// Get a mutable reference to an attachment by id, if it exists.
     pub fn attachment_mut(&mut self, id: AttachmentId) -> Option<AttachmentMut<'_>> {
         self.attachments
@@ -392,7 +461,8 @@ impl EntryMut<'_> {
     pub fn add_attachment(&mut self, name: impl Into<String>, data: Value<Vec<u8>>) -> AttachmentMut<'_> {
         let id = AttachmentId::next_free(self.database);
 
-        let entries: HashSet<(EntryId, Option<usize>)> = vec![(self.id, None)].into_iter().collect();
+        let entries: HashSet<(EntryId, Option<usize>)> =
+            vec![(self.id, self.history_index)].into_iter().collect();
 
         self.database
             .attachments
@@ -411,11 +481,14 @@ impl EntryMut<'_> {
     /// If it was the last reference to the attachment, remove it from the database.
     pub fn remove_attachment_by_name(&mut self, name: &str) {
         let id = self.id;
+        let history_index = self.history_index;
 
         // remove the attachment reference from this entry
         if let Some(attachment_id) = self.attachments.remove(name) {
             if let Some(mut attachment) = self.database.attachment_mut(attachment_id) {
-                attachment.entries.retain(|&(entry_id, _)| entry_id != id);
+                attachment.entries.retain(|&(entry_id, entry_history_index)| {
+                    !(entry_id == id && entry_history_index == history_index)
+                });
 
                 // if this was the last entry referencing the attachment, remove it from the database
                 if attachment.entries.is_empty() {
@@ -430,6 +503,7 @@ impl EntryMut<'_> {
     /// If it was the last reference to the attachment, remove it from the database.
     pub fn remove_attachment_by_id(&mut self, attachment_id: AttachmentId) {
         let id = self.id;
+        let history_index = self.history_index;
 
         // remove the attachment reference from this entry
         let mut names_to_remove = Vec::new();
@@ -444,7 +518,9 @@ impl EntryMut<'_> {
         }
 
         if let Some(mut attachment) = self.database.attachment_mut(attachment_id) {
-            attachment.entries.retain(|&(entry_id, _)| entry_id != id);
+            attachment.entries.retain(|&(entry_id, entry_history_index)| {
+                !(entry_id == id && entry_history_index == history_index)
+            });
 
             // if this was the last entry referencing the attachment, remove it from the database
             if attachment.entries.is_empty() {
@@ -511,6 +587,8 @@ impl EntryMut<'_> {
                 id: custom_icon_id,
                 entries: vec![(id, history_index)].into_iter().collect(),
                 groups: HashSet::new(),
+                name: None,
+                last_modification_time: Some(Times::now()),
                 data,
             },
         );
@@ -539,14 +617,16 @@ impl EntryMut<'_> {
         }
 
         let my_id = self.id;
+        let previous_parent = self.parent;
 
         let mut parent = self.parent_mut();
-        parent.entries.remove(&my_id);
+        parent.entries.shift_remove(&my_id);
 
         #[allow(clippy::unwrap_used, clippy::missing_panics_doc)] // group existence is checked
         let mut new_parent = self.database.group_mut(group_id).unwrap();
         new_parent.entries.insert(my_id);
         self.parent = group_id;
+        self.previous_parent_group = Some(previous_parent);
 
         Ok(())
     }
@@ -589,7 +669,7 @@ impl EntryMut<'_> {
             .database
             .group_mut(entry.parent)
             .expect("Parent group not found");
-        parent.entries.remove(&self.id);
+        parent.entries.shift_remove(&self.id);
 
         // Clear any group's last_top_visible_entry that pointed to this entry.
         // This field is a UI hint and should not hold a dangling EntryId.
@@ -619,6 +699,7 @@ impl Deref for EntryMut<'_> {
 
         if let Some(n) = self.history_index {
             // UNWRAP safety: history existence checked on EntryMut creation
+            #[allow(clippy::unwrap_used, clippy::indexing_slicing)]
             &entry.history.as_ref().unwrap().entries[n]
         } else {
             entry
@@ -634,6 +715,7 @@ impl DerefMut for EntryMut<'_> {
 
         if let Some(n) = self.history_index {
             // UNWRAP safety: history existence checked on EntryMut creation
+            #[allow(clippy::unwrap_used, clippy::indexing_slicing)]
             &mut entry.history.as_mut().unwrap().entries[n]
         } else {
             entry
@@ -651,6 +733,7 @@ pub struct EntryTrack<'a> {
 }
 
 impl EntryTrack<'_> {
+    /// Turn this tracked entry into a normal mutable reference to the entry
     pub fn as_mut(&mut self) -> EntryMut<'_> {
         EntryMut {
             database: self.database,
@@ -713,6 +796,54 @@ impl EntryTrack<'_> {
 
         AttachmentMut::new(self.database, id)
     }
+
+    /// Remove the entry's icon, tracking changes.
+    pub fn set_icon_none(&mut self) {
+        let mut this = self.as_mut();
+        this.set_icon_none();
+        this.times.last_modification = Some(Times::now());
+    }
+
+    /// Set a built-in icon for this entry by its ID, tracking changes.
+    pub fn set_icon_builtin(&mut self, icon_id: usize) {
+        let mut this = self.as_mut();
+        this.set_icon_builtin(icon_id);
+        this.times.last_modification = Some(Times::now());
+    }
+
+    /// Set a custom icon for this entry by its ID, tracking changes.
+    pub fn set_icon_custom(&mut self, custom_icon_id: CustomIconId) -> Result<(), CustomIconNotFoundError> {
+        let mut this = self.as_mut();
+        this.set_icon_custom(custom_icon_id)?;
+        this.times.last_modification = Some(Times::now());
+        Ok(())
+    }
+
+    /// Set a custom icon for this entry by providing the raw data, tracking changes. Returns a mutable reference to the newly created custom icon.
+    pub fn set_icon_custom_new(&mut self, data: Vec<u8>) -> CustomIconMut<'_> {
+        self.set_icon_none();
+
+        let custom_icon_id = CustomIconId::new();
+
+        let id = self.id;
+        let history_index = self.as_mut().history_index;
+
+        self.database.custom_icons.insert(
+            custom_icon_id,
+            CustomIcon {
+                id: custom_icon_id,
+                entries: vec![(id, history_index)].into_iter().collect(),
+                groups: HashSet::new(),
+                name: None,
+                last_modification_time: Some(Times::now()),
+                data,
+            },
+        );
+
+        self.icon = Some(Icon::Custom(custom_icon_id));
+
+        CustomIconMut::new(self.database, custom_icon_id)
+    }
 }
 
 impl Deref for EntryTrack<'_> {
@@ -740,16 +871,24 @@ impl Drop for EntryTrack<'_> {
 
             entry.history.get_or_insert_default().add_entry(historical);
         }
+        self.database.rebuild_attachment_references();
     }
 }
 
 #[cfg(test)]
+#[allow(clippy::unwrap_used)]
 mod tests {
 
+    use super::EntryId;
     use crate::{
         db::{fields, Value},
         Database,
     };
+
+    #[test]
+    fn entry_id_new_generates_distinct_ids() {
+        assert_ne!(EntryId::new(), EntryId::new());
+    }
 
     #[test]
     fn test_entry() {
@@ -801,8 +940,7 @@ mod tests {
             .entry(entry_id)
             .unwrap()
             .attachments
-            .get("Attachment 1")
-            .is_some());
+            .contains_key("Attachment 1"));
 
         assert_eq!(
             db.entry(entry_id).unwrap().get(fields::TITLE).unwrap(),

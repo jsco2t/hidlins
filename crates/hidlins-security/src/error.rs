@@ -56,7 +56,7 @@ pub enum SecurityError {
     /// Examples: `signal-hook` registration failure (Phase 4); future
     /// `zbus` `DBus` connect failure (post-MVP). The `name` field is
     /// the compile-time identifier the source advertises via its
-    /// `OsLockEventSource::name` accessor (arrives in Phase 4).
+    /// `OsLockEventSource::name` accessor.
     #[error("OS event source '{name}' failed to start: {detail}")]
     EventSourceStart {
         /// Source identifier (e.g., `"sigstop"`, `"noop"`, `"logind"`).
@@ -81,7 +81,7 @@ pub enum SecurityError {
         detail: String,
     },
 
-    /// An `AutoLockConfig` (arrives in Phase 2) failed validation
+    /// An `AutoLockConfig` failed validation
     /// (e.g., zero idle timeout).
     #[error("invalid auto-lock config: {detail}")]
     InvalidAutoLockConfig {
@@ -98,8 +98,8 @@ mod tests {
     #[test]
     fn clipboard_io_carries_supplied_detail_string() {
         // `ClipboardIo`'s `detail` field holds the formatted upstream
-        // error message verbatim — Phase 3 will populate it via
-        // `arboard::Error::to_string()`. Round-trip the contract here.
+        // error message verbatim from `arboard::Error::to_string()`.
+        // Round-trip the contract here.
         let err = SecurityError::ClipboardIo {
             detail: "x11 connection refused".to_string(),
         };

@@ -15,7 +15,9 @@
 //! never named.
 
 use chrono::NaiveDateTime;
-use hidlins_core::{fields, Database, GroupRef, Uuid};
+use hidlins_core::{
+    fields, Database, GroupRef, KdfParams, MasterPassword, NoRecoveryConfirmed, Uuid, Vault,
+};
 use hidlins_sync::merge::{reconcile, MergeError};
 
 /// A deterministic timestamp `secs` seconds past a fixed base instant.
@@ -23,6 +25,14 @@ fn t(secs: i64) -> NaiveDateTime {
     chrono::DateTime::from_timestamp(1_700_000_000 + secs, 0)
         .expect("valid timestamp")
         .naive_utc()
+}
+
+fn fast_test_kdf() -> KdfParams {
+    KdfParams {
+        memory_kib: 64,
+        iterations: 1,
+        parallelism: 1,
+    }
 }
 
 /// Create a database with a single root-level entry titled `title` whose
@@ -227,6 +237,77 @@ fn attachment_names(db: &Database, uuid: Uuid) -> Vec<String> {
         .collect();
     names.sort();
     names
+}
+
+/// The bytes of attachment `name` on the historical version titled `title`.
+fn history_attachment_bytes(db: &Database, uuid: Uuid, title: &str, name: &str) -> Option<Vec<u8>> {
+    let id = db
+        .root()
+        .entries()
+        .find(|e| e.id().uuid() == uuid)
+        .map(|e| e.id())?;
+    let entry = db.entry(id)?;
+    let history_len = entry.history.as_ref()?.get_entries().len();
+    (0..history_len).find_map(|index| {
+        let historical = entry.historical(index)?;
+        (historical.get(fields::TITLE) == Some(title))
+            .then(|| {
+                historical
+                    .attachment_by_name(name)
+                    .map(|attachment| attachment.data.as_slice().to_vec())
+            })
+            .flatten()
+    })
+}
+
+fn history_attachment_names(db: &Database, uuid: Uuid, title: &str) -> Option<Vec<String>> {
+    let id = db
+        .root()
+        .entries()
+        .find(|e| e.id().uuid() == uuid)
+        .map(|e| e.id())?;
+    let entry = db.entry(id)?;
+    let history_len = entry.history.as_ref()?.get_entries().len();
+    (0..history_len).find_map(|index| {
+        let historical = entry.historical(index)?;
+        if historical.get(fields::TITLE) != Some(title) {
+            return None;
+        }
+        let mut names: Vec<String> = historical.attachment_names().map(str::to_string).collect();
+        names.sort();
+        Some(names)
+    })
+}
+
+fn assert_history_attachment_transitions(
+    db: &Database,
+    add_uuid: Uuid,
+    replace_uuid: Uuid,
+    remove_uuid: Uuid,
+) {
+    assert_eq!(
+        history_attachment_bytes(db, add_uuid, "add-remote-loser", "added.bin").as_deref(),
+        Some(b"REMOTE-ADDED".as_slice())
+    );
+    assert_eq!(
+        history_attachment_bytes(db, replace_uuid, "replace-remote-loser", "shared.bin").as_deref(),
+        Some(b"REMOTE-REPLACEMENT".as_slice())
+    );
+    assert_eq!(
+        history_attachment_names(db, remove_uuid, "remove-remote-loser"),
+        Some(Vec::new()),
+        "a losing removal must not resurrect the removed attachment in history"
+    );
+    assert_eq!(
+        attachment_bytes(db, replace_uuid, "shared.bin").as_deref(),
+        Some(b"LOCAL-REPLACEMENT".as_slice()),
+        "the local winner remains current"
+    );
+    assert_eq!(
+        attachment_bytes(db, remove_uuid, "gone.bin").as_deref(),
+        Some(b"BASE-REMOVE".as_slice()),
+        "the local winner's current attachment remains present"
+    );
 }
 
 // --- FR-043 / limitation characterization tests --------------------------
@@ -569,6 +650,193 @@ fn local_newer_retains_remote_loser_in_history_via_backfill() {
 }
 
 #[test]
+fn losing_history_attachment_bytes_survive_encrypted_save_and_reopen() {
+    // Regression for HIDLINS-DATA-001. Both replicas allocate pool id 0 for
+    // different bytes. Copying the remote losing Entry into local history
+    // without importing and repointing its attachment would therefore make
+    // `remote.bin` silently resolve to `LOCAL-BYTES` after KDBX serialization.
+    let temp = tempfile::tempdir().expect("temp directory");
+    let path = temp.path().join("merged-history-attachment.kdbx");
+    let password = MasterPassword::new("history attachment test password".to_string());
+    let mut local = Vault::create(
+        &path,
+        &password,
+        None,
+        fast_test_kdf(),
+        NoRecoveryConfirmed::yes(),
+    )
+    .expect("create encrypted local vault");
+
+    let uuid = {
+        let mut root = local.database_mut().root_mut();
+        let mut entry = root.add_entry();
+        entry.set_unprotected(fields::TITLE, "base");
+        entry.times.last_modification = Some(t(0));
+        entry.id().uuid()
+    };
+    let mut remote = local.database().clone();
+
+    edit_untracked(local.database_mut(), uuid, "local-winner", t(20));
+    set_attachment(
+        local.database_mut(),
+        uuid,
+        "local.bin",
+        b"LOCAL-BYTES",
+        t(20),
+    );
+    edit_untracked(&mut remote, uuid, "remote-loser", t(10));
+    set_attachment(&mut remote, uuid, "remote.bin", b"REMOTE-BYTES", t(10));
+
+    reconcile(local.database_mut(), &remote).expect("merge succeeds");
+    local.save().expect("save merged vault");
+    drop(local);
+
+    let reopened = Vault::open(&path, &password, None).expect("reopen merged vault");
+    assert_eq!(
+        attachment_bytes(reopened.database(), uuid, "local.bin").as_deref(),
+        Some(b"LOCAL-BYTES".as_slice()),
+        "the winner's current attachment remains byte-identical"
+    );
+    assert_eq!(
+        history_attachment_bytes(reopened.database(), uuid, "remote-loser", "remote.bin")
+            .as_deref(),
+        Some(b"REMOTE-BYTES".as_slice()),
+        "the losing attachment must be imported into the local pool and survive KDBX save/reopen"
+    );
+}
+
+#[test]
+fn loser_history_attachment_add_replace_remove_converge_after_reopen() {
+    let temp = tempfile::tempdir().expect("temp directory");
+    let path = temp.path().join("history-attachment-transitions.kdbx");
+    let password = MasterPassword::new("history transitions test password".to_string());
+    let mut local = Vault::create(
+        &path,
+        &password,
+        None,
+        fast_test_kdf(),
+        NoRecoveryConfirmed::yes(),
+    )
+    .expect("create encrypted local vault");
+
+    let add_uuid = add_root_entry(local.database_mut(), "add-base", t(0));
+    let replace_uuid = add_root_entry(local.database_mut(), "replace-base", t(0));
+    let remove_uuid = add_root_entry(local.database_mut(), "remove-base", t(0));
+    set_attachment(
+        local.database_mut(),
+        replace_uuid,
+        "shared.bin",
+        b"BASE-REPLACE",
+        t(0),
+    );
+    set_attachment(
+        local.database_mut(),
+        remove_uuid,
+        "gone.bin",
+        b"BASE-REMOVE",
+        t(0),
+    );
+    let mut remote = local.database().clone();
+
+    for (uuid, title) in [
+        (add_uuid, "add-local-winner"),
+        (replace_uuid, "replace-local-winner"),
+        (remove_uuid, "remove-local-winner"),
+    ] {
+        edit_untracked(local.database_mut(), uuid, title, t(20));
+    }
+    set_attachment(
+        local.database_mut(),
+        add_uuid,
+        "local-only.bin",
+        b"LOCAL-CURRENT",
+        t(20),
+    );
+    set_attachment(
+        local.database_mut(),
+        replace_uuid,
+        "shared.bin",
+        b"LOCAL-REPLACEMENT",
+        t(20),
+    );
+
+    edit_untracked(&mut remote, add_uuid, "add-remote-loser", t(10));
+    set_attachment(&mut remote, add_uuid, "added.bin", b"REMOTE-ADDED", t(10));
+    edit_untracked(&mut remote, replace_uuid, "replace-remote-loser", t(10));
+    set_attachment(
+        &mut remote,
+        replace_uuid,
+        "shared.bin",
+        b"REMOTE-REPLACEMENT",
+        t(10),
+    );
+    edit_untracked(&mut remote, remove_uuid, "remove-remote-loser", t(10));
+    remove_named_attachment(&mut remote, remove_uuid, "gone.bin", t(10));
+
+    reconcile(local.database_mut(), &remote).expect("merge transitions");
+    local.save().expect("save merged transitions");
+    drop(local);
+
+    let reopened = Vault::open(&path, &password, None).expect("reopen merged transitions");
+    assert_history_attachment_transitions(reopened.database(), add_uuid, replace_uuid, remove_uuid);
+}
+
+#[test]
+fn parsed_history_attachment_survives_removal_from_current_version() {
+    // The KDBX parser must rebuild reverse attachment references. Otherwise a
+    // tracked edit followed by removing the current attachment treats the
+    // binary as unreferenced and deletes bytes still used by history.
+    let temp = tempfile::tempdir().expect("temp directory");
+    let path = temp.path().join("parsed-history-reference.kdbx");
+    let password = MasterPassword::new("parsed history test password".to_string());
+    let uuid = {
+        let mut vault = Vault::create(
+            &path,
+            &password,
+            None,
+            fast_test_kdf(),
+            NoRecoveryConfirmed::yes(),
+        )
+        .expect("create encrypted vault");
+        let uuid = add_root_entry(vault.database_mut(), "with-attachment", t(0));
+        set_attachment(
+            vault.database_mut(),
+            uuid,
+            "history.bin",
+            b"HISTORY-MUST-SURVIVE",
+            t(0),
+        );
+        vault.save().expect("save base attachment");
+        uuid
+    };
+
+    {
+        let mut vault = Vault::open(&path, &password, None).expect("parse base vault");
+        edit_tracked(
+            vault.database_mut(),
+            uuid,
+            "current-without-attachment",
+            t(10),
+        );
+        remove_named_attachment(vault.database_mut(), uuid, "history.bin", t(10));
+        vault.save().expect("save current removal");
+    }
+
+    let reopened = Vault::open(&path, &password, None).expect("reopen current removal");
+    assert_eq!(
+        attachment_bytes(reopened.database(), uuid, "history.bin"),
+        None,
+        "the attachment is removed from the current version"
+    );
+    assert_eq!(
+        history_attachment_bytes(reopened.database(), uuid, "with-attachment", "history.bin")
+            .as_deref(),
+        Some(b"HISTORY-MUST-SURVIVE".as_slice()),
+        "removing the current reference must not delete history's bytes"
+    );
+}
+
+#[test]
 fn first_collision_without_prior_history_still_preserves_loser_via_backfill() {
     // No-data-loss without prior history: `Database::merge` preserves a loser
     // only if it already carried history, so a first collision on an untracked
@@ -655,6 +923,24 @@ fn same_second_divergence_is_unresolvable() {
     assert!(
         matches!(result, Err(MergeError::Unresolvable { .. })),
         "same-second divergence must be Unresolvable; got {result:?}"
+    );
+}
+
+#[test]
+fn same_version_metadata_with_different_attachment_bytes_is_unresolvable() {
+    // Pool ids are replica-local. Both additions receive id 0, so upstream's
+    // raw Entry equality would otherwise mistake different bytes for the same
+    // attachment and silently accept the collision.
+    let (base, uuid) = db_with_entry("same-metadata", t(0));
+    let mut local = base.clone();
+    let mut remote = base;
+    set_attachment(&mut local, uuid, "secret.bin", b"LOCAL", t(10));
+    set_attachment(&mut remote, uuid, "secret.bin", b"REMOTE", t(10));
+
+    let result = reconcile(&mut local, &remote);
+    assert!(
+        matches!(result, Err(MergeError::Unresolvable { .. })),
+        "equal version metadata with unequal attachment bytes must fail closed; got {result:?}"
     );
 }
 

@@ -48,10 +48,9 @@
 //! # Activity-pong
 //!
 //! [`SyncOptions::on_activity`] is invoked at every network boundary
-//! and after the merge call. The full `hidlins-security`
-//! `AutoLockController` integration is deferred (see `crate::activity`);
-//! a closure-shaped callback locks in the *contract* without committing
-//! to the controller's borrow/ownership shape.
+//! and after the merge call. The TUI wires this callback to its
+//! `AutoLockController`, keeping long-running sync traffic from looking idle
+//! without coupling this transport/orchestration crate to UI lifecycle state.
 //!
 //! # Registry I/O
 //!
@@ -99,11 +98,9 @@ pub struct SyncOptions {
     pub max_retries: usize,
 
     /// Activity pinger called at every network boundary (HEAD, GET, PUT)
-    /// and after the merge engine returns. Wired through to a future
-    /// `hidlins_security::AutoLockController` once that crate's borrow
-    /// shape is settled; the closure shape lets us lock in the *contract*
-    /// without committing to the controller's ownership model. `None` is
-    /// the appropriate value for headless / one-shot CLI contexts.
+    /// and after the merge engine returns. The TUI uses this callback to keep
+    /// its auto-lock controller active during long syncs. `None` is appropriate
+    /// for headless and one-shot CLI contexts.
     pub on_activity: Option<Box<dyn FnMut()>>,
 }
 
@@ -664,7 +661,7 @@ fn read_vault_bytes(path: &std::path::Path) -> Result<Vec<u8>, SyncError> {
 /// pointer.
 fn sha256_of(bytes: &[u8]) -> String {
     let digest = Sha256::digest(bytes);
-    hex::encode(digest)
+    crate::encoding::encode_lower(&digest)
 }
 
 /// Call the activity pinger if one is registered.

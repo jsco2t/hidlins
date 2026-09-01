@@ -9,6 +9,7 @@ pub mod custom_serde;
 pub mod entry;
 pub mod group;
 pub mod meta;
+pub mod tags;
 pub mod times;
 pub mod timestamp;
 
@@ -38,12 +39,16 @@ pub fn parse_xml(
     Ok(kdbx.xml_to_db(inner_decryptor, header_attachments)?)
 }
 
+/// Errors that can occur during parsing of the inner XML database of a KDBX file
 #[derive(Debug, Error)]
 #[non_exhaustive]
 pub enum ParseXmlError {
+    /// Errors related to XML deserialization or serialization.
     #[error("Error parsing XML inside KDBX: {0}")]
     Xml(#[from] quick_xml::DeError),
 
+    /// Errors related to unprotecting entries, such as decryption failures or unsupported
+    /// encryption methods.
     #[error("Error unprotecting entry: {0}")]
     Unprotect(#[from] UnprotectError),
 }
@@ -152,6 +157,7 @@ impl KeePassFile {
 
         db.attachments = attachments;
         db.custom_icons = custom_icons;
+        db.rebuild_attachment_references();
 
         // Re-populate CustomIcon back-reference sets.
         //
@@ -162,22 +168,26 @@ impl KeePassFile {
         let entry_ids: Vec<crate::db::EntryId> = db.entries.keys().copied().collect();
         for entry_id in entry_ids {
             // current version
-            if let Some(crate::db::Icon::Custom(icon_id)) = db.entries[&entry_id].icon {
-                if let Some(icon) = db.custom_icons.get_mut(&icon_id) {
+            if let Some(crate::db::Icon::Custom(icon_id)) =
+                db.entries.get(&entry_id).and_then(|e| e.icon.as_ref())
+            {
+                if let Some(icon) = db.custom_icons.get_mut(icon_id) {
                     icon.entries.insert((entry_id, None));
                 }
             }
+
             // historical versions
-            let history_len = db.entries[&entry_id]
-                .history
-                .as_ref()
-                .map_or(0, |h| h.entries.len());
-            for i in 0..history_len {
-                if let Some(crate::db::Icon::Custom(icon_id)) =
-                    db.entries[&entry_id].history.as_ref().unwrap().entries[i].icon
-                {
-                    if let Some(icon) = db.custom_icons.get_mut(&icon_id) {
-                        icon.entries.insert((entry_id, Some(i)));
+            if let Some(entry) = db.entries.get(&entry_id) {
+                let history_len = entry.history.as_ref().map_or(0, |h| h.entries.len());
+
+                for i in 0..history_len {
+                    #[allow(clippy::indexing_slicing)] // We just checked that the index is in bounds
+                    if let Some(crate::db::Icon::Custom(icon_id)) =
+                        entry.history.as_ref().and_then(|h| h.entries[i].icon.as_ref())
+                    {
+                        if let Some(icon) = db.custom_icons.get_mut(icon_id) {
+                            icon.entries.insert((entry_id, Some(i)));
+                        }
                     }
                 }
             }
@@ -185,8 +195,10 @@ impl KeePassFile {
 
         let group_ids: Vec<crate::db::GroupId> = db.groups.keys().copied().collect();
         for group_id in group_ids {
-            if let Some(crate::db::Icon::Custom(icon_id)) = db.groups[&group_id].icon {
-                if let Some(icon) = db.custom_icons.get_mut(&icon_id) {
+            if let Some(crate::db::Icon::Custom(icon_id)) =
+                db.groups.get(&group_id).and_then(|g| g.icon.as_ref())
+            {
+                if let Some(icon) = db.custom_icons.get_mut(icon_id) {
                     icon.groups.insert(group_id);
                 }
             }
@@ -215,7 +227,7 @@ impl KeePassFile {
                     .iter()
                     .map(|(uuid, deletion_time)| DeletedObject {
                         uuid: UUID(*uuid),
-                        deletion_time: deletion_time.map(Timestamp::new_iso8601),
+                        deletion_time: deletion_time.map(Timestamp::from),
                     })
                     .collect(),
             })
@@ -282,10 +294,16 @@ pub struct DeletedObject {
     #[serde(rename = "UUID")]
     uuid: UUID,
 
-    #[serde(default, with = "cs_opt_string")]
+    #[serde(
+        default,
+        rename = "DeletionTime",
+        alias = "deletion_time",
+        with = "cs_opt_string"
+    )]
     deletion_time: Option<Timestamp>,
 }
 
+#[allow(clippy::unwrap_used)]
 #[cfg(test)]
 mod tests {
 
@@ -297,7 +315,7 @@ mod tests {
     #[test]
     fn test_deserialize_uuid() {
         let uuid_str = "AAECAwQFBgcICQoLDA0ODw==";
-        let uuid: UUID = quick_xml::de::from_str(&format!("{}", uuid_str)).unwrap();
+        let uuid: UUID = quick_xml::de::from_str(uuid_str).unwrap();
         assert_eq!(
             uuid.0.as_bytes(),
             &[0x00, 0x01, 0x02, 0x03, 0x04, 0x05, 0x06, 0x07, 0x08, 0x09, 0x0a, 0x0b, 0x0c, 0x0d, 0x0e, 0x0f]
@@ -311,5 +329,52 @@ mod tests {
         ]));
         let serialized = quick_xml::se::to_string(&Test(uuid)).unwrap();
         assert_eq!(serialized, "<Test>AAECAwQFBgcICQoLDA0ODw==</Test>");
+    }
+
+    #[test]
+    fn test_serialize_deleted_object_deletion_time() {
+        let deleted_object = DeletedObject {
+            uuid: UUID(Uuid::nil()),
+            deletion_time: Some(Timestamp::new_iso8601(
+                chrono::NaiveDateTime::parse_from_str("2026-08-15T12:34:56", "%Y-%m-%dT%H:%M:%S").unwrap(),
+            )),
+        };
+
+        let serialized = quick_xml::se::to_string_with_root("DeletedObject", &deleted_object).unwrap();
+
+        assert!(serialized.contains("<DeletionTime>"));
+        assert!(!serialized.contains("<deletion_time>"));
+    }
+
+    #[test]
+    fn test_deserialize_legacy_deleted_object_deletion_time() {
+        let deleted_object: DeletedObject = quick_xml::de::from_str(
+            "<DeletedObject><UUID>AAAAAAAAAAAAAAAAAAAAAA==</UUID><deletion_time>2026-08-15T12:34:56Z</deletion_time></DeletedObject>",
+        )
+        .unwrap();
+
+        assert!(deleted_object.deletion_time.is_some());
+    }
+
+    #[cfg(feature = "save_kdbx4")]
+    #[test]
+    fn test_serialize_deletion_time_mode() {
+        let xml = r#"<KeePassFile>
+            <Meta></Meta>
+            <Root>
+               <Group><UUID>tP/vJ/3uSHyomfPZ4dXVlg==</UUID><Name></Name></Group>
+               <DeletedObjects>
+                   <DeletedObject>
+                       <UUID>30lsaI9KSYefuJb0PHSRiw==</UUID>
+                       <DeletionTime>io8Y4g4AAAA=</DeletionTime>
+                   </DeletedObject>
+               </DeletedObjects>
+            </Root>
+        </KeePassFile>"#;
+        let mut cipher = crate::config::InnerCipherConfig::Plain.get_cipher(&[]).unwrap();
+        let db = parse_xml(xml.as_bytes(), &[], &mut *cipher).unwrap();
+        let kdbx = KeePassFile::db_to_xml(&db, &mut *cipher).unwrap();
+        let xml = quick_xml::se::to_string_with_root("DeletedObjects", &kdbx.root.deleted_objects).unwrap();
+        assert!(xml.contains("<DeletionTime>io8Y4g4AAAA=</DeletionTime>"));
     }
 }

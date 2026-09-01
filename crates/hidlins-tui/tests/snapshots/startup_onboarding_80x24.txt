@@ -1,0 +1,19 @@
+
+
+
+
+                             ┌ Hidlins startup ──────────────────────────────┐
+          .--------.         │HIDLINS                                        │
+        .'          '.       │Please select a vault file:                    │
+       /    .----.    \      │Focused field: Vault path                      │
+      |    |      |    |     │Path: [type an existing KDBX path]             │
+  .---'----'------'----'---. │Status: Ready                                  │
+  | o      HIDLINS      o  | │                                               │
+  |                        | │Enter: Open vault                              │
+  |       HH     HH        | │Esc or Ctrl+Q: Exit                            │
+  |       HH     HH        | │                                               │
+  |       HHHHHHHHH        | │                                               │
+  |       HH     HH        | │                                               │
+  | o     HH     HH     o  | │                                               │
+  '------------------------' │                                               │
+                             └───────────────────────────────────────────────┘

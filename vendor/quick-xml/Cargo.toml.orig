@@ -1,6 +1,6 @@
 [package]
 name = "quick-xml"
-version = "0.40.1"
+version = "0.41.0"
 description = "High performance xml reader and writer"
 edition = "2021"
 
@@ -67,6 +67,11 @@ name = "encoding"
 harness = false
 path = "benches/encoding.rs"
 required-features = ["encoding"]
+
+[[bench]]
+name = "issue971"
+harness = false
+path = "benches/issue971.rs"
 
 [features]
 default = []

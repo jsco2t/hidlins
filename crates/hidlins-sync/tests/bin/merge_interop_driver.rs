@@ -3,10 +3,11 @@
 //!
 //! Produces the US-044 collision outcome on disk: a single entry whose
 //! current title is `winner` and whose history contains the collision loser
-//! `loser`. The shell harness then opens the vault with `keepassxc-cli`,
-//! exports it to XML, and asserts KeePassXC ≥ 2.7 reads both the current
-//! value and the preserved-loser history entry — the NFR-009 round-trip
-//! promise applied to a merged vault.
+//! `loser`, with distinct attachments on each version. The shell harness then
+//! opens the vault with `keepassxc-cli`, exports it to XML, and asserts
+//! KeePassXC ≥ 2.7 reads the current value and the preserved-loser history
+//! attachment byte-for-byte — the NFR-009 round-trip promise applied to a
+//! merged vault.
 //!
 //! Test-only: gated behind the `test-helpers` feature so it is never built
 //! into a production binary. The master password is read from stdin (first
@@ -17,7 +18,9 @@
 use std::io::BufRead;
 
 use chrono::NaiveDateTime;
-use hidlins_core::{fields, Database, KdfParams, MasterPassword, NoRecoveryConfirmed, Uuid, Vault};
+use hidlins_core::{
+    fields, Database, KdfParams, MasterPassword, NoRecoveryConfirmed, Uuid, Value, Vault,
+};
 use hidlins_sync::merge::reconcile;
 
 /// A deterministic modification timestamp `secs` past a fixed base instant.
@@ -44,6 +47,18 @@ fn edit(db: &mut Database, uuid: Uuid, title: &str, at: NaiveDateTime) {
         .expect("entry exists")
         .times
         .last_modification = Some(at);
+}
+
+fn attach(db: &mut Database, uuid: Uuid, name: &str, bytes: &[u8], at: NaiveDateTime) {
+    let id = db
+        .root()
+        .entries()
+        .find(|e| e.id().uuid() == uuid)
+        .map(|e| e.id())
+        .expect("entry exists");
+    let mut entry = db.entry_mut(id).expect("entry exists");
+    entry.add_attachment(name, Value::unprotected(bytes.to_vec()));
+    entry.times.last_modification = Some(at);
 }
 
 fn main() {
@@ -97,10 +112,24 @@ fn main() {
     let mut remote: Database =
         Vault::open_from_bytes(&base_bytes, &password, None).expect("open_from_bytes remote");
     edit(&mut remote, uuid, "loser", ts(10));
+    attach(
+        &mut remote,
+        uuid,
+        "loser.bin",
+        b"HIDLINS-LOSER-HISTORY-ATTACHMENT",
+        ts(10),
+    );
 
     // 3. The "local" device edits the same entry to the (newer) winner value.
     let mut local = Vault::open(out.as_ref(), &password, None).expect("open local");
     edit(local.database_mut(), uuid, "winner", ts(20));
+    attach(
+        local.database_mut(),
+        uuid,
+        "winner.bin",
+        b"HIDLINS-WINNER-CURRENT-ATTACHMENT",
+        ts(20),
+    );
 
     // 4. Merge: winner (newer) wins the current value; loser is preserved as
     //    a history entry under the same UUID. Save the merged vault.

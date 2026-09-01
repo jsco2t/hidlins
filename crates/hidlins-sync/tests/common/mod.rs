@@ -6,5 +6,6 @@
 
 #![allow(dead_code, clippy::doc_markdown)]
 
+pub mod encoding;
 pub mod minio_env;
 pub mod sync_env;

@@ -60,7 +60,6 @@ enumflags2.workspace = true
 futures-core.workspace = true
 futures-lite.workspace = true
 async-broadcast.workspace = true
-hex.workspace = true
 ordered-stream.workspace = true
 uuid.workspace = true
 event-listener.workspace = true

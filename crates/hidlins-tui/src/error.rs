@@ -10,12 +10,12 @@ use thiserror::Error;
 
 /// Errors surfaced by the `hidlins-tui` binary.
 ///
-/// `#[non_exhaustive]` so later phases can add variants (e.g. richer config or
-/// settings errors) without a breaking change to the matching sites.
+/// `#[non_exhaustive]` so the error surface can evolve without breaking
+/// downstream matching sites.
 #[derive(Error, Debug)]
 #[non_exhaustive]
 pub enum TuiError {
-    /// A recognized option is deliberately reserved for a tracked later task.
+    /// A recognized option is deliberately unavailable in this build.
     #[error("{0}")]
     UnsupportedOption(String),
     /// Terminal / backend I/O (raw mode, alternate screen, draw, poll).
@@ -40,20 +40,15 @@ pub enum TuiError {
     /// Reading or writing the TUI's own non-secret `tui.toml` failed. Kept
     /// distinct from [`TuiError::Io`] (terminal I/O) so config failures can be
     /// surfaced non-fatally (status-bar warning, keep running on in-memory
-    /// state) per design U.5. Wired in Phase 4.
+    /// state) per design U.5.
     #[error("could not access the TUI config file: {0}")]
     ConfigIo(io::Error),
 
     /// The TUI's `tui.toml` could not be parsed; the loader falls back to
     /// defaults. The message is a parser diagnostic, never file contents that
-    /// could carry secrets (the config holds only prefs + UUIDs). Wired in
-    /// Phase 4.
+    /// could carry secrets (the config holds only prefs + UUIDs).
     #[error("could not parse the TUI config: {0}")]
     ConfigParse(String),
-
-    /// No vaults are registered in `vaults.toml`.
-    #[error("no vaults registered (run `hidlins vault create` to make one)")]
-    NoVaultsRegistered,
 
     /// `--vault NAME` named a vault that is not in the registry. The name is a
     /// user-chosen vault label (never secret). Reported pre-terminal so it
@@ -83,7 +78,6 @@ mod tests {
         vec![
             TuiError::ConfigIo(io::Error::new(io::ErrorKind::NotFound, "no such file")),
             TuiError::ConfigParse("expected a table at line 3".to_string()),
-            TuiError::NoVaultsRegistered,
             TuiError::UnknownVault("personal".to_string()),
             TuiError::Cancelled,
             TuiError::Internal("vault is None in Phase::Workspace"),

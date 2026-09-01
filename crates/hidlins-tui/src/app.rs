@@ -1,14 +1,15 @@
 //! `App` — the single source of truth for the running TUI.
 //!
-//! The [`Phase`] state machine drives the pre-unlock screens (`UnlockList` →
-//! `UnlockPrompt` → `LockScreen`) and the unlocked `Workspace` (tab bar + active
-//! tab + status bar). Auto-lock (FR-073) is wired in [`App::tick`].
+//! The [`Phase`] state machine drives the pre-unlock screens (first-vault
+//! onboarding or registered-vault selection → `UnlockPrompt` → `LockScreen`)
+//! and the unlocked `Workspace` (tab bar + active tab + status bar). Auto-lock
+//! (FR-073) is wired in [`App::tick`].
 //!
-//! **Phase 4 (persistence + pins + recents):** on unlock the workspace is
+//! On unlock the workspace is
 //! hydrated from `tui.toml` (per-vault pinned tabs + recents), the tree sort
 //! defaults to the global preference in `config.toml`, and pin toggles / recents bumps
-//! mirror back to `tui.toml`. Overlays (Phase 5) and sync/Settings (Phase 6)
-//! land later.
+//! mirror back to `tui.toml`. Action overlays and the Settings/Sync surfaces
+//! operate over the same unlocked session.
 //!
 //! Master-password lifetime (ADR-T4): the App holds **no** `MasterPassword`
 //! field. The typed password lives only in the `UnlockPrompt`'s
@@ -16,7 +17,7 @@
 //! `Vault::open` call, and is dropped (zeroized) immediately after.
 
 use std::fmt;
-use std::path::PathBuf;
+use std::path::{Path, PathBuf};
 use std::time::{Duration, Instant};
 
 use chrono::Utc;
@@ -24,7 +25,7 @@ use crossterm::event::{
     Event, KeyCode, KeyEvent, KeyEventKind, KeyModifiers, MouseButton, MouseEvent, MouseEventKind,
 };
 use hidlins_core::{
-    EntryBuilder, EntryKind, HidlinsPaths, MasterPassword, MatchedField, SearchOptions,
+    EntryKind, HidlinsPaths, MasterPassword, MatchedField, RegisteredVault, SearchOptions,
     SearchResult, SearchScope, Uuid, Vault, VaultError, VaultRegistry,
 };
 use hidlins_security::vault_lock::VaultLockConfig;
@@ -39,17 +40,22 @@ use crate::clipboard::{self, ClipboardSink};
 use crate::command::registry::{CmdState, Contexts};
 use crate::command::{Command, Keymap, PendingSeq, Preset, Resolution};
 use crate::config::{self, TuiConfig};
+use crate::entry_actions;
 use crate::error::TuiError;
 use crate::jump_history::JumpHistory;
 use crate::overlay::bulk::{GroupChoice, GroupPickerState, TagInputState};
-use crate::overlay::edit::{Col, EditField, EditState, EditValues};
+#[cfg(test)]
+use crate::overlay::edit::EditValues;
+use crate::overlay::edit::{Col, EditField, EditState};
 use crate::overlay::generate::{Class, GenState};
 use crate::overlay::history::HistoryState;
 use crate::overlay::search::{self, SearchState};
 use crate::overlay::sync_config::{SyncConfigState, SyncField};
 use crate::overlay::{self, Overlay, TagAction};
+use crate::persistence;
 use crate::recents::Recents;
 use crate::screens;
+use crate::session::SessionResources;
 use crate::sync_runtime::{SyncMsg, SyncResult, SyncRuntime, SyncTrigger};
 use crate::tabs::{PinChange, Tab, TabBar, MAX_PINS};
 use crate::theme::{self, EnvParts, Theme, UserThemeFile, BUILTIN_NAMES};
@@ -79,6 +85,47 @@ fn digit_value(key: &KeyEvent) -> Option<usize> {
         KeyCode::Char(c) => c.to_digit(10).map(|d| d as usize),
         _ => None,
     }
+}
+
+/// Resolve a user-entered existing-vault path without shell expansion.
+///
+/// Only a leading `~/` is expanded. Relative paths are anchored at `cwd`, then
+/// the result is canonicalized and required to name a regular file. Keeping
+/// this helper pure makes every deterministic path rule unit-testable without
+/// mutating process environment or current directory.
+fn resolve_existing_vault_path(
+    raw: &str,
+    cwd: &Path,
+    home: Option<&Path>,
+) -> Result<(PathBuf, String), &'static str> {
+    let trimmed = raw.trim();
+    if trimmed.is_empty() {
+        return Err("Enter the path to an existing KDBX vault.");
+    }
+
+    let expanded = if let Some(rest) = trimmed.strip_prefix("~/") {
+        home.ok_or("Cannot expand ~/ because the home directory is unavailable.")?
+            .join(rest)
+    } else {
+        PathBuf::from(trimmed)
+    };
+    let anchored = if expanded.is_absolute() {
+        expanded
+    } else {
+        cwd.join(expanded)
+    };
+    let canonical = std::fs::canonicalize(anchored)
+        .map_err(|_| "Vault file does not exist or cannot be accessed.")?;
+    if !canonical.is_file() {
+        return Err("Select a KDBX file, not a directory.");
+    }
+    let name = canonical
+        .file_stem()
+        .and_then(|stem| stem.to_str())
+        .filter(|stem| !stem.is_empty())
+        .ok_or("Vault filename must contain a valid UTF-8 name.")?
+        .to_string();
+    Ok((canonical, name))
 }
 
 /// Maximum consecutive failed unlock attempts before bouncing back to the list.
@@ -139,20 +186,43 @@ impl From<VaultError> for PersistError {
 }
 
 /// Top-level phase. Pre-unlock screens are full-screen; unlocking enters the
-/// (placeholder, this phase) workspace.
+/// tabbed workspace.
 pub(crate) enum Phase {
+    /// First run: enter the path of an existing KDBX vault.
+    VaultOnboarding { input: tui_input::Input },
     /// Pick a registered vault.
     UnlockList,
     /// Enter the master password for the chosen vault.
     UnlockPrompt {
-        vault_name: String,
+        origin: UnlockOrigin,
         input: PasswordInput,
         attempts: u8,
     },
     /// Post-lock screen; any key returns to the list.
     LockScreen,
-    /// Unlocked workspace (placeholder body in Phase 2).
+    /// Unlocked tabbed workspace.
     Workspace,
+}
+
+/// Complete, valid provenance for an unlock prompt. Each variant owns exactly
+/// the data its cancel, retry, and success transitions require.
+#[derive(Debug, Clone)]
+pub(crate) enum UnlockOrigin {
+    /// One configured vault or an explicit `--vault` selection.
+    Direct { vault_name: String },
+    /// A named row selected from the multiple-vault picker.
+    VaultList { vault_name: String, index: usize },
+    /// First-run authentication, with registration deferred until success.
+    Onboarding { registration: RegisteredVault },
+}
+
+impl UnlockOrigin {
+    pub(crate) fn vault_name(&self) -> &str {
+        match self {
+            Self::Direct { vault_name } | Self::VaultList { vault_name, .. } => vault_name,
+            Self::Onboarding { registration } => &registration.name,
+        }
+    }
 }
 
 /// Which pane of the Secrets tab has keyboard focus (T3.1). `Tab` toggles it;
@@ -202,15 +272,9 @@ pub(crate) enum MouseTarget {
 #[allow(clippy::struct_excessive_bools)]
 pub(crate) struct App {
     pub(crate) phase: Phase,
-    /// `Some` only while unlocked AND not mid-sync. Dropping it zeroizes the
-    /// database and releases the on-disk lock. It is `None` while a background
-    /// sync owns it (ADR-T4a) — see [`App::is_syncing`].
-    pub(crate) vault: Option<Vault>,
-    /// `Some` except while a background sync owns it (moved to the worker for
-    /// the duration; ADR-T4a). The pre-unlock phases that read it
-    /// (`UnlockList`/`LockScreen`) never run mid-sync, so [`App::registry`]'s
-    /// `expect` is sound. Handed back in [`App::integrate_sync_result`].
-    registry: Option<VaultRegistry>,
+    /// Single owner for the registry/vault pair. Its variants make the locked,
+    /// ready, and worker-owned states explicit and rule out split ownership.
+    session: SessionResources,
     /// Resolved state-directory paths; the anchor for `tui.toml` I/O (T4.1).
     pub(crate) paths: HidlinsPaths,
     /// Per-vault pins/recents (`tui.toml`; ADR-T3). The on-disk mirror of the
@@ -333,7 +397,6 @@ impl App {
     /// Construct from the on-disk registry (production path).
     ///
     /// # Errors
-    /// [`TuiError::NoVaultsRegistered`] if the registry has no vaults;
     /// [`TuiError::Core`] if the registry can't be loaded; [`TuiError::Security`]
     /// if the auto-lock controller rejects its config.
     pub(crate) fn new(args: &Args) -> Result<Self, TuiError> {
@@ -529,8 +592,7 @@ impl App {
             return;
         };
         let registry = self
-            .registry
-            .as_mut()
+            .registry_mut()
             .expect("registry present outside an in-flight sync");
         if let Err(e) = registry.update_registered_extra(&name, |extra| {
             VaultLockConfig::apply_idle_timeout(extra, Some(seconds));
@@ -603,15 +665,25 @@ impl App {
         paths: HidlinsPaths,
         lock_config: AutoLockConfig,
     ) -> Result<Self, TuiError> {
-        if registry.list().next().is_none() {
-            return Err(TuiError::NoVaultsRegistered);
-        }
+        let vault_names: Vec<_> = registry.list().map(|vault| vault.name.clone()).collect();
+        let phase = match vault_names.as_slice() {
+            [] => Phase::VaultOnboarding {
+                input: tui_input::Input::default(),
+            },
+            [name] => Phase::UnlockPrompt {
+                origin: UnlockOrigin::Direct {
+                    vault_name: name.clone(),
+                },
+                input: PasswordInput::new(),
+                attempts: 0,
+            },
+            _ => Phase::UnlockList,
+        };
         let (ui_config, config_warning) = TuiConfig::load(&config::config_path(&paths));
         let user_config_path = paths.config_toml();
         Ok(Self {
-            phase: Phase::UnlockList,
-            vault: None,
-            registry: Some(registry),
+            phase,
+            session: SessionResources::locked(registry),
             paths,
             ui_config,
             // Defaulted here (test seam touches no config file); `App::new`
@@ -660,14 +732,26 @@ impl App {
     /// The vault registry. Present except while a background sync owns it
     /// (ADR-T4a); the pre-unlock phases that call this never run mid-sync.
     pub(crate) fn registry(&self) -> &VaultRegistry {
-        self.registry
-            .as_ref()
+        self.session
+            .registry()
             .expect("registry is present outside an in-flight sync")
+    }
+
+    fn registry_mut(&mut self) -> Option<&mut VaultRegistry> {
+        self.session.registry_mut()
+    }
+
+    pub(crate) fn vault(&self) -> Option<&Vault> {
+        self.session.vault()
+    }
+
+    pub(crate) fn vault_mut(&mut self) -> Option<&mut Vault> {
+        self.session.vault_mut()
     }
 
     /// Whether a background sync is in flight (vault moved to the worker).
     pub(crate) fn is_syncing(&self) -> bool {
-        self.sync.is_syncing()
+        self.session.is_syncing()
     }
 
     /// Test seam: inject a clipboard sink (e.g. a recording mock).
@@ -700,11 +784,11 @@ impl App {
             self.on_sync_message(msg, now);
         }
 
-        if self.vault.is_some() {
+        if self.vault().is_some() {
             if self.controller.tick(now) == LockState::Locked {
                 self.lock_app();
             }
-        } else if self.sync.is_syncing() && self.controller.tick(now) == LockState::Locked {
+        } else if self.is_syncing() && self.controller.tick(now) == LockState::Locked {
             self.lock_pending = true;
         }
     }
@@ -728,10 +812,9 @@ impl App {
     /// cleanly. A failed reload falls back to an empty registry rather than
     /// leaving `registry` `None` (which would panic the post-lock `UnlockList`).
     fn recover_from_lost_worker(&mut self) {
-        self.registry = Some(
-            VaultRegistry::load(self.paths.clone())
-                .unwrap_or_else(|_| VaultRegistry::with_paths(self.paths.clone())),
-        );
+        let registry = VaultRegistry::load(self.paths.clone())
+            .unwrap_or_else(|_| VaultRegistry::with_paths(self.paths.clone()));
+        self.session.recover_locked(registry);
         self.lock_pending = false;
         let message = "Sync worker failed unexpectedly; vault locked.".to_string();
         self.sync_status = Some(message.clone());
@@ -751,21 +834,22 @@ impl App {
             outcome,
             trigger,
         } = result;
-        self.registry = Some(registry);
         match outcome {
             Ok(outcome) => {
-                self.vault = Some(vault);
+                self.session.finish_sync(vault, registry);
                 self.surface_outcome(&outcome, now);
                 // FastReplaced/Merged may have changed the entry set; the tree
                 // rebuilds from the vault each frame, so just re-clamp selection.
                 self.reclamp_tree_selection();
                 // A remote replacement/merge can remove entries that were
                 // marked before sync. Never leave stale batch operands behind.
-                self.marks.retain(|uuid| {
-                    self.vault
-                        .as_ref()
-                        .is_some_and(|vault| vault.get_entry(*uuid).is_ok())
-                });
+                let valid_marks: std::collections::HashSet<_> = self
+                    .vault()
+                    .into_iter()
+                    .flat_map(Vault::entry_summaries)
+                    .map(|entry| entry.uuid())
+                    .collect();
+                self.marks.retain(|uuid| valid_marks.contains(uuid));
                 if self.marks.is_empty() {
                     self.tree_mode = TreeMode::Normal;
                 }
@@ -785,6 +869,7 @@ impl App {
                 // LockScreen, even for an on-quit trigger: the local save is
                 // already durable, so the user can re-open and retry.
                 drop(vault);
+                self.session.recover_locked(registry);
                 self.lock_pending = false;
                 let message = sync_error_message(&e);
                 self.sync_status = Some(message.clone());
@@ -821,7 +906,7 @@ impl App {
     /// entry. Selection is UUID-based, so a still-present entry is untouched.
     fn reclamp_tree_selection(&mut self) {
         self.detail_scroll = 0;
-        let Some(vault) = self.vault.as_ref() else {
+        let Some(vault) = self.vault() else {
             return;
         };
         let rows = entry_tree::build_rows(vault, &self.tree, &self.recents);
@@ -840,7 +925,7 @@ impl App {
     /// Replacing `self.phase` drops any `Zeroizing` buffer held by the current
     /// phase (a partially-typed `UnlockPrompt` password).
     pub(crate) fn lock_app(&mut self) {
-        self.vault = None;
+        self.session.lock();
         self.status = None;
         // Drop any open overlay so its secret-bearing buffers (edit password,
         // generate preview) zeroize on lock (CLAUDE.md zeroize-on-lock).
@@ -893,14 +978,19 @@ impl App {
         // flows to the input instead. The palette stays reachable pre-unlock from
         // the unlock list and lock screen (one `Esc` away from the prompt).
         if self.keys.matches(Command::Help, key)
-            && !matches!(self.phase, Phase::UnlockPrompt { .. })
+            && !matches!(
+                self.phase,
+                Phase::VaultOnboarding { .. } | Phase::UnlockPrompt { .. }
+            )
         {
             self.execute_command(Command::Help, None);
             return;
         }
 
         // `matches!` releases the phase borrow before the &mut self call.
-        if matches!(self.phase, Phase::UnlockList) {
+        if matches!(self.phase, Phase::VaultOnboarding { .. }) {
+            self.on_vault_onboarding_key(key);
+        } else if matches!(self.phase, Phase::UnlockList) {
             self.on_unlock_list_key(key);
         } else if matches!(self.phase, Phase::UnlockPrompt { .. }) {
             self.on_unlock_prompt_key(key);
@@ -911,8 +1001,8 @@ impl App {
         }
     }
 
-    /// Workspace key handling. Phase 2 implements tab navigation only; tree /
-    /// detail / overlay keys land in Phase 3+.
+    /// Workspace key handling for tabs, the entry tree/detail panes, overlays,
+    /// settings, and sync actions.
     ///
     /// Tab motions (OQ-N1): `Alt+1..9` jumps directly; `gt`/`gT` cycle; a digit
     /// prefix before `gt` (`{count}gt`) jumps to that 1-based ordinal. The
@@ -1039,7 +1129,7 @@ impl App {
     /// `j`/`k`). Best-effort: assumes the tree is not scrolled past the top,
     /// which holds for vaults that fit the pane (the common case).
     fn mouse_select_tree_row(&mut self, i: usize) {
-        let Some(vault) = self.vault.as_ref() else {
+        let Some(vault) = self.vault() else {
             return;
         };
         let rows = entry_tree::build_rows(vault, &self.tree, &self.recents);
@@ -1250,8 +1340,7 @@ impl App {
     /// The selected tree node's UUID if (and only if) it is an entry.
     fn selected_entry_uuid(&self) -> Option<Uuid> {
         let uuid = self.tree.selected()?;
-        self.vault
-            .as_ref()
+        self.vault()
             .and_then(|v| v.get_entry(uuid).ok())
             .map(|_| uuid)
     }
@@ -1274,7 +1363,7 @@ impl App {
         {
             self.save_count += 1;
         }
-        match self.vault.as_mut() {
+        match self.vault_mut() {
             Some(vault) => vault.save().map_err(PersistError::from),
             None => Ok(()),
         }
@@ -1302,6 +1391,7 @@ impl App {
             };
         }
         match self.phase {
+            Phase::VaultOnboarding { .. } => Contexts::VAULT_ONBOARDING,
             Phase::UnlockList => Contexts::UNLOCK_LIST,
             Phase::UnlockPrompt { .. } => Contexts::UNLOCK_PROMPT,
             Phase::LockScreen => Contexts::LOCK_SCREEN,
@@ -1328,7 +1418,7 @@ impl App {
     /// actionable); reveal / history also work on a pinned tab (whose entry is
     /// always present); sync needs a configured remote.
     pub(crate) fn command_state(&self, id: Command) -> CmdState {
-        if self.sync.is_syncing() && !Self::command_available_during_sync(id) {
+        if self.is_syncing() && !Self::command_available_during_sync(id) {
             return CmdState::Disabled;
         }
         // Read-only session (T4.7, layer 1): every vault-mutating command is
@@ -1436,7 +1526,7 @@ impl App {
         // unavailable while a background sync owns the vault (ADR-T4a). Mirror
         // `dispatch_active_tab_key`'s guard so key dispatch and the palette share
         // the same behaviour (the single-execution-path contract).
-        if !Self::command_available_during_sync(id) && self.sync.is_syncing() {
+        if !Self::command_available_during_sync(id) && self.is_syncing() {
             return;
         }
         match id {
@@ -1546,7 +1636,7 @@ impl App {
                 Tab::Settings => self.settings_command(id),
             },
             // Pre-unlock prompt / lock screen have no registry-driven nav.
-            Phase::UnlockPrompt { .. } | Phase::LockScreen => {}
+            Phase::VaultOnboarding { .. } | Phase::UnlockPrompt { .. } | Phase::LockScreen => {}
         }
     }
 
@@ -1568,7 +1658,7 @@ impl App {
     /// The group a freshly added entry should land in: the selected group, else
     /// the selected entry's parent group, else the root group.
     fn add_target_group(&self) -> Uuid {
-        let Some(vault) = self.vault.as_ref() else {
+        let Some(vault) = self.vault() else {
             return Uuid::nil();
         };
         let root = vault.root_group_uuid();
@@ -1605,7 +1695,7 @@ impl App {
                 .map_or(SearchScope::All, SearchScope::GroupSubtree),
             "tag" => self
                 .selected_entry_uuid()
-                .and_then(|uuid| self.vault.as_ref()?.get_entry(uuid).ok())
+                .and_then(|uuid| self.vault()?.get_entry(uuid).ok())
                 .and_then(|entry| entry.tags().first().cloned())
                 .map_or(SearchScope::All, |tag| {
                     SearchScope::Tag(tag.as_str().to_string())
@@ -1644,7 +1734,7 @@ impl App {
     /// The group of the current tree node: a selected group is itself; a selected
     /// entry resolves to its parent group.
     fn current_tree_group(&self) -> Option<Uuid> {
-        let vault = self.vault.as_ref()?;
+        let vault = self.vault()?;
         let sel = self.tree.selected()?;
         if vault.group_view(sel).is_ok() {
             return Some(sel);
@@ -1657,7 +1747,7 @@ impl App {
 
     fn first_tag_scope(&self, state: &SearchState) -> Option<SearchScope> {
         let uuid = state.selected_uuid()?;
-        let vault = self.vault.as_ref()?;
+        let vault = self.vault()?;
         let entry = vault.get_entry(uuid).ok()?;
         entry
             .tags()
@@ -1700,8 +1790,7 @@ impl App {
             return;
         };
         let overlay = self
-            .vault
-            .as_ref()
+            .vault()
             .and_then(|v| v.get_entry(uuid).ok())
             .map(|view| Overlay::Edit(Box::new(EditState::from_entry(uuid, &view))));
         if let Some(overlay) = overlay {
@@ -1743,8 +1832,7 @@ impl App {
     /// Secrets-tab selection and pinned tabs).
     fn open_history_for(&mut self, uuid: Uuid) {
         let overlay = self
-            .vault
-            .as_ref()
+            .vault()
             .and_then(|v| v.get_entry(uuid).ok())
             .map(|view| {
                 let title = if view.title().is_empty() {
@@ -1775,7 +1863,7 @@ impl App {
     /// even in a read-only session.
     fn copy_field_of(&mut self, uuid: Uuid, field: CopyField) {
         let (text, label) = {
-            let Some(view) = self.vault.as_ref().and_then(|v| v.get_entry(uuid).ok()) else {
+            let Some(view) = self.vault().and_then(|v| v.get_entry(uuid).ok()) else {
                 return;
             };
             match field {
@@ -1808,10 +1896,7 @@ impl App {
         let Some(uuid) = self.tree.selected() else {
             return;
         };
-        let is_entry = self
-            .vault
-            .as_ref()
-            .is_some_and(|v| v.get_entry(uuid).is_ok());
+        let is_entry = self.vault().is_some_and(|v| v.get_entry(uuid).is_ok());
         if !is_entry {
             self.status_bar
                 .set_warning("Only entries can be pinned.", Instant::now());
@@ -1834,15 +1919,13 @@ impl App {
     /// tree), so they are safe to surface.
     /// The display name of a group by UUID (search scope indicator, T4.2).
     pub(crate) fn group_name_for(&self, uuid: Uuid) -> String {
-        self.vault
-            .as_ref()
+        self.vault()
             .and_then(|v| v.group_view(uuid).ok())
             .map_or_else(|| "(group)".to_string(), |g| g.name().to_string())
     }
 
     fn entry_title(&self, uuid: Uuid) -> String {
-        self.vault
-            .as_ref()
+        self.vault()
             .and_then(|v| v.get_entry(uuid).ok())
             .map_or_else(
                 || "(entry)".to_string(),
@@ -1864,7 +1947,7 @@ impl App {
         let Some(name) = self.selected_vault.clone() else {
             return;
         };
-        if self.vault.is_none() {
+        if self.vault().is_none() {
             return;
         }
         self.ui_config.set_vault_state(
@@ -1879,8 +1962,7 @@ impl App {
     /// warns in the status bar and the UI keeps running on in-memory state. Used
     /// by [`Self::persist_ui_state`] (pins/recents).
     fn save_ui_config(&mut self) {
-        let path = config::config_path(&self.paths);
-        if let Err(e) = self.ui_config.save(&self.paths, &path) {
+        if let Err(e) = persistence::save_ui_state(&self.paths, &self.ui_config) {
             self.status_bar
                 .set_error(format!("Could not save tui.toml: {e}"), Instant::now());
         }
@@ -1890,7 +1972,7 @@ impl App {
     /// (U.5): a write failure warns in the status bar and the UI keeps running
     /// on in-memory state. Comments are not preserved (design §2.2.5).
     fn update_user_config(&mut self, update: impl FnOnce(&mut UserConfig)) -> bool {
-        match UserConfig::update_at(&self.user_config_path, update) {
+        match persistence::update_user_config(&self.user_config_path, update) {
             Ok(latest) => {
                 self.user_config = latest;
                 true
@@ -1916,7 +1998,7 @@ impl App {
     /// entry changes. `cmd` is a resolved navigation command (from a key or the
     /// palette); non-navigation commands are ignored here.
     fn tree_command(&mut self, cmd: Command) {
-        let rows = match self.vault.as_ref() {
+        let rows = match self.vault() {
             Some(vault) => entry_tree::build_rows(vault, &self.tree, &self.recents),
             None => return,
         };
@@ -1987,8 +2069,7 @@ impl App {
 
     /// [`Self::max_detail_scroll`] for an explicit entry (pinned tabs).
     fn max_scroll_for(&self, uuid: Uuid) -> u16 {
-        self.vault
-            .as_ref()
+        self.vault()
             .and_then(|vault| entry_detail::detail_data_for(vault, uuid, Utc::now()))
             .map_or(0, |data| {
                 let count =
@@ -2101,7 +2182,7 @@ impl App {
     /// Run the live query and refresh the result rows. Pure read of the vault.
     fn run_search(&self, state: &mut SearchState) {
         let query = state.input.value().to_string();
-        let Some(vault) = self.vault.as_ref() else {
+        let Some(vault) = self.vault() else {
             state.set_results(Vec::new());
             return;
         };
@@ -2215,7 +2296,7 @@ impl App {
     /// focus the detail pane for an entry (tree for a group). Does NOT push onto
     /// the history (a back/forward walk is not a new visit).
     fn jump_to_history(&mut self, uuid: Uuid) {
-        let Some(vault) = self.vault.as_ref() else {
+        let Some(vault) = self.vault() else {
             return;
         };
         let is_group = vault.group_view(uuid).is_ok();
@@ -2249,8 +2330,7 @@ impl App {
     /// navigation agree after search/history jumps into collapsed subtrees.
     fn expand_ancestors(&mut self, uuid: Uuid) {
         let path = self
-            .vault
-            .as_ref()
+            .vault()
             .and_then(|vault| screens::secrets::node_path(vault, vault.root_group_uuid(), uuid));
         if let Some(path) = path {
             for ancestor in &path[..path.len().saturating_sub(1)] {
@@ -2285,7 +2365,7 @@ impl App {
 
     /// Enter (or re-anchor) visual multi-select at the current row and mark it.
     fn enter_visual_mode(&mut self) {
-        let rows = match self.vault.as_ref() {
+        let rows = match self.vault() {
             Some(v) => entry_tree::build_rows(v, &self.tree, &self.recents),
             None => return,
         };
@@ -2300,7 +2380,7 @@ impl App {
         let TreeMode::Visual { anchor } = self.tree_mode else {
             return;
         };
-        let rows = match self.vault.as_ref() {
+        let rows = match self.vault() {
             Some(v) => entry_tree::build_rows(v, &self.tree, &self.recents),
             None => return,
         };
@@ -2357,8 +2437,12 @@ impl App {
     /// excluding the Recycle Bin (never a move target).
     fn collect_group_choices(&self) -> Vec<GroupChoice> {
         let mut out = Vec::new();
-        if let Some(vault) = self.vault.as_ref() {
-            let recycle = vault.database().recycle_bin().map(|g| g.id().uuid());
+        if let Some(vault) = self.vault() {
+            let recycle = vault
+                .group_summaries()
+                .into_iter()
+                .find(hidlins_core::GroupSummary::is_recycle_bin)
+                .map(|group| group.uuid());
             Self::walk_group_choices(vault, vault.root_group_uuid(), 0, recycle, &mut out);
         }
         out
@@ -2460,7 +2544,7 @@ impl App {
     fn apply_move_to_group(&mut self, target: Uuid) {
         let uuids = self.marked_uuids();
         let result: Result<(), VaultError> = (|| {
-            let Some(vault) = self.vault.as_mut() else {
+            let Some(vault) = self.vault_mut() else {
                 return Ok(());
             };
             // Validate the entire batch before the first mutation. A remote
@@ -2484,7 +2568,7 @@ impl App {
             // User input must use the fallible constructor; `Tag::new` is for
             // trusted literals and deliberately panics on a semicolon.
             let parsed = hidlins_core::Tag::from(tag.to_string())?;
-            let Some(vault) = self.vault.as_mut() else {
+            let Some(vault) = self.vault_mut() else {
                 return Ok(());
             };
             for &uuid in &uuids {
@@ -2549,7 +2633,7 @@ impl App {
     fn perform_bulk_delete(&mut self, uuids: &[Uuid]) {
         let owned: Vec<Uuid> = uuids.to_vec();
         let result: Result<(), VaultError> = (|| {
-            let Some(vault) = self.vault.as_mut() else {
+            let Some(vault) = self.vault_mut() else {
                 return Ok(());
             };
             for &uuid in &owned {
@@ -2577,8 +2661,7 @@ impl App {
         // Keep the tree selection valid if it pointed at a deleted entry.
         if self.tree.selected().is_some_and(|s| owned.contains(&s)) {
             let rows = self
-                .vault
-                .as_ref()
+                .vault()
                 .map(|v| entry_tree::build_rows(v, &self.tree, &self.recents))
                 .unwrap_or_default();
             self.tree.select_first(&rows);
@@ -2830,12 +2913,12 @@ impl App {
         // Apply the edit to the in-memory vault first (borrows only the vault),
         // then persist through the choke point (borrows all of `self`).
         let mutated: Result<Uuid, VaultError> = {
-            let Some(vault) = self.vault.as_mut() else {
+            let Some(vault) = self.vault_mut() else {
                 return false;
             };
             match state.target {
-                Some(uuid) => Self::apply_update(vault, uuid, &values).map(|()| uuid),
-                None => Self::apply_add(vault, state.group, &values),
+                Some(uuid) => entry_actions::update(vault, uuid, &values).map(|()| uuid),
+                None => entry_actions::add(vault, state.group, &values),
             }
         };
         let outcome: Result<Uuid, PersistError> = match mutated {
@@ -2872,63 +2955,13 @@ impl App {
         }
     }
 
-    /// Build an [`EntryBuilder`] from the snapshot and add it (associated fn so
-    /// it borrows only the `Vault`, not all of `self`).
-    fn apply_add(vault: &mut Vault, group: Uuid, v: &EditValues) -> Result<Uuid, VaultError> {
-        let mut builder = match v.kind {
-            EntryKind::Credential => EntryBuilder::credential(v.title.clone()),
-            EntryKind::SecureNote => EntryBuilder::secure_note(v.title.clone()),
-            EntryKind::Totp => EntryBuilder::totp(v.title.clone(), &v.totp_uri)?,
-        };
-        if matches!(v.kind, EntryKind::Credential | EntryKind::Totp) {
-            builder = builder.username(v.username.clone()).url(v.url.clone());
-        }
-        if matches!(v.kind, EntryKind::Credential) {
-            builder = builder.password(v.password.as_str());
-        }
-        builder = builder.notes(v.notes.clone()).tags(v.tags.clone());
-        for (name, value, protected) in &v.custom {
-            builder = builder.custom_field(name.clone(), value.as_str().to_string(), *protected);
-        }
-        vault.add_entry(group, builder.build())
-    }
-
-    /// Apply the snapshot to an existing entry via `update_entry` (one history
-    /// snapshot). OTP-bearing fields are preserved (never in `v.custom`).
-    fn apply_update(vault: &mut Vault, uuid: Uuid, v: &EditValues) -> Result<(), VaultError> {
-        vault.update_entry(uuid, |view| {
-            view.set_title(v.title.clone());
-            match v.kind {
-                EntryKind::Credential => {
-                    view.set_username(v.username.clone());
-                    view.set_password(v.password.as_str());
-                    view.set_url(v.url.clone());
-                }
-                EntryKind::Totp => {
-                    view.set_username(v.username.clone());
-                    view.set_url(v.url.clone());
-                }
-                EntryKind::SecureNote => {}
-            }
-            view.set_notes(v.notes.clone());
-            view.set_tags(v.tags.clone());
-            for (name, value, protected) in &v.custom {
-                view.set_custom_field(name.clone(), value.as_str().to_string(), *protected);
-            }
-            for name in &v.removed_custom {
-                view.remove_custom_field(name);
-            }
-            Ok(())
-        })
-    }
-
     /// Delete the entry, save, then clean up UI state: drop it from recents,
     /// unpin any tab, and fix the tree selection (ADR-T5 delete-removes).
     fn perform_delete(&mut self, uuid: Uuid) {
         // Remove from the in-memory vault first (borrows only the vault), then
         // persist through the choke point (borrows all of `self`).
         let deleted: Result<(), VaultError> = {
-            let Some(vault) = self.vault.as_mut() else {
+            let Some(vault) = self.vault_mut() else {
                 return;
             };
             vault.delete_entry(uuid)
@@ -2947,8 +2980,7 @@ impl App {
         }
         if self.tree.selected() == Some(uuid) {
             let rows = self
-                .vault
-                .as_ref()
+                .vault()
                 .map(|v| entry_tree::build_rows(v, &self.tree, &self.recents))
                 .unwrap_or_default();
             self.tree.select_first(&rows);
@@ -2973,7 +3005,7 @@ impl App {
             ),
             None => (Vec::new(), Recents::new()),
         };
-        let pinned: Vec<Uuid> = match self.vault.as_ref() {
+        let pinned: Vec<Uuid> = match self.vault() {
             Some(vault) => pinned
                 .into_iter()
                 .filter(|uuid| vault.get_entry(*uuid).is_ok())
@@ -3000,11 +3032,65 @@ impl App {
             self.startup_notices.clear();
             self.status_bar.set_warning(joined, Instant::now());
         }
-        let rows = match self.vault.as_ref() {
+        let rows = match self.vault() {
             Some(vault) => entry_tree::build_rows(vault, &self.tree, &self.recents),
             None => return,
         };
         self.tree.select_first(&rows);
+    }
+
+    fn on_vault_onboarding_key(&mut self, key: &KeyEvent) {
+        match key.code {
+            KeyCode::Enter => self.submit_vault_path(),
+            KeyCode::Esc => self.should_quit = true,
+            _ => {
+                if let Phase::VaultOnboarding { input } = &mut self.phase {
+                    feed_input(input, &Event::Key(*key));
+                    self.status = None;
+                }
+            }
+        }
+    }
+
+    fn submit_vault_path(&mut self) {
+        let Phase::VaultOnboarding { input } = &self.phase else {
+            return;
+        };
+        let raw = input.value().to_string();
+        let Ok(cwd) = std::env::current_dir() else {
+            self.status = Some("Cannot resolve the current directory.".to_string());
+            return;
+        };
+        let home = std::env::var_os("HOME").map(PathBuf::from);
+        let (path, name) = match resolve_existing_vault_path(&raw, &cwd, home.as_deref()) {
+            Ok(resolved) => resolved,
+            Err(message) => {
+                self.status = Some(message.to_string());
+                return;
+            }
+        };
+        if self.registry().get(&name).is_some() {
+            self.status = Some(format!(
+                "A vault named '{name}' is already registered; choose a different file."
+            ));
+            return;
+        }
+
+        let pending = RegisteredVault {
+            name: name.clone(),
+            path,
+            created_at: Utc::now().to_rfc3339(),
+            keyfile_path: None,
+            extra: toml::Table::new(),
+        };
+        self.status = None;
+        self.phase = Phase::UnlockPrompt {
+            origin: UnlockOrigin::Onboarding {
+                registration: pending,
+            },
+            input: PasswordInput::new(),
+            attempts: 0,
+        };
     }
 
     fn on_unlock_list_key(&mut self, key: &KeyEvent) {
@@ -3033,7 +3119,11 @@ impl App {
                     .nth(self.list_index)
                     .map(|v| v.name.clone());
                 if let Some(name) = name {
-                    self.open_unlock_prompt_for(name);
+                    let index = self.list_index;
+                    self.open_unlock_prompt(UnlockOrigin::VaultList {
+                        vault_name: name,
+                        index,
+                    });
                 }
             }
             _ => {}
@@ -3044,10 +3134,14 @@ impl App {
     /// by the list's `Confirm` action and the `--vault NAME` fast path (T3.2).
     /// The caller must have validated that `name` is registered.
     fn open_unlock_prompt_for(&mut self, name: String) {
-        self.selected_vault = Some(name.clone());
+        self.open_unlock_prompt(UnlockOrigin::Direct { vault_name: name });
+    }
+
+    fn open_unlock_prompt(&mut self, origin: UnlockOrigin) {
+        self.selected_vault = Some(origin.vault_name().to_string());
         self.status = None;
         self.phase = Phase::UnlockPrompt {
-            vault_name: name,
+            origin,
             input: PasswordInput::new(),
             attempts: 0,
         };
@@ -3060,37 +3154,117 @@ impl App {
         match input.on_key(key) {
             InputAction::Continue => {}
             // Replacing the phase drops the `PasswordInput` → zeroize fires.
-            InputAction::Cancel => self.phase = Phase::UnlockList,
+            InputAction::Cancel => self.cancel_unlock_prompt(),
             InputAction::Submit => self.try_unlock(),
         }
     }
 
+    fn cancel_unlock_prompt(&mut self) {
+        let replaced = std::mem::replace(&mut self.phase, Phase::LockScreen);
+        let Phase::UnlockPrompt { origin, .. } = replaced else {
+            self.phase = replaced;
+            return;
+        };
+        match origin {
+            UnlockOrigin::Direct { .. } => self.should_quit = true,
+            UnlockOrigin::VaultList { index, .. } => {
+                self.list_index = index;
+                self.status = None;
+                self.phase = Phase::UnlockList;
+            }
+            UnlockOrigin::Onboarding { registration } => {
+                let path = registration.path.to_string_lossy().into_owned();
+                self.status = None;
+                self.phase = Phase::VaultOnboarding {
+                    input: tui_input::Input::new(path),
+                };
+            }
+        }
+    }
+
+    fn restore_unlock_origin(&mut self, origin: UnlockOrigin, direct_attempts: u8) {
+        match origin {
+            UnlockOrigin::Direct { vault_name } => {
+                self.phase = Phase::UnlockPrompt {
+                    origin: UnlockOrigin::Direct { vault_name },
+                    input: PasswordInput::new(),
+                    attempts: direct_attempts,
+                };
+            }
+            UnlockOrigin::VaultList { index, .. } => {
+                self.list_index = index;
+                self.phase = Phase::UnlockList;
+            }
+            UnlockOrigin::Onboarding { registration } => {
+                let path = registration.path.to_string_lossy().into_owned();
+                self.phase = Phase::VaultOnboarding {
+                    input: tui_input::Input::new(path),
+                };
+            }
+        }
+    }
+
+    fn recover_after_registration_failure(
+        &mut self,
+        pending: &RegisteredVault,
+        error: &VaultError,
+    ) {
+        self.status = Some(format!("Could not register vault: {error}"));
+        if let Ok(latest) = VaultRegistry::load(self.paths.clone()) {
+            self.session.recover_locked(latest);
+        }
+        let names: Vec<_> = self
+            .registry()
+            .list()
+            .map(|vault| vault.name.clone())
+            .collect();
+        self.phase = match names.as_slice() {
+            [] => Phase::VaultOnboarding {
+                input: tui_input::Input::new(pending.path.to_string_lossy().into_owned()),
+            },
+            [name] => Phase::UnlockPrompt {
+                origin: UnlockOrigin::Direct {
+                    vault_name: name.clone(),
+                },
+                input: PasswordInput::new(),
+                attempts: 0,
+            },
+            _ => Phase::UnlockList,
+        };
+    }
+
     /// Take the typed password out of the prompt and attempt to open the vault.
     fn try_unlock(&mut self) {
-        // Move the prompt's fields out; `self.phase` is left as UnlockList and
+        // Move the prompt's fields out; `self.phase` is a temporary sentinel and
         // overwritten below on every path.
-        let (vault_name, input, attempts) =
-            match std::mem::replace(&mut self.phase, Phase::UnlockList) {
-                Phase::UnlockPrompt {
-                    vault_name,
-                    input,
-                    attempts,
-                } => (vault_name, input, attempts),
-                other => {
-                    self.phase = other;
-                    return;
-                }
-            };
+        let (origin, input, attempts) = match std::mem::replace(&mut self.phase, Phase::LockScreen)
+        {
+            Phase::UnlockPrompt {
+                origin,
+                input,
+                attempts,
+            } => (origin, input, attempts),
+            other => {
+                self.phase = other;
+                return;
+            }
+        };
 
-        let Some(registered) = self
-            .registry
-            .as_ref()
-            .and_then(|r| r.get(&vault_name))
-            .cloned()
-        else {
-            // Vault vanished from the registry; bounce to the list.
-            self.phase = Phase::UnlockList;
-            return;
+        let registered = match &origin {
+            UnlockOrigin::Onboarding { registration } => registration.clone(),
+            UnlockOrigin::Direct { vault_name } | UnlockOrigin::VaultList { vault_name, .. } => {
+                let Some(registered) = self
+                    .session
+                    .registry()
+                    .and_then(|registry| registry.get(vault_name))
+                    .cloned()
+                else {
+                    self.status = Some("The selected vault is no longer registered.".to_string());
+                    self.restore_unlock_origin(origin, attempts);
+                    return;
+                };
+                registered
+            }
         };
 
         // The typed buffer (`Zeroizing`) lives until this scope ends; it is used
@@ -3102,11 +3276,28 @@ impl App {
         let password = MasterPassword::new(typed.to_string());
         match Vault::open(&registered.path, &password, None) {
             Ok(vault) => {
-                self.vault = Some(vault);
-                self.selected_vault = Some(vault_name);
+                if let UnlockOrigin::Onboarding {
+                    registration: pending,
+                } = &origin
+                {
+                    let result = self
+                        .registry_mut()
+                        .expect("locked onboarding owns the registry")
+                        .register_and_save(pending.clone());
+                    if let Err(error) = result {
+                        drop(vault);
+                        self.recover_after_registration_failure(pending, &error);
+                        return;
+                    }
+                }
+                assert!(
+                    self.session.unlock(vault),
+                    "unlock transition starts from a locked session"
+                );
+                self.selected_vault = Some(origin.vault_name().to_string());
                 // Arm the idle-lock controller from THIS vault's configured
                 // timeout (T3.5) — so an edited auto-lock survives restart —
-                // rather than reusing the placeholder default.
+                // rather than reusing the process default.
                 self.arm_auto_lock_for_current_vault(Instant::now());
                 self.hydrate_workspace();
                 self.reset_tab_motion();
@@ -3128,10 +3319,10 @@ impl App {
                     self.status = Some(format!(
                         "{MAX_UNLOCK_ATTEMPTS} incorrect attempts; vault remains locked."
                     ));
-                    self.phase = Phase::UnlockList;
+                    self.restore_unlock_origin(origin, 0);
                 } else {
                     self.phase = Phase::UnlockPrompt {
-                        vault_name,
+                        origin,
                         input: PasswordInput::new(),
                         attempts,
                     };
@@ -3143,20 +3334,49 @@ impl App {
             // of miscounting it as an incorrect attempt.
             Err(other) => {
                 self.status = Some(format!("Could not open vault: {other}"));
-                self.phase = Phase::UnlockList;
+                self.restore_unlock_origin(origin, attempts);
             }
         }
     }
 
     fn on_lock_screen_key(&mut self) {
-        // Any key returns to the list with the previously-open vault highlighted.
+        // Any key returns to the selected vault's password flow. A multi-vault
+        // prompt retains its picker return destination; a single-vault prompt
+        // remains direct.
         if let Some(name) = self.selected_vault.clone() {
             let idx = self.registry().list().position(|v| v.name == name);
             if let Some(idx) = idx {
                 self.list_index = idx;
+                let origin = if self.registry().list().count() > 1 {
+                    UnlockOrigin::VaultList {
+                        vault_name: name,
+                        index: idx,
+                    }
+                } else {
+                    UnlockOrigin::Direct { vault_name: name }
+                };
+                self.open_unlock_prompt(origin);
+                return;
             }
         }
-        self.phase = Phase::UnlockList;
+        let names: Vec<_> = self
+            .registry()
+            .list()
+            .map(|vault| vault.name.clone())
+            .collect();
+        self.phase = match names.as_slice() {
+            [] => Phase::VaultOnboarding {
+                input: tui_input::Input::default(),
+            },
+            [name] => Phase::UnlockPrompt {
+                origin: UnlockOrigin::Direct {
+                    vault_name: name.clone(),
+                },
+                input: PasswordInput::new(),
+                attempts: 0,
+            },
+            _ => Phase::UnlockList,
+        };
     }
 
     // ---- Phase 6: sync triggers + Settings ----
@@ -3169,7 +3389,7 @@ impl App {
     /// The selected vault's [`SyncConfig`], if any.
     fn selected_sync_config(&self) -> Option<SyncConfig> {
         let name = self.selected_vault.as_deref()?;
-        let entry = self.registry.as_ref()?.get(name)?;
+        let entry = self.session.registry()?.get(name)?;
         SyncConfig::from_vault_entry(entry)
     }
 
@@ -3199,14 +3419,14 @@ impl App {
         // prompts for the master password to do so.
         !self.read_only
             && self.user_config.sync_on_lock_quit()
-            && self.vault.is_some()
+            && self.vault().is_some()
             && self.sync_configured()
     }
 
     /// Manual sync (`s`). Re-prompts the master password (the App holds none),
     /// unless already syncing or no target is configured.
     fn request_sync(&mut self) {
-        if self.sync.is_syncing() {
+        if self.is_syncing() {
             self.status_bar
                 .set_info("Sync already in progress.", Instant::now());
             return;
@@ -3227,7 +3447,7 @@ impl App {
     /// `Ctrl+L`. Defers if a sync is in flight; otherwise either flushes first
     /// (sync-on-lock) or locks immediately.
     fn request_lock(&mut self) {
-        if self.sync.is_syncing() {
+        if self.is_syncing() {
             self.lock_pending = true;
             self.status_bar
                 .set_info("Will lock when the sync finishes.", Instant::now());
@@ -3264,7 +3484,7 @@ impl App {
     /// path and the confirmed path (T4.8) so both preserve `sync-on-lock-quit`.
     fn do_quit(&mut self) {
         if matches!(self.phase, Phase::Workspace)
-            && !self.sync.is_syncing()
+            && !self.is_syncing()
             && self.should_sync_on_leave()
         {
             self.overlay = Some(Overlay::SyncUnlock {
@@ -3308,13 +3528,7 @@ impl App {
         let Some(name) = self.selected_vault.clone() else {
             return;
         };
-        let Some(vault) = self.vault.take() else {
-            return;
-        };
-        let Some(registry) = self.registry.take() else {
-            // Should not happen (registry is only None mid-sync, which this
-            // gates against); restore the vault and bail.
-            self.vault = Some(vault);
+        let Some((vault, registry)) = self.session.begin_sync() else {
             return;
         };
         self.sync
@@ -3428,7 +3642,7 @@ impl App {
     /// unlocked (the credential is encrypted with the master password, and only
     /// an unlocked session is in a position to re-collect it).
     fn open_sync_config(&mut self) {
-        if self.vault.is_none() {
+        if self.vault().is_none() {
             self.status_bar
                 .set_warning("Unlock a vault to configure sync.", Instant::now());
             return;
@@ -3537,7 +3751,7 @@ impl App {
             s3.set_path_style(true);
         }
 
-        let Some(registry) = self.registry.as_mut() else {
+        let Some(registry) = self.registry_mut() else {
             state.error = Some("Registry unavailable during sync.".to_string());
             return false;
         };
@@ -3564,8 +3778,9 @@ impl App {
     pub(crate) fn render(&self, frame: &mut Frame, now: Instant) {
         self.mouse_regions.borrow_mut().clear();
         match &self.phase {
-            Phase::UnlockList => screens::unlock_list::render(self, frame),
-            Phase::UnlockPrompt { .. } => screens::unlock_prompt::render(self, frame),
+            Phase::VaultOnboarding { .. } | Phase::UnlockList | Phase::UnlockPrompt { .. } => {
+                screens::startup_modal::render(self, frame);
+            }
             Phase::LockScreen => screens::lock_screen::render(self, frame),
             Phase::Workspace => screens::workspace::render(self, frame, now),
         }
@@ -3657,7 +3872,9 @@ mod tests {
 
     /// Select the first vault and type `password` without submitting.
     fn select_and_type(app: &mut App, password: &str) {
-        app.handle_event(&key_code(KeyCode::Enter)); // UnlockList → UnlockPrompt
+        if matches!(app.phase, Phase::UnlockList) {
+            app.handle_event(&key_code(KeyCode::Enter)); // UnlockList → UnlockPrompt
+        }
         assert!(matches!(app.phase, Phase::UnlockPrompt { .. }));
         for c in password.chars() {
             app.handle_event(&key(c));
@@ -3670,15 +3887,389 @@ mod tests {
     }
 
     #[test]
-    fn from_registry_rejects_empty_registry() {
+    fn empty_registry_starts_in_locked_vault_onboarding() {
         let dir = tempfile::tempdir().unwrap();
         let paths = HidlinsPaths::with_state_dir(dir.path().join("state"));
         let registry = VaultRegistry::with_paths(paths.clone());
-        let result = App::from_registry(registry, paths, AutoLockConfig::default());
-        assert!(
-            matches!(result, Err(TuiError::NoVaultsRegistered)),
-            "empty registry must yield NoVaultsRegistered"
+        let app = App::from_registry(registry, paths, AutoLockConfig::default())
+            .expect("empty registry is a valid startup state");
+
+        assert!(matches!(app.phase, Phase::VaultOnboarding { .. }));
+        assert!(app.vault().is_none());
+        assert_eq!(app.registry().list().count(), 0);
+    }
+
+    #[test]
+    fn one_vault_starts_directly_at_its_password_prompt() {
+        let (_dir, app) = single_vault_app();
+        assert!(matches!(
+            app.phase,
+            Phase::UnlockPrompt {
+                origin: UnlockOrigin::Direct { ref vault_name },
+                ..
+            } if vault_name == "personal"
+        ));
+    }
+
+    #[test]
+    fn multiple_vaults_start_at_the_explicit_picker() {
+        let (_dir, app) = fixture_app(&["alpha", "beta"], Duration::from_secs(300));
+        assert!(matches!(app.phase, Phase::UnlockList));
+        assert_eq!(app.list_index, 0);
+    }
+
+    #[test]
+    fn first_vault_path_authenticates_before_registration() {
+        let dir = tempfile::tempdir().unwrap();
+        let paths = HidlinsPaths::with_state_dir(dir.path().join("state"));
+        let vault_path = dir.path().join("personal.kdbx");
+        drop(
+            Vault::create(
+                &vault_path,
+                &MasterPassword::new(PASSWORD.to_string()),
+                None,
+                fast_kdf(),
+                NoRecoveryConfirmed::yes(),
+            )
+            .expect("create fixture vault"),
         );
+        let registry = VaultRegistry::with_paths(paths.clone());
+        let mut app = App::from_registry(registry, paths.clone(), AutoLockConfig::default())
+            .expect("onboarding app");
+
+        for c in vault_path.to_string_lossy().chars() {
+            app.handle_event(&key(c));
+        }
+        app.handle_event(&key_code(KeyCode::Enter));
+
+        assert!(matches!(
+            app.phase,
+            Phase::UnlockPrompt {
+                origin: UnlockOrigin::Onboarding { .. },
+                ..
+            }
+        ));
+        assert!(
+            !paths.vaults_toml().exists(),
+            "path selection alone must not write the registry"
+        );
+
+        for c in PASSWORD.chars() {
+            app.handle_event(&key(c));
+        }
+        app.handle_event(&key_code(KeyCode::Enter));
+
+        assert!(matches!(app.phase, Phase::Workspace));
+        assert!(app.vault().is_some());
+        let registered = app
+            .registry()
+            .get("personal")
+            .expect("registered after auth");
+        assert_eq!(registered.path, vault_path.canonicalize().unwrap());
+        assert!(paths.vaults_toml().exists());
+    }
+
+    #[test]
+    fn picker_password_escape_restores_the_same_row() {
+        let (_dir, mut app) = fixture_app(&["alpha", "beta"], Duration::from_secs(300));
+        app.handle_event(&key('j'));
+        app.handle_event(&key_code(KeyCode::Enter));
+        assert!(matches!(
+            app.phase,
+            Phase::UnlockPrompt {
+                origin: UnlockOrigin::VaultList { index: 1, .. },
+                ..
+            }
+        ));
+        for c in "discard-me".chars() {
+            app.handle_event(&key(c));
+        }
+
+        app.handle_event(&key_code(KeyCode::Esc));
+
+        assert!(matches!(app.phase, Phase::UnlockList));
+        assert_eq!(app.list_index, 1);
+    }
+
+    #[test]
+    fn onboarding_question_mark_is_typed_instead_of_opening_help() {
+        let dir = tempfile::tempdir().unwrap();
+        let paths = HidlinsPaths::with_state_dir(dir.path().join("state"));
+        let registry = VaultRegistry::with_paths(paths.clone());
+        let mut app = App::from_registry(registry, paths, AutoLockConfig::default()).unwrap();
+
+        app.handle_event(&key('?'));
+
+        let Phase::VaultOnboarding { input } = &app.phase else {
+            panic!("expected onboarding");
+        };
+        assert_eq!(input.value(), "?");
+        assert!(app.overlay.is_none());
+    }
+
+    #[test]
+    fn onboarding_invalid_paths_preserve_the_field_and_surface_actionable_errors() {
+        let dir = tempfile::tempdir().unwrap();
+        let paths = HidlinsPaths::with_state_dir(dir.path().join("state"));
+        let registry = VaultRegistry::with_paths(paths.clone());
+        let mut app = App::from_registry(registry, paths, AutoLockConfig::default()).unwrap();
+
+        for raw in ["", "/definitely/not/a/hidlins-vault.kdbx"] {
+            app.phase = Phase::VaultOnboarding {
+                input: tui_input::Input::new(raw.to_string()),
+            };
+            app.handle_event(&key_code(KeyCode::Enter));
+            let Phase::VaultOnboarding { input } = &app.phase else {
+                panic!("invalid path must remain in onboarding");
+            };
+            assert_eq!(input.value(), raw);
+            assert!(app
+                .status
+                .as_deref()
+                .is_some_and(|message| !message.is_empty()));
+        }
+
+        let directory = dir.path().to_string_lossy().into_owned();
+        app.phase = Phase::VaultOnboarding {
+            input: tui_input::Input::new(directory.clone()),
+        };
+        app.handle_event(&key_code(KeyCode::Enter));
+        let Phase::VaultOnboarding { input } = &app.phase else {
+            panic!("directory must remain in onboarding");
+        };
+        assert_eq!(input.value(), directory);
+        assert!(app.status.as_deref().unwrap().contains("not a directory"));
+    }
+
+    #[test]
+    fn path_resolution_expands_home_and_relative_paths_without_a_shell() {
+        let dir = tempfile::tempdir().unwrap();
+        let nested = dir.path().join("vaults");
+        std::fs::create_dir(&nested).unwrap();
+        let vault = nested.join("personal.kdbx");
+        std::fs::write(&vault, b"fixture").unwrap();
+
+        let (from_home, home_name) =
+            resolve_existing_vault_path("~/vaults/personal.kdbx", dir.path(), Some(dir.path()))
+                .unwrap();
+        let (from_relative, relative_name) =
+            resolve_existing_vault_path("vaults/personal.kdbx", dir.path(), None).unwrap();
+
+        assert_eq!(from_home, vault.canonicalize().unwrap());
+        assert_eq!(from_relative, vault.canonicalize().unwrap());
+        assert_eq!(home_name, "personal");
+        assert_eq!(relative_name, "personal");
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn path_resolution_rejects_a_non_utf8_file_stem() {
+        use std::ffi::OsString;
+        use std::os::unix::ffi::OsStringExt;
+
+        let dir = tempfile::tempdir().unwrap();
+        let path = dir
+            .path()
+            .join(OsString::from_vec(vec![0xff, b'.', b'k', b'd', b'b', b'x']));
+        std::fs::write(&path, b"fixture").unwrap();
+        let selected = dir.path().join("selected.kdbx");
+        std::os::unix::fs::symlink(&path, &selected).unwrap();
+
+        assert_eq!(
+            resolve_existing_vault_path(selected.to_str().unwrap(), dir.path(), None),
+            Err("Vault filename must contain a valid UTF-8 name.")
+        );
+        let canonical = path.canonicalize().unwrap();
+        let stem = canonical.file_stem().and_then(|value| value.to_str());
+        assert!(stem.is_none(), "fixture itself has an unusable UTF-8 stem");
+    }
+
+    #[test]
+    fn pending_vault_wrong_password_clears_input_and_does_not_register() {
+        let dir = tempfile::tempdir().unwrap();
+        let paths = HidlinsPaths::with_state_dir(dir.path().join("state"));
+        let vault_path = dir.path().join("personal.kdbx");
+        drop(
+            Vault::create(
+                &vault_path,
+                &MasterPassword::new(PASSWORD.to_string()),
+                None,
+                fast_kdf(),
+                NoRecoveryConfirmed::yes(),
+            )
+            .unwrap(),
+        );
+        let registry = VaultRegistry::with_paths(paths.clone());
+        let mut app =
+            App::from_registry(registry, paths.clone(), AutoLockConfig::default()).unwrap();
+        app.phase = Phase::VaultOnboarding {
+            input: tui_input::Input::new(vault_path.to_string_lossy().into_owned()),
+        };
+        app.handle_event(&key_code(KeyCode::Enter));
+
+        for c in "wrong".chars() {
+            app.handle_event(&key(c));
+        }
+        app.handle_event(&key_code(KeyCode::Enter));
+
+        let Phase::UnlockPrompt {
+            origin,
+            input,
+            attempts,
+        } = &app.phase
+        else {
+            panic!("authentication failure must re-prompt");
+        };
+        assert_eq!(*attempts, 1);
+        assert_eq!(input.len_chars(), 0);
+        assert!(matches!(origin, UnlockOrigin::Onboarding { .. }));
+        assert!(!paths.vaults_toml().exists());
+        assert_eq!(app.registry().list().count(), 0);
+    }
+
+    #[test]
+    fn registration_failure_drops_opened_vault_and_restores_path_form() {
+        let dir = tempfile::tempdir().unwrap();
+        let paths = HidlinsPaths::with_state_dir(dir.path().join("state"));
+        let vault_path = dir.path().join("personal.kdbx");
+        drop(
+            Vault::create(
+                &vault_path,
+                &MasterPassword::new(PASSWORD.to_string()),
+                None,
+                fast_kdf(),
+                NoRecoveryConfirmed::yes(),
+            )
+            .unwrap(),
+        );
+        let registry = VaultRegistry::with_paths(paths.clone());
+        let mut app =
+            App::from_registry(registry, paths.clone(), AutoLockConfig::default()).unwrap();
+        app.phase = Phase::VaultOnboarding {
+            input: tui_input::Input::new(vault_path.to_string_lossy().into_owned()),
+        };
+        app.handle_event(&key_code(KeyCode::Enter));
+
+        let mut external = VaultRegistry::load(paths.clone()).unwrap();
+        external
+            .register_and_save(RegisteredVault {
+                name: "personal".to_string(),
+                path: dir.path().join("other.kdbx"),
+                created_at: "2026-01-01T00:00:00Z".to_string(),
+                keyfile_path: None,
+                extra: toml::Table::new(),
+            })
+            .unwrap();
+        for c in PASSWORD.chars() {
+            app.handle_event(&key(c));
+        }
+        app.handle_event(&key_code(KeyCode::Enter));
+
+        assert!(matches!(
+            app.phase,
+            Phase::UnlockPrompt {
+                origin: UnlockOrigin::Direct { ref vault_name },
+                ..
+            } if vault_name == "personal"
+        ));
+        assert!(app.vault().is_none());
+        assert_eq!(
+            app.registry().list().count(),
+            1,
+            "the locked session reloads the authoritative registry"
+        );
+        assert!(app
+            .status
+            .as_deref()
+            .unwrap()
+            .contains("Could not register vault"));
+        assert_eq!(VaultRegistry::load(paths).unwrap().list().count(), 1);
+    }
+
+    #[test]
+    fn attempts_do_not_follow_the_user_between_picker_rows() {
+        let (_dir, mut app) = fixture_app(&["alpha", "beta"], Duration::from_secs(300));
+        app.handle_event(&key('j'));
+        unlock(&mut app, "wrong");
+        assert!(matches!(app.phase, Phase::UnlockPrompt { attempts: 1, .. }));
+        app.handle_event(&key_code(KeyCode::Esc));
+        app.handle_event(&key('k'));
+        app.handle_event(&key_code(KeyCode::Enter));
+
+        assert!(matches!(
+            app.phase,
+            Phase::UnlockPrompt {
+                origin: UnlockOrigin::VaultList { ref vault_name, .. },
+                attempts: 0,
+                ..
+            } if vault_name == "alpha"
+        ));
+    }
+
+    #[test]
+    fn picker_prompt_resolves_by_name_and_never_unlocks_a_replaced_row() {
+        let (dir, mut app) = fixture_app(&["alpha", "beta"], Duration::from_secs(300));
+        let registry_path = app.paths.vaults_toml();
+        let disk_before = std::fs::read(&registry_path).unwrap();
+        app.handle_event(&key('j'));
+        app.handle_event(&key_code(KeyCode::Enter));
+
+        app.registry_mut()
+            .unwrap()
+            .deregister("beta", false)
+            .unwrap();
+        app.registry_mut()
+            .unwrap()
+            .register(RegisteredVault {
+                name: "gamma".to_string(),
+                path: dir.path().join("gamma.kdbx"),
+                created_at: "2026-01-01T00:00:00Z".to_string(),
+                keyfile_path: None,
+                extra: toml::Table::new(),
+            })
+            .unwrap();
+        for c in PASSWORD.chars() {
+            app.handle_event(&key(c));
+        }
+        app.handle_event(&key_code(KeyCode::Enter));
+
+        assert!(matches!(app.phase, Phase::UnlockList));
+        assert!(app.vault().is_none());
+        assert!(app
+            .status
+            .as_deref()
+            .unwrap()
+            .contains("no longer registered"));
+        assert_eq!(std::fs::read(registry_path).unwrap(), disk_before);
+    }
+
+    #[test]
+    fn escape_from_pending_password_returns_to_the_path_form_without_writing() {
+        let dir = tempfile::tempdir().unwrap();
+        let paths = HidlinsPaths::with_state_dir(dir.path().join("state"));
+        let vault_path = dir.path().join("personal.kdbx");
+        std::fs::write(&vault_path, b"not opened in this transition test").unwrap();
+        let registry = VaultRegistry::with_paths(paths.clone());
+        let mut app =
+            App::from_registry(registry, paths.clone(), AutoLockConfig::default()).unwrap();
+        app.phase = Phase::VaultOnboarding {
+            input: tui_input::Input::new(vault_path.to_string_lossy().into_owned()),
+        };
+        app.handle_event(&key_code(KeyCode::Enter));
+        for c in "discard-me".chars() {
+            app.handle_event(&key(c));
+        }
+
+        app.handle_event(&key_code(KeyCode::Esc));
+
+        let Phase::VaultOnboarding { input } = &app.phase else {
+            panic!("pending prompt must return to onboarding");
+        };
+        assert_eq!(
+            input.value(),
+            vault_path.canonicalize().unwrap().to_string_lossy()
+        );
+        assert!(!paths.vaults_toml().exists());
     }
 
     // T-IT-1: correct password opens the vault and enters the workspace.
@@ -3687,7 +4278,7 @@ mod tests {
         let (_dir, mut app) = single_vault_app();
         unlock(&mut app, PASSWORD);
         assert!(matches!(app.phase, Phase::Workspace));
-        assert!(app.vault.is_some());
+        assert!(app.vault().is_some());
         assert_eq!(app.selected_vault.as_deref(), Some("personal"));
     }
 
@@ -3700,12 +4291,12 @@ mod tests {
             Phase::UnlockPrompt { attempts, .. } => assert_eq!(*attempts, 1),
             other => panic!("expected UnlockPrompt, got {:?}", PhaseName(other)),
         }
-        assert!(app.vault.is_none());
+        assert!(app.vault().is_none());
     }
 
     // Regression: a non-auth `Vault::open` failure (missing file, lock
     // contention, corruption) must NOT be presented as a wrong password or
-    // consume an unlock attempt — the real error surfaces on the list.
+    // consume an unlock attempt — the real error surfaces on the prompt.
     #[test]
     fn non_auth_open_error_surfaces_cause_without_counting_attempt() {
         let (dir, mut app) = single_vault_app();
@@ -3715,8 +4306,8 @@ mod tests {
         unlock(&mut app, PASSWORD);
 
         assert!(
-            matches!(app.phase, Phase::UnlockList),
-            "non-auth failure bounces to the list, not the attempts loop"
+            matches!(app.phase, Phase::UnlockPrompt { attempts: 0, .. }),
+            "direct startup remains retryable without incrementing attempts"
         );
         let status = app.status.as_deref().unwrap_or_default();
         assert!(
@@ -3727,12 +4318,12 @@ mod tests {
             !status.contains("incorrect"),
             "must not claim the password was wrong: {status:?}"
         );
-        assert!(app.vault.is_none());
+        assert!(app.vault().is_none());
     }
 
-    // T-IT-1: three wrong attempts bounce back to the list with a status note.
+    // T-IT-1: three wrong attempts reset the direct prompt with a status note.
     #[test]
-    fn three_wrong_attempts_return_to_list_with_status() {
+    fn three_wrong_attempts_reset_direct_prompt_with_status() {
         let (_dir, mut app) = single_vault_app();
         // First attempt from UnlockList.
         unlock(&mut app, "nope");
@@ -3743,8 +4334,8 @@ mod tests {
             }
             app.handle_event(&key_code(KeyCode::Enter));
         }
-        assert!(matches!(app.phase, Phase::UnlockList));
-        assert!(app.vault.is_none());
+        assert!(matches!(app.phase, Phase::UnlockPrompt { attempts: 0, .. }));
+        assert!(app.vault().is_none());
         assert!(app
             .status
             .as_deref()
@@ -3753,12 +4344,12 @@ mod tests {
     }
 
     #[test]
-    fn esc_from_prompt_returns_to_list() {
+    fn esc_from_direct_prompt_exits_without_fabricating_a_list() {
         let (_dir, mut app) = single_vault_app();
         select_and_type(&mut app, "partial");
         app.handle_event(&key_code(KeyCode::Esc));
-        assert!(matches!(app.phase, Phase::UnlockList));
-        assert!(app.vault.is_none());
+        assert!(app.should_quit);
+        assert!(app.vault().is_none());
     }
 
     // T-IT-3: manual lock (Ctrl+L) drops the vault and shows the lock screen.
@@ -3768,7 +4359,7 @@ mod tests {
         unlock(&mut app, PASSWORD);
         app.handle_event(&key_ctrl('l'));
         assert!(matches!(app.phase, Phase::LockScreen));
-        assert!(app.vault.is_none());
+        assert!(app.vault().is_none());
     }
 
     // T-IT-3: lock-now is a no-op while still locked (no vault to drop).
@@ -3777,13 +4368,13 @@ mod tests {
         let (_dir, mut app) = single_vault_app();
         app.handle_event(&key_ctrl('l'));
         assert!(
-            matches!(app.phase, Phase::UnlockList),
-            "Ctrl+L on the list does nothing"
+            matches!(app.phase, Phase::UnlockPrompt { .. }),
+            "Ctrl+L on a direct prompt does nothing"
         );
     }
 
     #[test]
-    fn lock_screen_any_key_returns_to_list_highlighting_prior_vault() {
+    fn lock_screen_any_key_returns_to_prior_vault_prompt_with_picker_origin() {
         let (_dir, mut app) = fixture_app(&["alpha", "beta"], Duration::from_secs(300));
         // Highlight + unlock the second vault.
         app.handle_event(&key('j')); // list_index → 1 (beta)
@@ -3791,6 +4382,17 @@ mod tests {
         assert_eq!(app.selected_vault.as_deref(), Some("beta"));
         app.handle_event(&key_ctrl('l')); // lock
         app.handle_event(&key(' ')); // any key on the lock screen
+        assert!(matches!(
+            app.phase,
+            Phase::UnlockPrompt {
+                origin: UnlockOrigin::VaultList {
+                    ref vault_name,
+                    index: 1,
+                },
+                ..
+            } if vault_name == "beta"
+        ));
+        app.handle_event(&key_code(KeyCode::Esc));
         assert!(matches!(app.phase, Phase::UnlockList));
         assert_eq!(app.list_index, 1, "prior vault (beta) re-highlighted");
     }
@@ -3805,17 +4407,18 @@ mod tests {
         // Unlock the first vault (alpha).
         unlock(&mut app, PASSWORD);
         assert_eq!(app.selected_vault.as_deref(), Some("alpha"));
-        let vault_alpha_uuid = app.vault.as_ref().unwrap().root_group_uuid();
+        let vault_alpha_uuid = app.vault().unwrap().root_group_uuid();
         // Lock.
         app.handle_event(&key_ctrl('l'));
         assert!(matches!(app.phase, Phase::LockScreen));
         // Return to list and select the second vault (beta).
-        app.handle_event(&key(' ')); // any key on lock screen → UnlockList
+        app.handle_event(&key(' ')); // any key on lock screen → alpha prompt
+        app.handle_event(&key_code(KeyCode::Esc)); // back to picker
         app.handle_event(&key('j')); // list_index → 1 (beta)
         assert_eq!(app.list_index, 1);
         unlock(&mut app, PASSWORD);
         assert_eq!(app.selected_vault.as_deref(), Some("beta"));
-        let vault_beta_uuid = app.vault.as_ref().unwrap().root_group_uuid();
+        let vault_beta_uuid = app.vault().unwrap().root_group_uuid();
         // Verify the vault UUID changed.
         assert_ne!(
             vault_alpha_uuid, vault_beta_uuid,
@@ -3835,18 +4438,19 @@ mod tests {
         let t0 = Instant::now();
         app.tick(t0 + Duration::from_millis(950));
         assert!(
-            app.vault.is_some(),
+            app.vault().is_some(),
             "first tick: Expired warning, vault still present"
         );
         app.tick(t0 + Duration::from_secs(1));
-        assert!(app.vault.is_none());
+        assert!(app.vault().is_none());
         assert!(matches!(app.phase, Phase::LockScreen));
         // Return to list and unlock the second vault.
-        app.handle_event(&key(' ')); // any key on lock screen → UnlockList
+        app.handle_event(&key(' ')); // any key on lock screen → alpha prompt
+        app.handle_event(&key_code(KeyCode::Esc)); // back to picker
         app.handle_event(&key('j')); // list_index → 1 (beta)
         unlock(&mut app, PASSWORD);
         assert_eq!(app.selected_vault.as_deref(), Some("beta"));
-        assert!(app.vault.is_some());
+        assert!(app.vault().is_some());
     }
 
     /// Journey: unlock → lock → return to list → verify the list highlights
@@ -3861,8 +4465,10 @@ mod tests {
         // Lock.
         app.handle_event(&key_ctrl('l'));
         assert!(matches!(app.phase, Phase::LockScreen));
-        // Return to list.
+        // Return to the selected prompt, then back to its picker row.
         app.handle_event(&key(' '));
+        assert!(matches!(app.phase, Phase::UnlockPrompt { .. }));
+        app.handle_event(&key_code(KeyCode::Esc));
         assert!(matches!(app.phase, Phase::UnlockList));
         // The list should highlight the previously unlocked vault.
         assert_eq!(app.list_index, 1, "second vault re-highlighted");
@@ -3882,12 +4488,12 @@ mod tests {
         // First over-deadline tick: Active → Expired; not locked yet.
         app.tick(t0 + Duration::from_millis(1_100));
         assert!(
-            app.vault.is_some(),
+            app.vault().is_some(),
             "Expired is a one-tick warning, not a lock"
         );
         // Next tick: Expired → Locked.
         app.tick(t0 + Duration::from_millis(1_200));
-        assert!(app.vault.is_none());
+        assert!(app.vault().is_none());
         assert!(matches!(app.phase, Phase::LockScreen));
     }
 
@@ -3897,7 +4503,7 @@ mod tests {
         let (_dir, mut app) = single_vault_app();
         // Never unlocked → tick far in the future must not panic or change phase.
         app.tick(Instant::now() + Duration::from_secs(10_000));
-        assert!(matches!(app.phase, Phase::UnlockList));
+        assert!(matches!(app.phase, Phase::UnlockPrompt { .. }));
     }
 
     #[test]
@@ -4060,14 +4666,14 @@ mod tests {
         let (_dir, mut app) = populated_app();
         unlock(&mut app, PASSWORD);
         // Selection starts on the Personal group (collapsed). `l` expands it.
-        let vault = app.vault.as_ref().unwrap();
+        let vault = app.vault().unwrap();
         let rows_before = entry_tree::build_rows(vault, &app.tree, &app.recents).len();
         app.handle_event(&key('l'));
-        let vault = app.vault.as_ref().unwrap();
+        let vault = app.vault().unwrap();
         let rows_after = entry_tree::build_rows(vault, &app.tree, &app.recents).len();
         assert!(rows_after > rows_before, "l expands the group");
         app.handle_event(&key('h'));
-        let vault = app.vault.as_ref().unwrap();
+        let vault = app.vault().unwrap();
         assert_eq!(
             entry_tree::build_rows(vault, &app.tree, &app.recents).len(),
             rows_before,
@@ -4121,7 +4727,7 @@ mod tests {
 
     /// Look up an entry UUID by exact title in the unlocked fixture.
     fn entry_uuid(app: &App, title: &str) -> Uuid {
-        let vault = app.vault.as_ref().expect("unlocked");
+        let vault = app.vault().expect("unlocked");
         vault
             .search(SearchOptions::new(title))
             .expect("search")
@@ -4155,13 +4761,13 @@ mod tests {
         assert!(matches!(app.focus, Focus::Tree));
         // `l` on a group still expands rather than changing focus.
         let rows_before = {
-            let v = app.vault.as_ref().unwrap();
+            let v = app.vault().unwrap();
             entry_tree::build_rows(v, &app.tree, &app.recents).len()
         };
         app.handle_event(&key('k')); // back up onto the Personal group
         app.handle_event(&key('l')); // expands
         let rows_after = {
-            let v = app.vault.as_ref().unwrap();
+            let v = app.vault().unwrap();
             entry_tree::build_rows(v, &app.tree, &app.recents).len()
         };
         assert!(rows_after > rows_before, "l on a group expands it");
@@ -4184,7 +4790,7 @@ mod tests {
             "jump to an entry focuses detail"
         );
         let rows = {
-            let v = app.vault.as_ref().unwrap();
+            let v = app.vault().unwrap();
             entry_tree::build_rows(v, &app.tree, &app.recents)
         };
         assert!(
@@ -4334,7 +4940,7 @@ mod tests {
         );
         assert!(!app.is_syncing(), "read-only start_sync is a no-op");
         assert!(
-            app.vault.is_some(),
+            app.vault().is_some(),
             "read-only start_sync does not consume the vault"
         );
         assert!(
@@ -4358,7 +4964,7 @@ mod tests {
         );
         app.handle_event(&key('y')); // stray confirm — nothing to confirm
         assert!(
-            app.vault.as_ref().unwrap().get_entry(root1).is_ok(),
+            app.vault().unwrap().get_entry(root1).is_ok(),
             "the entry must remain in the in-memory vault (not deleted)"
         );
     }
@@ -4599,7 +5205,7 @@ mod tests {
         unlock(&mut app, PASSWORD);
         render_to(&app, 80, 24);
         let rows = {
-            let v = app.vault.as_ref().unwrap();
+            let v = app.vault().unwrap();
             entry_tree::build_rows(v, &app.tree, &app.recents)
         };
         // Click the second visible row (index 1).
@@ -4669,7 +5275,7 @@ mod tests {
                 // And clicking it selects that entry, not the first one.
                 app.handle_mouse_event(mouse_down(3, 3));
                 let rows = {
-                    let v = app.vault.as_ref().unwrap();
+                    let v = app.vault().unwrap();
                     entry_tree::build_rows(v, &app.tree, &app.recents)
                 };
                 assert_eq!(app.tree.selected(), Some(rows[i].uuid));
@@ -5021,8 +5627,7 @@ mod tests {
         let alpha = entry_uuid(&app, "Alpha");
         let bravo = entry_uuid(&app, "Bravo");
         let has_tag = |app: &App, uuid: Uuid| {
-            app.vault
-                .as_ref()
+            app.vault()
                 .unwrap()
                 .get_entry(uuid)
                 .unwrap()
@@ -5031,16 +5636,14 @@ mod tests {
                 .any(|t| t.as_str() == "urgent")
         };
         let before_alpha_history = app
-            .vault
-            .as_ref()
+            .vault()
             .unwrap()
             .get_entry(alpha)
             .unwrap()
             .history()
             .len();
         let before_bravo_history = app
-            .vault
-            .as_ref()
+            .vault()
             .unwrap()
             .get_entry(bravo)
             .unwrap()
@@ -5054,8 +5657,7 @@ mod tests {
             "tag added to both"
         );
         assert_eq!(
-            app.vault
-                .as_ref()
+            app.vault()
                 .unwrap()
                 .get_entry(alpha)
                 .unwrap()
@@ -5064,8 +5666,7 @@ mod tests {
             before_alpha_history + 1
         );
         assert_eq!(
-            app.vault
-                .as_ref()
+            app.vault()
                 .unwrap()
                 .get_entry(bravo)
                 .unwrap()
@@ -5090,8 +5691,7 @@ mod tests {
         app.marks.insert(alpha);
         let before_save = app.save_count;
         let before_history = app
-            .vault
-            .as_ref()
+            .vault()
             .unwrap()
             .get_entry(alpha)
             .unwrap()
@@ -5100,8 +5700,7 @@ mod tests {
         app.apply_tag(TagAction::Add, "invalid;tag");
         assert_eq!(app.save_count, before_save);
         assert_eq!(
-            app.vault
-                .as_ref()
+            app.vault()
                 .unwrap()
                 .get_entry(alpha)
                 .unwrap()
@@ -5122,7 +5721,7 @@ mod tests {
         let alpha = entry_uuid(&app, "Alpha");
         app.marks.extend([alpha, Uuid::new_v4()]);
         app.apply_tag(TagAction::Add, "urgent");
-        let entry = app.vault.as_ref().unwrap().get_entry(alpha).unwrap();
+        let entry = app.vault().unwrap().get_entry(alpha).unwrap();
         assert!(entry.tags().iter().all(|tag| tag.as_str() != "urgent"));
     }
 
@@ -5133,7 +5732,7 @@ mod tests {
         let alpha = entry_uuid(&app, "Alpha");
         let bravo = entry_uuid(&app, "Bravo");
         let archive = {
-            let vault = app.vault.as_mut().unwrap();
+            let vault = app.vault_mut().unwrap();
             let root = vault.root_group_uuid();
             vault.create_group(root, "Archive").unwrap()
         };
@@ -5141,8 +5740,7 @@ mod tests {
         app.marks.insert(bravo);
         app.apply_move_to_group(archive);
         let members = app
-            .vault
-            .as_ref()
+            .vault()
             .unwrap()
             .group_view(archive)
             .unwrap()
@@ -5173,7 +5771,7 @@ mod tests {
             ),
         }
         app.handle_event(&key('y')); // confirm
-        let vault = app.vault.as_ref().unwrap();
+        let vault = app.vault().unwrap();
         assert!(
             vault
                 .search(SearchOptions::new("Alpha"))
@@ -5447,8 +6045,7 @@ mod tests {
 
     fn first_match(app: &App, query: &str) -> Uuid {
         let results = app
-            .vault
-            .as_ref()
+            .vault()
             .unwrap()
             .search(SearchOptions::new(query))
             .unwrap();
@@ -5518,7 +6115,7 @@ mod tests {
         unlock(&mut app, PASSWORD);
         // Collapse the Personal group.
         app.handle_event(&key('h'));
-        let vault = app.vault.as_ref().unwrap();
+        let vault = app.vault().unwrap();
         let rows_before = entry_tree::build_rows(vault, &app.tree, &app.recents);
         let collapsed_count = rows_before.len();
         // Open search, type "Alpha" (inside Personal group).
@@ -5537,7 +6134,7 @@ mod tests {
         // The entry is selected and its ancestors are expanded so it is visible.
         assert_eq!(app.tree.selected(), Some(alpha_uuid));
         assert_eq!(app.focus, Focus::Detail);
-        let vault = app.vault.as_ref().unwrap();
+        let vault = app.vault().unwrap();
         let rows_after = entry_tree::build_rows(vault, &app.tree, &app.recents);
         assert!(rows_after.len() > collapsed_count, "ancestor group expands");
         assert!(
@@ -5586,7 +6183,7 @@ mod tests {
         };
         // Verify the vault contains an entry with this UUID and title "Bravo".
         {
-            let vault = app.vault.as_ref().unwrap();
+            let vault = app.vault().unwrap();
             let entry = vault.get_entry(expected_uuid).unwrap();
             assert_eq!(entry.title(), "Bravo");
         }
@@ -5598,7 +6195,7 @@ mod tests {
         // Verify focus moved to Detail.
         assert_eq!(app.focus, Focus::Detail);
         // Verify the detail pane shows the correct entry.
-        let vault = app.vault.as_ref().unwrap();
+        let vault = app.vault().unwrap();
         let entry = vault.get_entry(expected_uuid).unwrap();
         assert_eq!(entry.title(), "Bravo");
     }
@@ -5616,7 +6213,7 @@ mod tests {
         assert!(app.overlay.is_none(), "save closes the overlay");
         let uuid = first_match(&app, "NewEntry");
         assert_eq!(
-            app.vault.as_ref().unwrap().get_entry(uuid).unwrap().title(),
+            app.vault().unwrap().get_entry(uuid).unwrap().title(),
             "NewEntry"
         );
         assert_eq!(app.tree.selected(), Some(uuid), "new entry selected");
@@ -5661,15 +6258,8 @@ mod tests {
         app.handle_event(&key_ctrl('s'));
         assert!(app.overlay.is_none(), "retried save closes the overlay");
 
-        let vault = app.vault.as_ref().unwrap();
-        let matches: Vec<_> = vault
-            .database()
-            .iter_all_entries()
-            .filter(|e| {
-                e.get(hidlins_core::fields::TITLE)
-                    .is_some_and(|t| t == "RetryMe")
-            })
-            .collect();
+        let vault = app.vault().unwrap();
+        let matches = vault.entry_uuids_by_title("RetryMe");
         assert_eq!(
             matches.len(),
             1,
@@ -5696,8 +6286,7 @@ mod tests {
         app.handle_event(&key('j')); // → Root1 entry
         let uuid = app.tree.selected().unwrap();
         assert_eq!(
-            app.vault
-                .as_ref()
+            app.vault()
                 .unwrap()
                 .get_entry(uuid)
                 .unwrap()
@@ -5711,7 +6300,7 @@ mod tests {
         type_str(&mut app, "Z");
         app.handle_event(&key_ctrl('s'));
         assert!(app.overlay.is_none());
-        let view = app.vault.as_ref().unwrap();
+        let view = app.vault().unwrap();
         let entry = view.get_entry(uuid).unwrap();
         assert!(entry.title().contains('Z'), "title was edited");
         assert_eq!(entry.history().len(), 1, "one history snapshot appended");
@@ -5735,7 +6324,7 @@ mod tests {
         assert_eq!(app.recents.rank(uuid), None, "delete removes from recents");
         assert!(!app.tabs.is_pinned(uuid), "delete unpins the tab");
         // No longer present in the visible tree (moved to the skipped Recycle Bin).
-        let rows = entry_tree::build_rows(app.vault.as_ref().unwrap(), &app.tree, &app.recents);
+        let rows = entry_tree::build_rows(app.vault().unwrap(), &app.tree, &app.recents);
         assert!(!rows.iter().any(|r| r.uuid == uuid));
     }
 
@@ -5752,12 +6341,7 @@ mod tests {
         app.handle_event(&key('j'));
         let target_uuid = app.tree.selected().unwrap();
         assert_eq!(
-            app.vault
-                .as_ref()
-                .unwrap()
-                .get_entry(target_uuid)
-                .unwrap()
-                .title(),
+            app.vault().unwrap().get_entry(target_uuid).unwrap().title(),
             "Root1"
         );
         // Delete it.
@@ -5765,7 +6349,7 @@ mod tests {
         app.handle_event(&key('y'));
         assert!(app.overlay.is_none());
         // The entry should not appear in the visible tree rows (moved to Recycle Bin).
-        let vault = app.vault.as_ref().unwrap();
+        let vault = app.vault().unwrap();
         let rows = entry_tree::build_rows(vault, &app.tree, &app.recents);
         assert!(
             !rows.iter().any(|r| r.uuid == target_uuid),
@@ -5787,12 +6371,7 @@ mod tests {
         app.handle_event(&key('j'));
         let target_uuid = app.tree.selected().unwrap();
         assert_eq!(
-            app.vault
-                .as_ref()
-                .unwrap()
-                .get_entry(target_uuid)
-                .unwrap()
-                .title(),
+            app.vault().unwrap().get_entry(target_uuid).unwrap().title(),
             "Root1"
         );
         // Open the delete confirmation, then cancel with `n`.
@@ -5801,7 +6380,7 @@ mod tests {
         app.handle_event(&key('n'));
         assert!(app.overlay.is_none(), "n closes the confirmation");
         // The entry survives in the vault and remains in the visible tree.
-        let vault = app.vault.as_ref().unwrap();
+        let vault = app.vault().unwrap();
         assert!(
             vault.get_entry(target_uuid).is_ok(),
             "cancelled delete leaves the entry intact"
@@ -5855,12 +6434,7 @@ mod tests {
         app.handle_event(&key('j'));
         let target_uuid = app.tree.selected().unwrap();
         assert_eq!(
-            app.vault
-                .as_ref()
-                .unwrap()
-                .get_entry(target_uuid)
-                .unwrap()
-                .title(),
+            app.vault().unwrap().get_entry(target_uuid).unwrap().title(),
             "Root1"
         );
         // Open detail to bump it into recents.
@@ -5872,7 +6446,7 @@ mod tests {
         // Verify it's removed from recents.
         assert_eq!(app.recents.rank(target_uuid), None);
         // Verify tree rows decreased.
-        let vault = app.vault.as_ref().unwrap();
+        let vault = app.vault().unwrap();
         let rows = entry_tree::build_rows(vault, &app.tree, &app.recents);
         assert!(
             !rows.iter().any(|r| r.uuid == target_uuid),
@@ -5995,7 +6569,7 @@ mod tests {
     fn apply_add_round_trips_custom_fields_and_totp() {
         let (_dir, mut app) = populated_app();
         unlock(&mut app, PASSWORD);
-        let group = app.vault.as_ref().unwrap().root_group_uuid();
+        let group = app.vault().unwrap().root_group_uuid();
 
         let mut values = edit_values(EntryKind::Credential, "WithCustom");
         values.custom = vec![(
@@ -6003,10 +6577,9 @@ mod tests {
             hidlins_core::Zeroizing::new("k1".to_string()),
             false,
         )];
-        let uuid = App::apply_add(app.vault.as_mut().unwrap(), group, &values).unwrap();
+        let uuid = entry_actions::add(app.vault_mut().unwrap(), group, &values).unwrap();
         assert_eq!(
-            app.vault
-                .as_ref()
+            app.vault()
                 .unwrap()
                 .get_entry(uuid)
                 .unwrap()
@@ -6018,9 +6591,9 @@ mod tests {
         totp.totp_uri = hidlins_core::Zeroizing::new(
             "otpauth://totp/Example?secret=JBSWY3DPEHPK3PXP".to_string(),
         );
-        let tu = App::apply_add(app.vault.as_mut().unwrap(), group, &totp).unwrap();
+        let tu = entry_actions::add(app.vault_mut().unwrap(), group, &totp).unwrap();
         assert_eq!(
-            app.vault.as_ref().unwrap().get_entry(tu).unwrap().kind(),
+            app.vault().unwrap().get_entry(tu).unwrap().kind(),
             EntryKind::Totp
         );
     }
@@ -6042,10 +6615,9 @@ mod tests {
             hidlins_core::Zeroizing::new("k1".to_string()),
             false,
         )];
-        App::apply_update(app.vault.as_mut().unwrap(), uuid, &add).unwrap();
+        entry_actions::update(app.vault_mut().unwrap(), uuid, &add).unwrap();
         assert_eq!(
-            app.vault
-                .as_ref()
+            app.vault()
                 .unwrap()
                 .get_entry(uuid)
                 .unwrap()
@@ -6056,10 +6628,9 @@ mod tests {
         let mut remove = edit_values(EntryKind::Credential, "Root1");
         remove.username = "alice".to_string();
         remove.removed_custom = vec!["API".to_string()];
-        App::apply_update(app.vault.as_mut().unwrap(), uuid, &remove).unwrap();
+        entry_actions::update(app.vault_mut().unwrap(), uuid, &remove).unwrap();
         assert_eq!(
-            app.vault
-                .as_ref()
+            app.vault()
                 .unwrap()
                 .get_entry(uuid)
                 .unwrap()
@@ -6075,10 +6646,9 @@ mod tests {
     fn from_entry_seeds_and_snapshot_preserves_custom_field_protectedness() {
         let (_dir, mut app) = populated_app();
         unlock(&mut app, PASSWORD);
-        let group = app.vault.as_ref().unwrap().root_group_uuid();
+        let group = app.vault().unwrap().root_group_uuid();
         let uuid = app
-            .vault
-            .as_mut()
+            .vault_mut()
             .unwrap()
             .add_entry(
                 group,
@@ -6089,7 +6659,7 @@ mod tests {
             )
             .unwrap();
 
-        let view = app.vault.as_ref().unwrap().get_entry(uuid).unwrap();
+        let view = app.vault().unwrap().get_entry(uuid).unwrap();
         let state = EditState::from_entry(uuid, &view);
         let pin = state
             .custom
@@ -6127,10 +6697,9 @@ mod tests {
     fn apply_update_preserves_protected_custom_field_through_round_trip() {
         let (_dir, mut app) = populated_app();
         unlock(&mut app, PASSWORD);
-        let group = app.vault.as_ref().unwrap().root_group_uuid();
+        let group = app.vault().unwrap().root_group_uuid();
         let uuid = app
-            .vault
-            .as_mut()
+            .vault_mut()
             .unwrap()
             .add_entry(
                 group,
@@ -6143,14 +6712,14 @@ mod tests {
 
         // The edit the user would make: open the form, change nothing, save.
         let values = {
-            let view = app.vault.as_ref().unwrap().get_entry(uuid).unwrap();
+            let view = app.vault().unwrap().get_entry(uuid).unwrap();
             EditState::from_entry(uuid, &view)
                 .snapshot()
                 .expect("snapshot")
         };
-        App::apply_update(app.vault.as_mut().unwrap(), uuid, &values).unwrap();
+        entry_actions::update(app.vault_mut().unwrap(), uuid, &values).unwrap();
 
-        let view = app.vault.as_ref().unwrap().get_entry(uuid).unwrap();
+        let view = app.vault().unwrap().get_entry(uuid).unwrap();
         assert_eq!(
             view.custom_field_is_protected("PIN"),
             Some(true),
@@ -6325,7 +6894,7 @@ mod tests {
             },
         );
         let mp = MasterPassword::new(PASSWORD.to_string());
-        Sync::configure_remote(app.registry.as_mut().unwrap(), vault_name, s3, &mp)
+        Sync::configure_remote(app.registry_mut().unwrap(), vault_name, s3, &mp)
             .expect("configure target");
     }
 
@@ -6334,8 +6903,7 @@ mod tests {
     /// is bypassed (the advisor's "test the reintegration logic synchronously"
     /// guidance).
     fn integrate(app: &mut App, outcome: Result<SyncOutcome, SyncError>, trigger: SyncTrigger) {
-        let vault = app.vault.take().expect("vault present");
-        let registry = app.registry.take().expect("registry present");
+        let (vault, registry) = app.session.begin_sync().expect("ready session");
         app.integrate_sync_result(
             SyncResult {
                 vault,
@@ -6597,7 +7165,13 @@ mod tests {
         };
         app.apply_args(&args).expect("known vault applies");
         assert!(
-            matches!(&app.phase, Phase::UnlockPrompt { vault_name, .. } if vault_name == "personal"),
+            matches!(
+                &app.phase,
+                Phase::UnlockPrompt {
+                    origin: UnlockOrigin::Direct { vault_name },
+                    ..
+                } if vault_name == "personal"
+            ),
             "known --vault must open its unlock prompt"
         );
         assert_eq!(app.selected_vault.as_deref(), Some("personal"));
@@ -6640,8 +7214,41 @@ mod tests {
         app.handle_event(&key_code(KeyCode::Enter)); // submit → start
                                                      // We deliberately do NOT drain, so the in-flight handle stays set.
         assert!(app.is_syncing(), "submit moves the vault to the worker");
-        assert!(app.vault.is_none(), "vault is owned by the worker mid-sync");
+        assert!(
+            app.vault().is_none(),
+            "vault is owned by the worker mid-sync"
+        );
         assert!(app.overlay.is_none(), "the unlock overlay closed on submit");
+    }
+
+    #[test]
+    fn session_resource_ownership_characterizes_locked_ready_and_syncing() {
+        let (_dir, mut app) = populated_app();
+        assert!(
+            app.session.registry().is_some(),
+            "locked state retains the registry"
+        );
+        assert!(app.vault().is_none(), "locked state has no unlocked vault");
+
+        unlock(&mut app, PASSWORD);
+        assert!(
+            app.session.registry().is_some(),
+            "ready state retains the registry"
+        );
+        assert!(app.vault().is_some(), "ready state owns the unlocked vault");
+
+        configure_target(&mut app, "personal");
+        app.set_sync_engine(Arc::new(AlreadyInSyncEngine));
+        app.start_sync(
+            SyncTrigger::Manual,
+            MasterPassword::new(PASSWORD.to_string()),
+        );
+        assert!(app.is_syncing(), "syncing state owns the worker handle");
+        assert!(
+            app.session.registry().is_none(),
+            "worker owns the registry mid-sync"
+        );
+        assert!(app.vault().is_none(), "worker owns the vault mid-sync");
     }
 
     // ---- Journey tests: sync unlock overlay error paths ----
@@ -6729,7 +7336,7 @@ mod tests {
             }),
             SyncTrigger::Manual,
         );
-        assert!(app.vault.is_some(), "vault handed back on success");
+        assert!(app.vault().is_some(), "vault handed back on success");
         assert!(matches!(app.phase, Phase::Workspace), "stays unlocked");
         let status = app.sync_status_line().unwrap();
         assert!(status.contains("1 added"), "delta surfaced: {status}");
@@ -6760,7 +7367,7 @@ mod tests {
             matches!(app.phase, Phase::LockScreen),
             "any SyncError → lock"
         );
-        assert!(app.vault.is_none(), "vault dropped on error");
+        assert!(app.vault().is_none(), "vault dropped on error");
         assert!(app.status.as_deref().unwrap_or("").contains("Sync failed"));
     }
 
@@ -6769,8 +7376,7 @@ mod tests {
         let (_dir, mut app) = populated_app();
         unlock(&mut app, PASSWORD);
         // Simulate an in-flight sync: the worker owns the moved vault + registry.
-        let _vault = app.vault.take().expect("vault present");
-        let _registry = app.registry.take().expect("registry present");
+        let (_vault, _registry) = app.session.begin_sync().expect("ready session");
         app.lock_pending = true; // a lock had fired mid-sync
 
         // The worker panicked — `drain` surfaced `WorkerLost`.
@@ -6780,9 +7386,9 @@ mod tests {
             matches!(app.phase, Phase::LockScreen),
             "a lost worker drops to LockScreen"
         );
-        assert!(app.vault.is_none(), "no vault after a lost worker");
+        assert!(app.vault().is_none(), "no vault after a lost worker");
         assert!(
-            app.registry.is_some(),
+            app.session.registry().is_some(),
             "registry reloaded so the post-lock UnlockList does not panic"
         );
         assert!(!app.lock_pending, "deferred-lock flag cleared");
@@ -6829,7 +7435,7 @@ mod tests {
             matches!(app.phase, Phase::LockScreen),
             "deferred lock applied"
         );
-        assert!(app.vault.is_none());
+        assert!(app.vault().is_none());
         assert!(!app.lock_pending, "pending flag cleared");
     }
 
@@ -7020,7 +7626,7 @@ mod tests {
         app.handle_event(&key_ctrl('s'));
         assert!(app.overlay.is_none());
         // Verify round-trip through the vault.
-        let vault = app.vault.as_ref().unwrap();
+        let vault = app.vault().unwrap();
         let uuid = app.tree.selected().unwrap();
         let entry = vault.get_entry(uuid).unwrap();
         assert_eq!(entry.title(), "MyService");
@@ -7047,7 +7653,7 @@ mod tests {
         type_str(&mut app, "Discussed roadmap for Q1");
         app.handle_event(&key_ctrl('s'));
         assert!(app.overlay.is_none());
-        let vault = app.vault.as_ref().unwrap();
+        let vault = app.vault().unwrap();
         let uuid = app.tree.selected().unwrap();
         let entry = vault.get_entry(uuid).unwrap();
         assert_eq!(entry.kind(), EntryKind::SecureNote);
@@ -7064,7 +7670,7 @@ mod tests {
         app.handle_event(&key('j')); // → Root1 entry
         let uuid = app.tree.selected().unwrap();
         // Verify initial state.
-        let vault = app.vault.as_ref().unwrap();
+        let vault = app.vault().unwrap();
         let initial_password = vault.get_entry(uuid).unwrap().password().to_string();
         assert_eq!(initial_password, "s3cr3t");
         assert_eq!(vault.get_entry(uuid).unwrap().history().len(), 0);
@@ -7082,7 +7688,7 @@ mod tests {
         app.handle_event(&key_ctrl('s'));
         assert!(app.overlay.is_none());
         // Verify round-trip.
-        let vault = app.vault.as_ref().unwrap();
+        let vault = app.vault().unwrap();
         assert_eq!(vault.get_entry(uuid).unwrap().password(), "newpass");
         assert_eq!(
             vault.get_entry(uuid).unwrap().history().len(),
@@ -7101,7 +7707,7 @@ mod tests {
         app.handle_event(&key('j')); // → Root1 entry
         let uuid = app.tree.selected().unwrap();
         // Verify initial state.
-        let vault = app.vault.as_ref().unwrap();
+        let vault = app.vault().unwrap();
         assert_eq!(vault.get_entry(uuid).unwrap().title(), "Root1");
         assert_eq!(vault.get_entry(uuid).unwrap().history().len(), 0);
         assert_eq!(vault.get_entry(uuid).unwrap().kind(), EntryKind::Credential);
@@ -7113,7 +7719,7 @@ mod tests {
         app.handle_event(&key_ctrl('s'));
         assert!(app.overlay.is_none());
         // Verify title changed, kind unchanged, and history appended.
-        let vault = app.vault.as_ref().unwrap();
+        let vault = app.vault().unwrap();
         let entry = vault.get_entry(uuid).unwrap();
         assert!(entry.title().contains('Z'), "title was edited");
         assert_eq!(
@@ -7158,7 +7764,7 @@ mod tests {
                 app.handle_event(&key_ctrl('s'));
                 assert!(app.overlay.is_none());
                 // Verify the generated password persisted through the vault round-trip.
-                let vault = app.vault.as_ref().unwrap();
+                let vault = app.vault().unwrap();
                 let uuid = app.tree.selected().unwrap();
                 assert_eq!(vault.get_entry(uuid).unwrap().title(), "GeneratedEntry");
                 assert_eq!(vault.get_entry(uuid).unwrap().password(), generated);
@@ -7173,6 +7779,7 @@ mod tests {
     impl std::fmt::Debug for PhaseName<'_> {
         fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
             let s = match self.0 {
+                Phase::VaultOnboarding { .. } => "VaultOnboarding",
                 Phase::UnlockList => "UnlockList",
                 Phase::UnlockPrompt { .. } => "UnlockPrompt",
                 Phase::LockScreen => "LockScreen",
@@ -7788,7 +8395,7 @@ mod tests {
         // `?` opens the palette on the unlock list (TUIE-4 pre-unlock reach),
         // filtered to the UNLOCK_LIST context: unlock (Confirm) enabled,
         // workspace-only commands (copy) listed disabled.
-        let (_dir, mut app) = populated_app();
+        let (_dir, mut app) = fixture_app(&["alpha", "beta"], Duration::from_secs(300));
         assert!(matches!(app.phase, Phase::UnlockList));
         app.handle_event(&key('?'));
         match &app.overlay {
@@ -7938,7 +8545,7 @@ mod tests {
         let (_dir, mut app) = populated_app();
         unlock(&mut app, PASSWORD);
         let alpha = {
-            let vault = app.vault.as_ref().unwrap();
+            let vault = app.vault().unwrap();
             let root = vault.group_view(vault.root_group_uuid()).unwrap();
             let personal = root
                 .child_group_uuids()
@@ -7976,7 +8583,7 @@ mod tests {
         let (_dir, mut app) = populated_app();
         unlock(&mut app, PASSWORD);
         let selected = {
-            let vault = app.vault.as_mut().unwrap();
+            let vault = app.vault_mut().unwrap();
             let root = vault.root_group_uuid();
             let group_a = vault.create_group(root, "Group A").unwrap();
             let group_b = vault.create_group(group_a, "Group B").unwrap();
@@ -7984,7 +8591,7 @@ mod tests {
                 .add_entry(group_b, EntryBuilder::credential("Deep Entry").build())
                 .unwrap()
         };
-        let visible = entry_tree::build_rows(app.vault.as_ref().unwrap(), &app.tree, &app.recents);
+        let visible = entry_tree::build_rows(app.vault().unwrap(), &app.tree, &app.recents);
         assert!(visible.iter().all(|row| row.uuid != selected));
         app.tree.select(selected);
 

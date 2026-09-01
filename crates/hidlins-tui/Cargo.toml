@@ -1,6 +1,6 @@
 [package]
 name = "hidlins-tui"
-description = "Hidlins interactive terminal UI (placeholder; implemented by the tui-skeleton feature)."
+description = "Hidlins keyboard-driven terminal UI for vault, entry, generator, security, and S3 sync operations."
 version.workspace = true
 edition.workspace = true
 license.workspace = true
@@ -18,17 +18,17 @@ hidlins-core = { path = "../hidlins-core", version = "0.1" }
 # abandoned `sync-git` placeholder is gone); `TuiError` bridges
 # `hidlins_sync::SyncError` via `#[from]` (design U.5 / ADR-T4).
 hidlins-sync = { path = "../hidlins-sync", version = "0.1" }
-# Auto-lock + clipboard. Phase 2 wires `AutoLockController` (idle auto-lock,
-# FR-073); `Clipboard`/`AutoClearGuard` come online with copy actions in Phase 5.
+# Auto-lock + clipboard. `AutoLockController` enforces FR-073 idle locking;
+# `Clipboard`/`AutoClearGuard` protect copy actions.
 hidlins-security = { path = "../hidlins-security", version = "0.1" }
-# Password / passphrase generation for the Phase-5 Edit→Generate panel (T5.3).
+# Password / passphrase generation for the Edit→Generate panel.
 # First-party path dep; pulls no new vendored crates (its deps are already in
 # the tree).
 hidlins-genpw = { path = "../hidlins-genpw", version = "0.1" }
 
 # --- TUI framework + terminal backend (tui-skeleton T1.1) ---
 # Pins are the latest stable published ≥30 days as of 2026-06-01 (OQ-1):
-# ratatui 0.30.0 (2025-12-26), crossterm 0.29.0 (2025-04-05),
+# ratatui 0.30.2 (2026-06-19), crossterm 0.29.0 (2025-04-05),
 # tui-input 0.15.3 (2026-04-18), unicode-width 0.2.2 (2025-10-06).
 # ratatui 0.30's default features include the crossterm 0.29 backend;
 # `crossterm` is declared directly for the raw-mode / alternate-screen calls
@@ -41,30 +41,29 @@ hidlins-genpw = { path = "../hidlins-genpw", version = "0.1" }
 # (`std = ["time/local-offset"]`), which any usable build enables — so dropping
 # `all-widgets` removes zero crates (verified: compiled set unchanged). Not
 # worth the `default-features = false` + curated-list fragility for no gain.
-ratatui = "0.30"
+ratatui = "=0.30.2"
 crossterm = "0.29"
-# Input-widget primitive for the Phase-2 `PasswordInput` / search / edit
-# fields. The `crossterm` feature is enabled so the full tree is vendored once
-# (Phase 2 wires `Input::handle_event`). 0.15.3 targets crossterm 0.29 +
+# Input-widget primitive for `PasswordInput`, search, and edit fields. The
+# `crossterm` feature enables direct event translation. 0.15.3 targets crossterm 0.29 +
 # ratatui 0.30 + unicode-width 0.2.
 tui-input = { version = "0.15", features = ["crossterm"] }
-# Display-width-correct tab-label / detail truncation (Phase 2 T2.4 / OQ-N6).
+# Display-width-correct tab-label and detail truncation.
 unicode-width = "0.2"
-# Entry/group UUIDs — pinned-tab identity (`TabBar.pinned`) and (Phase 3+)
-# tree/detail selection. Re-uses hidlins-core's exact-pinned uuid. The `serde`
-# feature (Phase 4 / T4.1) lets pinned + recents UUIDs round-trip through
+# Entry/group UUIDs — pinned-tab identity (`TabBar.pinned`) and tree/detail
+# selection. Re-uses hidlins-core's exact-pinned uuid. The `serde` feature
+# lets pinned + recents UUIDs round-trip through
 # `tui.toml`; it matches `hidlins-core`'s own `uuid` features, so it adds zero
 # new vendored crates.
 uuid = { version = "1", features = ["serde"] }
 # Timestamps. `hidlins-core`'s public API surfaces `chrono::DateTime<Utc>`
 # (`EntryView::{creation_time,last_modification_time,expires}`), and the detail
-# pane needs `Utc::now()` to call `Vault::is_expired(uuid, now)` (Phase 3 / T3.3).
+# pane needs `Utc::now()` to call `Vault::is_expired(uuid, now)`.
 # Already vendored as a `hidlins-core` transitive, so this adds zero new crates;
 # `default-features = false, features = ["clock"]` matches core and keeps it lean.
 chrono = { version = "0.4", default-features = false, features = ["clock"] }
 
 # TUI-local persistence (`config.toml`: preferences; `tui.toml`: per-vault
-# pins/recents; Phase 4 / ADR-T3). Serialized with `serde` + `toml` (both already vendored workspace-
+# pins/recents; ADR-T3). Serialized with `serde` + `toml` (both already vendored workspace-
 # wide via hidlins-core) and written through `hidlins_core::atomic::write_atomic`.
 serde = { version = "1.0", features = ["derive"] }
 toml = "0.8"
@@ -72,7 +71,6 @@ toml = "0.8"
 # Memory hygiene + error/exit plumbing (already vendored workspace-wide).
 zeroize = { version = "1.8", features = ["derive"] }
 thiserror = "2.0"
-anyhow = "1"
 
 # Async-signal-safe SIGHUP/SIGTERM terminal-restore handler (T1.3). Unix-only;
 # the single audited `#[allow(unsafe_code)]` block in this crate — see the

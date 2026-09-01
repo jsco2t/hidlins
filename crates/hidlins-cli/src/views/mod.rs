@@ -1,6 +1,6 @@
 //! Per-subcommand serializable view structs — JSON schema contract.
 //!
-//! Phase 1 lands the module shape only. Phases 2–4 fill in:
+//! The shipped modules are:
 //!
 //! - [`vault`]: `VaultCreateView`, `VaultListView`, `VaultOpenView`, `VaultSetLockView`, `VaultSetSyncView`.
 //! - [`entry`]: `EntryGetView`, `EntryListView`, `EntrySearchView`, `EntryAddView`, `EntryEditView`, `EntryRmView`.

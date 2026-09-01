@@ -3,8 +3,8 @@
 //! A thin shell: parse CLI arguments (before any terminal setup), handle the
 //! print-and-exit forms (`--help`/`--version`) and usage errors here, then hand
 //! the parsed [`hidlins_tui::Args`] to the library's `run`. All real logic lives
-//! in the library crate; `main` only adapts [`hidlins_tui::TuiError`] into
-//! `anyhow::Error` for a clean process exit.
+//! in the library crate; `main` only maps success and typed failures to a
+//! process exit status.
 
 use std::process::ExitCode;
 

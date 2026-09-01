@@ -151,6 +151,11 @@ impl<'a> EntryView<'a> {
             })
             .collect()
     }
+
+    /// Return whether the entry has one or more attachment names.
+    pub fn has_attachments(&self) -> bool {
+        self.entry.attachment_names().next().is_some()
+    }
 }
 
 impl<'a> EntryViewMut<'a> {

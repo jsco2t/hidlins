@@ -13,11 +13,14 @@ pub(crate) mod value;
 use std::collections::HashMap;
 
 pub use attachment::{Attachment, AttachmentId, AttachmentMut, AttachmentRef};
-pub use autotype::{AutoType, AutoTypeAssociation};
+pub use autotype::{AutoType, AutoTypeAssociation, DataTransferObfuscation};
 pub use color::{Color, ParseColorError};
 pub use custom_data::{CustomDataItem, CustomDataValue};
 pub use entry::{DestinationGroupNotFoundError, Entry, EntryId, EntryMut, EntryRef, EntryTrack};
-pub use group::{Group, GroupId, GroupMut, GroupRef, GroupTrack, MoveGroupError};
+pub use group::{
+    DuplicateEntryIdError, DuplicateGroupIdError, Group, GroupId, GroupMut, GroupRef, GroupTrack,
+    MoveGroupError,
+};
 pub use history::History;
 pub use icon::{CustomIcon, CustomIconId, CustomIconMut, CustomIconNotFoundError, CustomIconRef, Icon};
 pub use meta::{MemoryProtection, Meta};
@@ -74,7 +77,8 @@ impl Database {
         Self::with_data(config, GroupId::new())
     }
 
-    pub(crate) fn new_with_root_id(root_id: GroupId) -> Self {
+    /// Create a new database with the given group UUID
+    pub fn new_with_root_id(root_id: GroupId) -> Self {
         let root = Group::with_id(root_id, None);
 
         let mut groups = HashMap::new();
@@ -107,6 +111,48 @@ impl Database {
             entries: HashMap::new(),
             groups,
             deleted_objects: HashMap::new(),
+        }
+    }
+
+    /// Rebuild attachment-to-entry back-references from every current and
+    /// historical entry's attachment map.
+    ///
+    /// KDBX stores entry-to-binary references, so the reverse index must be
+    /// reconstructed after parsing or history replacement. Missing pool ids
+    /// are ignored; callers can then repair those dangling references through
+    /// the entry APIs without risking deletion of a binary still referenced by
+    /// another current or historical version.
+    pub fn rebuild_attachment_references(&mut self) {
+        for attachment in self.attachments.values_mut() {
+            attachment.entries.clear();
+        }
+
+        let mut references = Vec::new();
+        for (entry_id, entry) in &self.entries {
+            references.extend(
+                entry
+                    .attachments
+                    .values()
+                    .copied()
+                    .map(|attachment_id| (attachment_id, *entry_id, None)),
+            );
+            if let Some(history) = &entry.history {
+                for (index, historical) in history.entries.iter().enumerate() {
+                    references.extend(
+                        historical
+                            .attachments
+                            .values()
+                            .copied()
+                            .map(|attachment_id| (attachment_id, *entry_id, Some(index))),
+                    );
+                }
+            }
+        }
+
+        for (attachment_id, entry_id, history_index) in references {
+            if let Some(attachment) = self.attachments.get_mut(&attachment_id) {
+                attachment.entries.insert((entry_id, history_index));
+            }
         }
     }
 

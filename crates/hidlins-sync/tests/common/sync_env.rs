@@ -208,7 +208,7 @@ impl SyncTestEnv {
     #[must_use]
     pub fn local_sha(&self) -> String {
         let bytes = std::fs::read(&self.vault_path).expect("read vault bytes");
-        hex::encode(Sha256::digest(&bytes))
+        super::encoding::encode_lower(&Sha256::digest(&bytes))
     }
 
     fn next_time(&self) -> chrono::NaiveDateTime {

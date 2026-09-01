@@ -8,10 +8,9 @@
 
 [advisories]
 # RUSTSEC-2026-0194 / RUSTSEC-2026-0195 — quick-xml CPU / memory-exhaustion DoS,
-# fixed in quick-xml >= 0.41.0. Pulled transitively via wayland-scanner
-# (build-time codegen over trusted crate-shipped protocol XML; no published
-# release moves to 0.41) and via keepass 0.12.9 (the keepass 0.13 bump to
-# quick-xml 0.41 is a major core-KDBX-library change tracked as a follow-up).
-# Residual exposure is a low-severity DoS reachable only via a maliciously
-# crafted vault — no data loss, no RCE. See deny.toml for the full rationale.
+# fixed in quick-xml >= 0.41.0. The runtime KDBX path now uses fixed
+# quick-xml 0.41 through keepass 0.13.25. The remaining 0.39 path is solely
+# wayland-scanner build-time code generation over trusted crate-shipped
+# protocol XML; no published wayland-scanner release moves to 0.41.
+# See deny.toml for the full non-reachability rationale.
 ignore = ["RUSTSEC-2026-0194", "RUSTSEC-2026-0195"]

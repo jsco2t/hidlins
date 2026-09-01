@@ -23,7 +23,7 @@ const CRUMB_SEP: &str = " › ";
 /// Render the Secrets tab into `area`. `_now` (monotonic) is unused here — the
 /// expired affordance and TOTP need wall-clock time, taken from `Utc::now()`.
 pub(crate) fn render(app: &App, frame: &mut Frame, area: Rect, _now: Instant) {
-    let Some(vault) = app.vault.as_ref() else {
+    let Some(vault) = app.vault() else {
         // Unreachable in `Phase::Workspace`, but render defensively rather than
         // panic in a draw closure.
         frame.render_widget(Paragraph::new("No vault open."), area);
@@ -103,7 +103,7 @@ pub(crate) fn build_breadcrumb(app: &App, width: usize) -> String {
     let vault_name = app.selected_vault.as_deref().unwrap_or("vault");
     let mut parts: Vec<String> = vec![vault_name.to_string()];
 
-    if let (Some(vault), Some(sel)) = (app.vault.as_ref(), app.tree.selected()) {
+    if let (Some(vault), Some(sel)) = (app.vault(), app.tree.selected()) {
         if let Some(path) = node_path(vault, vault.root_group_uuid(), sel) {
             parts.extend(path.into_iter().map(|uuid| node_name(vault, uuid)));
         }

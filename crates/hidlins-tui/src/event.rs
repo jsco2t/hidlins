@@ -35,7 +35,7 @@ pub(crate) fn run_event_loop(
 
         // Tighten the poll deadline to the lock countdown only while unlocked;
         // otherwise a fresh/locked controller could yield a 0-length poll.
-        let poll_for = if app.vault.is_some() {
+        let poll_for = if app.vault().is_some() {
             app.controller
                 .time_until_lock(now)
                 .map_or(FRAME_BUDGET, |d| d.min(FRAME_BUDGET))

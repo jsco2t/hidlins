@@ -461,7 +461,7 @@ fn render_preview(app: &App, state: &SearchState, frame: &mut Frame, area: Rect)
         frame.render_widget(block, area);
         return;
     };
-    let Some(vault) = app.vault.as_ref() else {
+    let Some(vault) = app.vault() else {
         frame.render_widget(block, area);
         return;
     };

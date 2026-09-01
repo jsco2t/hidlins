@@ -13,18 +13,15 @@
 //! `hidlins_security::AutoClearGuard::wait_for_clear` before exit so
 //! the auto-clear timer actually fires on Wayland (design §2.5 + §3.9).
 //!
-//! ## Group resolution
-//!
-//! `hidlins-core::EntryView` does not expose the parent group; we walk
-//! `vault.database().iter_all_entries()` to find the entry's `EntryRef`
-//! and read `parent().name`. The cost is O(N) per get/list — fine at
-//! Phase 0 vault sizes (≤5,000 entries per NFR-002). When tighter,
-//! entry-management can add a `group_name()` accessor.
+//! Entry and group queries use owned, secret-free core records so this
+//! presentation layer never traverses the underlying KDBX database model.
+
+use std::collections::HashMap;
 
 use chrono::Utc;
 use hidlins_core::{
-    EntryBuilder, EntryKind, EntryView, Keyfile, MatchedField, RegisteredVault, SearchMode,
-    SearchOptions, SearchScope, Vault, VaultError, VaultReadOnly, VaultRegistry,
+    EntryBuilder, EntryKind, Keyfile, MatchedField, RegisteredVault, SearchMode, SearchOptions,
+    SearchScope, Vault, VaultError, VaultReadOnly, VaultRegistry,
 };
 use hidlins_genpw::{CharSet, PasswordBuilder};
 
@@ -119,8 +116,11 @@ fn run_add(cli: &Cli, args: &EntryAddArgs) -> Result<(), CliExit> {
         .map_err(CliExit::from)?;
     vault.save().map_err(CliExit::from)?;
 
-    let group_name = group_name_for(vault.database(), uuid)
-        .unwrap_or_else(|| vault.database().root().name.clone());
+    let group_name = vault
+        .entry_summary(uuid)
+        .map_err(CliExit::from)?
+        .group_name()
+        .to_string();
     let view = EntryAddView {
         uuid,
         title: &args.title,
@@ -172,13 +172,9 @@ fn run_get(cli: &Cli, args: &EntryGetArgs) -> Result<(), CliExit> {
         VaultReadOnly::open(&record.path, &master, keyfile.as_ref()).map_err(CliExit::from)?;
 
     let uuid = resolve_entry_uuid(&vault, args)?;
-    let entry_ref = vault
-        .database()
-        .iter_all_entries()
-        .find(|e| e.id().uuid() == uuid)
-        .ok_or(CliExit::from(VaultError::EntryNotFound { uuid }))?;
-    let group_name = entry_ref.parent().name.clone();
-    let view_data = EntryView::new(entry_ref);
+    let summary = vault.entry_summary(uuid).map_err(CliExit::from)?;
+    let group_name = summary.group_name().to_string();
+    let view_data = vault.get_entry(uuid).map_err(CliExit::from)?;
 
     let totp_code = if args.show_totp {
         match vault.totp(uuid) {
@@ -246,15 +242,7 @@ fn resolve_entry_uuid(vault: &VaultReadOnly, args: &EntryGetArgs) -> Result<uuid
             "entry get requires --uuid or --title".to_string(),
         ));
     };
-    let matches: Vec<uuid::Uuid> = vault
-        .database()
-        .iter_all_entries()
-        .filter(|e| {
-            e.get(hidlins_core::fields::TITLE)
-                .is_some_and(|t| t.eq_ignore_ascii_case(title))
-        })
-        .map(|e| e.id().uuid())
-        .collect();
+    let matches = vault.entry_uuids_by_title(title);
     match matches.len() {
         0 => Err(CliExit::UserError(format!("no entry with title {title:?}"))),
         1 => Ok(matches[0]),
@@ -391,8 +379,6 @@ fn run_list(cli: &Cli, args: &EntryListArgs) -> Result<(), CliExit> {
     let keyfile = record.keyfile_path.clone().map(Keyfile::Path);
     let vault =
         VaultReadOnly::open(&record.path, &master, keyfile.as_ref()).map_err(CliExit::from)?;
-    let db = vault.database();
-
     // Collect tag filter parsed once.
     let filter_tags: Vec<hidlins_core::Tag> = args
         .tags
@@ -401,32 +387,29 @@ fn run_list(cli: &Cli, args: &EntryListArgs) -> Result<(), CliExit> {
         .collect::<Result<Vec<_>, _>>()?;
 
     let now = Utc::now();
-    // First pass: collect raw filtered + group-resolved rows. We keep
-    // owned `String`s for the group name (the DB borrow lives across
-    // the iteration but group lookup requires a fresh `EntryRef` walk).
+    // First pass: collect filtered rows from secret-free core summaries.
     let mut rows: Vec<EntryRow> = Vec::new();
-    for entry_ref in db.iter_all_entries() {
-        // Capture the parent group's name BEFORE moving the EntryRef
-        // into the EntryView façade — the view takes ownership.
-        let group_name = entry_ref.parent().name.clone();
-        let view = EntryView::new(entry_ref);
-        let expired = view.expires().is_some_and(|t| t <= now);
+    for summary in vault.entry_summaries() {
+        let expired = summary.expires().is_some_and(|t| t <= now);
         if expired && !args.include_expired {
             continue;
         }
-        let entry_tags = view.tags();
         if !filter_tags.is_empty()
             && !filter_tags
                 .iter()
-                .all(|f| entry_tags.iter().any(|t| t == f))
+                .all(|filter| summary.tags().iter().any(|tag| tag == filter))
         {
             continue;
         }
         rows.push(EntryRow {
-            uuid: view.uuid(),
-            title: view.title().to_owned(),
-            group: group_name,
-            tags: entry_tags.iter().map(|t| t.as_str().to_owned()).collect(),
+            uuid: summary.uuid(),
+            title: summary.title().to_owned(),
+            group: summary.group_name().to_owned(),
+            tags: summary
+                .tags()
+                .iter()
+                .map(|tag| tag.as_str().to_owned())
+                .collect(),
             expired,
         });
     }
@@ -478,13 +461,15 @@ fn run_search(cli: &Cli, args: &EntrySearchArgs) -> Result<(), CliExit> {
     // Resolve UUIDs back to display rows, carrying score + fuzzy indices.
     let now = Utc::now();
     let mut rows: Vec<SearchRowOwned> = Vec::new();
-    let db = vault.database();
+    let summaries: HashMap<_, _> = vault
+        .entry_summaries()
+        .into_iter()
+        .map(|summary| (summary.uuid(), summary))
+        .collect();
     for result in &results {
-        let Some(entry_ref) = db.iter_all_entries().find(|e| e.id().uuid() == result.uuid) else {
+        let Some(summary) = summaries.get(&result.uuid) else {
             continue;
         };
-        let group_name = entry_ref.parent().name.clone();
-        let view = EntryView::new(entry_ref);
         let matched_indices = result
             .match_indices
             .iter()
@@ -495,11 +480,15 @@ fn run_search(cli: &Cli, args: &EntrySearchArgs) -> Result<(), CliExit> {
             .collect();
         rows.push(SearchRowOwned {
             row: EntryRow {
-                uuid: view.uuid(),
-                title: view.title().to_owned(),
-                group: group_name,
-                tags: view.tags().iter().map(|t| t.as_str().to_owned()).collect(),
-                expired: view.expires().is_some_and(|t| t <= now),
+                uuid: summary.uuid(),
+                title: summary.title().to_owned(),
+                group: summary.group_name().to_owned(),
+                tags: summary
+                    .tags()
+                    .iter()
+                    .map(|tag| tag.as_str().to_owned())
+                    .collect(),
+                expired: summary.expires().is_some_and(|t| t <= now),
             },
             score: result.score,
             matched_indices,
@@ -540,11 +529,11 @@ fn matched_field_name(field: MatchedField) -> &'static str {
 /// `tag:<tag>` is an exact (case-insensitive) tag filter.
 fn parse_scope(vault: &VaultReadOnly, scope: &str) -> Result<SearchScope, CliExit> {
     if let Some(name) = scope.strip_prefix("group:") {
-        let db = vault.database();
-        let mut matches = db
-            .iter_all_groups()
-            .filter(|g| g.name.eq_ignore_ascii_case(name))
-            .map(|g| g.id().uuid());
+        let groups = vault.group_summaries();
+        let mut matches = groups
+            .iter()
+            .filter(|group| group.name().eq_ignore_ascii_case(name))
+            .map(hidlins_core::GroupSummary::uuid);
         let first = matches.next();
         match (first, matches.next()) {
             (Some(uuid), None) => Ok(SearchScope::GroupSubtree(uuid)),
@@ -552,8 +541,10 @@ fn parse_scope(vault: &VaultReadOnly, scope: &str) -> Result<SearchScope, CliExi
                 "scope group {name:?} is ambiguous — multiple groups share that name"
             ))),
             (None, _) => {
-                let candidates: Vec<String> =
-                    db.iter_all_groups().map(|g| g.name.clone()).collect();
+                let candidates: Vec<&str> = groups
+                    .iter()
+                    .map(hidlins_core::GroupSummary::name)
+                    .collect();
                 Err(CliExit::UserError(format!(
                     "no group named {name:?}; known groups: {}",
                     candidates.join(", ")
@@ -599,12 +590,6 @@ fn optional_field(value: &str) -> Option<&str> {
     } else {
         Some(value)
     }
-}
-
-fn group_name_for(db: &hidlins_core::Database, uuid: uuid::Uuid) -> Option<String> {
-    db.iter_all_entries()
-        .find(|e| e.id().uuid() == uuid)
-        .map(|e| e.parent().name.clone())
 }
 
 fn load_registry_record(cli: &Cli, vault_id: &str) -> Result<RegisteredVault, CliExit> {

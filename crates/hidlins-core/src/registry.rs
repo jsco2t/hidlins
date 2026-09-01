@@ -16,9 +16,9 @@
 //!
 //! ## Forward compatibility
 //!
-//! Future features (sync, per-vault auto-lock) will add `[[vault.sync]]`
-//! / `[vault.lock]` style sub-tables to each `[[vault]]` entry. The
-//! registry preserves any unknown TOML keys verbatim via
+//! Shipped sync and per-vault auto-lock settings use nested data attached to
+//! each `[[vault]]` entry. The registry preserves those and any unknown TOML
+//! keys verbatim via
 //! `#[serde(flatten)] extra: toml::Table` at both the top level and the
 //! per-vault level. This is the same forward-compat principle KDBX uses
 //! internally — never drop data we don't understand.
@@ -55,8 +55,8 @@ pub const SCHEMA_VERSION: u32 = 1;
 /// A single registered vault.
 ///
 /// Fields beyond `name`, `path`, `created_at`, and `keyfile_path` are
-/// captured in `extra` and round-tripped verbatim on save (forward-compat
-/// for sync / auto-lock features that will add their own sub-tables).
+/// captured in `extra` and round-tripped verbatim on save. This includes the
+/// shipped sync and auto-lock extensions and preserves future unknown fields.
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct RegisteredVault {
     /// Unique human-readable name for the vault.
@@ -264,6 +264,30 @@ impl VaultRegistry {
         Ok(())
     }
 
+    /// Transactionally register and persist a vault.
+    ///
+    /// The latest on-disk registry is reloaded while holding the write lock so
+    /// a stale caller cannot overwrite registrations completed by another
+    /// process. `self` is replaced only after the atomic save succeeds.
+    ///
+    /// # Errors
+    ///
+    /// - [`VaultError::AlreadyRegistered`] if the latest registry already has
+    ///   a vault with the same name.
+    /// - [`VaultError::Contended`] if another process holds the registry lock.
+    /// - The load and save errors documented by [`Self::load`] and
+    ///   [`Self::save`].
+    pub fn register_and_save(&mut self, vault: RegisteredVault) -> Result<(), VaultError> {
+        self.paths.ensure_exists()?;
+        let path = self.paths.vaults_toml();
+        let _guard = crate::locking::acquire_exclusive(&path)?;
+        let mut latest = Self::load(self.paths.clone())?;
+        latest.register(vault)?;
+        latest.save_unlocked()?;
+        *self = latest;
+        Ok(())
+    }
+
     /// Add a vault to the registry.
     ///
     /// # Errors
@@ -370,6 +394,96 @@ mod tests {
         let paths = paths_in(&tmp);
         let registry = VaultRegistry::load(paths).expect("load missing succeeds");
         assert_eq!(registry.list().count(), 0);
+    }
+
+    #[test]
+    fn register_and_save_missing_registry_round_trips_every_field() {
+        let tmp = TempDir::new().expect("tempdir");
+        let paths = paths_in(&tmp);
+        let mut registry = VaultRegistry::with_paths(paths.clone());
+        let mut vault = sample_vault("personal", tmp.path());
+        vault.keyfile_path = Some(tmp.path().join("personal.key"));
+        vault.extra.insert(
+            "future_setting".to_string(),
+            toml::Value::String("preserve me".to_string()),
+        );
+
+        registry
+            .register_and_save(vault.clone())
+            .expect("transactional registration succeeds");
+
+        for registered in [
+            registry.get("personal").expect("caller updated"),
+            VaultRegistry::load(paths)
+                .expect("reload")
+                .get("personal")
+                .expect("persisted registration"),
+        ] {
+            assert_eq!(registered.name, vault.name);
+            assert_eq!(registered.path, vault.path);
+            assert_eq!(registered.created_at, vault.created_at);
+            assert_eq!(registered.keyfile_path, vault.keyfile_path);
+            assert_eq!(registered.extra, vault.extra);
+        }
+    }
+
+    #[test]
+    fn register_and_save_preserves_unrelated_concurrent_registration() {
+        let tmp = TempDir::new().expect("tempdir");
+        let paths = paths_in(&tmp);
+        let mut initial = VaultRegistry::with_paths(paths.clone());
+        initial
+            .register_and_save(sample_vault("personal", tmp.path()))
+            .expect("initial registration");
+
+        let mut stale = VaultRegistry::load(paths.clone()).expect("stale load");
+        let mut concurrent = VaultRegistry::load(paths.clone()).expect("concurrent load");
+        concurrent
+            .register_and_save(sample_vault("work", tmp.path()))
+            .expect("concurrent registration");
+
+        stale
+            .register_and_save(sample_vault("archive", tmp.path()))
+            .expect("stale caller rebases registration");
+
+        let names: Vec<_> = stale.list().map(|vault| vault.name.as_str()).collect();
+        assert_eq!(names, ["personal", "work", "archive"]);
+        let reloaded = VaultRegistry::load(paths).expect("reload");
+        assert!(reloaded.get("personal").is_some());
+        assert!(reloaded.get("work").is_some());
+        assert!(reloaded.get("archive").is_some());
+    }
+
+    #[test]
+    fn register_and_save_duplicate_leaves_disk_and_caller_unchanged() {
+        let tmp = TempDir::new().expect("tempdir");
+        let paths = paths_in(&tmp);
+        let mut registry = VaultRegistry::with_paths(paths.clone());
+        registry
+            .register_and_save(sample_vault("personal", tmp.path()))
+            .expect("initial registration");
+        let disk_before = std::fs::read(paths.vaults_toml()).expect("registry bytes");
+        let caller_before: Vec<_> = registry
+            .list()
+            .map(|vault| (vault.name.clone(), vault.path.clone()))
+            .collect();
+
+        let mut duplicate = sample_vault("personal", tmp.path());
+        duplicate.path = tmp.path().join("different.kdbx");
+        let error = registry
+            .register_and_save(duplicate)
+            .expect_err("duplicate must fail");
+
+        assert!(matches!(
+            error,
+            VaultError::AlreadyRegistered { ref name } if name == "personal"
+        ));
+        assert_eq!(std::fs::read(paths.vaults_toml()).unwrap(), disk_before);
+        let caller_after: Vec<_> = registry
+            .list()
+            .map(|vault| (vault.name.clone(), vault.path.clone()))
+            .collect();
+        assert_eq!(caller_after, caller_before);
     }
 
     #[test]

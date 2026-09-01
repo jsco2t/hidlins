@@ -2,6 +2,7 @@ mod auth_mechanism;
 mod client;
 mod command;
 mod common;
+mod hex;
 #[cfg(feature = "p2p")]
 mod server;
 

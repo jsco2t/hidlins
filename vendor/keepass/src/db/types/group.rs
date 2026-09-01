@@ -3,6 +3,7 @@ use std::{
     ops::{Deref, DerefMut},
 };
 
+use indexmap::IndexSet;
 use thiserror::Error;
 use uuid::Uuid;
 
@@ -20,17 +21,29 @@ use crate::{
 pub struct GroupId(Uuid);
 
 impl GroupId {
-    pub(crate) fn new() -> Self {
+    /// Generate a new random `GroupId`.
+    pub fn new() -> Self {
         Self(Uuid::new_v4())
     }
 
-    pub(crate) const fn from_uuid(uuid: Uuid) -> Self {
+    /// Build a `GroupId` from an existing [Uuid].
+    ///
+    /// Useful when a group's identifier needs to be pinned (e.g. test fixtures or migrations).
+    /// Pair with [Group::add_group_with_id][GroupMut::add_group_with_id] to insert
+    /// a group under a chosen identifier.
+    pub const fn from_uuid(uuid: Uuid) -> Self {
         Self(uuid)
     }
 
     /// Get the Uuid contained inside
     pub fn uuid(&self) -> Uuid {
         self.0
+    }
+}
+
+impl From<Uuid> for GroupId {
+    fn from(uuid: Uuid) -> Self {
+        Self::from_uuid(uuid)
     }
 }
 
@@ -56,19 +69,22 @@ pub struct Group {
     /// Notes for the group
     pub notes: Option<String>,
 
+    /// The list of tags for this group
+    pub tags: Vec<String>,
+
     /// Icon for the group
     pub(crate) icon: Option<Icon>,
 
     /// The list of child group identifiers
-    pub(crate) groups: HashSet<GroupId>,
+    pub(crate) groups: IndexSet<GroupId>,
 
     /// The list of entry identifiers directly under this group
-    pub(crate) entries: HashSet<EntryId>,
+    pub(crate) entries: IndexSet<EntryId>,
 
     /// The list of time fields for this group
     pub times: Times,
 
-    // Custom Data
+    /// Custom Data
     pub custom_data: HashMap<String, CustomDataItem>,
 
     /// Whether the group is expanded in the user interface
@@ -85,6 +101,8 @@ pub struct Group {
 
     /// UUID for the last top visible entry
     pub(crate) last_top_visible_entry: Option<EntryId>,
+
+    pub(crate) previous_parent_group: Option<GroupId>,
 }
 
 impl Group {
@@ -99,9 +117,10 @@ impl Group {
             parent,
             name: String::new(),
             notes: None,
+            tags: Vec::new(),
             icon: None,
-            groups: HashSet::new(),
-            entries: HashSet::new(),
+            groups: IndexSet::new(),
+            entries: IndexSet::new(),
             times: Times::new(),
             custom_data: HashMap::new(),
             is_expanded: true,
@@ -109,6 +128,7 @@ impl Group {
             enable_autotype: None,
             enable_searching: None,
             last_top_visible_entry: None,
+            previous_parent_group: None,
         }
     }
 
@@ -118,9 +138,10 @@ impl Group {
             parent,
             name: String::new(),
             notes: None,
+            tags: Vec::new(),
             icon: None,
-            groups: HashSet::new(),
-            entries: HashSet::new(),
+            groups: IndexSet::new(),
+            entries: IndexSet::new(),
             times: Times::new(),
             custom_data: HashMap::new(),
             is_expanded: true,
@@ -128,6 +149,7 @@ impl Group {
             enable_autotype: None,
             enable_searching: None,
             last_top_visible_entry: None,
+            previous_parent_group: None,
         }
     }
 
@@ -229,6 +251,12 @@ impl GroupRef<'_> {
         self.parent.map(|id| GroupRef::new(self.database, id))
     }
 
+    /// Get a reference to the previous parent group, if any
+    pub fn previous_parent(&self) -> Option<GroupRef<'_>> {
+        self.previous_parent_group
+            .and_then(|id| self.database().group(id))
+    }
+
     /// Get a reference to the custom icon of this group, if it has one and it is a custom icon
     pub fn custom_icon(&self) -> Option<CustomIconRef<'_>> {
         if let Some(Icon::Custom(cid)) = self.icon {
@@ -296,49 +324,94 @@ impl GroupMut<'_> {
     }
 
     /// Adds a new subgroup to this group and returns a mutable reference to it.
+    #[allow(clippy::missing_panics_doc)]
     pub fn add_group(&mut self) -> GroupMut<'_> {
         let new_group = Group::new(Some(self.id));
         let id = new_group.id;
 
-        self.groups.insert(id);
-        self.database.groups.insert(id, new_group);
-
-        GroupMut::new(self.database, id)
+        // A freshly-generated v4 UUID does not collide with an existing identifier in any
+        // realistic scenario, so the duplicate check inside `add_group_with_id` cannot trip
+        // here.
+        #[allow(clippy::expect_used)] // fresh v4 UUID cannot collide
+        self.add_group_with_id(id)
+            .expect("fresh v4 UUID cannot collide with an existing group identifier")
     }
 
     /// Adds a new entry to this group and returns a mutable reference to it.
+    #[allow(clippy::missing_panics_doc)]
     pub fn add_entry(&mut self) -> EntryMut<'_> {
         let new_entry = Entry::new(self.id);
         let id = new_entry.id();
 
-        self.entries.insert(id);
-        self.database.entries.insert(id, new_entry);
-
-        EntryMut::new(self.database, id)
+        // A freshly-generated v4 UUID does not collide with an existing identifier in any
+        // realistic scenario, so the duplicate check inside `add_entry_with_id` cannot trip
+        // here.
+        #[allow(clippy::expect_used)] // fresh v4 UUID cannot collide
+        self.add_entry_with_id(id)
+            .expect("fresh v4 UUID cannot collide with an existing entry identifier")
     }
 
-    pub(crate) fn add_entry_with_id(&mut self, id: EntryId) -> EntryMut<'_> {
+    /// Adds a new entry under a caller-supplied [EntryId] and returns a mutable reference to it.
+    ///
+    /// Returns [DuplicateEntryIdError] if an entry with the same identifier already
+    /// exists anywhere in the database.
+    ///
+    /// # Example
+    ///
+    /// ```
+    /// use keepass::db::{Database, EntryId, fields};
+    /// use uuid::uuid;
+    ///
+    /// let mut db = Database::new();
+    /// let entry_id: EntryId = uuid!("00000000-0000-0000-0000-000000000001").into();
+    /// db.root_mut()
+    ///     .add_entry_with_id(entry_id)
+    ///     .unwrap()
+    ///     .edit(|e| {
+    ///         e.set_unprotected(fields::TITLE, "My entry with defined UUID");
+    ///     });
+    /// ```
+    pub fn add_entry_with_id(&mut self, id: EntryId) -> Result<EntryMut<'_>, DuplicateEntryIdError> {
         if self.database.entries.contains_key(&id) {
-            panic!("Entry with ID {} already exists", id);
+            return Err(DuplicateEntryIdError(id));
         }
 
         let new_entry = Entry::with_id(id, self.id);
         self.entries.insert(id);
         self.database.entries.insert(id, new_entry);
 
-        EntryMut::new(self.database, id)
+        Ok(EntryMut::new(self.database, id))
     }
 
-    pub(crate) fn add_group_with_id(&mut self, id: GroupId) -> GroupMut<'_> {
+    /// Adds a new subgroup under a caller-supplied [GroupId] and returns a mutable reference to
+    /// it.
+    ///
+    /// Returns [DuplicateGroupIdError] if a group with the same identifier already
+    /// exists anywhere in the database.
+    ///
+    /// # Example
+    ///
+    /// ```
+    /// use keepass::db::{Database, GroupId};
+    /// use uuid::uuid;
+    ///
+    /// let mut db = Database::new();
+    /// let group_id: GroupId = uuid!("00000000-0000-0000-0000-000000000002").into();
+    /// db.root_mut()
+    ///     .add_group_with_id(group_id)
+    ///     .unwrap()
+    ///     .edit(|g| g.name = "Pinned group".to_string());
+    /// ```
+    pub fn add_group_with_id(&mut self, id: GroupId) -> Result<GroupMut<'_>, DuplicateGroupIdError> {
         if self.database.groups.contains_key(&id) {
-            panic!("Group with ID {} already exists", id);
+            return Err(DuplicateGroupIdError(id));
         }
 
         let new_group = Group::with_id(id, Some(self.id));
         self.groups.insert(id);
         self.database.groups.insert(id, new_group);
 
-        GroupMut::new(self.database, id)
+        Ok(GroupMut::new(self.database, id))
     }
 
     /// Get a mutable reference to the database this group belongs to
@@ -349,6 +422,12 @@ impl GroupMut<'_> {
     /// Get a mutable reference to the parent group, if any
     pub fn parent_mut(&mut self) -> Option<GroupMut<'_>> {
         self.parent.map(move |id| GroupMut::new(self.database, id))
+    }
+
+    /// Get a mutable reference to the previous parent group, if any
+    pub fn previous_parent_mut(&mut self) -> Option<GroupMut<'_>> {
+        self.previous_parent_group
+            .and_then(move |id| self.database_mut().group_mut(id))
     }
 
     /// Find a contained group by name, case-insensitively, and return a mutable reference to it.
@@ -448,6 +527,8 @@ impl GroupMut<'_> {
                 id: custom_icon_id,
                 entries: HashSet::new(),
                 groups: vec![id].into_iter().collect(),
+                name: None,
+                last_modification_time: Some(Times::now()),
                 data,
             },
         );
@@ -491,7 +572,7 @@ impl GroupMut<'_> {
         // Remove from old parent
         #[allow(clippy::unwrap_used, clippy::missing_panics_doc)] // we checked that old_parent_id exists
         let mut old_parent = self.database.group_mut(old_parent_id).unwrap();
-        old_parent.groups.remove(&self.id);
+        old_parent.groups.shift_remove(&self.id);
 
         // Insert into new parent
         #[allow(clippy::unwrap_used, clippy::missing_panics_doc)] // we checked that new_parent_id exists
@@ -500,6 +581,7 @@ impl GroupMut<'_> {
 
         // Update parent reference
         self.parent = Some(new_parent_id);
+        self.previous_parent_group = Some(old_parent_id);
 
         Ok(())
     }
@@ -513,7 +595,7 @@ impl GroupMut<'_> {
         // Remove from parent
         if let Some(parent_id) = self.parent {
             if let Some(mut parent) = self.database.group_mut(parent_id) {
-                parent.groups.remove(&self.id);
+                parent.groups.shift_remove(&self.id);
             }
         }
 
@@ -564,6 +646,16 @@ impl GroupMut<'_> {
     }
 }
 
+/// Attempted to add a group with an ID that already exists in the database.
+#[derive(Debug, Error)]
+#[error("a group with ID {0} already exists in the database")]
+pub struct DuplicateGroupIdError(pub GroupId);
+
+/// Attempted to add an entry with an ID that already exists in the database.
+#[derive(Debug, Error)]
+#[error("an entry with ID {0} already exists in the database")]
+pub struct DuplicateEntryIdError(pub EntryId);
+
 /// Errors that can occur when moving a group to a new parent.
 #[derive(Debug, Error)]
 #[non_exhaustive]
@@ -613,6 +705,7 @@ pub struct GroupTrack<'a> {
 }
 
 impl GroupTrack<'_> {
+    /// Turn the GroupTrack back into a regular GroupMut
     pub fn as_mut(&mut self) -> GroupMut<'_> {
         GroupMut::new(self.database, self.id)
     }
@@ -634,7 +727,7 @@ impl GroupTrack<'_> {
         // Remove from parent
         if let Some(parent_id) = self.parent {
             if let Some(mut parent) = self.database.group_mut(parent_id) {
-                parent.groups.remove(&self.id);
+                parent.groups.shift_remove(&self.id);
             }
         }
 
@@ -694,6 +787,7 @@ impl DerefMut for GroupTrack<'_> {
 pub struct CannotDeleteRootError;
 
 #[cfg(test)]
+#[allow(clippy::unwrap_used)]
 mod group_tests {
     use crate::db::fields;
     use crate::Database;
@@ -774,5 +868,105 @@ mod group_tests {
             .unwrap()
             .entry_mut(sample_entry_id)
             .is_some());
+    }
+
+    #[test]
+    fn add_entry_with_id_uses_supplied_uuid() {
+        use crate::db::EntryId;
+        use uuid::uuid;
+
+        let mut db = Database::new();
+        let pinned_uuid = uuid!("00000000-0000-0000-0000-0000000000aa");
+        let pinned: EntryId = pinned_uuid.into();
+
+        let inserted_id = db
+            .root_mut()
+            .add_entry_with_id(pinned)
+            .unwrap()
+            .edit(|e| {
+                e.set_unprotected(fields::TITLE, "pinned");
+            })
+            .id();
+
+        assert_eq!(inserted_id, pinned);
+        assert_eq!(inserted_id.uuid(), pinned_uuid);
+        assert_eq!(db.entry(pinned).unwrap().get(fields::TITLE), Some("pinned"),);
+    }
+
+    #[test]
+    fn add_entry_with_id_duplicate_returns_error() {
+        use crate::db::{DuplicateEntryIdError, EntryId};
+        use uuid::uuid;
+
+        let mut db = Database::new();
+        let pinned: EntryId = uuid!("00000000-0000-0000-0000-0000000000ab").into();
+
+        db.root_mut().add_entry_with_id(pinned).unwrap();
+
+        assert!(matches!(
+            db.root_mut().add_entry_with_id(pinned),
+            Err(DuplicateEntryIdError(eid)) if eid == pinned
+        ));
+    }
+
+    #[test]
+    fn add_group_with_id_uses_supplied_uuid() {
+        use crate::db::GroupId;
+        use uuid::uuid;
+
+        let mut db = Database::new();
+        let pinned_uuid = uuid!("00000000-0000-0000-0000-0000000000ba");
+        let pinned: GroupId = pinned_uuid.into();
+
+        let inserted_id = db
+            .root_mut()
+            .add_group_with_id(pinned)
+            .unwrap()
+            .edit(|g| g.name = "pinned".into())
+            .id();
+
+        assert_eq!(inserted_id, pinned);
+        assert_eq!(inserted_id.uuid(), pinned_uuid);
+        assert_eq!(db.group(pinned).unwrap().name, "pinned");
+    }
+
+    #[test]
+    fn add_group_with_id_duplicate_returns_error() {
+        use crate::db::{DuplicateGroupIdError, GroupId};
+        use uuid::uuid;
+
+        let mut db = Database::new();
+        let pinned: GroupId = uuid!("00000000-0000-0000-0000-0000000000bb").into();
+
+        db.root_mut().add_group_with_id(pinned).unwrap();
+
+        assert!(matches!(
+            db.root_mut().add_group_with_id(pinned),
+            Err(DuplicateGroupIdError(gid)) if gid == pinned
+        ));
+    }
+
+    #[test]
+    fn group_id_new_generates_distinct_ids() {
+        use crate::db::GroupId;
+
+        assert_ne!(GroupId::new(), GroupId::new());
+    }
+
+    #[test]
+    fn from_uuid_impls_match_constructors() {
+        use crate::db::{EntryId, GroupId};
+        use uuid::uuid;
+
+        let raw = uuid!("00000000-0000-0000-0000-0000000000cc");
+        let from_entry: EntryId = raw.into();
+        let from_entry_ctor = EntryId::from_uuid(raw);
+        assert_eq!(from_entry, from_entry_ctor);
+        assert_eq!(from_entry.uuid(), raw);
+
+        let from_group: GroupId = raw.into();
+        let from_group_ctor = GroupId::from_uuid(raw);
+        assert_eq!(from_group, from_group_ctor);
+        assert_eq!(from_group.uuid(), raw);
     }
 }

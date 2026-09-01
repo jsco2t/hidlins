@@ -20,7 +20,6 @@ filedescriptor.workspace = true
 finl_unicode.workspace = true
 fixedbitset.workspace = true
 fnv = {workspace=true, optional=true}
-hex.workspace = true
 image = {workspace=true, optional=true}
 lazy_static.workspace = true
 libc.workspace = true
