@@ -4,6 +4,5 @@
 pub(crate) mod lock_screen;
 pub(crate) mod secrets;
 pub(crate) mod settings;
-pub(crate) mod unlock_list;
-pub(crate) mod unlock_prompt;
+pub(crate) mod startup_modal;
 pub(crate) mod workspace;

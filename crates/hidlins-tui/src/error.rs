@@ -50,10 +50,6 @@ pub enum TuiError {
     #[error("could not parse the TUI config: {0}")]
     ConfigParse(String),
 
-    /// No vaults are registered in `vaults.toml`.
-    #[error("no vaults registered (run `hidlins vault create` to make one)")]
-    NoVaultsRegistered,
-
     /// `--vault NAME` named a vault that is not in the registry. The name is a
     /// user-chosen vault label (never secret). Reported pre-terminal so it
     /// prints on a normal screen (T3.2).
@@ -82,7 +78,6 @@ mod tests {
         vec![
             TuiError::ConfigIo(io::Error::new(io::ErrorKind::NotFound, "no such file")),
             TuiError::ConfigParse("expected a table at line 3".to_string()),
-            TuiError::NoVaultsRegistered,
             TuiError::UnknownVault("personal".to_string()),
             TuiError::Cancelled,
             TuiError::Internal("vault is None in Phase::Workspace"),

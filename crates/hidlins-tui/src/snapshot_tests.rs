@@ -12,6 +12,7 @@
 //! [`DetailData`], so no clock / fixture-timestamp flakiness).
 
 use std::path::{Path, PathBuf};
+use std::time::Instant;
 
 use chrono::{TimeZone, Utc};
 use hidlins_core::{
@@ -27,6 +28,7 @@ use ratatui::{Frame, Terminal};
 use crate::app::App;
 use crate::recents::Recents;
 use crate::tabs::TabBar;
+use crate::test_support::{configured_app, onboarding_app};
 use crate::theme::Theme;
 use crate::widgets::entry_detail::{self, DetailData};
 use crate::widgets::entry_tree::{self, TreeState};
@@ -108,6 +110,36 @@ fn assert_snapshot_inner(actual: &[String], path: &Path, name: &str, update: boo
         }
         panic!("snapshot `{name}` mismatch (run `make test-update-snapshots` to update)");
     }
+}
+
+fn startup_lines(app: &App, width: u16, height: u16) -> Vec<String> {
+    let mut lines = render_lines(width, height, |frame| app.render(frame, Instant::now()));
+    while lines.last().is_some_and(String::is_empty) {
+        lines.pop();
+    }
+    lines
+}
+
+#[test]
+fn startup_onboarding_normal_snapshot() {
+    let (_dir, app, _vault_path) = onboarding_app();
+    assert_snapshot(&startup_lines(&app, 80, 24), "startup_onboarding_80x24");
+}
+
+#[test]
+fn startup_multiple_normal_snapshot() {
+    let (_dir, app) = configured_app(&["alpha", "beta", "gamma"]);
+    assert_snapshot(&startup_lines(&app, 60, 16), "startup_multiple_60x16");
+}
+
+#[test]
+fn startup_password_accessible_compact_snapshot() {
+    let (_dir, mut app) = configured_app(&["personal"]);
+    app.theme = Theme::accessible();
+    assert_snapshot(
+        &startup_lines(&app, 40, 12),
+        "startup_password_accessible_40x12",
+    );
 }
 
 fn fast_kdf() -> KdfParams {
@@ -358,7 +390,7 @@ fn settings_tab_snapshot() {
 #[test]
 fn hint_bar_snapshot() {
     use crate::command::registry::CmdState;
-    use crate::widgets::hint_bar::{render_hint_bar, HintCell};
+    use crate::widgets::hint_bar::{hint_line, HintCell};
 
     let cell = |keys: &str, desc: &'static str, state: CmdState| HintCell {
         desc,
@@ -379,7 +411,10 @@ fn hint_bar_snapshot() {
     // tested in `truncation_keeps_whole_cells_and_more_indicator`).
     let theme = Theme::auto();
     let lines = render_lines(80, 1, |frame| {
-        render_hint_bar(frame, Rect::new(0, 0, 80, 1), &cells, &theme);
+        frame.render_widget(
+            Paragraph::new(hint_line(&cells, &theme)),
+            Rect::new(0, 0, 80, 1),
+        );
     });
     assert_snapshot(&lines, "hint_bar_secrets_tree");
 }

@@ -19,14 +19,12 @@
 //! advertising a key that dispatch cannot execute.
 //!
 //! Pure-build + thin-render split (crate convention): [`build_hint_bar`] returns
-//! plain [`HintCell`]s (unit-tested headlessly); [`render_hint_bar`] /
-//! [`hint_line`] are the ratatui adapters. Styles always carry a `Modifier`
+//! plain [`HintCell`]s (unit-tested headlessly); [`hint_line`] is the ratatui
+//! adapter used by the workspace status bar. Styles always carry a `Modifier`
 //! (never colour alone — FR-074/NFR-015).
 
 use ratatui::layout::Rect;
 use ratatui::text::{Line, Span};
-use ratatui::widgets::Paragraph;
-use ratatui::Frame;
 use unicode_width::UnicodeWidthStr;
 
 use crate::app::App;
@@ -212,13 +210,6 @@ pub(crate) fn hint_line(cells: &[HintCell], theme: &Theme) -> Line<'static> {
         ));
     }
     Line::from(spans)
-}
-
-/// Render pre-fitted `cells` into `area` (a single line). Used directly by the
-/// pre-unlock screens; the workspace routes through the status bar so the
-/// idle-lock countdown shares the row.
-pub(crate) fn render_hint_bar(frame: &mut Frame, area: Rect, cells: &[HintCell], theme: &Theme) {
-    frame.render_widget(Paragraph::new(hint_line(cells, theme)), area);
 }
 
 #[cfg(test)]

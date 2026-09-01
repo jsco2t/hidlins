@@ -32,3 +32,15 @@ If a vault already exists in settings, the startup modal must instead ask for
 the vault password and retain an exit action. The implementation plan must
 review the interaction for accessibility before product work begins.
 
+## Plan revision 2 — Multiple-vault form
+
+The shared startup modal has three explicit forms:
+
+1. When no vault is configured, ask the user to select an existing vault.
+2. When exactly one vault is configured, ask for that vault's password.
+3. When multiple vaults are configured, list them and let the user select which
+   vault to open. The same modal then transitions to the password form for the
+   selected vault.
+
+From the multiple-vault password form, the user must be able to use a visible
+Back action or press Escape to return to the vault list and choose again.

@@ -5,10 +5,13 @@
 //! `hidlins-core` / `hidlins-security` / `hidlins-sync`; this crate renders and
 //! dispatches keys, holding no vault logic of its own.
 //!
-//! The UI is a persistent tabbed workspace (Secrets + ≤5 pinned-secret tabs +
-//! a Settings/Sync tab) reached after unlocking a registered vault; action
-//! surfaces (search, add/edit, generate, history, sync, command palette) render as modal
-//! overlays over the active tab.
+//! Startup is a shared modal: an empty registry accepts an existing KDBX path,
+//! one registered vault opens its password form directly, and multiple vaults
+//! open an explicit picker before password entry. Successful first-run
+//! authentication persists the registration before entering the persistent
+//! tabbed workspace (Secrets + ≤5 pinned-secret tabs + a Settings/Sync tab).
+//! Action surfaces (search, add/edit, generate, history, sync, command palette)
+//! render as modal overlays over the active tab.
 //!
 //! ## Discoverability & accessibility
 //!
@@ -17,7 +20,8 @@
 //! paired with the live `Keymap`) so it can never drift from the dispatch
 //! logic. Theming resolves config and CLI/user-theme choices over terminal
 //! capability detection; set `HIDLINS_TUI_THEME=accessible` (or `NO_COLOR`) to force
-//! the monochrome, screen-reader-friendly palette. The
+//! the monochrome, screen-reader-friendly palette and semantic startup layout
+//! without decorative art. The
 //! chosen palette name is printed to stderr before the alternate screen is
 //! entered, so a theme-detection surprise is visible.
 //!
@@ -80,17 +84,16 @@ use crate::user_config::UserConfig;
 
 /// Top-level entry point invoked by `main.rs`.
 ///
-/// Builds the `App` (registry I/O) *before* touching the terminal, so a
-/// `NoVaultsRegistered` (or other startup) error prints on a normal terminal
-/// instead of inside raw mode. Then installs the terminal guard (raw mode +
-/// alternate screen + panic/signal restore) and runs the event loop; the guard
-/// restores the terminal on any return path, panic, or fatal signal.
+/// Builds the `App` (registry I/O) before touching the terminal. An empty
+/// registry is a valid first-run state rendered after the alternate screen is
+/// entered; actual startup errors still print on the normal terminal. Then the
+/// terminal guard installs raw mode, alternate screen, and panic/signal
+/// restoration before running the event loop.
 ///
 /// # Errors
 ///
-/// Returns [`TuiError`] if the registry can't be loaded, no vaults are
-/// registered, `--vault` names an unknown vault, terminal setup fails, or the
-/// event loop fails.
+/// Returns [`TuiError`] if the registry can't be loaded, `--vault` names an
+/// unknown vault, terminal setup fails, or the event loop fails.
 pub fn run(args: &Args) -> Result<(), TuiError> {
     run_with(args, hidlins_security::harden_process, run_hardened)
 }

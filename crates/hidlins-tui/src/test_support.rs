@@ -1,5 +1,6 @@
 //! Shared test-only fixture and semantic render helpers for TUI journeys.
 
+use std::path::PathBuf;
 use std::time::{Duration, Instant};
 
 use chrono::{TimeZone, Utc};
@@ -99,6 +100,62 @@ pub(crate) fn populated_app() -> (TempDir, App) {
     (dir, app)
 }
 
+/// Build an empty-registry app beside one real, unregistered fast-KDF vault.
+pub(crate) fn onboarding_app() -> (TempDir, App, PathBuf) {
+    let dir = tempfile::tempdir().expect("tempdir");
+    let vault_path = dir.path().join("first-vault.kdbx");
+    drop(
+        Vault::create(
+            &vault_path,
+            &MasterPassword::new(MASTER_PASSWORD.to_string()),
+            None,
+            fast_kdf(),
+            NoRecoveryConfirmed::yes(),
+        )
+        .expect("create onboarding fixture vault"),
+    );
+    let paths = HidlinsPaths::with_state_dir(dir.path().join("state"));
+    let registry = VaultRegistry::with_paths(paths.clone());
+    let mut app = App::from_registry(registry, paths, AutoLockConfig::default())
+        .expect("build onboarding app");
+    app.theme = Theme::from_env_parts(None, false, Some("xterm-256color"), Some("truecolor"));
+    (dir, app, vault_path)
+}
+
+/// Build a configured app with one fast-KDF vault for each registry-order name.
+pub(crate) fn configured_app(names: &[&str]) -> (TempDir, App) {
+    let dir = tempfile::tempdir().expect("tempdir");
+    let paths = HidlinsPaths::with_state_dir(dir.path().join("state"));
+    let mut registry = VaultRegistry::with_paths(paths.clone());
+    for name in names {
+        let path = dir.path().join(format!("{name}.kdbx"));
+        drop(
+            Vault::create(
+                &path,
+                &MasterPassword::new(MASTER_PASSWORD.to_string()),
+                None,
+                fast_kdf(),
+                NoRecoveryConfirmed::yes(),
+            )
+            .expect("create configured fixture vault"),
+        );
+        registry
+            .register(RegisteredVault {
+                name: (*name).to_string(),
+                path,
+                created_at: "2026-01-01T00:00:00Z".to_string(),
+                keyfile_path: None,
+                extra: toml::Table::new(),
+            })
+            .expect("register configured fixture vault");
+    }
+    registry.save().expect("save configured fixture registry");
+    let mut app = App::from_registry(registry, paths, AutoLockConfig::default())
+        .expect("build configured app");
+    app.theme = Theme::from_env_parts(None, false, Some("xterm-256color"), Some("truecolor"));
+    (dir, app)
+}
+
 pub(crate) fn key(c: char) -> Event {
     Event::Key(KeyEvent::new(KeyCode::Char(c), KeyModifiers::NONE))
 }
@@ -131,7 +188,9 @@ pub(crate) fn type_text(app: &mut App, text: &str) {
 }
 
 pub(crate) fn unlock(app: &mut App) {
-    app.handle_event(&key_code(KeyCode::Enter));
+    if matches!(app.phase, Phase::UnlockList) {
+        app.handle_event(&key_code(KeyCode::Enter));
+    }
     type_text(app, MASTER_PASSWORD);
     app.handle_event(&key_code(KeyCode::Enter));
     assert!(matches!(app.phase, Phase::Workspace));

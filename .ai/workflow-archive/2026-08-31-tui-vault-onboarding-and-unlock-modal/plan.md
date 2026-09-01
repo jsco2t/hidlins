@@ -11,7 +11,9 @@ consistent branded startup modal that:
   `vaults.toml` registry;
 - asks for the master password immediately when exactly one registered vault
   exists;
-- preserves an accessible vault selector when multiple vaults are registered;
+- presents a third, accessible vault-list form when multiple vaults are
+  registered, transitions within the same modal to the selected vault's
+  password form, and returns to the same highlighted list on Back or Escape;
 - always exposes an explicit keyboard exit action; and
 - uses the request's exact ASCII art in the normal spacious presentation.
 
@@ -116,8 +118,12 @@ not claim that those tests prove AT-SPI or speech-engine integration.
    actionable error; the workspace never opens with an unsaved selection.
 5. Render onboarding, registered-vault selection, and password entry inside a
    shared centered startup shell. Exactly one registered vault opens directly
-   at password entry; multiple registrations retain selection before password
-   entry; `--vault NAME` retains its direct selection behavior.
+   at password entry. Multiple registrations open a dedicated list form whose
+   current row is carried by a visible text marker; Up/Down and `j`/`k` move,
+   and Enter transitions the same shell to the selected vault's password form.
+   That password form exposes `Esc: Back to vault list`; Back/Escape zeroizes
+   the password input and restores the list with the same vault highlighted.
+   `--vault NAME` retains its direct selection behavior.
 6. Render the exact requested art from one literal constant in normal themes
    at supported geometry. Use the compact semantic heading for the
    `accessible` theme and undersized terminals. Keep prompt labels, current
@@ -143,6 +149,14 @@ not claim that those tests prove AT-SPI or speech-engine integration.
   merely typing a path does not mutate settings.
 - The existing registry insertion order remains the multiple-vault order.
   This package does not introduce a separate default-vault preference.
+- Startup is one shell with three explicit form states: first-vault path,
+  single-vault password, and multiple-vault picker/password. The picker index
+  is preserved across its password transition; it is not inferred again from
+  a mutable registry row after the transition.
+- Password prompts carry an explicit return destination. A pending first-vault
+  prompt returns to its path form; a multiple-vault prompt returns to its
+  picker; a single-vault or explicit `--vault` prompt has no fabricated list
+  predecessor. Every return drops/zeroizes the current password input.
 - The startup interface is keyboard-complete. Mouse behavior, if retained as
   an accelerator, routes through the same actions and is never required.
 - Exact art fidelity applies to the normal, sufficiently large visual layout.
@@ -157,7 +171,8 @@ not claim that those tests prove AT-SPI or speech-engine integration.
 - Empty-registry startup within the alternate-screen TUI.
 - Safe first-vault path entry, validation, authentication, and registration.
 - Direct password startup for one registered vault and branded selection for
-  multiple registered vaults.
+  multiple registered vaults, including list-to-password transition and
+  Back/Escape-to-the-same-list behavior.
 - Exit, cancel/back, validation failure, wrong-password, non-authentication
   failure, and persistence-failure behavior.
 - Exact normal-layout ASCII art plus accessible/compact alternatives.
@@ -215,6 +230,10 @@ sync/clipboard behavior. Flutter gates are outside this Rust-TUI package.
   error line.
 - `?` is a valid path/password character. Help dispatch must not steal it while
   either text field owns input.
+- A multiple-vault registry could change while its list or password form is
+  open. Selection must be identified by vault name, with the saved list index
+  used only for restored focus; a vanished selection returns safely to a
+  refreshed picker instead of unlocking a different row.
 - The dirty baseline includes prior completed work. Reviews must preserve that
   state and restrict repairs to the files and behaviors owned by this package.
 
@@ -259,15 +278,25 @@ sync/clipboard behavior. Flutter gates are outside this Rust-TUI package.
   a retry/recovery path.
 - With exactly one registered vault, startup presents the same branded shell
   directly at a labeled, masked master-password prompt with textual
-  `Enter: Unlock` and `Ctrl+Q: Exit` actions. With multiple vaults, the same
-  shell provides text-marked keyboard selection before password entry.
+  `Enter: Unlock` and `Ctrl+Q: Exit` actions.
+- With two or more registered vaults, startup presents a distinct third form in
+  the same shell: a scrollable registry-order list with a textual selected-row
+  carrier, Up/Down and `j`/`k` navigation, `Enter: Continue`, and
+  `Ctrl+Q: Exit`. Enter opens the selected vault's masked password form without
+  leaving the shared modal.
+- The multiple-vault password form contains textual `Esc: Back to vault list`,
+  `Enter: Unlock`, and `Ctrl+Q: Exit` actions. Back or Escape drops/zeroizes the
+  entered password, returns to the list with the same vault highlighted, and
+  permits a different selection. Repeated list → password → list transitions
+  do not change `vaults.toml` or accumulate unlock attempts on another vault.
 - `--vault NAME` still opens that registered vault's password prompt directly;
   an explicit unknown name remains a pre-terminal usage error.
 - Auto-lock/re-entry, cancel/back, help dispatch, global exit, and existing
   unlock attempt behavior remain reachable and internally consistent.
 - TestBackend journeys cover empty-registry select/wrong-password/success/save,
-  configured single-vault unlock, multiple-vault selection, invalid-path
-  recovery, persistence failure, and exit.
+  configured single-vault unlock, multiple-vault list navigation, transition
+  to the chosen password form, Escape/back restoration, choosing a different
+  vault, invalid-path recovery, persistence failure, and exit.
 - Accessibility contracts flatten actual buffers and prove meaningful reading
   order, visible labels/states/actions, text-only selection/focus, password
   canary absence with masking present, no raw escape/control sequences, and
@@ -281,4 +310,3 @@ sync/clipboard behavior. Flutter gates are outside this Rust-TUI package.
   `e8305fdc948cc1f58b189a88566c1e5f237c2e3827c4672853ea0f3e1b4e2804`;
   no manifest, `Cargo.lock`, or `vendor/` change is introduced.
 - Every standard and final command in `gate.json` passes in order.
-

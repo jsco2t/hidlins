@@ -57,6 +57,14 @@ claims.
 The TUI (`hidlins-tui`) is the reference UX. Launch it with `make run-tui` or
 `cargo run -p hidlins-tui --offline --locked`.
 
+Startup stays inside the alternate-screen TUI. With no registered vaults it
+prompts for an existing KDBX path, authenticates the vault, and only then saves
+the registration. One registered vault opens its password form directly; two
+or more open a keyboard-navigable vault picker whose password form returns to
+the same selected row with `Esc`. Every startup form exposes its Open/Unlock,
+Back, and Exit keys as text. Set `HIDLINS_TUI_THEME=accessible` for the compact
+semantic startup layout without decorative ASCII art.
+
 ### Keybinding presets and rebinding
 
 Two presets ship: **vim** (default) and **plain** (arrow-first, no chords). To

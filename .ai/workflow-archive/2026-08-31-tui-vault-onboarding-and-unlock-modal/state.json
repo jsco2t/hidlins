@@ -1,0 +1,53 @@
+{
+  "schema_version": 2,
+  "work_id": "2026-08-31-tui-vault-onboarding-and-unlock-modal",
+  "title": "TUI Vault Onboarding and Unlock Modal",
+  "phase": "DONE",
+  "created_at": "2026-09-01T03:17:52Z",
+  "updated_at": "2026-09-01T15:01:58Z",
+  "approved_at": "2026-09-01T03:32:49Z",
+  "completed_at": "2026-09-01T14:41:40Z",
+  "archived_at": "2026-09-01T15:01:58Z",
+  "baseline_sha": "883535f205d0937d2b90a8bf13051882e1a2c2c8",
+  "final_sha": "d33113b22721b304f7775bd20aa4b582f572ff02",
+  "plan_revision": 2,
+  "acceptance_round": 1,
+  "completed_rounds": [],
+  "approved_plan_sha256": "62d34d462ba7bc325a4fd4a36ed2abb1ea2f387ab0cae41fc885fdfe42dd25ed",
+  "current_task": null,
+  "tasks": [
+    {
+      "id": "001",
+      "path": "tasks/001-transactional-vault-registration.md",
+      "round": 1,
+      "status": "COMPLETE",
+      "attempts": 3,
+      "implementation": "Added VaultRegistry::register_and_save with lock-reload-insert-atomic-save semantics and test-forward concurrency/failure coverage.",
+      "evidence": "evidence/001.md"
+    },
+    {
+      "id": "002",
+      "path": "tasks/002-startup-onboarding-state-machine.md",
+      "round": 1,
+      "status": "COMPLETE",
+      "attempts": 3,
+      "implementation": "Added explicit empty, single-vault, and multiple-vault startup states with authenticate-before-register onboarding and typed picker return behavior.",
+      "evidence": "evidence/002.md"
+    },
+    {
+      "id": "003",
+      "path": "tasks/003-branded-accessible-startup-modal.md",
+      "round": 1,
+      "status": "COMPLETE",
+      "attempts": 2,
+      "implementation": "Unified all startup forms in a responsive accessible modal with exact normal-layout art, explicit text semantics, scrolling selection, in-process journeys, buffer contracts, and focused goldens.",
+      "evidence": "evidence/003.md"
+    }
+  ],
+  "task_retry_limit": 3,
+  "final_retry_limit": 2,
+  "final_attempts": 2,
+  "stop_continuations": 0,
+  "max_stop_continuations": 50,
+  "block_reason": null
+}

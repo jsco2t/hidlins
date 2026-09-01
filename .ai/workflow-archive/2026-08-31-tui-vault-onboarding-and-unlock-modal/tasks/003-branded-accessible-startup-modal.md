@@ -21,7 +21,8 @@ the deterministic surface without a new dependency.
 ### In scope
 
 - One shared startup renderer for onboarding, registered-vault selection, and
-  password entry.
+  password entry, with distinct no-vault, single-vault, and multiple-vault
+  forms.
 - Exact literal ASCII art in normal themes when geometry permits.
 - Accessible-theme and compact semantic alternatives.
 - Text labels, reading order, focus/selection carriers, key hints, retry and
@@ -47,6 +48,12 @@ the deterministic surface without a new dependency.
 - Use text markers/labels for current vault, focused field, masked password,
   Open/Unlock, Exit, failure counts, and disabled/unavailable states. Color and
   reverse video may supplement but never replace text.
+- The multiple-vault list must label its purpose, mark the selected vault in
+  text, expose `Enter: Continue` and `Ctrl+Q: Exit`, and remain usable when the
+  list exceeds the visible modal height.
+- The password form reached from that list must label the selected vault and
+  expose `Esc: Back to vault list`, `Enter: Unlock`, and `Ctrl+Q: Exit` in
+  review order. Returning must render the same highlighted list row.
 - Keep row-major reading order meaningful. The accessible transcript must put
   heading, prompt, field/selection, error/status, and actions in that order.
 - Assert secret canaries and raw ESC/C0/C1 controls are absent from every
@@ -64,7 +71,8 @@ the deterministic surface without a new dependency.
       rows in order wherever the full-layout predicate is true.
 - [ ] Accessible-theme and 40×12 renders omit decorative art, retain the
       `HIDLINS` semantic heading, and preserve every primary field/action/error.
-- [ ] Empty, one-vault, multiple-vault, wrong-password, invalid-path,
+- [ ] Empty, one-vault, multiple-vault list, selected-vault password,
+      back-restored list, wrong-password, invalid-path,
       persistence-error, and retry frames have coherent reading order and
       explicit text carriers.
 - [ ] The password is masked and both path/password canaries are absent from
@@ -75,7 +83,9 @@ the deterministic surface without a new dependency.
       forbidden control characters.
 - [ ] In-process journeys prove first-run selection, no pre-auth registry
       mutation, wrong-password recovery, correct-password save/reload/workspace,
-      configured direct unlock, multiple selection, and exit.
+      configured direct unlock, multiple-list navigation, selection-to-password
+      transition, Escape/back-to-same-selection, choosing another vault, and
+      exit.
 - [ ] Snapshot goldens are deliberate, stable, and current.
 - [ ] Current docs no longer claim an empty registry is fatal or instruct the
       user to leave the TUI to register the first vault.
@@ -108,4 +118,3 @@ the deterministic surface without a new dependency.
 The exact art is a visual requirement, not semantic content. Tests must enforce
 both its exact normal rendering and its deliberate absence from the explicit
 accessible layout.
-
