@@ -11,8 +11,8 @@
 //!
 //! ## Binary-pool deduplication
 //!
-//! `keepass-rs` 0.12.9 allocates a fresh `AttachmentId` per
-//! `add_attachment` call (`vendor/keepass/src/db/types/entry.rs:393`),
+//! `keepass-rs` 0.13.25 allocates a fresh `AttachmentId` per
+//! `add_attachment` call,
 //! so two attachments with identical content occupy two pool entries.
 //! Content-based dedup would require crate-internal access we don't
 //! have. This is a known divergence from the original Phase-4 plan and

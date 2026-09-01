@@ -1,6 +1,6 @@
 [package]
 name = "hidlins-sync"
-description = "Hidlins sync — three-way KDBX merge, vaults.toml sync configuration, and the (transport-agnostic) SyncTransport trait. Transitional state: the gix-based git transport was removed at the start of features/s3-sync/; an S3-compatible transport lands across Phases 2–6 of that feature."
+description = "Hidlins S3-compatible sync transport, SigV4 authentication, and entry-level three-way KDBX merge."
 version.workspace = true
 edition.workspace = true
 license.workspace = true
@@ -74,15 +74,12 @@ secrecy = "0.10"
 # --- S3 wire protocol stack (features/s3-sync/ T2; design.md ADR-1) ---
 #
 # Hand-rolled SigV4 signer over RustCrypto's HMAC + SHA-256. Both versions
-# are already in the workspace dep tree via keepass-rs (keepass 0.12.9
+# are already in the workspace dep tree via keepass-rs (keepass 0.13.25
 # pulls hmac 0.13 + sha2 0.11); declaring them as direct deps here so the
 # signer's `use hmac::Hmac; use sha2::Sha256;` aren't relying on incidental
 # transitive availability.
 hmac = "0.13"
 sha2 = "0.11"
-# Constant-time hex encoding for the SigV4 signature output. Pure Rust,
-# no_std-capable, ~0.4kloc. License: MIT OR Apache-2.0.
-hex = "0.4"
 
 # Pure-Rust blocking HTTP client over rustls. `default-features = false`
 # disables compression (gzip/brotli). The conventional `rustls` feature is
@@ -127,13 +124,13 @@ required-features = ["test-helpers"]
 hidlins-sync = { path = ".", version = "0.1", features = ["test-helpers"] }
 # vaults.toml round-trip tests write a registry to a temp dir and reload it.
 tempfile = "3.10"
-# SyncTestEnv computes the same hex(SHA-256) over on-disk vault bytes that the
+# SyncTestEnv computes the same SHA-256 over on-disk vault bytes that the
 # orchestrator uses for its `last_synced_local_sha256` pointer, so US/MinIO
-# integration tests can model "synced then edited" precisely. Both are already
-# normal deps (so no new vendored sources); an integration test is a separate
-# crate and only sees dev-deps, hence the duplicate declaration here.
+# integration tests can model "synced then edited" precisely. `sha2` is already
+# a normal dependency; an integration test is a separate crate and only sees
+# dev-dependencies, hence the duplicate declaration here. Lowercase encoding is
+# implemented by a tiny independent test oracle under `tests/common/`.
 sha2 = "0.11"
-hex = "0.4"
 # Merge-engine property tests (tests/merge_property_tests.rs): `proptest` +
 # `proptest-derive` drive the four merge properties (no-data-loss, winner,
 # disjoint-commutativity, idempotence) with shrinking; `arbitrary` drives the

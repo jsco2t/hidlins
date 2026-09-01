@@ -1237,7 +1237,6 @@ mod test {
         (
             #[$test:meta]
             $read_event:ident,
-            $read_until_close:ident,
             // constructor of the XML source on which internal functions will be called
             $source:path,
             $skip:literal,

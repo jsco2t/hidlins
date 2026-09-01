@@ -1,0 +1,25 @@
+{
+  "standard_commands": [
+    "make check",
+    "make deny",
+    "make audit",
+    "make doc"
+  ],
+  "final_commands": [
+    "make check",
+    "make test-ignored",
+    "make test-merge-properties",
+    "make completions-check",
+    "make snapshots-check",
+    "make doc",
+    "make deny",
+    "make audit",
+    "make interop",
+    "make interop-entry",
+    "make interop-sync",
+    "make bench-search-gate",
+    "make minio-up",
+    "make test-s3-integration",
+    "make minio-down"
+  ]
+}

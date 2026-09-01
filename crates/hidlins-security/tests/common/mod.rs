@@ -1,8 +1,8 @@
 //! Shared test helpers for `hidlins-security`.
 //!
-//! Phase 1 landed `signals`. Phase 2 adds `clock` (the `FakeClock`
-//! used by `tests/us_051_idle_auto_lock.rs`). Phase 3 will add a
-//! `fixtures` module with `FakeClipboardBackend`.
+//! `signals` serializes process-global signal tests; `clock` provides the
+//! deterministic `FakeClock` used by idle auto-lock tests. Clipboard fixtures
+//! live with their display-gated integration suite.
 
 #![allow(dead_code)] // not all helpers used by every integration test
 

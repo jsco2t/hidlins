@@ -14,11 +14,10 @@ use crate::{
         ciphers::{self},
         kdf, CryptographyError,
     },
-    format::{
-        variant_dictionary::{VariantDictionary, VariantDictionaryError},
-        KDBX4_CURRENT_MINOR_VERSION,
-    },
+    format::{variant_dictionary::VariantDictionaryError, KDBX4_CURRENT_MINOR_VERSION},
 };
+
+pub use crate::format::variant_dictionary::{VariantDictionary, VariantDictionaryValue};
 
 const _CIPHERSUITE_AES128: [u8; 16] = hex!("61ab05a1946441c38d743a563df8dd35");
 const CIPHERSUITE_AES256: [u8; 16] = hex!("31c1f2e6bf714350be5805216afc5aff");
@@ -78,8 +77,13 @@ impl Default for DatabaseConfig {
 #[cfg_attr(feature = "serialization", derive(serde::Serialize))]
 #[non_exhaustive]
 pub enum OuterCipherConfig {
+    /// Encrypt the database with AES-256 in CBC mode.
     AES256,
+
+    /// Encrypt the database with Twofish in CBC mode.
     Twofish,
+
+    /// Encrypt the database with ChaCha20.
     ChaCha20,
 }
 
@@ -134,11 +138,16 @@ impl TryFrom<&[u8]> for OuterCipherConfig {
 #[derive(Debug, Error)]
 #[non_exhaustive]
 pub enum OuterCipherConfigError {
+    /// Errors with cryptographic operations
     #[error(transparent)]
     Cryptography(#[from] CryptographyError),
 
+    /// The identifier for the outer cipher specified in the database is invalid
     #[error("Invalid outer cipher ID: {:?}", cid)]
-    InvalidOuterCipherID { cid: Vec<u8> },
+    InvalidOuterCipherID {
+        /// The invalid cipher ID that was encountered, as a byte vector
+        cid: Vec<u8>,
+    },
 }
 
 /// Choices for encrypting protected values inside of databases
@@ -146,8 +155,13 @@ pub enum OuterCipherConfigError {
 #[cfg_attr(feature = "serialization", derive(serde::Serialize))]
 #[non_exhaustive]
 pub enum InnerCipherConfig {
+    /// Don't encrypt proected values
     Plain,
+
+    /// Encrypt protected values with Salsa20
     Salsa20,
+
+    /// Encrypt protected values with ChaCha20
     ChaCha20,
 }
 
@@ -199,11 +213,16 @@ impl TryFrom<u32> for InnerCipherConfig {
 #[derive(Debug, Error)]
 #[non_exhaustive]
 pub enum InnerCipherConfigError {
+    /// A cryptographic error occurred while configuring the inner cipher
     #[error(transparent)]
     Cryptography(#[from] CryptographyError),
 
+    /// The identifier for the inner cipher specified in the database is invalid
     #[error("Invalid inner cipher ID: {}", cid)]
-    InvalidInnerCipherID { cid: u32 },
+    InvalidInnerCipherID {
+        /// The invalid cipher ID that was encountered
+        cid: u32,
+    },
 }
 
 // Name of the KDF fields in the variant dictionaries.
@@ -224,22 +243,44 @@ const KDF_ROUNDS: &str = "R";
 #[non_exhaustive]
 pub enum KdfConfig {
     /// Derive keys with repeated AES encryption
-    Aes { rounds: u64 },
+    Aes {
+        /// The number of rounds of AES encryption to perform when deriving keys
+        rounds: u64,
+    },
     /// Derive keys with Argon2d
     Argon2 {
+        /// The number of iterations to perform when deriving keys
         iterations: u64,
+
+        /// The amount of memory (in bytes) to use when deriving keys
+        ///
+        /// KDBX stores this value in bytes, while the underlying Argon2 implementation
+        /// expects KiB and converts internally when deriving keys.
         memory: u64,
+
+        /// The degree of parallelism to use when deriving keys
         parallelism: u32,
 
+        /// The version of the Argon2 algorithm to use when deriving keys
         #[cfg_attr(feature = "serialization", serde(serialize_with = "serialize_argon2_version"))]
         version: argon2::Version,
     },
+
     /// Derive keys with Argon2id
     Argon2id {
+        /// The number of iterations to perform when deriving keys
         iterations: u64,
+
+        /// The amount of memory (in bytes) to use when deriving keys
+        ///
+        /// KDBX stores this value in bytes, while the underlying Argon2 implementation
+        /// expects KiB and converts internally when deriving keys.
         memory: u64,
+
+        /// The degree of parallelism to use when deriving keys
         parallelism: u32,
 
+        /// The version of the Argon2 algorithm to use when deriving keys
         #[cfg_attr(feature = "serialization", serde(serialize_with = "serialize_argon2_version"))]
         version: argon2::Version,
     },
@@ -317,7 +358,8 @@ impl KdfConfig {
 
         match self {
             KdfConfig::Aes { rounds } => {
-                vd.set(KDF_ID, KDF_AES_KDBX4.to_vec());
+                // always use the KDBX3 AES KDF UUID for compatibility with other libraries
+                vd.set(KDF_ID, KDF_AES_KDBX3.to_vec());
                 vd.set(KDF_ROUNDS, *rounds);
                 vd.set(KDF_SEED, seed.to_vec());
             }
@@ -362,14 +404,14 @@ impl TryFrom<VariantDictionary> for (KdfConfig, Vec<u8>) {
     type Error = KdfConfigError;
 
     fn try_from(vd: VariantDictionary) -> Result<(KdfConfig, Vec<u8>), Self::Error> {
-        let uuid = vd.get::<Vec<u8>>(KDF_ID)?;
+        let uuid = vd.get_typed::<Vec<u8>>(KDF_ID)?;
 
         if uuid == &KDF_ARGON2ID {
-            let memory: u64 = *vd.get(KDF_MEMORY)?;
-            let salt: Vec<u8> = vd.get::<Vec<u8>>(KDF_SALT)?.clone();
-            let iterations: u64 = *vd.get(KDF_ITERATIONS)?;
-            let parallelism: u32 = *vd.get(KDF_PARALLELISM)?;
-            let version: u32 = *vd.get(KDF_VERSION)?;
+            let memory: u64 = *vd.get_typed(KDF_MEMORY)?;
+            let salt: Vec<u8> = vd.get_typed::<Vec<u8>>(KDF_SALT)?.clone();
+            let iterations: u64 = *vd.get_typed(KDF_ITERATIONS)?;
+            let parallelism: u32 = *vd.get_typed(KDF_PARALLELISM)?;
+            let version: u32 = *vd.get_typed(KDF_VERSION)?;
 
             let version = match version {
                 0x10 => argon2::Version::Version10,
@@ -387,11 +429,11 @@ impl TryFrom<VariantDictionary> for (KdfConfig, Vec<u8>) {
                 salt,
             ))
         } else if uuid == &KDF_ARGON2 {
-            let memory: u64 = *vd.get(KDF_MEMORY)?;
-            let salt: Vec<u8> = vd.get::<Vec<u8>>(KDF_SALT)?.clone();
-            let iterations: u64 = *vd.get(KDF_ITERATIONS)?;
-            let parallelism: u32 = *vd.get(KDF_PARALLELISM)?;
-            let version: u32 = *vd.get(KDF_VERSION)?;
+            let memory: u64 = *vd.get_typed(KDF_MEMORY)?;
+            let salt: Vec<u8> = vd.get_typed::<Vec<u8>>(KDF_SALT)?.clone();
+            let iterations: u64 = *vd.get_typed(KDF_ITERATIONS)?;
+            let parallelism: u32 = *vd.get_typed(KDF_PARALLELISM)?;
+            let version: u32 = *vd.get_typed(KDF_VERSION)?;
 
             let version = match version {
                 0x10 => argon2::Version::Version10,
@@ -409,8 +451,8 @@ impl TryFrom<VariantDictionary> for (KdfConfig, Vec<u8>) {
                 salt,
             ))
         } else if uuid == &KDF_AES_KDBX4 || uuid == &KDF_AES_KDBX3 {
-            let rounds: u64 = *vd.get(KDF_ROUNDS)?;
-            let seed: Vec<u8> = vd.get::<Vec<u8>>(KDF_SEED)?.clone();
+            let rounds: u64 = *vd.get_typed(KDF_ROUNDS)?;
+            let seed: Vec<u8> = vd.get_typed::<Vec<u8>>(KDF_SEED)?.clone();
 
             Ok((KdfConfig::Aes { rounds }, seed))
         } else {
@@ -423,12 +465,21 @@ impl TryFrom<VariantDictionary> for (KdfConfig, Vec<u8>) {
 #[derive(Debug, Error)]
 #[non_exhaustive]
 pub enum KdfConfigError {
+    /// An invalid KDF version was specified in the database
     #[error("Invalid KDF version: {}", version)]
-    InvalidKDFVersion { version: u32 },
+    InvalidKDFVersion {
+        /// The invalid KDF version that was encountered
+        version: u32,
+    },
 
+    /// An invalid KDF UUID was specified in the database
     #[error("Invalid KDF UUID: {:?}", uuid)]
-    InvalidKDFUUID { uuid: Vec<u8> },
+    InvalidKDFUUID {
+        /// The invalid KDF UUID that was encountered, as a byte vector
+        uuid: Vec<u8>,
+    },
 
+    /// Errors parsing KDF parameters from the variant dictionary
     #[error(transparent)]
     VariantDictionary(#[from] VariantDictionaryError),
 }
@@ -438,7 +489,10 @@ pub enum KdfConfigError {
 #[cfg_attr(feature = "serialization", derive(serde::Serialize))]
 #[non_exhaustive]
 pub enum CompressionConfig {
+    /// Don't compress the inner data
     None,
+
+    /// Compress the inner data with GZip
     GZip,
 }
 
@@ -477,5 +531,8 @@ impl TryFrom<u32> for CompressionConfig {
 pub enum CompressionConfigError {
     /// The identifier for the compression algorithm specified in the database is invalid
     #[error("Invalid compression algorithm: {}", cid)]
-    InvalidCompressionSuite { cid: u32 },
+    InvalidCompressionSuite {
+        /// The invalid compression suite ID that was encountered
+        cid: u32,
+    },
 }

@@ -71,10 +71,10 @@ mod unlock;
 pub mod vault;
 
 pub use entry::{
-    fuzzy_match, fuzzy_match_terms, Attachment, EntryBuilder, EntryDraft, EntryKind, EntryView,
-    EntryViewMut, FuzzyMatch, GroupDeleteBehavior, GroupView, HistoryCap, HistoryView,
-    MatchedField, OtpAuthUriError, SearchMode, SearchOptions, SearchResult, SearchScope, Tag, Totp,
-    TotpAlgorithm, DEFAULT_MAX_ATTACHMENT_BYTES, MAX_ATTACHMENT_BYTES_KEY,
+    fuzzy_match, fuzzy_match_terms, Attachment, EntryBuilder, EntryDraft, EntryKind, EntrySummary,
+    EntryView, EntryViewMut, FuzzyMatch, GroupDeleteBehavior, GroupSummary, GroupView, HistoryCap,
+    HistoryView, MatchedField, OtpAuthUriError, SearchMode, SearchOptions, SearchResult,
+    SearchScope, Tag, Totp, TotpAlgorithm, DEFAULT_MAX_ATTACHMENT_BYTES, MAX_ATTACHMENT_BYTES_KEY,
     MAX_ATTACHMENT_BYTES_UPPER_BOUND,
 };
 pub use error::VaultError;

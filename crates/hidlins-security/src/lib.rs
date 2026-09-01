@@ -42,6 +42,7 @@ pub mod clock;
 pub mod error;
 pub mod harden;
 pub mod os_events;
+#[cfg(feature = "desktop")]
 pub(crate) mod secret;
 pub mod vault_lock;
 

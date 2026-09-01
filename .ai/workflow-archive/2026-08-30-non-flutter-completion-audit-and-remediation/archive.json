@@ -1,0 +1,18 @@
+{
+  "schema_version": 1,
+  "work_id": "2026-08-30-non-flutter-completion-audit-and-remediation",
+  "title": "Non-Flutter Completion Audit and Remediation",
+  "created_at": "2026-08-31T00:55:38Z",
+  "approved_at": "2026-09-01T01:39:03Z",
+  "completed_at": "2026-09-01T02:25:07Z",
+  "archived_at": "2026-09-01T02:34:54Z",
+  "baseline_sha": "883535f205d0937d2b90a8bf13051882e1a2c2c8",
+  "final_sha": "883535f205d0937d2b90a8bf13051882e1a2c2c8",
+  "approved_plan_sha256": "cd2254e216b33bd66e52d6c19140f16b18e8bf860a344ca46158bc70227b3286",
+  "acceptance_rounds": 1,
+  "prior_completed_rounds": 0,
+  "task_count": 9,
+  "tasks_completed": 9,
+  "result": "DONE",
+  "final_evidence": "evidence/final.md"
+}

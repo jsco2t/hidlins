@@ -1,7 +1,6 @@
-//! `Workspace` — the unlocked UI shell: tab bar (top) + active-tab body +
-//! status bar (bottom). **Phase 4:** the Secrets tab (tree + scrollable detail,
-//! via [`crate::screens::secrets`]) and pinned tabs (each renders one entry's
-//! detail) are real; the Settings editor (Phase 6) is still a placeholder.
+//! `Workspace` — the unlocked UI shell: tab bar (top), active Secrets/pinned/
+//! Settings body, and status bar (bottom). The Secrets tab renders the tree and
+//! scrollable detail via [`crate::screens::secrets`].
 
 use std::time::Instant;
 
@@ -44,7 +43,7 @@ pub(crate) fn render(app: &App, frame: &mut Frame, now: Instant) {
     } else {
         match active {
             Tab::Secrets => secrets::render(app, frame, body_area, now),
-            Tab::Pinned(uuid) => match app.vault.as_ref() {
+            Tab::Pinned(uuid) => match app.vault() {
                 Some(vault) => {
                     entry_detail::render_pinned(
                         vault,

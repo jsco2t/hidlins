@@ -24,6 +24,9 @@ use std::path::{Path, PathBuf};
 use chrono::{DateTime, Utc};
 use hidlins_sync::s3::signer::{ResolvedCredentials, Signer};
 
+#[path = "common/encoding.rs"]
+mod encoding;
+
 /// The set of test directories we deliberately skip, with one-line
 /// rationales. Any directory present in the corpus but NOT in this list
 /// must be processed by the runner — surfacing new tests as deliberate
@@ -496,5 +499,5 @@ fn hex_sha256(bytes: &[u8]) -> String {
     use sha2::{Digest, Sha256};
     let mut h = Sha256::new();
     h.update(bytes);
-    hex::encode(h.finalize())
+    encoding::encode_lower(&h.finalize())
 }

@@ -265,7 +265,11 @@ impl TreeState {
 /// `recents` supplies the per-vault MRU ordering for the `RecentlyUsed` sort
 /// (ignored by the other orders).
 pub(crate) fn build_rows(vault: &Vault, state: &TreeState, recents: &Recents) -> Vec<TreeRow> {
-    let recycle = vault.database().recycle_bin().map(|g| g.id().uuid());
+    let recycle = vault
+        .group_summaries()
+        .into_iter()
+        .find(hidlins_core::GroupSummary::is_recycle_bin)
+        .map(|group| group.uuid());
     let mut rows = Vec::new();
     walk(
         vault,

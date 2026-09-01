@@ -41,7 +41,6 @@ confidence-threshold = 0.93
 allow = [
     "MIT",
     "Apache-2.0",
-    "Apache-2.0 WITH LLVM-exception",
     "BSD-2-Clause",
     "BSD-3-Clause",
     "ISC",
@@ -109,8 +108,8 @@ yanked = "deny"
 #
 # RUSTSEC-2026-0194 / RUSTSEC-2026-0195 — quick-xml CPU / memory-exhaustion DoS
 # when parsing untrusted XML with many attributes / namespace declarations.
-# Fixed in quick-xml >= 0.41.0. We pull quick-xml transitively via TWO paths,
-# neither of which we can lift to 0.41 today:
+# Fixed in quick-xml >= 0.41.0. The keepass runtime path was lifted to fixed
+# quick-xml 0.41 by Task 001. One path remains:
 #
 #   1. wayland-scanner (0.31.10, latest) -> ... -> arboard -> hidlins-security.
 #      wayland-scanner requires quick-xml "0.39" and has NO published release
@@ -119,16 +118,11 @@ yanked = "deny"
 #      inside the crate — trusted, fixed input, never untrusted runtime data.
 #      The DoS is not reachable in our build or at runtime.
 #
-#   2. keepass 0.12.9 (pinned "=0.12.9" in hidlins-core) requires quick-xml
-#      "0.40". keepass 0.13.16 moves to quick-xml 0.41, but that is a major bump
-#      of the core KDBX library with the `_merge` feature active and must clear
-#      its own KeePassXC round-trip + merge interop re-validation before it can
-#      land (the KDBX-interop promise in CLAUDE.md). Tracked as a follow-up;
-#      until then the residual exposure is a low-severity CPU/memory DoS
-#      reachable only when a user opens a maliciously-crafted vault — no data
-#      loss, no RCE. Mirrored in .cargo/audit.toml (cargo audit reads its own
-#      ignore list).
+# keepass 0.13.25 now resolves quick-xml 0.41.0, so malicious KDBX input no
+# longer reaches either advisory. The retained exception applies only to the
+# trusted-input build-time path above. Mirrored in .cargo/audit.toml (cargo
+# audit reads its own ignore list).
 ignore = [
-    { id = "RUSTSEC-2026-0194", reason = "quick-xml DoS: no upstream fix on the wayland-scanner (build-time, trusted input) path; keepass 0.13 bump tracked as a follow-up" },
-    { id = "RUSTSEC-2026-0195", reason = "quick-xml DoS: no upstream fix on the wayland-scanner (build-time, trusted input) path; keepass 0.13 bump tracked as a follow-up" },
+    { id = "RUSTSEC-2026-0194", reason = "quick-xml DoS: remaining wayland-scanner path is build-time only over trusted crate-shipped XML; no published fixed parent release" },
+    { id = "RUSTSEC-2026-0195", reason = "quick-xml DoS: remaining wayland-scanner path is build-time only over trusted crate-shipped XML; no published fixed parent release" },
 ]

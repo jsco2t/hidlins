@@ -51,7 +51,7 @@ mod open;
 mod types;
 
 #[cfg(feature = "_merge")]
-mod merge;
+pub mod merge;
 
 #[cfg(feature = "totp")]
 mod otp;
@@ -71,6 +71,7 @@ pub use crate::db::{
 pub use crate::db::otp::{TOTPAlgorithm, TOTPError, TOTP};
 
 #[cfg(test)]
+#[allow(clippy::unwrap_used)]
 mod database_tests {
     use std::fs::File;
 

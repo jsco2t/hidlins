@@ -35,11 +35,11 @@ UNAME_S        := $(shell uname -s)
 # Devs who know what they want type `make build`, `make test`, `make check`.
 .DEFAULT_GOAL := help
 
-.PHONY: help toolchain build test test-ignored test-all test-update-snapshots test-clipboard test-os-events \
+.PHONY: help toolchain build test test-ignored test-all test-tui-contracts test-update-snapshots test-clipboard test-os-events \
         test-sigv4 minio-up minio-down test-s3-integration interop-sync \
         fmt fmt-check lint lint-fix check-feature-gates \
         check verify interop interop-entry bench bench-search bench-search-gate bench-search-gate-ci \
-        vendor deny audit doc clean completions completions-check run-tui \
+        vendor vendor-patches deny audit doc clean completions completions-check run-tui \
         snapshots-check \
         api-gen api-gen-check app-build-linux app-build-macos app-analyze app-fmt app-fmt-check \
         app-test app-goldens-update app-test-bridge app-deps app-run boundary-check pub-vendor pub-vendor-check \
@@ -256,7 +256,7 @@ check-feature-gates:  ## Type-check feature-gated test suites the runtime CI swe
 	# targets without running them (no display needed).
 	$(CARGO) check -p hidlins-security --offline --locked --features clipboard-tests --tests
 	$(CARGO) check -p hidlins-cli --offline --locked --features clipboard-tests --tests
-	$(CARGO) check -p hidlins-security --offline --locked --no-default-features
+	RUSTFLAGS="-D warnings" $(CARGO) check -p hidlins-security --offline --locked --no-default-features
 	$(CARGO) check -p hidlins-api --offline --locked --features test-fixtures --tests
 ifeq ($(UNAME_S),Darwin)
 	# iokit compiles natively here; logind's zbus tree is Linux-only.
@@ -282,6 +282,10 @@ test-ignored:  ## Run #[ignore]d tests serially (env-mutating + signal-handler t
 	$(CARGO) test $(CARGO_FLAGS) --features test-binaries -- --ignored --test-threads=1
 
 test-all: test test-ignored  ## Run both default and #[ignore]d tests.
+
+test-tui-contracts:  ## Run in-process TUI journeys and accessibility semantic contracts.
+	$(CARGO) test -p hidlins-tui --offline --locked --lib journey_tests
+	$(CARGO) test -p hidlins-tui --offline --locked --lib accessibility_contract_tests
 
 test-update-snapshots:  ## Regenerate the hidlins-tui snapshot golden files (tui-skeleton T3.5).
 	# Re-renders the Secrets-tab tree/detail snapshots and rewrites the golden
@@ -363,7 +367,7 @@ test-s3-integration:  ## Run the #[ignore]-gated MinIO live-wire tests (run `mak
 	. tools/sync-tests/fixtures/.minio-env && \
 		$(CARGO) test -p hidlins-cli --offline --locked --features minio-tests --test cli_sync_minio -- --ignored --test-threads=1
 
-test-os-events:  ## Run hidlins-security OS-event integration tests (Phase 5: logind on Linux, IOKit on macOS).
+test-os-events:  ## Run hidlins-security OS-event integration tests (logind on Linux, IOKit on macOS).
 	# Picks the host-appropriate source test. Both files are
 	# `#[ignore]`d so the default `make test` skips them.
 	#
@@ -506,7 +510,10 @@ completions-check:  ## Re-generate completions and fail the build if shell-compl
 # ---------------------------------------------------------------------------
 
 vendor:  ## Re-vendor dependencies into vendor/. REQUIRES NETWORK ACCESS.
-	CARGO_NET_OFFLINE=false $(CARGO) vendor
+	python3 tools/dev/vendor.py
+
+vendor-patches:  ## Reapply and verify audited patches to vendored crates (offline).
+	python3 tools/dev/vendor.py --patch-only
 
 # ---------------------------------------------------------------------------
 # Housekeeping.

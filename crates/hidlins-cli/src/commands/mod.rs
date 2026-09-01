@@ -1,10 +1,8 @@
 //! Per-subcommand dispatch functions.
 //!
-//! Phase 1 ships stub bodies — each `run` returns
-//! [`crate::exit::CliExit::NotImplemented`]. Phases 2–4 replace these
-//! bodies in place; the module shape is frozen now so the integration
-//! test surface (and any external links into `hidlins_cli::commands::*`)
-//! does not churn across phases.
+//! Each module owns the implemented dispatch for one top-level command family.
+//! The stable module shape keeps the integration-test surface and external
+//! links into `hidlins_cli::commands::*` from churning.
 //!
 //! Helpers shared by more than one command module live here — they
 //! define cross-cutting CLI contracts (the global `--registry` flag,

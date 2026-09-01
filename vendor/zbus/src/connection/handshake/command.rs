@@ -2,6 +2,8 @@ use std::{borrow::Cow, fmt, str::FromStr};
 
 use crate::{Error, Guid, OwnedGuid, Result, conn::AuthMechanism};
 
+use super::hex;
+
 // The plain-text SASL profile authentication protocol described here:
 // <https://dbus.freedesktop.org/doc/dbus-specification.html#auth-protocol>
 //
@@ -96,8 +98,8 @@ impl FromStr for Command {
     }
 }
 
-impl From<hex::FromHexError> for Error {
-    fn from(e: hex::FromHexError) -> Self {
+impl From<hex::DecodeError> for Error {
+    fn from(e: hex::DecodeError) -> Self {
         Error::Handshake(format!("Invalid hexcode: {e}"))
     }
 }

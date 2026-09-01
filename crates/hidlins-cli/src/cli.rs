@@ -1,8 +1,7 @@
 //! Top-level command tree.
 //!
-//! Defines [`Cli`] and the [`Command`] subcommand enum, plus a small
-//! placeholder verb enum per subcommand. Phase 1 carries only the
-//! top-level shape; Phases 2–4 flesh out the per-subcommand verbs.
+//! Defines [`Cli`], the complete [`Command`] subcommand enum, and each
+//! subcommand's arguments and verbs.
 //!
 //! ## ASCII-art header
 //!
@@ -115,10 +114,8 @@ pub enum OutputFormat {
 }
 
 // ---------------------------------------------------------------------------
-// Per-subcommand argument structs. Phase 1 ships placeholder verb enums;
-// Phases 2–4 fill them in with real flags. The top-level subcommand
-// parser must already accept the verb shapes today so `--help` is
-// stable across phases.
+// Per-subcommand argument structs. These types are the shipped command-line
+// contract, so help text, completions, and parsing tests keep them stable.
 // ---------------------------------------------------------------------------
 
 /// `hidlins vault` — vault lifecycle.

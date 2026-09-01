@@ -1,0 +1,107 @@
+{
+  "schema_version": 2,
+  "work_id": "2026-08-30-non-flutter-completion-audit-and-remediation",
+  "title": "Non-Flutter Completion Audit and Remediation",
+  "phase": "DONE",
+  "created_at": "2026-08-31T00:55:38Z",
+  "updated_at": "2026-09-01T02:34:54Z",
+  "approved_at": "2026-09-01T01:39:03Z",
+  "completed_at": "2026-09-01T02:25:07Z",
+  "archived_at": "2026-09-01T02:34:54Z",
+  "baseline_sha": "883535f205d0937d2b90a8bf13051882e1a2c2c8",
+  "final_sha": "883535f205d0937d2b90a8bf13051882e1a2c2c8",
+  "plan_revision": 5,
+  "acceptance_round": 1,
+  "completed_rounds": [],
+  "approved_plan_sha256": "cd2254e216b33bd66e52d6c19140f16b18e8bf860a344ca46158bc70227b3286",
+  "current_task": null,
+  "tasks": [
+    {
+      "id": "001",
+      "path": "tasks/001-completion-audit-and-fix-ledger.md",
+      "round": 1,
+      "status": "COMPLETE",
+      "attempts": 2,
+      "implementation": "Codified test-forward/dependency/license guardrails; completed the non-Flutter completion, architecture, and dependency ledgers; removed direct anyhow and graph-wide hex; upgraded vulnerable/yanked dependency paths; added reproducible audited vendor patching; and repaired the Keepass KDBX3/4.0 write-back regression found by interop.",
+      "evidence": "evidence/001.md"
+    },
+    {
+      "id": "002",
+      "path": "tasks/002-vault-entry-and-generator-repairs.md",
+      "round": 1,
+      "status": "COMPLETE",
+      "attempts": 1,
+      "implementation": "Removed the stale unused Keyfile::bytes secret-bearing accessor and deferred-work suppression after characterizing the active zeroize-on-drop KeyfileMaterial unlock path.",
+      "evidence": "evidence/002.md"
+    },
+    {
+      "id": "003",
+      "path": "tasks/003-security-behavior-repairs.md",
+      "round": 1,
+      "status": "COMPLETE",
+      "attempts": 1,
+      "implementation": "Made no-default security builds warning-denying and warning-clean by feature-gating the clipboard-only secret module and zeroize edge under desktop, while preserving all default and platform containment behavior.",
+      "evidence": "evidence/003.md"
+    },
+    {
+      "id": "004",
+      "path": "tasks/004-sync-and-merge-data-integrity-repairs.md",
+      "round": 1,
+      "status": "COMPLETE",
+      "attempts": 3,
+      "implementation": "Repaired merge-history attachment data loss with zeroizing content snapshots, semantic history deduplication, fail-closed ambiguity detection, reproducible pool-safe Keepass APIs and reverse-reference reconstruction, encrypted save/reopen regressions, and enhanced KeePassXC attachment interop.",
+      "evidence": "evidence/004.md"
+    },
+    {
+      "id": "005",
+      "path": "tasks/005-cli-surface-repairs.md",
+      "round": 1,
+      "status": "COMPLETE",
+      "attempts": 1,
+      "implementation": "Added owned secret-free core entry/group query records, migrated every CLI entry query away from raw KDBX traversal, preserved command contracts with pre-refactor characterization, eliminated quadratic search enrichment, and repaired non-idempotent audited vendor patch insertion discovered by the characterization run.",
+      "evidence": "evidence/005.md"
+    },
+    {
+      "id": "006",
+      "path": "tasks/006-tui-experience-repairs.md",
+      "round": 1,
+      "status": "COMPLETE",
+      "attempts": 3,
+      "implementation": "Replaced independent optional vault/registry ownership with a valid-state session enum, extracted entry actions and persistence from the TUI coordinator, migrated the TUI off raw KDBX traversal onto owned core queries, narrowed the remaining infrastructure seam, and preserved snapshots, accessibility modes, and search performance.",
+      "evidence": "evidence/006.md"
+    },
+    {
+      "id": "007",
+      "path": "tasks/007-build-supply-chain-and-doc-repairs.md",
+      "round": 1,
+      "status": "COMPLETE",
+      "attempts": 1,
+      "implementation": "Reconciled the final dependency graph and CI/Make parity, tightened the license allow-list, removed obsolete deferred sync scaffolding, corrected shipped-state documentation, closed the documentation finding, and recorded exact external notebook corrections without editing the notebook.",
+      "evidence": "evidence/007.md"
+    },
+    {
+      "id": "008",
+      "path": "tasks/008-live-and-accessibility-verification.md",
+      "round": 1,
+      "status": "COMPLETE",
+      "attempts": 1,
+      "implementation": "main",
+      "evidence": "evidence/008.md"
+    },
+    {
+      "id": "009",
+      "path": "tasks/009-consolidate-tui-real-environment-verification.md",
+      "round": 1,
+      "status": "COMPLETE",
+      "attempts": 1,
+      "implementation": "main",
+      "evidence": "evidence/009.md"
+    }
+  ],
+  "task_retry_limit": 3,
+  "final_retry_limit": 2,
+  "final_attempts": 1,
+  "stop_continuations": 0,
+  "max_stop_continuations": 50,
+  "block_reason": null
+}

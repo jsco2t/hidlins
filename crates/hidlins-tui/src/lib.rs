@@ -34,12 +34,15 @@ pub(crate) mod args;
 pub(crate) mod clipboard;
 pub(crate) mod command;
 pub(crate) mod config;
+pub(crate) mod entry_actions;
 pub(crate) mod error;
 pub(crate) mod event;
 pub(crate) mod jump_history;
 pub(crate) mod overlay;
+pub(crate) mod persistence;
 pub(crate) mod recents;
 pub(crate) mod screens;
+pub(crate) mod session;
 pub(crate) mod sync_runtime;
 pub(crate) mod tabs;
 pub(crate) mod terminal_guard;
@@ -48,11 +51,17 @@ pub(crate) mod user_config;
 pub(crate) mod util;
 pub(crate) mod widgets;
 
+#[cfg(test)]
+mod accessibility_contract_tests;
+#[cfg(test)]
+mod journey_tests;
 /// Hand-rolled snapshot harness + tree/detail golden tests (T3.5). In-crate
 /// because the render functions it exercises are `pub(crate)` (the lesson
 /// Phase 1/2 already hit: an integration test in `tests/` can't reach them).
 #[cfg(test)]
 mod snapshot_tests;
+#[cfg(test)]
+mod test_support;
 
 pub use args::{Args, DumpFormat, ParseOutcome};
 pub use error::TuiError;

@@ -9,9 +9,11 @@
 # history entry that KeePassXC can read.
 #
 # `merge-interop-driver` writes a merged vault whose one entry has current
-# title "winner" and a history entry titled "loser". We export it to XML with
-# keepassxc-cli (the export includes <History> entries) and assert both are
-# present.
+# title "winner" and a history entry titled "loser", with distinct attachments
+# on each version. We export it to XML with keepassxc-cli (the export includes
+# <History> entries) and assert the historical attachment reference is accepted
+# and retained. The Rust save/reopen regression proves the referenced history
+# bytes; KeePassXC's CLI does not expose attachment export from a history entry.
 set -eu
 
 DRIVER="${HIDLINS_SYNC_MERGE_DRIVER:-target/debug/merge-interop-driver}"
@@ -31,6 +33,8 @@ trap 'rm -rf "$workdir"' EXIT
 
 vault="$workdir/merged.kdbx"
 xml="$workdir/merged.xml"
+winner_attachment="$workdir/winner.bin"
+winner_expected="$workdir/winner.expected"
 
 # Produce the merged vault (password on stdin — never the command line).
 printf '%s\n' "$PASSWORD" | "$DRIVER" "$vault" >/dev/null
@@ -48,5 +52,19 @@ grep -F "loser" "$xml" >/dev/null || {
     echo "FAIL: collision loser 'loser' not preserved in history (NFR-009 / FR-043)" >&2
     exit 1
 }
+grep -F "<Key>loser.bin</Key>" "$xml" >/dev/null || {
+    echo "FAIL: KeePassXC did not retain the loser's historical attachment reference" >&2
+    exit 1
+}
 
-echo "sync_us-044 KeePassXC interop OK (winner current + loser in history)"
+# Prove the pool repair did not disturb the current winner: KeePassXC must
+# export its attachment bytes exactly.
+printf '%s' 'HIDLINS-WINNER-CURRENT-ATTACHMENT' >"$winner_expected"
+printf '%s\n' "$PASSWORD" | keepassxc-cli attachment-export -q \
+    "$vault" "winner" "winner.bin" "$winner_attachment"
+cmp -s "$winner_expected" "$winner_attachment" || {
+    echo "FAIL: KeePassXC exported incorrect current attachment bytes" >&2
+    exit 1
+}
+
+echo "sync_us-044 KeePassXC interop OK (winner attachment current + loser attachment in history)"

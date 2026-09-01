@@ -214,7 +214,7 @@ fn human_size(bytes: u64) -> String {
 /// when nothing (or a group) is selected, or no vault is open. `now` resolves
 /// the live expiry check.
 pub(crate) fn build_detail_data(app: &App, now: DateTime<Utc>) -> Option<DetailData> {
-    let vault = app.vault.as_ref()?;
+    let vault = app.vault()?;
     let uuid = app.tree.selected()?;
     detail_data_for(vault, uuid, now)
 }

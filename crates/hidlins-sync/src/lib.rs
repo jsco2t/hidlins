@@ -90,10 +90,10 @@
 #![forbid(unsafe_code)]
 #![deny(missing_docs)]
 
-mod activity;
 pub mod auth;
 pub mod backup;
 pub mod config;
+mod encoding;
 pub mod error;
 pub mod merge;
 pub mod s3;

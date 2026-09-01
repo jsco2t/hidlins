@@ -148,17 +148,6 @@ impl Keyfile {
             Keyfile::Bytes(_) => None,
         }
     }
-
-    /// Borrow the raw bytes if this is a `Bytes` variant; otherwise
-    /// `None`. Crate-private — same rationale as
-    /// [`MasterPassword::as_bytes`].
-    #[allow(dead_code)] // consumed by the future `unlock` module
-    pub(crate) fn bytes(&self) -> Option<&[u8]> {
-        match self {
-            Keyfile::Path(_) => None,
-            Keyfile::Bytes(b) => Some(b),
-        }
-    }
 }
 
 impl fmt::Debug for Keyfile {

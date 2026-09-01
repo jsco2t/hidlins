@@ -21,7 +21,7 @@ struct GetTcapBuilder {
 
 impl GetTcapBuilder {
     fn flush(&mut self) {
-        let decoded = hex::decode(&self.current)
+        let decoded = crate::hex::decode(&self.current)
             .map(|s| String::from_utf8_lossy(&s).to_string())
             .unwrap_or_else(|_| String::from_utf8_lossy(&self.current).to_string());
         self.names.push(decoded);

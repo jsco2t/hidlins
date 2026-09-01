@@ -3,7 +3,7 @@
 use std::fs::{File, OpenOptions};
 use std::path::{Path, PathBuf};
 
-use keepass::config::{DatabaseConfig, KdfConfig};
+use keepass::config::{DatabaseConfig, DatabaseVersion, KdfConfig};
 use keepass::db::DatabaseOpenError;
 use keepass::Database;
 
@@ -125,7 +125,7 @@ impl Vault {
 
         let keyfile_material = KeyfileMaterial::from_keyfile(keyfile)?;
         let key = build_database_key_from_material(master, &keyfile_material)?;
-        let database = Database::with_config(kdf.database_config());
+        let mut database = Database::with_config(kdf.database_config());
         let lock = match acquire_exclusive(path) {
             Ok(lock) => lock,
             Err(err) => {
@@ -134,7 +134,7 @@ impl Vault {
             }
         };
 
-        if let Err(err) = save_database(path, &database, key.clone()) {
+        if let Err(err) = save_database(path, &mut database, key.clone()) {
             let _ = std::fs::remove_file(path);
             return Err(err);
         }
@@ -176,7 +176,7 @@ impl Vault {
 
     /// Save the in-memory database to disk using an atomic replace.
     pub fn save(&mut self) -> Result<(), VaultError> {
-        save_database(&self.path, &self.database, self.key.clone())
+        save_database(&self.path, &mut self.database, self.key.clone())
     }
 
     /// Re-encrypt the vault with a new master password after re-verifying
@@ -190,7 +190,7 @@ impl Vault {
         open_database(&self.path, current_key)?;
 
         let new_key = build_database_key_from_material(new, &self.keyfile_material)?;
-        save_database(&self.path, &self.database, new_key.clone())?;
+        save_database(&self.path, &mut self.database, new_key.clone())?;
         self.key = new_key;
         Ok(())
     }
@@ -201,11 +201,19 @@ impl Vault {
     }
 
     /// Return immutable access to the in-memory KDBX database.
+    ///
+    /// Infrastructure seam for the sync adapter and compatibility tooling.
+    /// Presentation crates should use the owned/query APIs instead.
+    #[doc(hidden)]
     pub fn database(&self) -> &Database {
         &self.database
     }
 
     /// Return mutable access to the in-memory KDBX database.
+    ///
+    /// Infrastructure seam for the sync adapter and compatibility tooling.
+    /// Presentation crates must use invariant-preserving mutation APIs instead.
+    #[doc(hidden)]
     pub fn database_mut(&mut self) -> &mut Database {
         &mut self.database
     }
@@ -214,7 +222,7 @@ impl Vault {
     /// filesystem or acquiring a lock.
     ///
     /// Used by `hidlins-sync` to decrypt a remote vault snapshot fetched over
-    /// the sync transport (a git blob, etc.) so it can be fed into the merge.
+    /// the sync transport as an encrypted object so it can be fed into the merge.
     /// Returns the parsed [`Database`] rather than a [`Vault`] because the
     /// snapshot is path-less and lock-less — it is consumed read-only by the
     /// merge and then dropped; a partial `Vault` with a panicking `path()`
@@ -292,6 +300,10 @@ impl VaultReadOnly {
     }
 
     /// Return immutable access to the in-memory KDBX database.
+    ///
+    /// Infrastructure seam for sync and compatibility tooling. Presentation
+    /// crates should use the owned/query APIs instead.
+    #[doc(hidden)]
     pub fn database(&self) -> &Database {
         &self.database
     }
@@ -308,9 +320,26 @@ fn open_database(path: &Path, key: keepass::DatabaseKey) -> Result<Database, Vau
 
 fn save_database(
     path: &Path,
-    database: &Database,
+    database: &mut Database,
     key: keepass::DatabaseKey,
 ) -> Result<(), VaultError> {
+    // Hidlins reads KDBX3 for migration but only writes the current KDBX4
+    // minor version. KeePassXC can legitimately rewrite a shared vault as
+    // KDBX 4.0, while keepass-rs currently serializes KDBX 4.1 only. Promote
+    // either legacy form before the next Hidlins save while preserving the
+    // parsed cipher and KDF configuration (including legacy AES-KDF).
+    let current_version = DatabaseConfig::default().version;
+    let DatabaseVersion::KDB4(current_minor) = current_version else {
+        unreachable!("keepass-rs default database version must be KDBX4")
+    };
+    let needs_migration = match database.config.version {
+        DatabaseVersion::KDB3(_) => true,
+        DatabaseVersion::KDB4(minor) => minor < current_minor,
+        _ => false,
+    };
+    if needs_migration {
+        database.config.version = DatabaseVersion::KDB4(current_minor);
+    }
     write_atomic_with(path, |file| {
         database
             .save(file, key)
@@ -332,5 +361,45 @@ fn map_open_error(source: DatabaseOpenError, path: &Path) -> VaultError {
         | DatabaseOpenError::UnsupportedVersion
         | DatabaseOpenError::Format(_) => VaultError::InvalidFormat { source },
         _ => VaultError::AuthenticationFailed,
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::{save_database, Database, DatabaseConfig};
+    use keepass::config::DatabaseVersion;
+    use keepass::DatabaseKey;
+    use std::fs::File;
+
+    #[test]
+    fn saving_a_legacy_kdbx3_database_migrates_it_to_kdbx4() {
+        let directory = tempfile::tempdir().expect("temporary directory");
+        let path = directory.path().join("legacy.kdbx");
+        let key = DatabaseKey::new().with_password("legacy-test-password");
+        let mut database = Database::with_config(DatabaseConfig::default());
+        database.config.version = DatabaseVersion::KDB3(1);
+
+        save_database(&path, &mut database, key.clone())
+            .expect("Hidlins writes legacy KDBX3 databases back as KDBX4");
+
+        assert!(matches!(database.config.version, DatabaseVersion::KDB4(_)));
+        let reopened = Database::open(&mut File::open(path).unwrap(), key).unwrap();
+        assert!(matches!(reopened.config.version, DatabaseVersion::KDB4(_)));
+    }
+
+    #[test]
+    fn saving_a_kdbx4_0_database_migrates_it_to_the_writable_minor_version() {
+        let directory = tempfile::tempdir().expect("temporary directory");
+        let path = directory.path().join("kdbx-4-0.kdbx");
+        let key = DatabaseKey::new().with_password("legacy-test-password");
+        let mut database = Database::with_config(DatabaseConfig::default());
+        database.config.version = DatabaseVersion::KDB4(0);
+
+        save_database(&path, &mut database, key.clone())
+            .expect("Hidlins writes KeePassXC KDBX 4.0 databases as current KDBX4");
+
+        assert_eq!(database.config.version, DatabaseConfig::default().version);
+        let reopened = Database::open(&mut File::open(path).unwrap(), key).unwrap();
+        assert_eq!(reopened.config.version, DatabaseConfig::default().version);
     }
 }

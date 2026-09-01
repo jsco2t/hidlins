@@ -16,9 +16,9 @@
 //!
 //! ## Forward compatibility
 //!
-//! Future features (sync, per-vault auto-lock) will add `[[vault.sync]]`
-//! / `[vault.lock]` style sub-tables to each `[[vault]]` entry. The
-//! registry preserves any unknown TOML keys verbatim via
+//! Shipped sync and per-vault auto-lock settings use nested data attached to
+//! each `[[vault]]` entry. The registry preserves those and any unknown TOML
+//! keys verbatim via
 //! `#[serde(flatten)] extra: toml::Table` at both the top level and the
 //! per-vault level. This is the same forward-compat principle KDBX uses
 //! internally — never drop data we don't understand.
@@ -55,8 +55,8 @@ pub const SCHEMA_VERSION: u32 = 1;
 /// A single registered vault.
 ///
 /// Fields beyond `name`, `path`, `created_at`, and `keyfile_path` are
-/// captured in `extra` and round-tripped verbatim on save (forward-compat
-/// for sync / auto-lock features that will add their own sub-tables).
+/// captured in `extra` and round-tripped verbatim on save. This includes the
+/// shipped sync and auto-lock extensions and preserves future unknown fields.
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct RegisteredVault {
     /// Unique human-readable name for the vault.

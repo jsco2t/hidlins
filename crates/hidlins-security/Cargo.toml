@@ -32,7 +32,7 @@ workspace = true
 #   - `serde` (Phase 4) — derives `Serialize` / `Deserialize` on
 #     `VaultLockConfig`.
 thiserror = "2.0"
-zeroize = { version = "1.8", features = ["derive"] }
+zeroize = { version = "1.8", features = ["derive"], optional = true }
 #   - `libc` (PMF-2) — `setrlimit(RLIMIT_CORE, 0)` core-dump suppression in
 #     `harden::harden_process`. Already vendored (a `hidlins-tui` dep); adding
 #     it here drags no new vendored crate.
@@ -120,7 +120,7 @@ default = ["desktop"]
 # Desktop feature: bundles clipboard (arboard) and OS-event sources
 # (signal-hook for SIGTSTP). Mobile builds (`default-features = false`)
 # compile only auto_lock, vault_lock, clock, and harden.
-desktop = ["dep:arboard", "dep:signal-hook"]
+desktop = ["dep:arboard", "dep:signal-hook", "dep:zeroize"]
 
 # Test-only feature gate. The `sigstop_helper` binary (declared
 # below) is built only when `--features test-binaries` is passed.

@@ -134,6 +134,7 @@ impl SyncRuntime {
     }
 
     /// Whether a sync is currently in flight (vault moved to the worker).
+    #[cfg(test)]
     pub(crate) fn is_syncing(&self) -> bool {
         self.inflight.is_some()
     }

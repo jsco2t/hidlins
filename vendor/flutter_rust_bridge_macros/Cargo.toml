@@ -37,9 +37,6 @@ name = "flutter_rust_bridge_macros"
 path = "src/lib.rs"
 proc-macro = true
 
-[dependencies.hex]
-version = "0.4.3"
-
 [dependencies.md-5]
 version = "0.10.6"
 

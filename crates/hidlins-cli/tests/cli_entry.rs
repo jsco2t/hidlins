@@ -342,6 +342,77 @@ fn entry_search_returns_matches() {
 }
 
 #[test]
+fn entry_query_commands_preserve_group_and_title_contracts() {
+    use hidlins_core::{EntryBuilder, Keyfile, MasterPassword, Vault};
+
+    let reg = vault_named("v");
+    let path = reg.tempdir.path().join("v.kdbx");
+    let mut vault = Vault::open(
+        &path,
+        &MasterPassword::new(PW.to_string()),
+        None::<&Keyfile>,
+    )
+    .expect("open seeded vault");
+    let root = vault.root_group_uuid();
+    let banking = vault.create_group(root, "Banking").expect("create group");
+    let first = vault
+        .add_entry(banking, EntryBuilder::credential("Shared").build())
+        .expect("add first entry");
+    let second = vault
+        .add_entry(root, EntryBuilder::credential("shared").build())
+        .expect("add second entry");
+    vault.save().expect("save query fixture");
+    drop(vault);
+
+    let (code, stdout, stderr) = run_with_stdin(
+        &reg,
+        &["--format", "json", "entry", "list", "--vault", "v"],
+        &format!("{PW}\n"),
+    );
+    assert_eq!(code, 0, "list stderr:\n{stderr}");
+    let listed: Value = serde_json::from_str(stdout.trim()).expect("list JSON");
+    let banking_row = listed["entries"]
+        .as_array()
+        .expect("entries array")
+        .iter()
+        .find(|entry| entry["uuid"] == first.to_string())
+        .expect("banking entry");
+    assert_eq!(banking_row["group"], "Banking");
+
+    let (code, stdout, stderr) = run_with_stdin(
+        &reg,
+        &[
+            "--format",
+            "json",
+            "entry",
+            "search",
+            "--vault",
+            "v",
+            "--scope",
+            "group:banking",
+            "shared",
+        ],
+        &format!("{PW}\n"),
+    );
+    assert_eq!(code, 0, "search stderr:\n{stderr}");
+    let searched: Value = serde_json::from_str(stdout.trim()).expect("search JSON");
+    let matches = searched["matches"].as_array().expect("matches array");
+    assert_eq!(matches.len(), 1);
+    assert_eq!(matches[0]["uuid"], first.to_string());
+    assert_eq!(matches[0]["group"], "Banking");
+
+    let (code, _stdout, stderr) = run_with_stdin(
+        &reg,
+        &["entry", "get", "--vault", "v", "--title", "SHARED"],
+        &format!("{PW}\n"),
+    );
+    assert_eq!(code, 1, "ambiguous lookup stderr:\n{stderr}");
+    assert!(stderr.contains("2 entries share title"));
+    assert!(stderr.contains(&first.to_string()));
+    assert!(stderr.contains(&second.to_string()));
+}
+
+#[test]
 fn entry_rm_permanent_skips_recycle_bin() {
     let reg = vault_named("v");
     let uuid = add_github_entry(&reg);

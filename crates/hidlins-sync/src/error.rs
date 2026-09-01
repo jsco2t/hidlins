@@ -4,8 +4,8 @@
 //! etc.) so callers can branch on them programmatically. No variant ever
 //! carries plaintext passwords, decrypted vault contents, KDBX bytes, or any
 //! credential material — the same discipline `hidlins-core::VaultError`
-//! follows. The enum is `#[non_exhaustive]` so later phases can add variants
-//! without a `SemVer` break.
+//! follows. The enum is `#[non_exhaustive]` so future releases can add variants
+//! without a SemVer break.
 
 use std::path::PathBuf;
 
