@@ -1,8 +1,11 @@
-import 'package:flutter/material.dart';
+import 'package:material_ui/material_ui.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 
 import '../../data/failures.dart';
+import '../../data/models.dart';
 import '../../l10n/app_localizations.dart';
+import '../../platform/keyfile_access.dart';
+import '../../platform/platform_result.dart';
 import '../../providers/providers.dart';
 import '../../ui/activity_capture.dart';
 import '../../ui/tokens.dart';
@@ -22,6 +25,7 @@ class _CreateVaultDialogState extends ConsumerState<CreateVaultDialog> {
   final _confirmPhraseCtrl = TextEditingController();
   bool _saving = false;
   String? _error;
+  KeyfileReference? _keyfileReference;
 
   @override
   void dispose() {
@@ -87,6 +91,15 @@ class _CreateVaultDialogState extends ConsumerState<CreateVaultDialog> {
                           return null;
                         },
                       ),
+                      const SizedBox(height: HidlinsSpacing.md),
+                      OutlinedButton.icon(
+                        onPressed: _saving ? null : _selectKeyfile,
+                        icon: const Icon(Icons.vpn_key_outlined),
+                        label: Text(
+                          _keyfileReference?.displayName ??
+                              l10n.lockScreenKeyfileSelect,
+                        ),
+                      ),
                       const SizedBox(height: HidlinsSpacing.lg),
 
                       // No-recovery warning
@@ -101,18 +114,18 @@ class _CreateVaultDialogState extends ConsumerState<CreateVaultDialog> {
                                 children: [
                                   Icon(
                                     Icons.warning,
-                                    color: Theme.of(
-                                      context,
-                                    ).colorScheme.onErrorContainer,
+                                    color: Theme.of(context)
+                                        .colorScheme
+                                        .onErrorContainer,
                                   ),
                                   const SizedBox(width: HidlinsSpacing.sm),
                                   Expanded(
                                     child: Text(
                                       l10n.vaultCreateNoRecoveryWarning,
                                       style: TextStyle(
-                                        color: Theme.of(
-                                          context,
-                                        ).colorScheme.onErrorContainer,
+                                        color: Theme.of(context)
+                                            .colorScheme
+                                            .onErrorContainer,
                                       ),
                                     ),
                                   ),
@@ -168,11 +181,24 @@ class _CreateVaultDialogState extends ConsumerState<CreateVaultDialog> {
       _error = null;
     });
 
+    KeyfileRef? keyfile;
+    final reference = _keyfileReference;
     try {
+      if (reference != null) {
+        final resolved = await ref
+            .read(keyfileAccessCapabilityProvider)
+            .resolve(reference);
+        if (resolved case PlatformSuccess<String>(:final value)) {
+          keyfile = KeyfileRef.path(value);
+        } else {
+          throw const _KeyfileAccessException();
+        }
+      }
       final repo = ref.read(sessionRepositoryProvider);
       await repo.createVault(
         name: _nameCtrl.text,
         masterPassword: _passwordCtrl.text,
+        keyfile: keyfile,
         confirmedNoRecovery: true,
       );
       if (mounted) Navigator.of(context).pop(true);
@@ -190,6 +216,30 @@ class _CreateVaultDialogState extends ConsumerState<CreateVaultDialog> {
         _saving = false;
         _error = AppLocalizations.of(context)!.errorGeneric;
       });
+    } finally {
+      if (reference != null) {
+        await ref.read(keyfileAccessCapabilityProvider).release(reference);
+      }
     }
   }
+
+  Future<void> _selectKeyfile() async {
+    final result = await ref
+        .read(keyfileAccessCapabilityProvider)
+        .pickReference();
+    if (!mounted) return;
+    if (result case PlatformSuccess<KeyfileReference>(:final value)) {
+      setState(() {
+        _keyfileReference = value;
+        _error = null;
+      });
+    } else if (result is PlatformFailure<KeyfileReference> ||
+        result is PlatformStale<KeyfileReference>) {
+      setState(() => _error = AppLocalizations.of(context)!.errorGeneric);
+    }
+  }
+}
+
+final class _KeyfileAccessException implements Exception {
+  const _KeyfileAccessException();
 }

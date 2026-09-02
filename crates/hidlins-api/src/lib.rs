@@ -4,6 +4,8 @@
 // here. A crate-wide `allow(unexpected_cfgs)` would disable typo detection for
 // every hand-written `#[cfg]` in the boundary crate.
 
+#[cfg(target_os = "android")]
+pub mod android;
 pub mod api;
 pub mod clipboard_port;
 pub mod dto;
@@ -11,6 +13,9 @@ pub mod error;
 pub mod event;
 #[cfg(any(test, feature = "test-fixtures"))]
 pub mod fixtures;
+#[cfg(target_os = "ios")]
+#[allow(unsafe_code)]
+pub mod ios;
 pub mod sync_port;
 // frb-generated FFI glue necessarily contains unsafe (extern "C" fns,
 // raw pointer casts, #[no_mangle]) and code patterns that trigger

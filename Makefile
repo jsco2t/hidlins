@@ -25,6 +25,14 @@ CARGO          := cargo
 CARGO_FLAGS    := --workspace --offline --locked
 CLIPPY_FLAGS   := --workspace --all-targets --offline --locked -- -D warnings
 
+# Every Rust compilation launched through make inherits fatal warnings. Use
+# `override` so a caller-provided RUSTFLAGS/RUSTDOCFLAGS value is preserved and
+# the repository policy is appended instead of being replaced by command-line
+# variable precedence.
+override RUSTFLAGS    := $(strip $(RUSTFLAGS) -D warnings)
+override RUSTDOCFLAGS := $(strip $(RUSTDOCFLAGS) -D warnings)
+export RUSTFLAGS RUSTDOCFLAGS
+
 # Host OS — used to pick the platform-appropriate OS-event source test
 # (logind on Linux, IOKit on macOS); the wrong-platform feature won't
 # even resolve (`logind`→`zbus` is Linux-target-only; `iokit`→`objc2`
@@ -35,14 +43,14 @@ UNAME_S        := $(shell uname -s)
 # Devs who know what they want type `make build`, `make test`, `make check`.
 .DEFAULT_GOAL := help
 
-.PHONY: help toolchain build test test-ignored test-all test-tui-contracts test-update-snapshots test-clipboard test-os-events \
-        test-sigv4 minio-up minio-down test-s3-integration interop-sync \
+.PHONY: help toolchain build release build-policy-check _build-policy-check acceptance-evidence-check check-android build-android android-artifacts-check android-verifier-build android-verifier-test android-harness-check android-emulator-provision app-android-config-check app-build-android app-test-android-integration app-test-android-emulator app-test-android-emulator-minio app-test-android-emulator-s3 check-ios ios-harness-check app-test-ios-simulator app-test-ios-integration app-test-ios-simulator-minio app-test-ios-simulator-s3 app-test-ios-device app-build-ios app-prepare-ios-observation test test-ignored test-all test-tui-contracts test-update-snapshots test-clipboard test-os-events \
+        test-sigv4 minio-up minio-down minio-bucket test-s3-integration test-minio-managed interop-sync \
         fmt fmt-check lint lint-fix check-feature-gates \
-        check verify interop interop-entry bench bench-search bench-search-gate bench-search-gate-ci \
+        check verify interop interop-app interop-entry bench bench-search bench-search-gate bench-search-gate-ci \
         vendor vendor-patches deny audit doc clean completions completions-check run-tui \
         snapshots-check \
-        api-gen api-gen-check app-build-linux app-build-macos app-analyze app-fmt app-fmt-check \
-        app-test app-goldens-update app-test-bridge app-deps app-run boundary-check pub-vendor pub-vendor-check \
+        api-gen api-gen-check app-build-linux app-build-macos app-brand-generate app-brand-check app-analyze app-fmt app-fmt-check \
+        app-test app-test-performance app-test-integration app-test-integration-minio app-test-integration-performance app-goldens-update app-test-bridge app-deps app-run boundary-check pub-vendor pub-vendor-check pub-production-check \
         flutter-version-check telemetry-check app-check check-macos test-merge-properties
 
 help:  ## Show this help.
@@ -66,6 +74,19 @@ toolchain:  ## Install all dev tooling (Rust toolchain, keepassxc-cli, cargo-den
 
 build:  ## Build the workspace (offline, vendored).
 	$(CARGO) build $(CARGO_FLAGS)
+
+release:  ## Build optimized CLI, TUI, and agent artifacts in target/release/ (host platform).
+	$(CARGO) build $(CARGO_FLAGS) --release
+
+acceptance-evidence-check:  ## Audit release/CI/PRD evidence, skipped residuals, and all 45 July tasks.
+	python3 tools/acceptance/check.py self-test
+	python3 tools/acceptance/check.py check
+
+build-policy-check:  ## Prove first-party warnings are fatal and platform build policies stay scoped.
+	$(MAKE) --no-print-directory _build-policy-check RUSTFLAGS="$(RUSTFLAGS) -C debuginfo=0"
+
+_build-policy-check:
+	tools/dev/build-policy-check.sh
 
 run-tui:  ## Launch the interactive terminal UI (hidlins-tui).
 	$(CARGO) run -p hidlins-tui --offline --locked
@@ -121,20 +142,108 @@ api-gen-check:  ## Re-generate frb bindings and fail if output drifted (CI gate)
 # tool would happily fetch a missing package from pub.dev straight into the
 # vendored cache. `--no-pub` suppresses the implicit resolve entirely; the
 # only resolve path is `app-deps`, which is `--offline --enforce-lockfile`.
-app-build-linux: app-deps  ## Build the Flutter desktop app for Linux.
+app-build-linux: app-deps app-analyze  ## Build the Flutter desktop app for Linux.
 	cd app && flutter build linux --no-pub
 
-app-build-macos: app-deps  ## Build the Flutter desktop app for macOS (requires macOS host).
+app-build-macos: app-deps app-analyze  ## Build the Flutter desktop app for macOS (requires macOS host).
 	cd app && flutter build macos --no-pub
 
+check-ios: app-deps app-analyze app-brand-check  ## Cross-check iOS Rust targets and run native simulator security/storage tests.
+	tools/ios-native/run.sh check
+
+app-test-ios-simulator: app-deps  ## Run bounded native iOS tests on the configured simulator.
+	tools/ios-native/run.sh simulator
+
+ios-harness-check:  ## Test iOS simulator selection and protected S3 configuration tooling.
+	python3 tools/ios-native/harness_test.py
+
+app-test-ios-integration: app-deps app-analyze ios-harness-check  ## Run UI and real-bridge journeys on an available iPhone and iPad simulator.
+	tools/ios-native/integration.sh
+
+app-test-ios-simulator-minio: app-deps ios-harness-check  ## Run two-session real-bridge sync against managed MinIO on an iOS simulator.
+	$(MAKE) --no-print-directory minio-down
+	$(MAKE) --no-print-directory minio-up
+	@set -e; trap '$(MAKE) --no-print-directory -C $(CURDIR) minio-down' EXIT; \
+	tools/ios-native/s3_integration.sh minio
+
+app-test-ios-simulator-s3: app-deps ios-harness-check  ## Run two-session sync against configured real S3 (requires protected HIDLINS_IOS_S3_CONFIG path).
+	tools/ios-native/s3_integration.sh real
+
+app-test-ios-device: app-deps  ## Run native iOS tests on a connected, trusted physical iPhone (requires IOS_DEVELOPMENT_TEAM).
+	tools/ios-native/run.sh device
+
+app-build-ios: app-deps app-analyze  ## Build simulator debug and no-codesign device release iOS artifacts.
+	tools/ios-native/run.sh build
+
+app-prepare-ios-observation: app-build-ios ios-harness-check  ## Install and launch the inspected build for optional non-gating iOS observations.
+	tools/ios-native/prepare_observation.sh
+
+check-android:  ## Cross-check hidlins-api for both supported Android ABIs with the pinned Flutter NDK.
+	python3 tools/android-native/artifacts.py self-test
+	tools/android-native/build.sh check
+
+build-android:  ## Build/stage release Rust libraries for arm64-v8a + x86_64 and verify the artifact contract.
+	python3 tools/android-native/artifacts.py self-test
+	tools/android-native/build.sh build
+
+android-artifacts-check:  ## Reject stale, wrong-profile, wrong-ABI, misaligned, or modified staged Android libraries.
+	python3 tools/android-native/artifacts.py check
+
+android-verifier-build: build-android  ## Build and inspect the R8-minified verifier APK against staged Rust artifacts.
+	tools/android-verifier/gradle.sh assembleRelease
+	python3 tools/android-verifier/verify_apk.py
+
+android-verifier-test: android-verifier-build  ## Install/run the release verifier on a managed emulator and assert JNI initialization.
+	tools/android-verifier/run.sh
+
+app-android-config-check: app-deps  ## Verify Flutter 3.47.2 built-in Kotlin/old-DSL pins and reject legacy KGP application.
+	python3 tools/android-native/config_check.py self-test
+	python3 tools/android-native/config_check.py check
+	python3 tools/android-native/plugin_registrant.py self-test
+	python3 tools/android-native/plugin_registrant.py check
+
+app-build-android: build-android app-deps app-analyze app-brand-check app-android-config-check  ## Build and inspect Android debug and unsigned release APKs.
+	tools/android-native/build_app.sh
+
+app-test-android-integration: app-build-android  ## Build Android device tests and run them on the selected emulator.
+	tools/android-native/run_app_tests.sh
+
+android-harness-check: ios-harness-check  ## Validate Android API/ABI/form-factor selection, redaction, and protected S3 tooling.
+	python3 tools/android-native/emulator_matrix.py check
+	python3 tools/android-native/harness_test.py
+
+android-emulator-provision: android-harness-check  ## Install the host-native API 29/current Android CI/local AVD pair.
+	tools/android-native/provision_emulators.sh
+
+app-test-android-emulator: app-build-android android-harness-check  ## Run native, UI, bridge, lifecycle, and recreation checks on the host Android matrix.
+	tools/android-native/run_emulator_suite.sh core
+
+app-test-android-emulator-minio: app-build-android android-harness-check  ## Run two-session Android sync/recovery against managed MinIO on the host matrix.
+	$(MAKE) --no-print-directory minio-down
+	$(MAKE) --no-print-directory minio-up
+	@set -e; trap '$(MAKE) --no-print-directory -C $(CURDIR) minio-down' EXIT; \
+	tools/android-native/run_emulator_suite.sh minio
+
+app-test-android-emulator-s3: app-build-android android-harness-check  ## Run optional Android sync against protected HIDLINS_ANDROID_S3_CONFIG.
+	tools/android-native/run_emulator_suite.sh real
+
+app-brand-generate:  ## Regenerate committed iOS/Android brand rasters (requires macOS CoreGraphics).
+	@if [ "$(UNAME_S)" != "Darwin" ]; then \
+		echo "error: app-brand-generate requires macOS CoreGraphics" >&2; exit 1; fi
+	tools/dev/generate-brand-assets.swift
+
+app-brand-check: app-deps  ## Verify brand hashes, dimensions, platform resources, safe zone, and widget behavior.
+	cd app && dart tool/brand_check.dart
+	cd app && flutter test --no-pub test/ui/widgets/brand_mark_test.dart
+
 app-analyze:  ## Run Dart static analysis (CI gate).
-	cd app && dart analyze --fatal-infos
+	cd app && dart analyze --fatal-warnings --fatal-infos
 
 app-fmt:  ## Format Dart code.
-	cd app && dart format lib/ test/ test_bridge/
+	cd app && dart format lib/ test/ test_bridge/ test_driver/ integration_test/ tool/
 
 app-fmt-check:  ## Verify Dart formatting (CI gate).
-	cd app && dart format --output=none --set-exit-if-changed lib/ test/ test_bridge/
+	cd app && dart format --output=none --set-exit-if-changed lib/ test/ test_bridge/ test_driver/ integration_test/ tool/
 
 app-test: app-deps  ## Run Flutter widget/unit tests.
 	@if [ -z "$$(find app/test -name '*_test.dart' 2>/dev/null)" ]; then \
@@ -142,6 +251,9 @@ app-test: app-deps  ## Run Flutter widget/unit tests.
 		exit 1; \
 	fi
 	cd app && flutter test --no-pub
+
+app-test-performance: app-deps  ## Run deterministic 5,000-entry Flutter list/search sanity checks.
+	cd app && flutter test --no-pub test/performance/desktop_performance_test.dart
 
 app-goldens-update: app-deps  ## Regenerate Flutter golden files (requires HIDLINS_UPDATE_GOLDENS=1).
 	@if [ "$${HIDLINS_UPDATE_GOLDENS}" != "1" ]; then \
@@ -164,18 +276,54 @@ endif
 # and the lock-event stream without a display or device.
 app-test-bridge: app-deps  ## Build the hidlins-api cdylib and run the headless Dart↔Rust bridge smoke tests.
 	$(CARGO) build -p hidlins-api --offline --locked
-	cd app && HIDLINS_API_LIB=$(HIDLINS_API_LIB) flutter test --no-pub test_bridge
+	cd app && HIDLINS_API_LIB=$(HIDLINS_API_LIB) flutter test --no-pub test_bridge/bridge_smoke_test.dart
+
+app-test-integration: app-deps  ## Run real native-bridge desktop lifecycle and CRUD integration tests.
+	$(CARGO) build -p hidlins-api --offline --locked
+	$(CARGO) build -p hidlins-cli --offline --locked
+	cd app && HIDLINS_API_LIB=$(HIDLINS_API_LIB) flutter test --no-pub test_bridge/real_bridge_integration_test.dart
+	cd app && HIDLINS_API_LIB=$(HIDLINS_API_LIB) HIDLINS_CLI_BIN=$(CURDIR)/target/debug/hidlins flutter test --no-pub test_bridge/real_bridge_process_coexistence_integration_test.dart
+	HIDLINS_CLI_BIN=$(CURDIR)/target/debug/hidlins $(CARGO) test -p hidlins-tui --features process-interop-tests --lib app::tests::tui_session_and_cli_process_share_the_advisory_lock -- --exact
+
+app-test-integration-minio: app-deps  ## Run two-session real-bridge sync integration against managed MinIO.
+	$(CARGO) build -p hidlins-api --offline --locked
+	$(MAKE) --no-print-directory minio-down
+	$(MAKE) --no-print-directory minio-up
+	@set -e; trap '$(MAKE) --no-print-directory -C $(CURDIR) minio-down' EXIT; \
+	. tools/sync-tests/fixtures/.minio-env; \
+	bucket="hidlins-app-$${BASHPID}"; \
+	tools/sync-tests/fixtures/make_bucket.sh "$$bucket"; \
+	export HIDLINS_APP_MINIO_BUCKET="$$bucket"; \
+	cd app; \
+	HIDLINS_API_LIB=$(HIDLINS_API_LIB) flutter test --no-pub test_bridge/real_bridge_minio_integration_test.dart
+
+app-test-integration-performance: app-deps  ## Measure 5,000-entry list/search through the compiled native bridge.
+	$(CARGO) build -p hidlins-api --bin api-test-driver --features test-fixtures --offline --locked
+	$(CARGO) build -p hidlins-api --offline --locked
+	@set -e; fixture="$$(mktemp -d)"; log="$$(mktemp)"; \
+	trap 'rm -rf "$$fixture"; rm -f "$$log"' EXIT; \
+	printf '%s\n' 'performance-integration-master-marker' | \
+		target/debug/api-test-driver create-search-corpus "$$fixture" performance 5000; \
+	cd app; \
+	HIDLINS_API_LIB=$(HIDLINS_API_LIB) \
+	HIDLINS_PERF_STATE_DIR="$$fixture" \
+	HIDLINS_FLUTTER_VERSION="$$(cat ../.flutter-version)" \
+	HIDLINS_GIT_REVISION="$$(git -C .. rev-parse HEAD)" \
+	flutter test --reporter expanded --no-pub test_bridge/real_bridge_performance_integration_test.dart 2>&1 | tee "$$log"; \
+	status=$${PIPESTATUS[0]}; test "$$status" -eq 0; \
+	grep -Eo 'HIDLINS_PERF_JSON:\{.*\}' "$$log"
 
 app-deps:  ## Install pub dependencies (offline from the vendored cache).
 	@log="$$(mktemp)"; trap 'rm -f "$$log"' EXIT; \
-	cd app && dart pub get --offline --enforce-lockfile 2>&1 | tee "$$log"; \
+	cd app && flutter pub get --offline --enforce-lockfile 2>&1 | tee "$$log"; \
 	status=$${PIPESTATUS[0]}; \
 	if grep -q "doesn't match contents" "$$log"; then \
 		echo "error: vendored pub cache content-hash mismatch — app/vendor-pub/hosted-hashes/ is missing or stale." >&2; \
-		echo "       \`dart pub get\` reports this but exits 0, so it must be gated here." >&2; \
+		echo "       \`flutter pub get\` reports this but exits 0, so it must be gated here." >&2; \
 		exit 1; \
 	fi; \
-	exit $$status
+	if [ "$$status" -ne 0 ]; then exit "$$status"; fi; \
+	cd .. && python3 tools/android-native/plugin_registrant.py install
 
 app-run: app-deps  ## Launch the Flutter app on the default device.
 	cd app && flutter run --no-pub
@@ -215,6 +363,9 @@ pub-vendor-check:  ## Verify both vendored pub caches are up to date and unmodif
 		exit 1; \
 	fi; \
 	echo "  OK: vendored pub caches match the lockfile"
+
+pub-production-check: app-deps  ## Prove device-test-only Dart packages are absent from the shipping graph (CI gate).
+	tools/dev/pub-production-check.sh
 
 flutter-version-check:  ## Assert the installed Flutter matches .flutter-version (CI gate).
 	tools/dev/flutter-version-check.sh --strict
@@ -256,7 +407,7 @@ check-feature-gates:  ## Type-check feature-gated test suites the runtime CI swe
 	# targets without running them (no display needed).
 	$(CARGO) check -p hidlins-security --offline --locked --features clipboard-tests --tests
 	$(CARGO) check -p hidlins-cli --offline --locked --features clipboard-tests --tests
-	RUSTFLAGS="-D warnings" $(CARGO) check -p hidlins-security --offline --locked --no-default-features
+	$(CARGO) check -p hidlins-security --offline --locked --no-default-features
 	$(CARGO) check -p hidlins-api --offline --locked --features test-fixtures --tests
 ifeq ($(UNAME_S),Darwin)
 	# iokit compiles natively here; logind's zbus tree is Linux-only.
@@ -343,6 +494,10 @@ minio-up:  ## Start the pinned MinIO container for s3-sync integration tests (re
 minio-down:  ## Stop + remove the MinIO container started by `make minio-up`.
 	tools/sync-tests/fixtures/stop_minio.sh
 
+minio-bucket:  ## Bootstrap MINIO_BUCKET in the managed MinIO using the independent mc client.
+	@test -n "$(MINIO_BUCKET)" || { echo "error: set MINIO_BUCKET=<name>" >&2; exit 2; }
+	tools/sync-tests/fixtures/make_bucket.sh "$(MINIO_BUCKET)"
+
 test-s3-integration:  ## Run the #[ignore]-gated MinIO live-wire tests (run `make minio-up` first).
 	# Sources the endpoint + test credentials start_minio.sh wrote, then
 	# runs ONLY the minio_integration test binary's #[ignore]-gated cases.
@@ -366,6 +521,13 @@ test-s3-integration:  ## Run the #[ignore]-gated MinIO live-wire tests (run `mak
 	# run via a single command (per plan §7.4).
 	. tools/sync-tests/fixtures/.minio-env && \
 		$(CARGO) test -p hidlins-cli --offline --locked --features minio-tests --test cli_sync_minio -- --ignored --test-threads=1
+
+test-minio-managed:  ## Start clean managed MinIO, run Rust + app live-wire suites, and tear it down.
+	$(MAKE) --no-print-directory minio-down
+	$(MAKE) --no-print-directory minio-up
+	@set -e; trap '$(MAKE) --no-print-directory -C $(CURDIR) minio-down' EXIT; \
+	$(MAKE) --no-print-directory test-s3-integration; \
+	$(MAKE) --no-print-directory app-test-integration-minio
 
 test-os-events:  ## Run hidlins-security OS-event integration tests (logind on Linux, IOKit on macOS).
 	# Picks the host-appropriate source test. Both files are
@@ -420,20 +582,26 @@ lint-fix:  ## Apply clippy auto-fixes where safe.
 # contributors without the Flutter/frb toolchain can still build Rust-only
 # changes"). Note api-gen-check REWRITES the generated files as a side effect,
 # which is another reason it does not belong in the quick loop.
-check: fmt-check lint build test check-macos check-feature-gates  ## fmt-check + lint + build + test + cross/feature-gate checks (Rust-only; no Flutter needed).
+check: build-policy-check fmt-check lint build test check-macos check-feature-gates  ## warning policy + fmt-check + lint + build + test + cross/feature-gate checks (Rust-only; no Flutter needed).
 
 # pub-vendor-check runs right after app-deps, BEFORE anything executes
 # vendored Dart (flutter test, build_runner): tampered cache bytes should
 # fail the integrity gate without ever having run.
-app-check: flutter-version-check telemetry-check app-deps pub-vendor-check app-analyze app-fmt-check app-test app-test-bridge api-gen-check  ## Flutter-side gates (requires the Flutter SDK + Rust toolchain).
+app-check: flutter-version-check telemetry-check app-deps pub-vendor-check pub-production-check app-analyze app-fmt-check app-brand-check app-test app-test-bridge api-gen-check  ## Flutter-side gates (requires the Flutter SDK + Rust toolchain).
 
-verify: check app-check test-ignored doc deny audit interop interop-entry interop-sync boundary-check  ## Full verification gate (Rust + Flutter + interop).
+verify: check app-check acceptance-evidence-check test-ignored doc deny audit interop interop-entry interop-sync boundary-check  ## Full verification gate (Rust + Flutter + interop + acceptance evidence).
 
 interop:  ## Run vault-core KeePassXC interop shell tests (requires keepassxc-cli).
 	$(CARGO) build -p hidlins-core --bin hidlins-test-driver --offline --locked
 	HIDLINS_TEST_DRIVER=target/debug/hidlins-test-driver sh tools/interop-tests/us_090_rust_to_kpxc.sh
 	HIDLINS_TEST_DRIVER=target/debug/hidlins-test-driver sh tools/interop-tests/us_091_kpxc_to_rust.sh
 	HIDLINS_TEST_DRIVER=target/debug/hidlins-test-driver sh tools/interop-tests/us_092_round_trip.sh
+
+interop-app: app-deps  ## Run compiled Flutter-bridge KeePassXC round-trip and merge-history interop.
+	@command -v keepassxc-cli >/dev/null 2>&1 || { echo "error: keepassxc-cli is required" >&2; exit 1; }
+	$(CARGO) build -p hidlins-api --offline --locked
+	cd app && HIDLINS_API_LIB=$(HIDLINS_API_LIB) flutter test --no-pub test_bridge/real_bridge_keepassxc_integration_test.dart
+	$(MAKE) --no-print-directory interop-sync
 
 interop-sync:  ## Run the s3-sync KeePassXC merge-interop test (US-044; requires keepassxc-cli).
 	# Builds the test-only merge driver (gated behind `test-helpers` via
@@ -478,7 +646,7 @@ audit:  ## Run cargo-audit against RustSec advisories (requires cargo-audit inst
 	$(CARGO) audit
 
 doc:  ## Generate API docs locally.
-	RUSTDOCFLAGS="-D warnings" $(CARGO) doc --no-deps --offline
+	$(CARGO) doc --no-deps --offline
 
 # ---------------------------------------------------------------------------
 # Shell completions (FR-064) — re-generated by `make completions`, checked

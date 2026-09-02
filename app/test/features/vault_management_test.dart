@@ -1,4 +1,4 @@
-import 'package:flutter/material.dart';
+import 'package:material_ui/material_ui.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:flutter_test/flutter_test.dart';
 
@@ -6,12 +6,67 @@ import 'package:app/src/data/failures.dart';
 import 'package:app/src/data/models.dart';
 import 'package:app/src/features/vaults/change_password_dialog.dart';
 import 'package:app/src/features/vaults/connect_sync_dialog.dart';
+import 'package:app/src/features/vaults/create_vault_dialog.dart';
 import 'package:app/src/features/vaults/deregister_vault_dialog.dart';
 import 'package:app/src/features/vaults/vault_management_page.dart';
 import 'package:app/src/l10n/app_localizations.dart';
+import 'package:app/src/l10n/hidlins_localizations.dart';
+import 'package:app/src/platform/keyfile_access.dart';
+import 'package:app/src/platform/platform_result.dart';
+import 'package:app/src/platform/vault_import.dart';
+
 import '../helpers/feature_test_helpers.dart';
 
 void main() {
+  testWidgets('local create resolves and releases an optional keyfile', (
+    tester,
+  ) async {
+    final harness = TestHarness();
+    addTearDown(harness.dispose);
+    const reference = KeyfileReference(
+      reference: 'bookmark-1',
+      displayName: 'personal.key',
+    );
+    harness.keyfiles.pickResults.add(const PlatformSuccess(reference));
+    harness.keyfiles.resolveResults.add(
+      const PlatformSuccess('/provider/personal.key'),
+    );
+    harness.keyfiles.releaseResults.add(const PlatformSuccess(platformUnit));
+    await tester.pumpFeatureWithHarness(const CreateVaultDialog(), harness);
+    await tester.pumpAndSettle();
+
+    await tester.tap(find.text('Select keyfile'));
+    await tester.pumpAndSettle();
+    expect(find.text('personal.key'), findsOneWidget);
+    await tester.enterText(
+      find.widgetWithText(TextFormField, 'Vault name'),
+      'personal',
+    );
+    await tester.enterText(
+      find.widgetWithText(TextFormField, 'Master password'),
+      'strong-password',
+    );
+    await tester.enterText(
+      find.widgetWithText(TextFormField, 'Confirm password'),
+      'strong-password',
+    );
+    final noRecoveryConfirmation = find.widgetWithText(
+      TextFormField,
+      'Type CONFIRM to acknowledge',
+    );
+    await tester.ensureVisible(noRecoveryConfirmation);
+    await tester.pumpAndSettle();
+    await tester.enterText(noRecoveryConfirmation, 'CONFIRM');
+    await tester.ensureVisible(find.widgetWithText(FilledButton, 'Create'));
+    await tester.tap(find.widgetWithText(FilledButton, 'Create'));
+    await tester.pumpAndSettle();
+
+    expect(harness.session.createVaultCalled, isTrue);
+    expect(harness.keyfiles.resolved, [reference]);
+    expect(harness.keyfiles.released, [reference]);
+    expect(harness.session.vaults.single.hasKeyfile, isTrue);
+  });
+
   group('DeregisterVaultDialog', () {
     testWidgets('deregister without delete passes deleteFile: false', (
       tester,
@@ -324,6 +379,34 @@ void main() {
   });
 
   group('VaultManagementPage', () {
+    testWidgets('import registers only the Hidlins-owned copied path', (
+      tester,
+    ) async {
+      final harness = TestHarness();
+      addTearDown(harness.dispose);
+      harness.vaultImport.results.add(
+        const PlatformSuccess(
+          ImportedVault(
+            sourceReference:
+                '/Library/Application Support/Hidlins/Vaults/imported.kdbx',
+            displayName: 'imported',
+          ),
+        ),
+      );
+      await tester.pumpFeatureWithHarness(const VaultManagementPage(), harness);
+      await tester.pumpAndSettle();
+
+      await tester.tap(find.byIcon(Icons.file_open_outlined));
+      await tester.pumpAndSettle();
+
+      expect(harness.vaultImport.calls, 1);
+      expect(harness.session.registerExistingVaultCalled, isTrue);
+      expect(
+        harness.session.lastRegisteredVaultPath,
+        '/Library/Application Support/Hidlins/Vaults/imported.kdbx',
+      );
+    });
+
     testWidgets('shows vault list with sync badge', (tester) async {
       final harness = TestHarness();
       addTearDown(harness.dispose);
@@ -347,7 +430,7 @@ void main() {
         ProviderScope(
           overrides: harness.overrides,
           child: MaterialApp(
-            localizationsDelegates: AppLocalizations.localizationsDelegates,
+            localizationsDelegates: hidlinsLocalizationsDelegates,
             supportedLocales: AppLocalizations.supportedLocales,
             home: const VaultManagementPage(),
           ),

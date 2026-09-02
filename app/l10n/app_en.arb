@@ -44,6 +44,7 @@
   "actionDetach": "Remove",
   "actionSaveAs": "Save as…",
   "actionClose": "Close",
+  "actionHome": "Home",
   "copiedSnackbar": "Copied — clears in {seconds}s",
   "@copiedSnackbar": {
     "placeholders": {
@@ -58,10 +59,15 @@
   "emptyStateNoVaultsSubtitle": "Create or import a vault to begin",
   "emptyStateSelectEntry": "Select an entry",
   "emptyStateSelectEntrySubtitle": "Choose an entry from the list to view details",
+  "groupAllEntries": "All entries",
+  "errorPageTitle": "Page not found",
+  "errorPageMessage": "The requested page is unavailable.",
   "syncStatusIdle": "Sync idle",
   "syncStatusInProgress": "Syncing…",
   "syncStatusFailed": "Sync failed",
   "syncStatusSuccess": "Synced",
+  "startupSecurityWarningTitle": "Security integration degraded",
+  "startupSecurityWarningMessage": "Automatic OS screen-lock detection is unavailable. Idle auto-lock remains active.",
   "settingsTitle": "Settings",
   "settingsTheme": "Theme",
   "settingsThemeSystem": "System",
@@ -72,6 +78,8 @@
   "settingsAbout": "About",
   "settingsVersion": "Version",
   "settingsLicenses": "Open source licenses",
+  "settingsKeyboardShortcuts": "Keyboard shortcuts",
+  "settingsKeyboardShortcutsSummary": "Ctrl/Cmd-F or /: search · N: new entry · Ctrl/Cmd-C: copy selected password · G: generator · L: lock · Esc: close",
   "generatorTitle": "Password generator",
   "generatorRandom": "Random",
   "generatorDiceware": "Diceware",
@@ -208,5 +216,22 @@
       "endpoint": { "type": "String" }
     }
   },
-  "syncErrorAuthFailed": "S3 authentication failed"
+  "syncErrorAuthFailed": "S3 authentication failed",
+  "syncConfigureTitle": "Configure sync",
+  "syncSaveConfiguration": "Save sync configuration",
+  "syncNow": "Sync now",
+  "syncNotConfigured": "Sync is not configured",
+  "syncWorkspaceAvailable": "Your cached entries remain available while sync runs.",
+  "syncMutationsDisabled": "Editing is paused until sync finishes.",
+  "syncOutcomeAlreadyCurrent": "Already up to date",
+  "syncOutcomePushed": "Local changes uploaded",
+  "syncOutcomeFastReplaced": "Remote changes downloaded",
+  "syncOutcomeMerged": "Local and remote changes merged",
+  "syncConflictTitle": "Sync conflict needs attention",
+  "syncConflictMessage": "Both sides were preserved. Review the backup at {backupPath} before retrying.",
+  "@syncConflictMessage": {
+    "placeholders": {
+      "backupPath": { "type": "String" }
+    }
+  }
 }

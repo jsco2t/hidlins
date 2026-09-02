@@ -1,4 +1,4 @@
-import 'package:flutter/material.dart';
+import 'package:material_ui/material_ui.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:flutter_test/flutter_test.dart';
 
@@ -6,7 +6,9 @@ import 'package:app/src/data/failures.dart';
 import 'package:app/src/data/models.dart';
 import 'package:app/src/features/entries/entry_detail.dart';
 import 'package:app/src/l10n/app_localizations.dart';
+import 'package:app/src/l10n/hidlins_localizations.dart';
 import 'package:app/src/ui/theme.dart';
+
 import '../helpers/feature_test_helpers.dart';
 
 void main() {
@@ -51,7 +53,7 @@ void main() {
         overrides: harness.overrides,
         child: MaterialApp(
           theme: hidlinsLightTheme(),
-          localizationsDelegates: AppLocalizations.localizationsDelegates,
+          localizationsDelegates: hidlinsLocalizationsDelegates,
           supportedLocales: AppLocalizations.supportedLocales,
           home: Scaffold(
             body: EntryDetailPane(uuid: uuid, onPickFile: onPickFile),

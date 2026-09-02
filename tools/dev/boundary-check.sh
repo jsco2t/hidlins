@@ -99,12 +99,21 @@ done
 if [ ${#dart_roots[@]} -eq 0 ]; then
   err "no Dart source roots found under app/ — expected at least app/lib"
 else
-  ffi_violations=$(grep -rn --include="*.dart" --exclude-dir=bridge \
+  ffi_hits=$(grep -rn --include="*.dart" --exclude-dir=bridge \
     -E "import[[:space:]]+'dart:ffi'|DynamicLibrary\.|NativeFunction<" \
     "${dart_roots[@]}" 2>/dev/null || true)
-  proc_violations=$(grep -rn --include="*.dart" --exclude-dir=bridge \
-    -E "Process\.(run|start|runSync|startSync)|MethodChannel\(" \
+  proc_hits=$(grep -rn --include="*.dart" --exclude-dir=bridge \
+    -E "Process\.(run|start|runSync|startSync)" \
     "${dart_roots[@]}" 2>/dev/null || true)
+  native_test_allowlist="$REPO_ROOT/tools/dev/dart-native-test-allowlist.txt"
+  ffi_actual=$(printf '%s\n' "$ffi_hits" | sed -n "s|^$REPO_ROOT/\([^:]*\):.*|ffi \1|p" | LC_ALL=C sort -u)
+  proc_actual=$(printf '%s\n' "$proc_hits" | sed -n "s|^$REPO_ROOT/\([^:]*\):.*|process \1|p" | LC_ALL=C sort -u)
+  native_actual=$(printf '%s\n%s\n' "$ffi_actual" "$proc_actual" | sed '/^$/d' | LC_ALL=C sort -u)
+  native_expected=""
+  if require_file "$native_test_allowlist" "native test-harness allowlist missing"; then
+    native_expected=$(grep -vE '^[[:space:]]*(#|$)' "$native_test_allowlist" | LC_ALL=C sort -u)
+  fi
+  native_diff=$(diff <(printf '%s\n' "$native_expected") <(printf '%s\n' "$native_actual") || true)
   # dart:io is banned in PRODUCTION code only (app/lib): File/RandomAccessFile
   # bypass the core's atomic-write + advisory-lock discipline, and
   # HttpClient/Socket bypass the NFR-013 "only user-configured sync talks to
@@ -120,12 +129,26 @@ else
     "$REPO_ROOT/app/lib" 2>/dev/null || true)
 
   # Independent ifs: a PR can introduce several, and an `elif` would hide one.
-  [ -n "$ffi_violations" ] && err "Dart uses dart:ffi outside the generated bridge" "$ffi_violations"
-  [ -n "$proc_violations" ] && err "Dart shells out or opens a platform channel (bridge bypass)" "$proc_violations"
+  [ -n "$native_diff" ] && err "Dart native test bypasses differ from the exact reviewed allowlist" "$native_diff"
   [ -n "$io_violations" ] && err "app code imports dart:io (file/socket I/O belongs to the Rust core)" "$io_violations"
-  if [ -z "$ffi_violations" ] && [ -z "$proc_violations" ] && [ -z "$io_violations" ]; then
-    ok "Dart reaches Rust only through the generated bridge"
+  if [ -z "$native_diff" ] && [ -z "$io_violations" ]; then
+    ok "Dart native access is limited to generated code and exact real-bridge test harnesses"
   fi
+fi
+
+# Fixed platform capability exception to the blanket channel ban. The Python
+# checker validates exact locations, channel names, methods, and ownership, and
+# runs planted negative controls on every invocation.
+platform_output=""
+if ! platform_output=$(python3 "$REPO_ROOT/tools/dev/platform-boundary-check.py" check 2>&1); then
+  err "platform channel capability manifest failed" "$platform_output"
+else
+  ok "platform channels match the fixed lifecycle/clipboard/path/import/keyfile manifest"
+fi
+if ! platform_output=$(python3 "$REPO_ROOT/tools/dev/platform-boundary-check.py" self-test 2>&1); then
+  err "platform channel negative controls failed" "$platform_output"
+else
+  ok "platform channel negative controls reject channel/method/location bypasses"
 fi
 
 # ---------------------------------------------------------------------------
@@ -244,6 +267,22 @@ if require_file "$GEN" "generated bindings missing (run 'make api-gen')"; then
   fi
 fi
 
+# The generated method surface is an exact reviewed manifest. `rust_input`
+# prevents scanning other crates, while this list prevents a new public API
+# method inside hidlins-api from silently expanding the Dart boundary.
+API_MANIFEST="$REPO_ROOT/tools/dev/frb-api-manifest.txt"
+if [ -f "$GEN" ] && require_file "$API_MANIFEST" "FRB API manifest missing"; then
+  api_actual=$(grep -o 'debug_name: "[^"]*"' "$GEN" \
+    | sed 's/debug_name: "//; s/"$//' | LC_ALL=C sort -u || true)
+  api_expected=$(LC_ALL=C sort -u "$API_MANIFEST")
+  api_diff=$(diff <(printf '%s\n' "$api_expected") <(printf '%s\n' "$api_actual") || true)
+  if [ -n "$api_diff" ]; then
+    err "generated FRB method surface differs from the reviewed API manifest" "$api_diff"
+  else
+    ok "generated FRB method surface matches the reviewed API manifest"
+  fi
+fi
+
 # ---------------------------------------------------------------------------
 # 8. app/lib/src/bridge/ contains ONLY the known generated files.
 #
@@ -266,7 +305,8 @@ error.dart
 error.freezed.dart
 frb_generated.dart
 frb_generated.h
-frb_generated.io.dart"
+frb_generated.io.dart
+lib.dart"
 if [ ! -d "$BRIDGE_DIR" ]; then
   err "bridge directory missing (run 'make api-gen')"
 else

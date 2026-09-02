@@ -10,7 +10,7 @@ use hidlins_security::{AutoLockConfig, AutoLockController, LockState, OsLockReas
 use zeroize::Zeroize;
 
 pub use crate::dto::{
-    AppInitConfig, ClipboardEvent, KeyfileRef, LifecycleStateDto, LockEvent, SyncEvent, VaultTree,
+    AppInitConfig, KeyfileRef, LifecycleStateDto, LockEvent, SyncEvent, VaultTree,
 };
 pub use crate::error::HidlinsApiError;
 pub use crate::event::EventSink;
@@ -107,6 +107,7 @@ pub(crate) struct SessionState {
     pub(crate) lifecycle_enabled: bool,
     baseline_lock_config: AutoLockConfig,
     pub(crate) startup_warnings: Vec<String>,
+    pub(crate) clipboard_owner: u64,
 }
 
 impl SessionState {
@@ -148,6 +149,7 @@ impl SessionState {
     }
 
     pub(crate) fn do_lock(&mut self) {
+        crate::api::secrets::purge_clipboard_transfers(self.clipboard_owner);
         self.vault = None;
         self.credentials = None;
         self.controller.lock_now(OsLockReason::Manual);
@@ -176,6 +178,7 @@ impl SessionState {
         // Idempotent: only the first transition emits `Locked`. Both the
         // poison-recovery path and the ticker's poison branch call this.
         let was_alive = !self.dead;
+        crate::api::secrets::purge_clipboard_transfers(self.clipboard_owner);
         self.vault = None;
         self.credentials = None;
         self.dead = true;
@@ -216,6 +219,7 @@ pub struct AppSession {
     inner: Arc<Mutex<SessionState>>,
     activity_counter: Arc<AtomicU64>,
     lifecycle_state: Arc<AtomicU8>,
+    ticker_progress: Arc<Mutex<TickerProgress>>,
     dropped_lock_events: Arc<AtomicU64>,
     ticker_shutdown: Arc<AtomicBool>,
     ticker_join: Mutex<Option<JoinHandle<()>>>,
@@ -224,10 +228,13 @@ pub struct AppSession {
     #[cfg_attr(not(feature = "desktop"), allow(dead_code))]
     pub(crate) clipboard: Option<Arc<dyn crate::clipboard_port::ClipboardPort>>,
     pub(crate) sync_engine: Arc<dyn crate::sync_port::SyncEnginePort>,
-    #[cfg(any(test, feature = "test-fixtures"))]
-    test_grace_start: Mutex<Option<Instant>>,
-    #[cfg(any(test, feature = "test-fixtures"))]
-    test_last_seen: Mutex<u64>,
+}
+
+#[derive(Default)]
+#[flutter_rust_bridge::frb(ignore)]
+struct TickerProgress {
+    grace_start: Option<Instant>,
+    last_seen_activity: u64,
 }
 
 pub(crate) struct TotpSnapshot {
@@ -272,6 +279,52 @@ pub fn api_version() -> String {
     env!("CARGO_PKG_VERSION").to_string()
 }
 
+#[cfg(any(
+    all(target_os = "linux", feature = "desktop"),
+    all(target_os = "linux", feature = "logind"),
+    all(target_os = "macos", feature = "iokit")
+))]
+fn attach_platform_lock_sources(
+    mut controller: AutoLockController,
+) -> (AutoLockController, Vec<String>) {
+    let mut startup_warnings = Vec::new();
+
+    #[cfg(all(target_os = "linux", feature = "desktop"))]
+    match hidlins_security::SigstopSource::new() {
+        Ok(source) => {
+            if let Err(e) = controller.attach_event_source(source) {
+                startup_warnings.push(format!("OS lock detection degraded (SIGTSTP attach): {e}"));
+            }
+        }
+        Err(e) => {
+            startup_warnings.push(format!("OS lock detection degraded (SIGTSTP init): {e}"));
+        }
+    }
+
+    #[cfg(all(target_os = "linux", feature = "logind"))]
+    if let Err(e) = controller.attach_event_source(hidlins_security::LogindSource) {
+        startup_warnings.push(format!("OS lock detection degraded (logind): {e}"));
+    }
+
+    #[cfg(all(target_os = "macos", feature = "iokit"))]
+    if let Err(e) = controller.attach_event_source(hidlins_security::IoKitSource) {
+        startup_warnings.push(format!("OS lock detection degraded (IOKit): {e}"));
+    }
+
+    (controller, startup_warnings)
+}
+
+#[cfg(not(any(
+    all(target_os = "linux", feature = "desktop"),
+    all(target_os = "linux", feature = "logind"),
+    all(target_os = "macos", feature = "iokit")
+)))]
+fn attach_platform_lock_sources(
+    controller: AutoLockController,
+) -> (AutoLockController, Vec<String>) {
+    (controller, Vec::new())
+}
+
 #[allow(clippy::needless_pass_by_value)] // frb FFI passes owned DTOs
 pub fn init_app(cfg: AppInitConfig) -> Result<AppSession, HidlinsApiError> {
     HARDENED.get_or_init(|| {
@@ -289,7 +342,7 @@ pub fn init_app(cfg: AppInitConfig) -> Result<AppSession, HidlinsApiError> {
     let session_paths = paths.clone();
     let registry = VaultRegistry::load(paths)?;
 
-    let mut controller = AutoLockController::new(AutoLockConfig::default()).map_err(|e| {
+    let controller = AutoLockController::new(AutoLockConfig::default()).map_err(|e| {
         HidlinsApiError::Internal {
             context: format!("auto-lock controller init: {e}"),
         }
@@ -299,33 +352,7 @@ pub fn init_app(cfg: AppInitConfig) -> Result<AppSession, HidlinsApiError> {
     // CONSUMER of LogindSource/IoKitSource/SigstopSource. Startup failure
     // degrades to idle-only locking and records a warning retrievable via
     // `startup_warnings()` (FR-052 best-effort).
-    let mut startup_warnings: Vec<String> = Vec::new();
-    #[cfg(all(target_os = "linux", feature = "desktop"))]
-    {
-        match hidlins_security::SigstopSource::new() {
-            Ok(source) => {
-                if let Err(e) = controller.attach_event_source(source) {
-                    startup_warnings
-                        .push(format!("OS lock detection degraded (SIGTSTP attach): {e}"));
-                }
-            }
-            Err(e) => {
-                startup_warnings.push(format!("OS lock detection degraded (SIGTSTP init): {e}"));
-            }
-        }
-    }
-    #[cfg(all(target_os = "linux", feature = "logind"))]
-    {
-        if let Err(e) = controller.attach_event_source(hidlins_security::LogindSource) {
-            startup_warnings.push(format!("OS lock detection degraded (logind): {e}"));
-        }
-    }
-    #[cfg(all(target_os = "macos", feature = "iokit"))]
-    {
-        if let Err(e) = controller.attach_event_source(hidlins_security::IoKitSource) {
-            startup_warnings.push(format!("OS lock detection degraded (IOKit): {e}"));
-        }
-    }
+    let (controller, startup_warnings) = attach_platform_lock_sources(controller);
 
     let state = SessionState {
         registry,
@@ -341,11 +368,13 @@ pub fn init_app(cfg: AppInitConfig) -> Result<AppSession, HidlinsApiError> {
         lifecycle_enabled: LIFECYCLE_ENABLED,
         baseline_lock_config: AutoLockConfig::default(),
         startup_warnings,
+        clipboard_owner: crate::api::secrets::new_clipboard_owner(),
     };
 
     let inner = Arc::new(Mutex::new(state));
     let activity_counter = Arc::new(AtomicU64::new(0));
     let lifecycle_state = Arc::new(AtomicU8::new(lifecycle_to_u8(LifecycleStateDto::Resumed)));
+    let ticker_progress = Arc::new(Mutex::new(TickerProgress::default()));
     let ticker_shutdown = Arc::new(AtomicBool::new(false));
     let totp_cache = Arc::new(RwLock::new(HashMap::new()));
 
@@ -353,6 +382,7 @@ pub fn init_app(cfg: AppInitConfig) -> Result<AppSession, HidlinsApiError> {
         Arc::clone(&inner),
         Arc::clone(&activity_counter),
         Arc::clone(&lifecycle_state),
+        Arc::clone(&ticker_progress),
         Arc::clone(&ticker_shutdown),
         Arc::clone(&totp_cache),
     );
@@ -371,6 +401,7 @@ pub fn init_app(cfg: AppInitConfig) -> Result<AppSession, HidlinsApiError> {
         inner,
         activity_counter,
         lifecycle_state,
+        ticker_progress,
         dropped_lock_events: Arc::new(AtomicU64::new(0)),
         ticker_shutdown,
         ticker_join: Mutex::new(Some(ticker_join)),
@@ -378,10 +409,6 @@ pub fn init_app(cfg: AppInitConfig) -> Result<AppSession, HidlinsApiError> {
         paths: session_paths,
         clipboard,
         sync_engine: Arc::new(crate::sync_port::DefaultSyncEngine),
-        #[cfg(any(test, feature = "test-fixtures"))]
-        test_grace_start: Mutex::new(None),
-        #[cfg(any(test, feature = "test-fixtures"))]
-        test_last_seen: Mutex::new(0),
     })
 }
 
@@ -422,9 +449,42 @@ impl AppSession {
     }
 
     #[flutter_rust_bridge::frb(sync)]
-    pub fn report_lifecycle_state(&self, state: LifecycleStateDto) {
+    pub fn report_lifecycle_state(&self, state: LifecycleStateDto) -> LockEvent {
         self.lifecycle_state
             .store(lifecycle_to_u8(state), Ordering::Relaxed);
+
+        let activity = self.activity_counter.load(Ordering::Relaxed);
+        let mut progress = self
+            .ticker_progress
+            .lock()
+            .unwrap_or_else(std::sync::PoisonError::into_inner);
+        let mut session = self.lock_state();
+        let locked_before = !session.is_unlocked();
+        let TickerProgress {
+            grace_start,
+            last_seen_activity,
+        } = &mut *progress;
+        tick_inner(
+            &mut session,
+            Instant::now(),
+            activity,
+            state,
+            grace_start,
+            last_seen_activity,
+        );
+        let locked_after = !session.is_unlocked() || session.lock_pending;
+        drop(session);
+        drop(progress);
+
+        if !locked_before && locked_after {
+            clear_totp_cache_inner(&self.totp_cache);
+        }
+
+        if locked_after {
+            LockEvent::Locked
+        } else {
+            LockEvent::Unlocked
+        }
     }
 
     pub fn unlock(
@@ -728,13 +788,6 @@ impl AppSession {
         self.lock_state().sync_sink = Some(Box::new(adapter));
     }
 
-    #[cfg(feature = "desktop")]
-    pub fn clipboard_events(&self, _sink: crate::frb_generated::StreamSink<ClipboardEvent>) {
-        // Alpha: Dart drives the 30 s countdown from the known constant.
-        // The stream is registered for forward-compat; a Cleared event
-        // will be wired when ClipboardPort exposes guard-expiry callbacks.
-    }
-
     pub fn startup_warnings(&self) -> Vec<String> {
         let state = self.lock_state();
         state.startup_warnings.clone()
@@ -899,12 +952,14 @@ impl AppSession {
             lifecycle_enabled,
             baseline_lock_config: config,
             startup_warnings: Vec::new(),
+            clipboard_owner: crate::api::secrets::new_clipboard_owner(),
         };
 
         Ok(Self {
             inner: Arc::new(Mutex::new(state)),
             activity_counter: Arc::new(AtomicU64::new(0)),
             lifecycle_state: Arc::new(AtomicU8::new(0)),
+            ticker_progress: Arc::new(Mutex::new(TickerProgress::default())),
             dropped_lock_events: Arc::new(AtomicU64::new(0)),
             ticker_shutdown: Arc::new(AtomicBool::new(false)),
             ticker_join: Mutex::new(None),
@@ -912,8 +967,6 @@ impl AppSession {
             paths: session_paths,
             clipboard: None,
             sync_engine: Arc::new(crate::sync_port::DefaultSyncEngine),
-            test_grace_start: Mutex::new(None),
-            test_last_seen: Mutex::new(0),
         })
     }
 
@@ -944,12 +997,14 @@ impl AppSession {
             lifecycle_enabled: false,
             baseline_lock_config: AutoLockConfig::default(),
             startup_warnings: Vec::new(),
+            clipboard_owner: crate::api::secrets::new_clipboard_owner(),
         };
 
         Ok(Self {
             inner: Arc::new(Mutex::new(state)),
             activity_counter: Arc::new(AtomicU64::new(0)),
             lifecycle_state: Arc::new(AtomicU8::new(0)),
+            ticker_progress: Arc::new(Mutex::new(TickerProgress::default())),
             dropped_lock_events: Arc::new(AtomicU64::new(0)),
             ticker_shutdown: Arc::new(AtomicBool::new(false)),
             ticker_join: Mutex::new(None),
@@ -957,8 +1012,6 @@ impl AppSession {
             paths: session_paths,
             clipboard,
             sync_engine,
-            test_grace_start: Mutex::new(None),
-            test_last_seen: Mutex::new(0),
         })
     }
 
@@ -966,16 +1019,19 @@ impl AppSession {
         let activity = self.activity_counter.load(Ordering::Relaxed);
         let lifecycle = lifecycle_from_u8(self.lifecycle_state.load(Ordering::Relaxed));
 
-        let mut grace = self.test_grace_start.lock().expect("grace lock");
-        let mut last_seen = self.test_last_seen.lock().expect("last_seen lock");
+        let mut progress = self.ticker_progress.lock().expect("ticker progress lock");
         let mut state = self.lock_state();
+        let TickerProgress {
+            grace_start,
+            last_seen_activity,
+        } = &mut *progress;
         tick_inner(
             &mut state,
             now,
             activity,
             lifecycle,
-            &mut grace,
-            &mut last_seen,
+            grace_start,
+            last_seen_activity,
         );
     }
 
@@ -1069,15 +1125,13 @@ fn spawn_ticker(
     inner: Arc<Mutex<SessionState>>,
     activity_counter: Arc<AtomicU64>,
     lifecycle_state: Arc<AtomicU8>,
+    ticker_progress: Arc<Mutex<TickerProgress>>,
     shutdown: Arc<AtomicBool>,
     totp_cache: Arc<RwLock<HashMap<Uuid, TotpSnapshot>>>,
 ) -> JoinHandle<()> {
     thread::Builder::new()
         .name("hidlins-api-ticker".to_string())
         .spawn(move || {
-            let mut last_seen_activity: u64 = 0;
-            let mut grace_start: Option<Instant> = None;
-
             loop {
                 if shutdown.load(Ordering::Relaxed) {
                     break;
@@ -1096,6 +1150,11 @@ fn spawn_ticker(
                 let activity = activity_counter.load(Ordering::Relaxed);
                 let lifecycle = lifecycle_from_u8(lifecycle_state.load(Ordering::Relaxed));
 
+                let mut progress = match ticker_progress.lock() {
+                    Ok(guard) => guard,
+                    Err(poison) => poison.into_inner(),
+                };
+
                 let mut state = match inner.try_lock() {
                     Ok(guard) => guard,
                     Err(std::sync::TryLockError::WouldBlock) => continue,
@@ -1107,13 +1166,17 @@ fn spawn_ticker(
                 };
 
                 let locked_before = !state.is_unlocked();
+                let TickerProgress {
+                    grace_start,
+                    last_seen_activity,
+                } = &mut *progress;
                 tick_inner(
                     &mut state,
                     Instant::now(),
                     activity,
                     lifecycle,
-                    &mut grace_start,
-                    &mut last_seen_activity,
+                    grace_start,
+                    last_seen_activity,
                 );
                 let locked_after = !state.is_unlocked() || state.lock_pending;
                 if !locked_before && locked_after {
@@ -1141,6 +1204,8 @@ fn tick_inner(
     grace_start: &mut Option<Instant>,
     last_seen_activity: &mut u64,
 ) {
+    crate::api::secrets::purge_expired_clipboard_transfers();
+
     if activity != 0 && activity != *last_seen_activity {
         state.controller.register_activity(now);
     }

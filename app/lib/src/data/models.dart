@@ -340,15 +340,6 @@ class SyncStatusDto {
 
 enum SyncOutcomeDto { alreadyInSync, pushed, fastReplaced, merged, unknown }
 
-enum ClipboardEventType { countdown, cleared }
-
-class ClipboardEvent {
-  final int remainingSecs;
-  final bool cleared;
-
-  const ClipboardEvent({required this.remainingSecs, required this.cleared});
-}
-
 class S3ConfigDto {
   final String bucket;
   final String key;

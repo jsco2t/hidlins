@@ -51,10 +51,12 @@
 //! # }
 //! ```
 
-// Production code: deny unsafe by default. The only production opt-outs
-// are the locally-audited `mlock`/`munlock` blocks in `secret.rs`
-// (best-effort master-password memory locking — the follow-on that
-// design §3.9 anticipated when this was still `forbid`); test-only
+// Production code: deny unsafe by default. The production opt-outs are the
+// locally-audited `mlock`/`munlock` blocks in `secret.rs` (best-effort
+// master-password memory locking — the follow-on that design §3.9 anticipated
+// when this was still `forbid`) and the two Android `flock(2)` calls in
+// `locking.rs` required because Rust's std file-lock methods do not support
+// Android; test-only
 // modules opt in via `#[allow(unsafe_code)]` annotations on individual
 // items (see secret.rs and paths.rs test modules).
 #![deny(unsafe_code)]

@@ -1,7 +1,18 @@
 allprojects {
     repositories {
+        exclusiveContent {
+            forRepository {
+                maven {
+                    url = uri(rootProject.file("../../vendor/rustls-platform-verifier-android/maven"))
+                }
+            }
+            filter { includeGroup("rustls") }
+        }
         google()
         mavenCentral()
+    }
+    dependencyLocking {
+        lockAllConfigurations()
     }
 }
 

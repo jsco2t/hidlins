@@ -41,7 +41,7 @@ endif()
 # of modifying this function.
 function(APPLY_STANDARD_SETTINGS TARGET)
   target_compile_features(${TARGET} PUBLIC cxx_std_14)
-  target_compile_options(${TARGET} PRIVATE -Wall -Werror)
+  target_compile_options(${TARGET} PRIVATE -Wall)
   target_compile_options(${TARGET} PRIVATE "$<$<NOT:$<CONFIG:Debug>>:-O3>")
   target_compile_definitions(${TARGET} PRIVATE "$<$<NOT:$<CONFIG:Debug>>:NDEBUG>")
 endfunction()
@@ -56,6 +56,11 @@ pkg_check_modules(GTK REQUIRED IMPORTED_TARGET gtk+-3.0)
 
 # Application build; see runner/CMakeLists.txt.
 add_subdirectory("runner")
+
+# Only Hidlins' first-party runner owns the fatal-warning policy. Flutter
+# plugins also call APPLY_STANDARD_SETTINGS, so putting -Werror there would
+# incorrectly make vendored plugin warnings release blockers.
+target_compile_options(${BINARY_NAME} PRIVATE -Werror)
 
 # Run the Flutter tool portions of the build. This must not be removed.
 add_dependencies(${BINARY_NAME} flutter_assemble)
@@ -92,6 +97,24 @@ set(INSTALL_BUNDLE_DATA_DIR "${CMAKE_INSTALL_PREFIX}/data")
 set(INSTALL_BUNDLE_LIB_DIR "${CMAKE_INSTALL_PREFIX}/lib")
 
 install(TARGETS ${BINARY_NAME} RUNTIME DESTINATION "${CMAKE_INSTALL_PREFIX}"
+  COMPONENT Runtime)
+
+# Brand assets are installed both beside the relocatable app bundle for the
+# live GTK window and under freedesktop-standard paths for desktop launchers.
+install(FILES "${CMAKE_CURRENT_SOURCE_DIR}/assets/icons/app.hidlins-256.png"
+  DESTINATION "${CMAKE_INSTALL_PREFIX}/data" RENAME "hidlins.png"
+  COMPONENT Runtime)
+install(FILES "${CMAKE_CURRENT_SOURCE_DIR}/assets/icons/app.hidlins-16.png"
+  DESTINATION "${CMAKE_INSTALL_PREFIX}/share/icons/hicolor/16x16/apps"
+  RENAME "app.hidlins.png" COMPONENT Runtime)
+install(FILES "${CMAKE_CURRENT_SOURCE_DIR}/assets/icons/app.hidlins-32.png"
+  DESTINATION "${CMAKE_INSTALL_PREFIX}/share/icons/hicolor/32x32/apps"
+  RENAME "app.hidlins.png" COMPONENT Runtime)
+install(FILES "${CMAKE_CURRENT_SOURCE_DIR}/assets/icons/app.hidlins-256.png"
+  DESTINATION "${CMAKE_INSTALL_PREFIX}/share/icons/hicolor/256x256/apps"
+  RENAME "app.hidlins.png" COMPONENT Runtime)
+install(FILES "${CMAKE_CURRENT_SOURCE_DIR}/assets/app.hidlins.desktop"
+  DESTINATION "${CMAKE_INSTALL_PREFIX}/share/applications"
   COMPONENT Runtime)
 
 install(FILES "${FLUTTER_ICU_DATA_FILE}" DESTINATION "${INSTALL_BUNDLE_DATA_DIR}"

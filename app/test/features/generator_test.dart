@@ -1,8 +1,9 @@
-import 'package:flutter/material.dart';
+import 'package:material_ui/material_ui.dart';
 import 'package:flutter_test/flutter_test.dart';
 
 import 'package:app/src/features/generator/generator_page.dart';
 import 'package:app/src/ui/widgets/password_text.dart';
+
 import '../helpers/feature_test_helpers.dart';
 
 void main() {

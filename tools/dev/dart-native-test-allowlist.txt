@@ -1,0 +1,6 @@
+# Exact test harnesses that intentionally exercise the real native boundary.
+# Production Dart and every unlisted test remain prohibited from direct FFI or
+# process execution by boundary-check.sh.
+ffi app/integration_test/real_bridge_performance_test.dart
+process app/integration_test/real_bridge_keepassxc_test.dart
+process app/integration_test/real_bridge_process_coexistence_test.dart

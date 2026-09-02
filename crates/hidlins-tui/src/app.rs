@@ -119,13 +119,16 @@ fn resolve_existing_vault_path(
     if !canonical.is_file() {
         return Err("Select a KDBX file, not a directory.");
     }
-    let name = canonical
-        .file_stem()
+    let name = vault_name_from_path(&canonical)?;
+    Ok((canonical, name))
+}
+
+fn vault_name_from_path(path: &Path) -> Result<String, &'static str> {
+    path.file_stem()
         .and_then(|stem| stem.to_str())
         .filter(|stem| !stem.is_empty())
-        .ok_or("Vault filename must contain a valid UTF-8 name.")?
-        .to_string();
-    Ok((canonical, name))
+        .map(str::to_owned)
+        .ok_or("Vault filename must contain a valid UTF-8 name.")
 }
 
 /// Maximum consecutive failed unlock attempts before bouncing back to the list.
@@ -4061,7 +4064,7 @@ mod tests {
         assert_eq!(relative_name, "personal");
     }
 
-    #[cfg(unix)]
+    #[cfg(target_os = "linux")]
     #[test]
     fn path_resolution_rejects_a_non_utf8_file_stem() {
         use std::ffi::OsString;
@@ -4082,6 +4085,20 @@ mod tests {
         let canonical = path.canonicalize().unwrap();
         let stem = canonical.file_stem().and_then(|value| value.to_str());
         assert!(stem.is_none(), "fixture itself has an unusable UTF-8 stem");
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn vault_name_rejects_a_non_utf8_file_stem_without_filesystem_support() {
+        use std::ffi::OsString;
+        use std::os::unix::ffi::OsStringExt;
+
+        let path = PathBuf::from(OsString::from_vec(vec![0xff, b'.', b'k', b'd', b'b', b'x']));
+
+        assert_eq!(
+            vault_name_from_path(&path),
+            Err("Vault filename must contain a valid UTF-8 name.")
+        );
     }
 
     #[test]
@@ -4280,6 +4297,46 @@ mod tests {
         assert!(matches!(app.phase, Phase::Workspace));
         assert!(app.vault().is_some());
         assert_eq!(app.selected_vault.as_deref(), Some("personal"));
+    }
+
+    #[cfg(feature = "process-interop-tests")]
+    #[test]
+    fn tui_session_and_cli_process_share_the_advisory_lock() {
+        use std::io::Write as _;
+        use std::process::{Command as ProcessCommand, Stdio};
+
+        let (_dir, mut app) = single_vault_app();
+        unlock(&mut app, PASSWORD);
+        assert!(app.vault().is_some(), "TUI must own the live vault handle");
+
+        let cli = std::env::var("HIDLINS_CLI_BIN")
+            .expect("HIDLINS_CLI_BIN is set by make app-test-integration");
+        let mut child = ProcessCommand::new(cli)
+            .args([
+                "--registry",
+                app.paths.vaults_toml().to_str().expect("UTF-8 temp path"),
+                "vault",
+                "open",
+                "--id",
+                "personal",
+            ])
+            .stdin(Stdio::piped())
+            .stdout(Stdio::null())
+            .stderr(Stdio::null())
+            .spawn()
+            .expect("spawn CLI contender");
+        writeln!(child.stdin.as_mut().expect("child stdin"), "{PASSWORD}")
+            .expect("write test password");
+        let status = child.wait().expect("wait for CLI contender");
+        assert_eq!(
+            status.code(),
+            Some(2),
+            "CLI must report stable vault-lock exit code while TUI owns it"
+        );
+        assert!(
+            app.vault().is_some(),
+            "contention must not disturb TUI state"
+        );
     }
 
     // T-IT-1: wrong password keeps the prompt and counts the attempt.

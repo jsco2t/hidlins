@@ -1,4 +1,4 @@
-import 'package:flutter/material.dart';
+import 'package:material_ui/material_ui.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 
 import '../../data/failures.dart';
@@ -69,9 +69,12 @@ class _DetailContentState extends ConsumerState<_DetailContent> {
         Row(
           children: [
             Expanded(
-              child: Text(
-                detail.title,
-                style: Theme.of(context).textTheme.headlineSmall,
+              child: Semantics(
+                headingLevel: 1,
+                child: Text(
+                  detail.title,
+                  style: Theme.of(context).textTheme.headlineSmall,
+                ),
               ),
             ),
             if (detail.expiryTime != null)
@@ -243,9 +246,8 @@ class _DetailContentState extends ConsumerState<_DetailContent> {
     } on Exception {
       if (!mounted) return null;
       final l10n = AppLocalizations.of(context)!;
-      ScaffoldMessenger.of(
-        context,
-      ).showSnackBar(SnackBar(content: Text(l10n.errorRevealFailed)));
+      ScaffoldMessenger.of(context)
+          .showSnackBar(SnackBar(content: Text(l10n.errorRevealFailed)));
       return null;
     }
   }
@@ -256,14 +258,12 @@ class _DetailContentState extends ConsumerState<_DetailContent> {
       final repo = ref.read(secretsRepositoryProvider);
       await repo.copyEntryField(widget.uuid, field);
       if (!mounted) return;
-      ScaffoldMessenger.of(
-        context,
-      ).showSnackBar(SnackBar(content: Text(l10n.copiedSnackbar(30))));
+      ScaffoldMessenger.of(context)
+          .showSnackBar(SnackBar(content: Text(l10n.copiedSnackbar(30))));
     } on Exception {
       if (!mounted) return;
-      ScaffoldMessenger.of(
-        context,
-      ).showSnackBar(SnackBar(content: Text(l10n.errorGeneric)));
+      ScaffoldMessenger.of(context)
+          .showSnackBar(SnackBar(content: Text(l10n.errorGeneric)));
     }
   }
 }
@@ -385,12 +385,10 @@ class _AttachmentSectionState extends ConsumerState<_AttachmentSection> {
               subtitle: Text(l10n.attachmentBytes('${a.sizeBytes}')),
               dense: true,
               contentPadding: EdgeInsets.zero,
-              trailing: Tooltip(
-                message: l10n.actionDetach,
-                child: IconButton(
-                  icon: const Icon(Icons.close, size: 18),
-                  onPressed: () async => _confirmDetach(a.name),
-                ),
+              trailing: IconButton(
+                icon: const Icon(Icons.close, size: 18),
+                tooltip: l10n.actionDetach,
+                onPressed: () async => _confirmDetach(a.name),
               ),
             ),
           ),

@@ -1,0 +1,39 @@
+{
+  "schema_version": 1,
+  "minimum_api": 29,
+  "current_api": 36,
+  "entries": [
+    {
+      "api": 29,
+      "abi": "arm64-v8a",
+      "host_arch": "arm64",
+      "form_factor": "phone",
+      "avd": "hidlins-api29",
+      "system_image": "system-images;android-29;default;arm64-v8a"
+    },
+    {
+      "api": 36,
+      "abi": "arm64-v8a",
+      "host_arch": "arm64",
+      "form_factor": "tablet",
+      "avd": "hidlins-api36-tablet",
+      "system_image": "system-images;android-36;default;arm64-v8a"
+    },
+    {
+      "api": 29,
+      "abi": "x86_64",
+      "host_arch": "x86_64",
+      "form_factor": "phone",
+      "avd": "hidlins-api29-x86_64",
+      "system_image": "system-images;android-29;default;x86_64"
+    },
+    {
+      "api": 36,
+      "abi": "x86_64",
+      "host_arch": "x86_64",
+      "form_factor": "tablet",
+      "avd": "hidlins-api36-x86_64-tablet",
+      "system_image": "system-images;android-36;default;x86_64"
+    }
+  ]
+}

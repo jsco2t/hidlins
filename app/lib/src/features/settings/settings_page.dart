@@ -1,9 +1,10 @@
-import 'package:flutter/material.dart';
+import 'package:material_ui/material_ui.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 
 import '../../l10n/app_localizations.dart';
 import '../../providers/providers.dart';
 import '../../ui/tokens.dart';
+import '../../ui/widgets/brand_mark.dart';
 
 class SettingsPage extends ConsumerWidget {
   const SettingsPage({super.key});
@@ -82,12 +83,21 @@ class SettingsPage extends ConsumerWidget {
         ),
         const SizedBox(height: HidlinsSpacing.sm),
 
+        Card(
+          child: ListTile(
+            leading: const Icon(Icons.keyboard_outlined),
+            title: Text(l10n.settingsKeyboardShortcuts),
+            subtitle: Text(l10n.settingsKeyboardShortcutsSummary),
+          ),
+        ),
+        const SizedBox(height: HidlinsSpacing.sm),
+
         // About
         Card(
           child: Column(
             children: [
               ListTile(
-                leading: const Icon(Icons.info_outline),
+                leading: const BrandMark(size: 40),
                 title: Text(l10n.settingsAbout),
               ),
               ListTile(
@@ -97,6 +107,7 @@ class SettingsPage extends ConsumerWidget {
                 onTap: () => showLicensePage(
                   context: context,
                   applicationName: l10n.appTitle,
+                  applicationIcon: const BrandMark(size: 64),
                 ),
               ),
             ],

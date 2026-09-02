@@ -64,12 +64,14 @@ works from a clean clone.
 
 ```sh
 make build         # build the workspace (offline, vendored)
+make release       # optimized host CLI, TUI, and agent binaries
 make test          # default-parallel tests
 make test-ignored  # serial run of env-mutating / fault-injection tests
 make fmt           # auto-format
 make lint          # clippy with `-D warnings`
 make check         # Rust gate: fmt-check + lint + build + test (no Flutter needed)
 make app-check     # Flutter gates: version/telemetry/pub integrity/analyze/format/test/bridge smoke/codegen drift (needs Flutter SDK + Rust toolchain)
+make acceptance-evidence-check # audit release/CI/PRD evidence, skips, and all 45 July tasks
 make verify        # everything: check + app-check + ignored tests + docs + supply-chain + interop + boundary-check
 make deny          # cargo-deny (license + advisory + bans)
 make vendor        # re-vendor dependencies (the only target that needs network)
@@ -79,6 +81,35 @@ These targets wrap `cargo` with `--workspace --offline --locked`. A clean
 clone produces identical results to CI because `Cargo.lock`, `vendor/`,
 `rust-toolchain.toml`, and the `Makefile` itself are all committed and
 authoritative.
+
+All Rust compilation reached through `make` appends `-D warnings` to any
+caller-supplied `RUSTFLAGS`; rustdoc does the same through `RUSTDOCFLAGS`.
+`make build-policy-check` is part of `make check` and compiles an intentional
+warning fixture to prove the policy remains active and caller flags survive.
+Flutter artifact targets first run fatal Dart analysis. First-party Linux,
+Apple, Android Kotlin, and Android Java runner/app compilation also treats
+warnings as errors; the native settings are deliberately scoped away from
+vendored crates, packages, plugins, and Pods.
+
+`make release` builds optimized Rust binaries for the current host only:
+`target/release/hidlins` (CLI), `target/release/hidlins-tui`, and
+`target/release/hidlins-agent`. Flutter artifacts are likewise host/platform
+specific: `make app-build-linux` writes beneath
+`app/build/linux/<architecture>/release/bundle/`, while
+`make app-build-macos` writes `app/build/macos/Build/Products/Release/Hidlins.app`.
+Run the corresponding Flutter target on each supported host; these commands do
+not claim to cross-build every platform from one workstation.
+
+The complete unsigned alpha artifact matrix, Flutter 3.47.2 Android exception,
+automated acceptance map, manual/user skip register, and disposition of all 45
+July Flutter tasks are documented in
+[`docs/flutter-alpha-release.md`](docs/flutter-alpha-release.md) and its checked
+machine-readable companion. Android CI uses `make android-emulator-provision`
+followed by the same core and managed-MinIO emulator targets used locally.
+The local Apple Rust plugin is deliberately CocoaPods/Cargokit-only, with
+project-scoped SwiftPM disablement; Flutter's future-migration advisory is a
+tool notice, not a compiler warning. See the release document for the exact
+boundary and migration requirement.
 
 **Adding a new workflow?** If you add a new lint, test category, code-gen
 step, harness, or CI step, add the matching `make` target in the same
@@ -167,6 +198,60 @@ Direct dependencies added through the workflow above, newest first. Each line
 records the review at its add point; transitive crates are covered en masse by
 `make deny` (license + bans) over the four Phase-0 targets.
 
+#### iOS simulator integration runner (flutter-app Task 010, 2026-09-01)
+
+`integration_test` 0.0.0 is the official Flutter SDK device-test runner. It is
+BSD-3-Clause, maintained and released with the exact Flutter SDK pinned in
+`.flutter-version`, and is a development-only dependency. It is the supported
+way to run `flutter_test` journeys inside a real iOS application process; a
+repository implementation would have to reproduce Flutter's VM-service test
+protocol, native test plugin, device installation, and result transport.
+
+The SDK edge adds `flutter_driver` and `fuchsia_remote_debug_protocol` from the
+same pinned BSD-3-Clause Flutter SDK plus four pub.dev packages: `platform`
+3.1.6, `process` 5.0.6, and `sync_http` 0.3.1 are Dart-team BSD-3-Clause
+libraries; `webdriver` 3.1.0 is Dart-team Apache-2.0. All are dev-only driver
+infrastructure. `sync_http` and `webdriver` can make network requests, which is
+required by the SDK's host/device driver protocol; NFR-013 permits them only in
+the development graph. They add no production imports, native binary,
+telemetry, or runtime permission to Hidlins, and `make pub-production-check`
+fails if the runner or any of its seven reviewed packages enters the shipping
+graph. The resolved diff is seven locked packages, of which only those four
+small Dart packages add vendored pub trees. All are mature Dart/Flutter
+ecosystem components maintained by the SDK's own team; no feature reduction
+exists on the SDK dependency. The vendored trees, hosted hashes, lockfile,
+curated allowlist, and byte-integrity manifest were reviewed together;
+`make pub-vendor-check` gates their exact bytes.
+
+#### Android TLS verifier JNI foundation (flutter-app Task 007, 2026-09-01)
+
+`hidlins-api` promotes two Android-only crates already present in the locked,
+vendored `ureq` graph: `rustls-platform-verifier` 0.6.2 and `jni` 0.21.1.
+No package or vendor directory was added. Both are MIT OR Apache-2.0. The
+upstream verifier is maintained by the rustls organization, continues to ship
+signed releases, and is already the certificate-verification implementation
+used by Hidlins sync; replacing it would mean hand-writing Android certificate
+verification, which is prohibited. `jni` is the narrow safe wrapper that keeps
+the sole hand-written export free of raw-pointer JNI calls; replacing it with
+raw JNI would enlarge the audited unsafe surface.
+
+The Android companion artifact is the AAR embedded by the existing
+`rustls-platform-verifier-android` 0.1.1 crate:
+`rustls:rustls-platform-verifier:0.1.1`. Its AAR and POM remain inside
+`vendor/rustls-platform-verifier-android/maven/`. The committed artifact
+contract, Gradle lockfile, and strict SHA-256 verification metadata all pin the
+same coordinate and bytes. An exclusive Gradle content filter prevents the
+`rustls` group from resolving from Google or Maven Central. `make
+build-android` also requires exactly one `rustls-platform-verifier` crate in
+the Android graph, because initializing a second crate instance would not
+initialize the instance used by `ureq`.
+
+The dependency cost is therefore zero new Rust transitives and one already
+vendored 10 KiB AAR. No feature reduction is available: Android system trust
+verification requires the Rust verifier and its JVM companion. The checked
+release/R8 verifier APK is repository-only and adds no shipped product
+dependency.
+
 #### Flutter app Dart dependencies (flutter-app T2.4, 2026-07-24)
 
 Curated allowlist for `app/pubspec.yaml`. Dependencies are added in the task
@@ -174,8 +259,30 @@ that first **imports** them, not ahead of need — every entry is vendored and
 committed, so an unused package costs repo size, licence-audit surface, and
 (for plugins) native code linked into the binary.
 
+**Standalone Material migration (2026-09-01).** `material_ui` 1.0.0 is the
+official Flutter-team continuation of the now-frozen SDK Material library. It is
+exact-pinned and BSD-3-Clause, published by the verified `flutter.dev` publisher;
+upstream had already shipped 1.1.0 within nineteen days of the initial stable
+release, demonstrating active maintenance. The package has roughly 495k downloads
+and 256 likes at review time. Its only newly resolved transitive is the official
+`cupertino_ui` 1.0.1 package (also BSD-3-Clause and `flutter.dev`-published), which
+`material_ui` requires for adaptive widgets and its complete localization
+delegate set; Hidlins neither declares nor imports `cupertino_ui` directly.
+
+The vendored cost is material: `material_ui` contributes 1,148 files / 25 MB and
+`cupertino_ui` contributes 417 files / 6.2 MB. No package feature can remove the
+Cupertino edge. Continuing on the frozen framework copy would abandon the selected
+Flutter 3.47 forward baseline, while copying or maintaining a partial design
+system in-repository would be substantially larger, less accessible, and harder
+to test than the official packages. All other `material_ui` dependencies were
+already present in the locked Flutter application graph. The vendored diff is
+therefore limited to these two audited package directories, their hosted hashes,
+the lockfile, and the integrity manifest.
+
 | Package | Constraint | License | Maintenance / popularity | Hand-roll assessment |
 | --- | --- | --- | --- | --- |
+| `material_ui` | `1.0.0` (exact) | BSD-3-Clause | Official Flutter team / `flutter.dev`; active 1.1.0 follow-up; ~495k downloads, 256 likes at review | Not viable — this is Flutter's complete maintained Material implementation; an in-repo subset would regress API coverage, accessibility, and maintenance |
+| `cupertino_ui` | `1.0.1` (transitive, lock-pinned) | BSD-3-Clause | Official Flutter team / `flutter.dev`; required by `material_ui` for adaptive widgets and localizations | Not directly selected or imported; no feature exists to remove the required edge, and reimplementing it would be broader than retaining the official transitive |
 | `flutter_rust_bridge` | `2.12.0` (exact) | MIT | The bridge itself; triple-pinned with the Rust crate + codegen CLI | Not viable — generates ~10k lines of FFI glue |
 | `freezed_annotation` | `^3.1.0` | MIT | Flutter-ecosystem standard, actively maintained | Not viable — required *by* frb codegen for the sealed DTO classes |
 
@@ -195,7 +302,7 @@ bundle. Re-add each in T3.x/T4.x at first use, with its own review row.
 
 | Cache | Packages | Size | Role |
 | --- | --- | --- | --- |
-| `app/vendor-pub/` | 69 | 95M | the app's own dependencies |
+| `app/vendor-pub/` | 85 | 135M | the app's own dependencies |
 | `app/rust_builder/cargokit/build_tool/vendor-pub/` | 60 | 80M | Cargokit's build tool — **compiled and executed on every native build** |
 
 `make app-deps` resolves offline from the vendored cache; `PUB_CACHE` is
@@ -704,8 +811,7 @@ source shell-completions/hidlins.bash
   `missing_errors_doc`) are allowed because they fire on idiomatic API
   shapes.
 - Public items in `hidlins-core` have rustdoc comments. CI runs
-  `make doc` (wraps `cargo doc --no-deps --offline`) and (later) treats
-  warnings as errors.
+  `make doc` (wraps `cargo doc --no-deps --offline`) with warnings as errors.
 
 ---
 

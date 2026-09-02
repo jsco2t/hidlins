@@ -8,11 +8,13 @@
 import '../dto.dart';
 import '../error.dart';
 import '../frb_generated.dart';
+
 import 'package:flutter_rust_bridge/flutter_rust_bridge_for_generated.dart';
 
-// These functions are ignored because they are not marked as `pub`: `clear_totp_cache_inner`, `clear_totp_cache`, `do_lock`, `install_lock_sink`, `invalidate_totp`, `is_unlocked`, `kill`, `lifecycle_from_u8`, `lifecycle_to_u8`, `lock_state`, `maybe_sync_after_save`, `new`, `push_lock_event`, `push_sync_event`, `require_vault_mut`, `require_vault`, `secret_uri`, `spawn_ticker`, `tick_inner`, `unlock_inner`
-// These types are ignored because they are neither used by any `pub` functions nor (for structs and enums) marked `#[frb(unignore)]`: `ClearUnlockingOnDrop`, `SessionCredentials`, `SessionState`, `TotpSnapshot`
+// These functions are ignored because they are not marked as `pub`: `attach_platform_lock_sources`, `clear_totp_cache_inner`, `clear_totp_cache`, `do_lock`, `install_lock_sink`, `invalidate_totp`, `is_unlocked`, `kill`, `lifecycle_from_u8`, `lifecycle_to_u8`, `lock_state`, `maybe_sync_after_save`, `new`, `push_lock_event`, `push_sync_event`, `require_vault_mut`, `require_vault`, `secret_uri`, `spawn_ticker`, `tick_inner`, `unlock_inner`
+// These types are ignored because they are neither used by any `pub` functions nor (for structs and enums) marked `#[frb(unignore)]`: `ClearUnlockingOnDrop`, `SessionCredentials`, `SessionState`, `TickerProgress`, `TotpSnapshot`
 // These function are ignored because they are on traits that is not defined in current crate (put an empty `#[frb]` on it to unignore): `drop`, `drop`, `drop`, `drop`, `fmt`, `fmt`
+// These functions are ignored (category: IgnoreBecauseOwnerTyShouldIgnore): `default`
 
 Future<String> apiVersion() => RustLib.instance.api.crateApiSessionApiVersion();
 
@@ -67,8 +69,6 @@ abstract class AppSession implements RustOpaqueInterface {
   Future<void> clearExpiration({required String uuid});
 
   Future<void> clearSyncConfig({required String name});
-
-  Stream<ClipboardEvent> clipboardEvents();
 
   Future<void> configureSync({required S3ConfigDto cfg});
 
@@ -153,6 +153,17 @@ abstract class AppSession implements RustOpaqueInterface {
 
   Future<void> moveGroup({required String uuid, required String parent});
 
+  /// Prepare a non-secret, single-use native clipboard handoff.
+  ///
+  /// Desktop uses the Rust clipboard directly and therefore returns a typed
+  /// unsupported result. Mobile Dart receives only this ticket; the
+  /// protected value remains zeroizing Rust state until a native adapter
+  /// consumes it or the session locks.
+  Future<ClipboardTransferTicket> prepareClipboardTransfer({
+    required String uuid,
+    required CopyField field,
+  });
+
   Future<void> purgeEntry({required String uuid});
 
   Future<VaultSummary> registerExistingVault({
@@ -167,7 +178,7 @@ abstract class AppSession implements RustOpaqueInterface {
 
   void reportActivity();
 
-  void reportLifecycleState({required LifecycleStateDto state});
+  LockEvent reportLifecycleState({required LifecycleStateDto state});
 
   Future<String> revealField({
     required String uuid,

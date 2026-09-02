@@ -1,7 +1,8 @@
-import 'package:flutter/material.dart';
+import 'package:material_ui/material_ui.dart';
 
 import '../../l10n/app_localizations.dart';
 import '../../ui/tokens.dart';
+import '../../ui/widgets/brand_mark.dart';
 
 enum FirstRunChoice { create, connectSync, import_ }
 
@@ -13,8 +14,6 @@ class FirstRunPage extends StatelessWidget {
   @override
   Widget build(BuildContext context) {
     final l10n = AppLocalizations.of(context)!;
-    final colorScheme = Theme.of(context).colorScheme;
-
     return Center(
       child: ConstrainedBox(
         constraints: const BoxConstraints(maxWidth: 400),
@@ -23,7 +22,7 @@ class FirstRunPage extends StatelessWidget {
           child: Column(
             mainAxisSize: MainAxisSize.min,
             children: [
-              Icon(Icons.shield, size: 64, color: colorScheme.primary),
+              const BrandMark(size: 88),
               const SizedBox(height: HidlinsSpacing.lg),
               Text(
                 l10n.firstRunTitle,

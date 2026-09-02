@@ -41,6 +41,25 @@ fn unlocked_session_with_clipboard(
     (session, clipboard, root_uuid)
 }
 
+fn unlocked_session_without_clipboard(
+    env: &TestEnv,
+    name: &str,
+    password: &str,
+) -> (AppSession, String) {
+    let vault_path = create_test_vault(env, name, password);
+    register_vault(env, name, &vault_path);
+
+    let sync_engine = Arc::new(SucceedingSyncEngine(
+        hidlins_sync::SyncOutcome::AlreadyInSync,
+    ));
+    let session = AppSession::with_ports(env.paths_clone(), None, sync_engine)
+        .expect("create session without clipboard");
+    let tree = session
+        .unlock(name.to_string(), password.to_string(), None)
+        .expect("unlock");
+    (session, tree.root.uuid)
+}
+
 // ---------------------------------------------------------------------------
 // reveal_field
 // ---------------------------------------------------------------------------
@@ -180,6 +199,36 @@ fn copy_entry_field_sends_password_to_clipboard() {
     assert!(
         clipboard.last_ttl().is_some_and(|d| !d.is_zero()),
         "auto-clear must be armed (non-zero TTL)"
+    );
+}
+
+#[test]
+fn copy_entry_field_fails_when_clipboard_is_unavailable() {
+    let env = TestEnv::new();
+    let (session, root_uuid) =
+        unlocked_session_without_clipboard(&env, "copy-unavailable", "test-pass");
+    let uuid = session
+        .create_entry(
+            root_uuid,
+            EntryDraftDto {
+                kind: EntryKindDto::Credential,
+                title: "Unavailable clipboard".to_string(),
+                username: None,
+                password: Some("must-not-disappear".to_string()),
+                url: None,
+                notes: None,
+                tags: Vec::new(),
+                custom_fields: Vec::new(),
+                totp_uri: None,
+            },
+        )
+        .expect("create entry");
+
+    assert_eq!(
+        session.copy_entry_field(uuid, CopyField::Password),
+        Err(HidlinsApiError::Io {
+            context: "clipboard unavailable".to_string(),
+        })
     );
 }
 

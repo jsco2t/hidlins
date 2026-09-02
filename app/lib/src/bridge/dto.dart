@@ -7,6 +7,7 @@
 
 import 'error.dart';
 import 'frb_generated.dart';
+
 import 'package:flutter_rust_bridge/flutter_rust_bridge_for_generated.dart';
 import 'package:freezed_annotation/freezed_annotation.dart' hide protected;
 part 'dto.freezed.dart';
@@ -47,22 +48,29 @@ class AttachmentMeta {
           sizeBytes == other.sizeBytes;
 }
 
-class ClipboardEvent {
-  final int remainingSecs;
-  final bool cleared;
+/// Non-secret, single-use handle for native clipboard transfer.
+///
+/// Dart may forward this ticket to the fixed platform adapter, but it never
+/// receives the protected value held in Rust.
+class ClipboardTransferTicket {
+  final String id;
+  final int expiresAfterSecs;
 
-  const ClipboardEvent({required this.remainingSecs, required this.cleared});
+  const ClipboardTransferTicket({
+    required this.id,
+    required this.expiresAfterSecs,
+  });
 
   @override
-  int get hashCode => remainingSecs.hashCode ^ cleared.hashCode;
+  int get hashCode => id.hashCode ^ expiresAfterSecs.hashCode;
 
   @override
   bool operator ==(Object other) =>
       identical(this, other) ||
-      other is ClipboardEvent &&
+      other is ClipboardTransferTicket &&
           runtimeType == other.runtimeType &&
-          remainingSecs == other.remainingSecs &&
-          cleared == other.cleared;
+          id == other.id &&
+          expiresAfterSecs == other.expiresAfterSecs;
 }
 
 @freezed

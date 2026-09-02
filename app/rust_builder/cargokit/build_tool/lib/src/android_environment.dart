@@ -185,7 +185,16 @@ class AndroidEnvironment {
           .writeAsStringSync('INPUT(-lgcc)');
     }
 
-    var rustFlags = Platform.environment['CARGO_ENCODED_RUSTFLAGS'] ?? '';
+    // Hidlins patch: Cargokit's Android linker workaround must not erase the
+    // Makefile-wide fatal-warning policy. Cargo gives CARGO_ENCODED_RUSTFLAGS
+    // precedence over RUSTFLAGS, so seed the encoded value from RUSTFLAGS when
+    // the caller did not already provide an encoded form, then append -L.
+    var rustFlags = Platform.environment['CARGO_ENCODED_RUSTFLAGS'];
+    rustFlags ??= (Platform.environment['RUSTFLAGS'] ?? '')
+        .trim()
+        .split(RegExp(r'\s+'))
+        .where((flag) => flag.isNotEmpty)
+        .join('\x1f');
     if (rustFlags.isNotEmpty) {
       rustFlags = '$rustFlags\x1f';
     }

@@ -7,6 +7,7 @@ import 'package:app/src/bridge/dto.dart' as bridge;
 import 'package:app/src/data/models.dart';
 import 'package:app/src/data/repositories.dart';
 import 'package:app/src/providers/providers.dart';
+
 import '../fakes/fake_repositories.dart';
 
 void main() {
@@ -74,9 +75,8 @@ void main() {
       addTearDown(container.dispose);
 
       await container.read(vaultTreeProvider.future);
-      final initialEntries = (await container.read(
-        vaultTreeProvider.future,
-      )).entries;
+      final initialEntries = (await container.read(vaultTreeProvider.future))
+          .entries;
 
       entryRepo.tree = VaultTree(
         root: GroupNode(
@@ -91,9 +91,8 @@ void main() {
       syncRepo.syncController.add(const SyncEvent.started());
       await Future<void>.delayed(Duration.zero);
       await container.read(vaultTreeProvider.future);
-      final afterStarted = (await container.read(
-        vaultTreeProvider.future,
-      )).entries;
+      final afterStarted = (await container.read(vaultTreeProvider.future))
+          .entries;
       expect(afterStarted.length, initialEntries.length);
     });
 

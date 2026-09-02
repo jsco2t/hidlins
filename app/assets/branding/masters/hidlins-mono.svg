@@ -1,0 +1,18 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 1024 1024">
+
+<g stroke="#1F2022" stroke-width="34" stroke-linecap="round" stroke-linejoin="round">
+  <path d="M326 405V285c0-132 83-211 186-211s186 79 186 211v120" fill="none"/>
+  <path d="M381 405V287c0-91 54-151 131-151s131 60 131 151v118" fill="none" stroke-width="22"/>
+  <path d="M245 395 Q512 345 779 395 Q838 409 849 477 L878 745 Q889 838 806 873 Q512 934 218 873 Q135 838 146 745 L175 477 Q186 409 245 395Z" fill="#FAF8F2"/>
+  <path d="M337 494 Q512 442 687 494 L663 585 Q512 544 361 585Z" fill="none" stroke-width="22"/>
+</g>
+<text x="512" y="535" text-anchor="middle" fill="#1F2022" font-family="Georgia,serif" font-weight="700" font-size="68" letter-spacing="3">HIDLINS</text>
+<g fill="#1F2022">
+  <circle cx="260" cy="470" r="22"/><circle cx="764" cy="470" r="22"/>
+  <circle cx="250" cy="792" r="22"/><circle cx="774" cy="792" r="22"/>
+  <path d="M421 631 Q421 603 449 603 H467 Q495 603 495 631 V668 H529 V631 Q529 603 557 603 H575 Q603 603 603 631 V772 Q603 800 575 800 H557 Q529 800 529 772 V728 H495 V772 Q495 800 467 800 H449 Q421 800 421 772Z"/>
+</g>
+<g stroke="#1F2022" stroke-width="10" opacity=".72" stroke-linecap="round">
+  <path d="M302 648h52M286 699h72M675 646h43M664 706h62M328 829h77M614 830h80"/>
+</g>
+</svg>

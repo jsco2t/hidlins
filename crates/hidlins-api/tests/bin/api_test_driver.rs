@@ -7,6 +7,8 @@
 //! Subcommands:
 //!   create-vault <dir> <name> <password>
 //!   add-corpus   <dir> <name> <password>
+//!   create-search-corpus <dir> <name> <count>
+//!                 Reads the password from one stdin line.
 //!   edit-entry   <dir> <name> <entry-uuid> <field>
 //!                 Reads two lines from stdin: password, then value.
 
@@ -19,13 +21,14 @@ fn main() -> ExitCode {
     let args: Vec<String> = std::env::args().collect();
     if args.len() < 2 {
         eprintln!("usage: api-test-driver <subcommand> [args...]");
-        eprintln!("subcommands: create-vault, add-corpus, edit-entry");
+        eprintln!("subcommands: create-vault, add-corpus, create-search-corpus, edit-entry");
         return ExitCode::from(1);
     }
 
     let result = match args[1].as_str() {
         "create-vault" => cmd_create_vault(&args[2..]),
         "add-corpus" => cmd_add_corpus(&args[2..]),
+        "create-search-corpus" => cmd_create_search_corpus(&args[2..]),
         "edit-entry" => cmd_edit_entry(&args[2..]),
         other => {
             eprintln!("unknown subcommand: {other}");
@@ -40,6 +43,24 @@ fn main() -> ExitCode {
             ExitCode::from(1)
         }
     }
+}
+
+fn cmd_create_search_corpus(args: &[String]) -> Result<(), Box<dyn std::error::Error>> {
+    if args.len() < 3 {
+        return Err("usage: create-search-corpus <dir> <name> <count>\n\
+                    reads one password line from stdin"
+            .into());
+    }
+    let count: usize = args[2].parse().map_err(|_| "count must be an integer")?;
+    let mut password = String::new();
+    std::io::stdin().read_line(&mut password)?;
+    let password = password.trim_end();
+    let paths = HidlinsPaths::with_state_dir(args[0].clone().into());
+    paths.ensure_exists()?;
+    fixtures::create_test_vault(&paths, &args[1], password);
+    fixtures::add_search_corpus_entries(&paths, &args[1], password, count);
+    println!("search corpus ready: entries={count}");
+    Ok(())
 }
 
 fn cmd_create_vault(args: &[String]) -> Result<(), Box<dyn std::error::Error>> {

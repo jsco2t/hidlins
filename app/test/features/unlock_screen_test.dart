@@ -1,4 +1,4 @@
-import 'package:flutter/material.dart';
+import 'package:material_ui/material_ui.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:flutter_test/flutter_test.dart';
 
@@ -6,8 +6,11 @@ import 'package:app/src/data/failures.dart';
 import 'package:app/src/data/models.dart';
 import 'package:app/src/features/lock/unlock_screen.dart';
 import 'package:app/src/l10n/app_localizations.dart';
+import 'package:app/src/l10n/hidlins_localizations.dart';
 import 'package:app/src/providers/providers.dart';
 import 'package:app/src/ui/theme.dart';
+import 'package:app/src/ui/widgets/brand_mark.dart';
+
 import '../fakes/fake_repositories.dart';
 
 void main() {
@@ -26,7 +29,7 @@ void main() {
       ],
       child: MaterialApp(
         theme: hidlinsLightTheme(),
-        localizationsDelegates: AppLocalizations.localizationsDelegates,
+        localizationsDelegates: hidlinsLocalizationsDelegates,
         supportedLocales: AppLocalizations.supportedLocales,
         home: const UnlockScreen(),
       ),
@@ -44,6 +47,7 @@ void main() {
 
       expect(find.text('Vault locked'), findsOneWidget);
       expect(find.text('Unlock'), findsOneWidget);
+      expect(find.byType(BrandMark), findsOneWidget);
     });
 
     testWidgets('shows error on bad password', (tester) async {

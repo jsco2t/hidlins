@@ -26,6 +26,7 @@ use std::path::Path;
 
 use tempfile::{Builder as TempFileBuilder, NamedTempFile};
 
+use crate::locking::try_lock_exclusive;
 use crate::VaultError;
 
 const TEMP_PREFIX: &str = ".hidlins-tmp-";
@@ -208,7 +209,7 @@ fn cleanup_stale_temp_files(parent: &Path) -> Result<(), VaultError> {
 }
 
 fn lock_temp_file(temp: &NamedTempFile, target: &Path) -> Result<(), VaultError> {
-    temp.as_file().try_lock().map_err(|source| match source {
+    try_lock_exclusive(temp.as_file()).map_err(|source| match source {
         TryLockError::WouldBlock => VaultError::Io {
             source: io::Error::new(
                 io::ErrorKind::WouldBlock,

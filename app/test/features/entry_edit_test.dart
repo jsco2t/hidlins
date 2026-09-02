@@ -1,8 +1,9 @@
-import 'package:flutter/material.dart';
+import 'package:material_ui/material_ui.dart';
 import 'package:flutter_test/flutter_test.dart';
 
 import 'package:app/src/data/models.dart';
 import 'package:app/src/features/entries/entry_edit.dart';
+
 import '../helpers/feature_test_helpers.dart';
 
 void main() {
@@ -78,8 +79,11 @@ void main() {
       await tester.enterText(titleField, 'Modified');
       await tester.pumpAndSettle();
 
-      // The form is now dirty, back navigation should trigger guard
+      await tester.binding.handlePopRoute();
+      await tester.pumpAndSettle();
+
       expect(find.text('New entry'), findsOneWidget);
+      expect(find.text('Discard changes?'), findsOneWidget);
     });
 
     testWidgets('edit mode loads existing detail', (tester) async {

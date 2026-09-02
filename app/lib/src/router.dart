@@ -1,19 +1,24 @@
 import 'dart:async';
 
-import 'package:flutter/material.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:go_router/go_router.dart';
+import 'package:material_ui/material_ui.dart';
 
 import 'data/models.dart';
 import 'features/entries/entries_page.dart';
+import 'features/entries/entry_edit.dart';
 import 'features/generator/generator_page.dart';
 import 'features/lock/unlock_screen.dart';
 import 'features/search/search_page.dart';
 import 'features/settings/settings_page.dart';
+import 'features/sync/sync_controller.dart';
+import 'features/sync/sync_page.dart';
 import 'providers/lock_state_provider.dart';
 import 'providers/providers.dart';
 import 'ui/adaptive_scaffold.dart';
+import 'ui/desktop_shortcuts.dart';
 import 'ui/lock_guard.dart';
+import 'ui/tokens.dart';
 import 'l10n/app_localizations.dart';
 
 class _LockNotifier extends ChangeNotifier {
@@ -49,52 +54,96 @@ final routerProvider = Provider<GoRouter>((ref) {
       if (!isLocked && goingToLock) return '/entries';
       return null;
     },
+    errorPageBuilder: (context, state) {
+      final l10n = AppLocalizations.of(context)!;
+      return _materialPage(
+        state,
+        Scaffold(
+          appBar: AppBar(title: Text(l10n.errorPageTitle)),
+          body: Center(
+            child: Column(
+              mainAxisAlignment: MainAxisAlignment.center,
+              children: [
+                Text(l10n.errorPageMessage),
+                const SizedBox(height: 16),
+                TextButton(
+                  onPressed: () => context.go('/'),
+                  child: Text(l10n.actionHome),
+                ),
+              ],
+            ),
+          ),
+        ),
+      );
+    },
     routes: [
-      GoRoute(path: '/lock', builder: (context, state) => const UnlockScreen()),
+      GoRoute(
+        path: '/lock',
+        pageBuilder: (context, state) =>
+            _materialPage(state, const UnlockScreen()),
+      ),
       ShellRoute(
-        builder: (context, state, child) {
-          return _ShellWrapper(location: state.matchedLocation, child: child);
-        },
+        pageBuilder: (context, state, child) => _materialPage(
+          state,
+          _ShellWrapper(location: state.matchedLocation, child: child),
+        ),
         routes: [
           GoRoute(
             path: '/entries',
-            builder: (context, state) => const LockGuard(child: EntriesPage()),
+            pageBuilder: (context, state) =>
+                _materialPage(state, const LockGuard(child: EntriesPage())),
             routes: [
               GoRoute(
                 path: ':uuid',
-                builder: (context, state) => LockGuard(
-                  child: EntriesPage(initialUuid: state.pathParameters['uuid']),
+                pageBuilder: (context, state) => _materialPage(
+                  state,
+                  LockGuard(
+                    child: EntriesPage(
+                      initialUuid: state.pathParameters['uuid'],
+                    ),
+                  ),
                 ),
               ),
             ],
           ),
           GoRoute(
             path: '/search',
-            builder: (context, state) => const LockGuard(child: SearchPage()),
+            pageBuilder: (context, state) =>
+                _materialPage(state, const LockGuard(child: SearchPage())),
           ),
           GoRoute(
             path: '/generator',
-            builder: (context, state) =>
-                const LockGuard(child: GeneratorPage()),
+            pageBuilder: (context, state) =>
+                _materialPage(state, const LockGuard(child: GeneratorPage())),
           ),
           GoRoute(
             path: '/sync',
-            builder: (context, state) => LockGuard(
-              child: Builder(
-                builder: (context) =>
-                    Center(child: Text(AppLocalizations.of(context)!.navSync)),
-              ),
-            ),
+            pageBuilder: (context, state) =>
+                _materialPage(state, const LockGuard(child: SyncPage())),
           ),
           GoRoute(
             path: '/settings',
-            builder: (context, state) => const LockGuard(child: SettingsPage()),
+            pageBuilder: (context, state) =>
+                _materialPage(state, const LockGuard(child: SettingsPage())),
           ),
         ],
       ),
     ],
   );
 });
+
+MaterialPage<void> _materialPage(GoRouterState state, Widget child) {
+  return MaterialPage<void>(
+    key: state.pageKey,
+    name: state.name ?? state.path,
+    arguments: <String, String>{
+      ...state.pathParameters,
+      ...state.uri.queryParameters,
+    },
+    restorationId: state.pageKey.value,
+    child: child,
+  );
+}
 
 class _ShellWrapper extends ConsumerWidget {
   const _ShellWrapper({required this.location, required this.child});
@@ -106,18 +155,81 @@ class _ShellWrapper extends ConsumerWidget {
   Widget build(BuildContext context, WidgetRef ref) {
     final index = _indexForLocation(location);
     final prefs = ref.watch(prefsProvider).valueOrNull;
-    return AdaptiveScaffold(
-      selectedIndex: index,
-      onDestinationSelected: (i) {
-        final path = _locationForIndex(i);
-        context.go(path);
+    final selectedEntry = ref.watch(selectedEntryProvider);
+    final compactDetail =
+        location.startsWith('/entries') &&
+        selectedEntry != null &&
+        MediaQuery.sizeOf(context).width < HidlinsBreakpoints.medium;
+    return PopScope(
+      canPop: !compactDetail,
+      onPopInvokedWithResult: (didPop, _) {
+        if (!didPop && compactDetail) {
+          ref.read(selectedEntryProvider.notifier).select(null);
+        }
       },
-      body: child,
-      initialListPaneWidth: prefs?.listPaneWidth,
-      onListPaneWidthChanged: (width) {
-        unawaited(ref.read(prefsProvider.notifier).setListPaneWidth(width));
-      },
+      child: DesktopShortcuts(
+        onSearch: () => context.go('/search'),
+        onNewEntry: () => unawaited(_newEntry(context, ref)),
+        onLock: () => unawaited(ref.read(sessionRepositoryProvider).lockNow()),
+        onCopyPassword: () => unawaited(_copySelectedPassword(context, ref)),
+        onGenerator: () => context.go('/generator'),
+        onDismiss: () => unawaited(Navigator.of(context).maybePop()),
+        child: AdaptiveScaffold(
+          selectedIndex: index,
+          onDestinationSelected: (i) {
+            final path = _locationForIndex(i);
+            context.go(path);
+          },
+          body: child,
+          initialListPaneWidth: prefs?.listPaneWidth,
+          onListPaneWidthChanged: (width) {
+            unawaited(ref.read(prefsProvider.notifier).setListPaneWidth(width));
+          },
+        ),
+      ),
     );
+  }
+
+  Future<void> _newEntry(BuildContext context, WidgetRef ref) async {
+    final syncState = await ref.read(syncControllerProvider.future);
+    if (syncState.inFlight) {
+      if (context.mounted) {
+        ScaffoldMessenger.of(context).showSnackBar(
+          SnackBar(
+            content: Text(AppLocalizations.of(context)!.syncMutationsDisabled),
+          ),
+        );
+      }
+      return;
+    }
+    final tree = await ref.read(vaultTreeProvider.future);
+    if (!context.mounted) return;
+    await Navigator.of(context).push<void>(
+      MaterialPageRoute(
+        builder: (_) => EntryEditDialog(groupUuid: tree.root.uuid),
+      ),
+    );
+  }
+
+  Future<void> _copySelectedPassword(
+    BuildContext context,
+    WidgetRef ref,
+  ) async {
+    final uuid = ref.read(selectedEntryProvider);
+    if (uuid == null) return;
+    final l10n = AppLocalizations.of(context)!;
+    try {
+      await ref
+          .read(secretsRepositoryProvider)
+          .copyEntryField(uuid, CopyField.password);
+      if (!context.mounted) return;
+      ScaffoldMessenger.of(context)
+          .showSnackBar(SnackBar(content: Text(l10n.copiedSnackbar(30))));
+    } on Exception {
+      if (!context.mounted) return;
+      ScaffoldMessenger.of(context)
+          .showSnackBar(SnackBar(content: Text(l10n.errorCopyFailed)));
+    }
   }
 
   static int _indexForLocation(String location) {

@@ -1,10 +1,11 @@
 import 'dart:io';
 
-import 'package:flutter/material.dart';
+import 'package:material_ui/material_ui.dart';
 import 'package:flutter_test/flutter_test.dart';
 
 import 'package:app/src/ui/theme.dart';
 import 'package:app/src/l10n/app_localizations.dart';
+import 'package:app/src/l10n/hidlins_localizations.dart';
 
 const goldenSizeCompact = Size(400, 800);
 const goldenSizeMedium = Size(720, 800);
@@ -18,6 +19,7 @@ Future<void> expectGolden(
   required String name,
   Size size = goldenSizeExpanded,
   Brightness brightness = Brightness.light,
+  bool settle = true,
 }) async {
   if (!_isLinux) {
     markTestSkipped('Golden tests run on Linux only (deterministic rendering)');
@@ -35,12 +37,19 @@ Future<void> expectGolden(
     MaterialApp(
       theme: theme,
       debugShowCheckedModeBanner: false,
-      localizationsDelegates: AppLocalizations.localizationsDelegates,
+      localizationsDelegates: hidlinsLocalizationsDelegates,
       supportedLocales: AppLocalizations.supportedLocales,
       home: child,
     ),
   );
-  await tester.pumpAndSettle();
+  if (settle) {
+    await tester.pumpAndSettle();
+  } else {
+    // Indeterminate progress indicators never settle. Advance by a fixed
+    // interval so their captured phase remains reproducible.
+    await tester.pump();
+    await tester.pump(const Duration(milliseconds: 300));
+  }
 
   await expectLater(
     find.byType(MaterialApp),

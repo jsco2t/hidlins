@@ -5,6 +5,10 @@ analyzer:
     - vendor-pub/**
     - build/**
     - rust_builder/**
+    - android/**
+    - ios/**
+    - macos/**
+    - linux/**
 
 linter:
   rules:

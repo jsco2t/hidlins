@@ -1,4 +1,4 @@
-import 'package:flutter/material.dart';
+import 'package:material_ui/material_ui.dart';
 
 class EntryAvatar extends StatelessWidget {
   const EntryAvatar({super.key, required this.title, this.size = 40});
@@ -22,10 +22,8 @@ class EntryAvatar extends StatelessWidget {
         child: Center(
           child: Text(
             initial,
-            style: Theme.of(context).textTheme.titleMedium?.copyWith(
-              color: tint,
-              fontWeight: FontWeight.w600,
-            ),
+            style: Theme.of(context).textTheme.titleMedium
+                ?.copyWith(color: tint, fontWeight: FontWeight.w600),
           ),
         ),
       ),

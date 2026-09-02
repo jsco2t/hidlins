@@ -1,4 +1,4 @@
-import 'package:flutter/material.dart';
+import 'package:material_ui/material_ui.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:flutter_test/flutter_test.dart';
 
@@ -6,6 +6,7 @@ import 'package:app/src/bridge/dto.dart';
 import 'package:app/src/providers/lock_state_provider.dart';
 import 'package:app/src/ui/lock_guard.dart';
 import 'package:app/src/l10n/app_localizations.dart';
+import 'package:app/src/l10n/hidlins_localizations.dart';
 import 'package:app/src/ui/theme.dart';
 
 void main() {
@@ -14,7 +15,7 @@ void main() {
       overrides: [lockStateProvider.overrideWith((_) => Stream.value(event))],
       child: MaterialApp(
         theme: hidlinsLightTheme(),
-        localizationsDelegates: AppLocalizations.localizationsDelegates,
+        localizationsDelegates: hidlinsLocalizationsDelegates,
         supportedLocales: AppLocalizations.supportedLocales,
         home: LockGuard(child: child),
       ),

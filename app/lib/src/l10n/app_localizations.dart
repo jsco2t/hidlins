@@ -328,6 +328,12 @@ abstract class AppLocalizations {
   /// **'Close'**
   String get actionClose;
 
+  /// No description provided for @actionHome.
+  ///
+  /// In en, this message translates to:
+  /// **'Home'**
+  String get actionHome;
+
   /// No description provided for @copiedSnackbar.
   ///
   /// In en, this message translates to:
@@ -382,6 +388,24 @@ abstract class AppLocalizations {
   /// **'Choose an entry from the list to view details'**
   String get emptyStateSelectEntrySubtitle;
 
+  /// No description provided for @groupAllEntries.
+  ///
+  /// In en, this message translates to:
+  /// **'All entries'**
+  String get groupAllEntries;
+
+  /// No description provided for @errorPageTitle.
+  ///
+  /// In en, this message translates to:
+  /// **'Page not found'**
+  String get errorPageTitle;
+
+  /// No description provided for @errorPageMessage.
+  ///
+  /// In en, this message translates to:
+  /// **'The requested page is unavailable.'**
+  String get errorPageMessage;
+
   /// No description provided for @syncStatusIdle.
   ///
   /// In en, this message translates to:
@@ -405,6 +429,18 @@ abstract class AppLocalizations {
   /// In en, this message translates to:
   /// **'Synced'**
   String get syncStatusSuccess;
+
+  /// No description provided for @startupSecurityWarningTitle.
+  ///
+  /// In en, this message translates to:
+  /// **'Security integration degraded'**
+  String get startupSecurityWarningTitle;
+
+  /// No description provided for @startupSecurityWarningMessage.
+  ///
+  /// In en, this message translates to:
+  /// **'Automatic OS screen-lock detection is unavailable. Idle auto-lock remains active.'**
+  String get startupSecurityWarningMessage;
 
   /// No description provided for @settingsTitle.
   ///
@@ -465,6 +501,18 @@ abstract class AppLocalizations {
   /// In en, this message translates to:
   /// **'Open source licenses'**
   String get settingsLicenses;
+
+  /// No description provided for @settingsKeyboardShortcuts.
+  ///
+  /// In en, this message translates to:
+  /// **'Keyboard shortcuts'**
+  String get settingsKeyboardShortcuts;
+
+  /// No description provided for @settingsKeyboardShortcutsSummary.
+  ///
+  /// In en, this message translates to:
+  /// **'Ctrl/Cmd-F or /: search · N: new entry · Ctrl/Cmd-C: copy selected password · G: generator · L: lock · Esc: close'**
+  String get settingsKeyboardShortcutsSummary;
 
   /// No description provided for @generatorTitle.
   ///
@@ -1137,6 +1185,78 @@ abstract class AppLocalizations {
   /// In en, this message translates to:
   /// **'S3 authentication failed'**
   String get syncErrorAuthFailed;
+
+  /// No description provided for @syncConfigureTitle.
+  ///
+  /// In en, this message translates to:
+  /// **'Configure sync'**
+  String get syncConfigureTitle;
+
+  /// No description provided for @syncSaveConfiguration.
+  ///
+  /// In en, this message translates to:
+  /// **'Save sync configuration'**
+  String get syncSaveConfiguration;
+
+  /// No description provided for @syncNow.
+  ///
+  /// In en, this message translates to:
+  /// **'Sync now'**
+  String get syncNow;
+
+  /// No description provided for @syncNotConfigured.
+  ///
+  /// In en, this message translates to:
+  /// **'Sync is not configured'**
+  String get syncNotConfigured;
+
+  /// No description provided for @syncWorkspaceAvailable.
+  ///
+  /// In en, this message translates to:
+  /// **'Your cached entries remain available while sync runs.'**
+  String get syncWorkspaceAvailable;
+
+  /// No description provided for @syncMutationsDisabled.
+  ///
+  /// In en, this message translates to:
+  /// **'Editing is paused until sync finishes.'**
+  String get syncMutationsDisabled;
+
+  /// No description provided for @syncOutcomeAlreadyCurrent.
+  ///
+  /// In en, this message translates to:
+  /// **'Already up to date'**
+  String get syncOutcomeAlreadyCurrent;
+
+  /// No description provided for @syncOutcomePushed.
+  ///
+  /// In en, this message translates to:
+  /// **'Local changes uploaded'**
+  String get syncOutcomePushed;
+
+  /// No description provided for @syncOutcomeFastReplaced.
+  ///
+  /// In en, this message translates to:
+  /// **'Remote changes downloaded'**
+  String get syncOutcomeFastReplaced;
+
+  /// No description provided for @syncOutcomeMerged.
+  ///
+  /// In en, this message translates to:
+  /// **'Local and remote changes merged'**
+  String get syncOutcomeMerged;
+
+  /// No description provided for @syncConflictTitle.
+  ///
+  /// In en, this message translates to:
+  /// **'Sync conflict needs attention'**
+  String get syncConflictTitle;
+
+  /// No description provided for @syncConflictMessage.
+  ///
+  /// In en, this message translates to:
+  /// **'Both sides were preserved. Review the backup at {backupPath} before retrying.'**
+  String syncConflictMessage(String backupPath);
 }
 
 class _AppLocalizationsDelegate

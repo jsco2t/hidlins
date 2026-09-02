@@ -1,6 +1,6 @@
 import 'dart:async';
 
-import 'package:flutter/material.dart';
+import 'package:material_ui/material_ui.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 
 import '../../data/models.dart';
@@ -88,9 +88,8 @@ class TotpBlockState extends ConsumerState<TotpBlock> {
       final repo = ref.read(secretsRepositoryProvider);
       await repo.copyEntryField(widget.uuid, CopyField.totpCode);
       if (!mounted) return;
-      ScaffoldMessenger.of(
-        context,
-      ).showSnackBar(SnackBar(content: Text(l10n.copiedSnackbar(30))));
+      ScaffoldMessenger.of(context)
+          .showSnackBar(SnackBar(content: Text(l10n.copiedSnackbar(30))));
     } on Exception {
       // ignore
     }

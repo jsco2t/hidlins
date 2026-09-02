@@ -2,6 +2,11 @@
 /target/
 **/*.rs.bk
 
+# Repository-local toolchain/download scratch. This may contain complete Git
+# checkouts (for example a Flutter SDK) and must never become an embedded repo
+# or checked-in dependency.
+/.codex-tmp/
+
 # Editor
 *.swp
 *.swo
@@ -59,3 +64,6 @@ app/rust_builder/cargokit/build_tool/vendor-pub/_temp/
 .ai/workflow/state.json
 .ai/workflow/status.md
 .ai/workflow/evidence/
+app/android/native-artifacts/
+tools/android-verifier/.gradle/
+tools/android-verifier/app/build/

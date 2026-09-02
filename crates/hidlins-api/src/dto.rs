@@ -4,6 +4,16 @@ use zeroize::Zeroize;
 
 use crate::error::HidlinsApiError;
 
+/// Non-secret, single-use handle for native clipboard transfer.
+///
+/// Dart may forward this ticket to the fixed platform adapter, but it never
+/// receives the protected value held in Rust.
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub struct ClipboardTransferTicket {
+    pub id: String,
+    pub expires_after_secs: u32,
+}
+
 // ---------------------------------------------------------------------------
 // Vault / registry
 // ---------------------------------------------------------------------------
@@ -441,12 +451,6 @@ pub enum SyncEvent {
 pub enum LockEvent {
     Locked,
     Unlocked,
-}
-
-#[derive(Clone, Debug)]
-pub struct ClipboardEvent {
-    pub remaining_secs: u32,
-    pub cleared: bool,
 }
 
 #[derive(Clone, Copy, Debug)]

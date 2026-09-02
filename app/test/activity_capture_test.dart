@@ -1,10 +1,11 @@
-import 'package:flutter/material.dart';
+import 'package:material_ui/material_ui.dart';
 import 'package:flutter/services.dart';
 import 'package:flutter_test/flutter_test.dart';
 
 import 'package:app/src/app.dart';
 import 'package:app/src/data/models.dart';
 import 'package:app/src/providers/providers.dart';
+
 import 'fakes/fake_repositories.dart';
 
 void main() {
