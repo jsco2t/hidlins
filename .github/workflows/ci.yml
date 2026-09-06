@@ -73,6 +73,9 @@ jobs:
       - name: Build
         run: make build
 
+      - name: Optimized release binaries
+        run: make release
+
       # Type-check the platform-gated os_events modules (iokit via the
       # apple cross-targets, natively on the macOS leg) — the drift gate
       # `make check` bundles locally.
@@ -145,6 +148,15 @@ jobs:
       - name: Install pinned toolchain
         run: rustup show
 
+      - name: Install Flutter SDK
+        uses: subosito/flutter-action@1a449444c387b1966244ae4d4f8c696479add0b2 # v2.23.0
+        with:
+          flutter-version-file: .flutter-version
+          channel: stable
+
+      - name: Disable telemetry (NFR-013)
+        run: tools/dev/telemetry-check.sh --write
+
       - name: Install MinIO client (mc)
         run: |
           curl -fsSL https://dl.min.io/client/mc/release/linux-amd64/mc -o "$RUNNER_TEMP/mc"
@@ -152,25 +164,54 @@ jobs:
           sudo mv "$RUNNER_TEMP/mc" /usr/local/bin/mc
           mc --version
 
-      - name: Start MinIO
-        run: make minio-up
+      - name: Managed Rust + real-bridge MinIO integration
+        run: make test-minio-managed
 
-      - name: S3 integration tests (MINIO-*)
-        run: make test-s3-integration
+  android-rust:
+    name: android-app (${{ matrix.os }})
+    runs-on: ${{ matrix.os }}
+    strategy:
+      fail-fast: false
+      matrix:
+        os: [ubuntu-latest, macos-latest]
 
-      - name: Stop MinIO
-        if: always()
-        run: make minio-down
+    steps:
+      - uses: actions/checkout@v4
 
-  # Flutter app — analyze, format, build, codegen + supply-chain gates.
-  # Linux-only for now; macOS build added when T2.6 is verified.
+      - name: Install pinned toolchain
+        run: rustup show
+
+      - name: Install Flutter SDK
+        uses: subosito/flutter-action@1a449444c387b1966244ae4d4f8c696479add0b2 # v2.23.0
+        with:
+          flutter-version-file: .flutter-version
+          channel: stable
+
+      - name: Install exact Flutter NDK
+        run: sdkmanager "ndk;28.2.13676358"
+
+      - name: Disable telemetry (NFR-013)
+        run: tools/dev/telemetry-check.sh --write
+
+      - name: Cross-build, package, and inspect Android APKs
+        run: make app-build-android HIDLINS_ANDROID_STRICT=1
+
+      - name: Build and inspect R8 verifier
+        run: make android-verifier-build HIDLINS_ANDROID_STRICT=1
+
+  # Flutter app — analyze, format, native integration, interop, build,
+  # codegen + supply-chain gates on both supported desktop hosts.
   #
   # Every assertion runs through a `make` target so CI and `make app-check`
   # cannot drift (CLAUDE.md build-system rule). Only runner provisioning is
   # raw, matching the precedent set by the vault-core job.
   flutter-app:
-    name: flutter-app (ubuntu)
-    runs-on: ubuntu-latest
+    name: flutter-app (${{ matrix.os }})
+    runs-on: ${{ matrix.os }}
+    strategy:
+      fail-fast: false
+      matrix:
+        os: [ubuntu-latest, macos-latest]
 
     steps:
       - uses: actions/checkout@v4
@@ -192,9 +233,18 @@ jobs:
           channel: stable
 
       - name: Install build dependencies
+        if: runner.os == 'Linux'
         run: |
           sudo apt-get update
-          sudo apt-get install -y ninja-build clang libgtk-3-dev
+          sudo apt-get install -y ninja-build clang libgtk-3-dev keepassxc
+
+      - name: Install KeePassXC CLI (macOS)
+        if: runner.os == 'macOS'
+        run: |
+          brew install --cask keepassxc
+          if ! command -v keepassxc-cli >/dev/null 2>&1; then
+            sudo ln -s /Applications/KeePassXC.app/Contents/MacOS/keepassxc-cli /usr/local/bin/keepassxc-cli
+          fi
 
       - name: Install codegen tooling (pinned)
         working-directory: /tmp
@@ -215,8 +265,77 @@ jobs:
       - name: Flutter gates
         run: make app-check
 
+      - name: Real native-bridge desktop integration
+        run: make app-test-integration
+
+      - name: Real native-bridge 5,000-entry budget
+        run: make app-test-integration-performance
+
+      - name: App KeePassXC interoperability
+        run: make interop-app
+
       - name: Build Linux app
+        if: runner.os == 'Linux'
         run: make app-build-linux
+
+      - name: Build macOS app
+        if: runner.os == 'macOS'
+        run: make app-build-macos
+
+      - name: iOS native simulator security and privacy
+        if: runner.os == 'macOS'
+        run: make app-test-ios-simulator
+
+      - name: iPhone and iPad UI/real-bridge integration
+        if: runner.os == 'macOS'
+        run: make app-test-ios-integration
+
+      - name: Build and inspect iOS artifacts
+        if: runner.os == 'macOS'
+        run: make app-build-ios
 
       - name: Boundary check
         run: make boundary-check
+
+      - name: Acceptance evidence contract
+        run: make acceptance-evidence-check
+
+  # Host-native Android acceptance. macos-15 is the standard Apple Silicon
+  # image; ubuntu-24.04 is x86_64. The declarative matrix refuses to run an ABI
+  # that does not match the host and covers API 29 phone + API 36 tablet on each.
+  android-emulator:
+    name: android-emulator (${{ matrix.os }})
+    runs-on: ${{ matrix.os }}
+    strategy:
+      fail-fast: false
+      matrix:
+        os: [ubuntu-24.04, macos-15]
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Install pinned toolchain
+        run: rustup show
+
+      - name: Install Flutter SDK
+        uses: subosito/flutter-action@1a449444c387b1966244ae4d4f8c696479add0b2 # v2.23.0
+        with:
+          flutter-version-file: .flutter-version
+          channel: stable
+
+      - name: Enable Linux emulator acceleration
+        if: runner.os == 'Linux'
+        run: sudo chmod 0666 /dev/kvm
+
+      - name: Disable telemetry (NFR-013)
+        run: tools/dev/telemetry-check.sh --write
+
+      - name: Provision host-native Android matrix
+        run: make android-emulator-provision
+
+      - name: API 29/current native, UI, lifecycle, and real-bridge matrix
+        run: make app-test-android-emulator HIDLINS_ANDROID_STRICT=1
+
+      - name: API 29/current managed-MinIO sync matrix
+        if: runner.os == 'Linux'
+        run: make app-test-android-emulator-minio HIDLINS_ANDROID_STRICT=1

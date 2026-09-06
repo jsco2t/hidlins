@@ -1,0 +1,53 @@
+{
+  "schema": 1,
+  "capabilities": [
+    {
+      "name": "lifecycle",
+      "file": "lifecycle.dart",
+      "channel": "app.hidlins/lifecycle",
+      "methods": ["reportState"],
+      "policy_owner": "rust",
+      "mechanism_owner": "native"
+    },
+    {
+      "name": "clipboard",
+      "file": "secure_clipboard.dart",
+      "channel": "app.hidlins/clipboard",
+      "methods": ["copySecret"],
+      "policy_owner": "rust",
+      "mechanism_owner": "native"
+    },
+    {
+      "name": "paths",
+      "file": "app_paths.dart",
+      "channel": "app.hidlins/paths",
+      "methods": ["applicationSupportPath"],
+      "policy_owner": "rust",
+      "mechanism_owner": "native"
+    },
+    {
+      "name": "vault_import",
+      "file": "vault_import.dart",
+      "channel": "app.hidlins/vault_import",
+      "methods": ["pickVault"],
+      "policy_owner": "rust",
+      "mechanism_owner": "native"
+    },
+    {
+      "name": "keyfile",
+      "file": "keyfile_access.dart",
+      "channel": "app.hidlins/keyfile",
+      "methods": ["pickReference", "resolveReference", "releaseReference"],
+      "policy_owner": "rust",
+      "mechanism_owner": "native"
+    },
+    {
+      "name": "attachment_export",
+      "file": "attachment_export.dart",
+      "channel": "app.hidlins/attachment_export",
+      "methods": ["chooseDestination"],
+      "policy_owner": "rust",
+      "mechanism_owner": "native"
+    }
+  ]
+}

@@ -1,4 +1,4 @@
-import 'package:flutter/animation.dart';
+import 'package:material_ui/material_ui.dart';
 
 abstract final class HidlinsSpacing {
   static const double xs = 4;
@@ -13,6 +13,12 @@ abstract final class HidlinsMotion {
   static const Duration standard = Duration(milliseconds: 250);
   static const Duration slow = Duration(milliseconds: 300);
   static const Curve curve = Curves.easeOutCubic;
+
+  static Duration resolve(BuildContext context, Duration duration) {
+    return MediaQuery.maybeOf(context)?.disableAnimations == true
+        ? Duration.zero
+        : duration;
+  }
 }
 
 abstract final class HidlinsBreakpoints {

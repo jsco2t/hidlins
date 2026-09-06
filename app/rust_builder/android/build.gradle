@@ -1,56 +1,41 @@
-// The Android Gradle Plugin builds the native code with the Android NDK.
+plugins {
+    id 'com.android.library'
+}
 
 group 'com.flutter_rust_bridge.hidlins_api'
 version '1.0'
 
-buildscript {
-    repositories {
-        google()
-        mavenCentral()
-    }
-
-    dependencies {
-        // The Android Gradle Plugin knows how to build native code with the NDK.
-        classpath 'com.android.tools.build:gradle:7.3.0'
-    }
-}
-
-rootProject.allprojects {
-    repositories {
-        google()
-        mavenCentral()
-    }
-}
-
-apply plugin: 'com.android.library'
-
 android {
-    if (project.android.hasProperty("namespace")) {
-        namespace 'com.flutter_rust_bridge.hidlins_api'
-    }
-
-    // Bumping the plugin compileSdkVersion requires all clients of this plugin
-    // to bump the version in their app.
-    compileSdkVersion 33
-
-    // Use the NDK version
-    // declared in /android/app/build.gradle file of the Flutter project.
-    // Replace it with a version number if this plugin requires a specfic NDK version.
-    // (e.g. ndkVersion "23.1.7779620")
-    ndkVersion android.ndkVersion
+    namespace 'com.flutter_rust_bridge.hidlins_api'
+    compileSdk 36
+    ndkVersion '28.2.13676358'
 
     compileOptions {
-        sourceCompatibility JavaVersion.VERSION_1_8
-        targetCompatibility JavaVersion.VERSION_1_8
+        sourceCompatibility JavaVersion.VERSION_17
+        targetCompatibility JavaVersion.VERSION_17
     }
 
     defaultConfig {
-        minSdkVersion 19
+        minSdk 29
+        ndk {
+            abiFilters 'arm64-v8a', 'x86_64'
+        }
+    }
+
+    sourceSets {
+        main {
+            // Make owns Rust compilation. Gradle consumes only the checked
+            // two-ABI staging contract and never invokes legacy Cargokit.
+            jniLibs.srcDirs rootProject.file('native-artifacts/jniLibs')
+        }
     }
 }
 
-apply from: "../cargokit/gradle/plugin.gradle"
-cargokit {
-    manifestDir = "../../../crates/hidlins-api"
-    libname = "hidlins_api"
+def verifyHidlinsNativeArtifacts = tasks.register('verifyHidlinsNativeArtifacts', Exec) {
+    workingDir rootProject.file('../..')
+    commandLine 'python3', 'tools/android-native/artifacts.py', 'check'
+}
+
+tasks.named('preBuild') {
+    dependsOn verifyHidlinsNativeArtifacts
 }

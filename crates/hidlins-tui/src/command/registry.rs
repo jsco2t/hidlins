@@ -38,6 +38,7 @@ command_variants! {
     Help,    // ?
     Cancel,  // Esc
     Confirm, // Enter
+    AddVault, // a on the locked vault chooser
 
     // --- Tree / list navigation (vim + arrow parity) ---
     Next,   // j / Down
@@ -353,6 +354,15 @@ pub(crate) static COMMANDS: &[CommandSpec] = &[
             .or(Contexts::SYNC_CONFIG),
         order: 40,
         quick_bar: false,
+    },
+    CommandSpec {
+        id: Command::AddVault,
+        name: "add-vault",
+        desc: "add existing vault",
+        group: Group::Global,
+        contexts: Contexts::UNLOCK_LIST,
+        order: 45,
+        quick_bar: true,
     },
     // --- Navigation ---
     CommandSpec {

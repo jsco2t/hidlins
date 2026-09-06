@@ -1,8 +1,11 @@
 import 'package:flutter/services.dart';
+import 'package:flutter/gestures.dart';
+import 'package:material_ui/material_ui.dart';
 import 'package:flutter_test/flutter_test.dart';
 
 import 'package:app/src/data/models.dart';
 import 'package:app/src/features/entries/entry_list.dart';
+
 import '../helpers/feature_test_helpers.dart';
 
 void main() {
@@ -108,6 +111,55 @@ void main() {
       await tester.pumpAndSettle();
 
       expect(find.text('No entries yet'), findsOneWidget);
+    });
+
+    testWidgets('right click opens the entry context menu', (tester) async {
+      await tester.pumpFeature(
+        EntryList(
+          entries: entries,
+          selectedUuid: null,
+          onEntrySelected: (_) {},
+          onCopyUsername: (_) {},
+          onCopyPassword: (_) {},
+          onEditEntry: (_) {},
+          onDeleteEntry: (_) {},
+        ),
+      );
+      await tester.pumpAndSettle();
+
+      await tester.tapAt(
+        tester.getCenter(find.text('GitHub')),
+        buttons: kSecondaryMouseButton,
+      );
+      await tester.pumpAndSettle();
+
+      expect(find.text('Edit'), findsOneWidget);
+      expect(find.text('Delete'), findsOneWidget);
+    });
+
+    testWidgets('reduced motion removes the hover fade duration', (
+      tester,
+    ) async {
+      await tester.pumpFeature(
+        MediaQuery(
+          data: const MediaQueryData(disableAnimations: true),
+          child: EntryList(
+            entries: entries,
+            selectedUuid: null,
+            onEntrySelected: (_) {},
+            onCopyUsername: (_) {},
+            onCopyPassword: (_) {},
+          ),
+        ),
+      );
+      await tester.pump();
+
+      expect(
+        tester
+            .widgetList<AnimatedOpacity>(find.byType(AnimatedOpacity))
+            .every((widget) => widget.duration == Duration.zero),
+        isTrue,
+      );
     });
   });
 

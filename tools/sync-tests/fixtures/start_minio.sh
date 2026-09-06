@@ -2,7 +2,7 @@
 # start_minio.sh — spin up a MinIO container for s3-sync integration tests.
 #
 # Starts the pinned MinIO image (see MINIO_VERSION.md) as a detached
-# container bound to 127.0.0.1, waits for it to become healthy, and writes
+# container bound to the requested interface, waits for it to become healthy, and writes
 # a sourceable env file the tests (and `make test-s3-integration`) read.
 #
 # The credentials below are TEST-ONLY and intentionally well-known — they
@@ -12,7 +12,9 @@
 # Usage:
 #   tools/sync-tests/fixtures/start_minio.sh [--port N]
 #
-# Honours the HIDLINS_MINIO_PORT env var as an alternative to --port.
+# Honours HIDLINS_MINIO_PORT and HIDLINS_MINIO_BIND. A non-loopback bind for
+# physical-device testing must also set HIDLINS_MINIO_ADVERTISE_HOST to the
+# LAN address the device can reach.
 # Idempotent: if a container named "$CONTAINER" is already running it is
 # left in place and the env file is (re)written.
 set -euo pipefail
@@ -26,6 +28,8 @@ REGION="us-east-1"
 
 # Port: --port wins over HIDLINS_MINIO_PORT wins over the 9000 default.
 PORT="${HIDLINS_MINIO_PORT:-9000}"
+BIND_HOST="${HIDLINS_MINIO_BIND:-127.0.0.1}"
+ADVERTISE_HOST="${HIDLINS_MINIO_ADVERTISE_HOST:-$BIND_HOST}"
 while [ "$#" -gt 0 ]; do
 	case "$1" in
 		--port) PORT="$2"; shift 2 ;;
@@ -36,7 +40,12 @@ done
 
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 ENV_FILE="${SCRIPT_DIR}/.minio-env"
-ENDPOINT="http://127.0.0.1:${PORT}"
+if [ "$BIND_HOST" = "0.0.0.0" ] && [ "$ADVERTISE_HOST" = "0.0.0.0" ]; then
+	echo "start_minio.sh: HIDLINS_MINIO_ADVERTISE_HOST is required when binding 0.0.0.0" >&2
+	exit 2
+fi
+ENDPOINT="http://${ADVERTISE_HOST}:${PORT}"
+HEALTH_ENDPOINT="http://127.0.0.1:${PORT}"
 
 # --- Container engine: docker or podman ------------------------------------
 if command -v docker >/dev/null 2>&1; then
@@ -54,10 +63,10 @@ if "$ENGINE" ps --format '{{.Names}}' | grep -qx "$CONTAINER"; then
 else
 	# Remove any stopped container with the same name so the run is clean.
 	"$ENGINE" rm -f "$CONTAINER" >/dev/null 2>&1 || true
-	echo "start_minio.sh: starting $MINIO_IMAGE on 127.0.0.1:${PORT} ..."
+	echo "start_minio.sh: starting $MINIO_IMAGE on ${BIND_HOST}:${PORT} ..."
 	"$ENGINE" run -d \
 		--name "$CONTAINER" \
-		-p "127.0.0.1:${PORT}:9000" \
+		-p "${BIND_HOST}:${PORT}:9000" \
 		-e "MINIO_ROOT_USER=${ACCESS_KEY}" \
 		-e "MINIO_ROOT_PASSWORD=${SECRET_KEY}" \
 		"$MINIO_IMAGE" server /data >/dev/null
@@ -68,7 +77,7 @@ fi
 echo -n "start_minio.sh: waiting for MinIO to become healthy"
 ready=""
 for _ in $(seq 1 60); do
-	if curl -fsS -o /dev/null "${ENDPOINT}/minio/health/live" 2>/dev/null; then
+	if curl -fsS -o /dev/null "${HEALTH_ENDPOINT}/minio/health/live" 2>/dev/null; then
 		ready="yes"
 		break
 	fi
@@ -90,6 +99,8 @@ export HIDLINS_MINIO_ENDPOINT="${ENDPOINT}"
 export HIDLINS_MINIO_ACCESS_KEY="${ACCESS_KEY}"
 export HIDLINS_MINIO_SECRET_KEY="${SECRET_KEY}"
 export HIDLINS_MINIO_REGION="${REGION}"
+export HIDLINS_MINIO_ENGINE="${ENGINE}"
+export HIDLINS_MINIO_CONTAINER="${CONTAINER}"
 EOF
 
 echo "start_minio.sh: ready. endpoint=${ENDPOINT} (env written to ${ENV_FILE})"

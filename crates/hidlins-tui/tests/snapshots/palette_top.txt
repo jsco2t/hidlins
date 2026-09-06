@@ -9,11 +9,11 @@
       │  help  [?]                                   │
       │  cancel / back  [Esc]                        │
       │  confirm / open  [Enter]                     │
+      │  add existing vault  [a]                     │
       │Navigation                                    │
       │  down  [j / ↓]                               │
       │  up  [k / ↑]                                 │
       │  collapse / parent  [h / ←]                  │
       │  expand / open  [l / →]                      │
       │  jump back  [Ctrl+o / Alt+←]                 │
-      │  jump forward  [Ctrl+i / Alt+→]              │
       └──────────────────────────────────────────────┘

@@ -9,6 +9,8 @@ import 'package:app/src/data/failures.dart';
 import 'package:app/src/data/models.dart';
 import 'package:app/src/providers/activity_provider.dart';
 import 'package:app/src/providers/providers.dart';
+import 'package:app/src/platform/platform_result.dart';
+import 'package:app/src/platform/secure_clipboard.dart';
 
 void main() {
   group('bridge repositories', () {
@@ -73,6 +75,36 @@ void main() {
       );
     });
 
+    test(
+      'mobile clipboard passes only a one-shot Rust ticket to native',
+      () async {
+        final session = _FakeBridgeSession();
+        final clipboard = _FakeSecureClipboard();
+        final repo = BridgeSecretsRepository.mobile(session, clipboard);
+
+        await repo.copyEntryField('entry', CopyField.password);
+
+        expect(session.prepareCalls, 1);
+        expect(session.copyCalls, 0);
+        expect(clipboard.transfer?.id, 'hct-from-rust');
+        expect(clipboard.transfer?.expiresAfterSeconds, 30);
+        expect(clipboard.transfer.toString(), isNot(contains('secret-')));
+      },
+    );
+
+    test('unavailable mobile clipboard fails explicitly', () async {
+      final session = _FakeBridgeSession();
+      final clipboard = _FakeSecureClipboard(
+        result: const PlatformUnsupported(),
+      );
+      final repo = BridgeSecretsRepository.mobile(session, clipboard);
+
+      await expectLater(
+        repo.copyEntryField('entry', CopyField.password),
+        throwsA(isA<UnsupportedPlatformFailure>()),
+      );
+    });
+
     test('activity throttle delegates to the bridge-backed session', () {
       final session = _FakeBridgeSession();
       final container = ProviderContainer(
@@ -115,6 +147,8 @@ void main() {
 final class _FakeBridgeSession implements bridge_api.AppSession {
   int revealCalls = 0;
   int activityCalls = 0;
+  int prepareCalls = 0;
+  int copyCalls = 0;
   HidlinsApiError? revealError;
   bridge.UiPrefs prefs = const bridge.UiPrefs();
 
@@ -126,6 +160,26 @@ final class _FakeBridgeSession implements bridge_api.AppSession {
     revealCalls++;
     if (revealError case final error?) throw error;
     return 'secret-$revealCalls';
+  }
+
+  @override
+  Future<bridge.ClipboardTransferTicket> prepareClipboardTransfer({
+    required String uuid,
+    required bridge.CopyField field,
+  }) async {
+    prepareCalls += 1;
+    return const bridge.ClipboardTransferTicket(
+      id: 'hct-from-rust',
+      expiresAfterSecs: 30,
+    );
+  }
+
+  @override
+  Future<void> copyEntryField({
+    required String uuid,
+    required bridge.CopyField field,
+  }) async {
+    copyCalls += 1;
   }
 
   @override
@@ -143,4 +197,19 @@ final class _FakeBridgeSession implements bridge_api.AppSession {
 
   @override
   dynamic noSuchMethod(Invocation invocation) => super.noSuchMethod(invocation);
+}
+
+final class _FakeSecureClipboard implements SecureClipboardCapability {
+  _FakeSecureClipboard({this.result = const PlatformSuccess(platformUnit)});
+
+  final PlatformResult<PlatformUnit> result;
+  PreparedClipboardTransfer? transfer;
+
+  @override
+  Future<PlatformResult<PlatformUnit>> copyPrepared(
+    PreparedClipboardTransfer transfer,
+  ) async {
+    this.transfer = transfer;
+    return result;
+  }
 }

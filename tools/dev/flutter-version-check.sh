@@ -38,9 +38,9 @@ fi
 # Prefer the machine-readable form; fall back to the banner. An unparseable
 # result stays empty and therefore never accidentally compares equal.
 ACTUAL="$(flutter --version --machine 2>/dev/null \
-  | sed -n 's/.*"frameworkVersion"[[:space:]]*:[[:space:]]*"\([^"]*\)".*/\1/p' | head -n1)"
+  | sed -n 's/.*"frameworkVersion"[[:space:]]*:[[:space:]]*"\([^"]*\)".*/\1/p')"
 if [ -z "$ACTUAL" ]; then
-  ACTUAL="$(flutter --version 2>/dev/null | sed -n 's/^Flutter \([0-9][0-9.]*\).*/\1/p' | head -n1)"
+  ACTUAL="$(flutter --version 2>/dev/null | sed -n 's/^Flutter \([0-9][0-9.]*\).*/\1/p')"
 fi
 
 if [ -z "$ACTUAL" ]; then

@@ -469,35 +469,36 @@ fn lifecycle_grace_semantics_match_design_table() {
     assert!(session.has_vault(), "inactive: vault still present");
 
     // Paused → starts 15s grace
+    let paused_at = Instant::now();
     session.report_lifecycle_state(LifecycleStateDto::Paused);
-    session.drive_tick(t0 + Duration::from_secs(2));
     assert!(
         session.has_vault(),
-        "paused: vault present (grace just started)"
+        "paused report: vault present (grace just started)"
     );
 
     // 14s into grace — still alive
-    session.drive_tick(t0 + Duration::from_secs(16));
+    session.drive_tick(paused_at + Duration::from_secs(14));
     assert!(session.has_vault(), "paused+14s: vault still present");
 
     // Resumed → cancels grace
     session.report_lifecycle_state(LifecycleStateDto::Resumed);
-    session.drive_tick(t0 + Duration::from_secs(17));
     assert!(
         session.has_vault(),
-        "resumed: vault still present, grace cancelled"
+        "resumed report: vault still present, grace cancelled"
     );
 
     // Start grace again with Hidden
     session.report_lifecycle_state(LifecycleStateDto::Hidden);
-    session.drive_tick(t0 + Duration::from_secs(18));
+    let hidden_observed_at = Instant::now();
     assert!(session.has_vault(), "hidden: grace started");
 
-    // Finding #7: assert at the exact 15s boundary, not one tick later.
-    // Grace started at t0+18; 15s later is t0+33. The >= check fires
-    // directly (no Expired intermediate like idle), so the vault
-    // should be locked after the t0+33 tick.
-    session.drive_tick(t0 + Duration::from_secs(33));
+    session.drive_tick(hidden_observed_at + Duration::from_secs(14));
+    assert!(session.has_vault(), "hidden+14s: vault still present");
+
+    // Finding #7: assert on the first deterministic instant known to be at
+    // least 15s after the synchronous report returned, not one ticker later.
+    // The >= check fires directly (no Expired intermediate like idle).
+    session.drive_tick(hidden_observed_at + Duration::from_secs(15));
 
     assert!(
         !session.has_vault(),
@@ -523,9 +524,11 @@ fn lifecycle_detached_locks_immediately() {
     let (session, recording) = unlocked_mobile_session(&env, name, password);
 
     session.report_lifecycle_state(LifecycleStateDto::Detached);
-    session.drive_tick(Instant::now());
 
-    assert!(!session.has_vault(), "detached: vault dropped immediately");
+    assert!(
+        !session.has_vault(),
+        "detached report reconciles the lock before returning"
+    );
     assert!(
         !session.has_credentials(),
         "detached: credentials dropped immediately"

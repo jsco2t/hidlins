@@ -1,5 +1,6 @@
 // ignore: unused_import
 import 'package:intl/intl.dart' as intl;
+
 import 'app_localizations.dart';
 
 // ignore_for_file: type=lint
@@ -128,6 +129,9 @@ class AppLocalizationsEn extends AppLocalizations {
   String get actionClose => 'Close';
 
   @override
+  String get actionHome => 'Home';
+
+  @override
   String copiedSnackbar(int seconds) {
     return 'Copied — clears in ${seconds}s';
   }
@@ -159,6 +163,15 @@ class AppLocalizationsEn extends AppLocalizations {
       'Choose an entry from the list to view details';
 
   @override
+  String get groupAllEntries => 'All entries';
+
+  @override
+  String get errorPageTitle => 'Page not found';
+
+  @override
+  String get errorPageMessage => 'The requested page is unavailable.';
+
+  @override
   String get syncStatusIdle => 'Sync idle';
 
   @override
@@ -169,6 +182,13 @@ class AppLocalizationsEn extends AppLocalizations {
 
   @override
   String get syncStatusSuccess => 'Synced';
+
+  @override
+  String get startupSecurityWarningTitle => 'Security integration degraded';
+
+  @override
+  String get startupSecurityWarningMessage =>
+      'Automatic OS screen-lock detection is unavailable. Idle auto-lock remains active.';
 
   @override
   String get settingsTitle => 'Settings';
@@ -199,6 +219,13 @@ class AppLocalizationsEn extends AppLocalizations {
 
   @override
   String get settingsLicenses => 'Open source licenses';
+
+  @override
+  String get settingsKeyboardShortcuts => 'Keyboard shortcuts';
+
+  @override
+  String get settingsKeyboardShortcutsSummary =>
+      'Ctrl/Cmd-F or /: search · N: new entry · Ctrl/Cmd-C: copy selected password · G: generator · L: lock · Esc: close';
 
   @override
   String get generatorTitle => 'Password generator';
@@ -394,6 +421,22 @@ class AppLocalizationsEn extends AppLocalizations {
   String get attachmentDetachConfirm => 'Remove this attachment?';
 
   @override
+  String attachmentExportAction(String name) {
+    return 'Save $name as…';
+  }
+
+  @override
+  String get attachmentExportWarning => 'Saved copies are unencrypted.';
+
+  @override
+  String attachmentExportSuccess(String name) {
+    return 'Saved an unencrypted copy of $name';
+  }
+
+  @override
+  String get attachmentExportFailed => 'Could not save attachment';
+
+  @override
   String attachmentBytes(String size) {
     return '$size bytes';
   }
@@ -548,4 +591,43 @@ class AppLocalizationsEn extends AppLocalizations {
 
   @override
   String get syncErrorAuthFailed => 'S3 authentication failed';
+
+  @override
+  String get syncConfigureTitle => 'Configure sync';
+
+  @override
+  String get syncSaveConfiguration => 'Save sync configuration';
+
+  @override
+  String get syncNow => 'Sync now';
+
+  @override
+  String get syncNotConfigured => 'Sync is not configured';
+
+  @override
+  String get syncWorkspaceAvailable =>
+      'Your cached entries remain available while sync runs.';
+
+  @override
+  String get syncMutationsDisabled => 'Editing is paused until sync finishes.';
+
+  @override
+  String get syncOutcomeAlreadyCurrent => 'Already up to date';
+
+  @override
+  String get syncOutcomePushed => 'Local changes uploaded';
+
+  @override
+  String get syncOutcomeFastReplaced => 'Remote changes downloaded';
+
+  @override
+  String get syncOutcomeMerged => 'Local and remote changes merged';
+
+  @override
+  String get syncConflictTitle => 'Sync conflict needs attention';
+
+  @override
+  String syncConflictMessage(String backupPath) {
+    return 'Both sides were preserved. Review the backup at $backupPath before retrying.';
+  }
 }

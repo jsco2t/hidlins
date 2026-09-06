@@ -25,6 +25,23 @@ class KeyfileNeeded extends AppFailure {
   const KeyfileNeeded();
 }
 
+class UnsupportedPlatformFailure extends AppFailure {
+  final String capability;
+  const UnsupportedPlatformFailure(this.capability);
+}
+
+class PlatformOperationFailure extends AppFailure {
+  final String capability;
+  final String state;
+  final String? code;
+
+  const PlatformOperationFailure({
+    required this.capability,
+    required this.state,
+    this.code,
+  });
+}
+
 class PathAlreadyExists extends AppFailure {
   final String path;
   const PathAlreadyExists(this.path);
@@ -83,6 +100,8 @@ AppFailure mapApiError(HidlinsApiError error) {
       holderPid: holderPid,
     ),
     HidlinsApiError_KeyfileRequired() => const KeyfileNeeded(),
+    HidlinsApiError_UnsupportedPlatform(:final capability) =>
+      UnsupportedPlatformFailure(capability),
     HidlinsApiError_PathExists(:final path) => PathAlreadyExists(path),
     HidlinsApiError_FileNotFound(:final path) => NotFound(path),
     HidlinsApiError_InvalidInput(:final field, :final reason) =>

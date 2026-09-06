@@ -11,6 +11,8 @@ void main() {
       const HidlinsApiError.vaultBusySyncing(): VaultIsBusy,
       const HidlinsApiError.vaultContended(holderPid: 42): VaultContended,
       const HidlinsApiError.keyfileRequired(): KeyfileNeeded,
+      const HidlinsApiError.unsupportedPlatform(capability: 'clipboard'):
+          UnsupportedPlatformFailure,
       const HidlinsApiError.pathExists(path: '/v.kdbx'): PathAlreadyExists,
       const HidlinsApiError.fileNotFound(path: '/v.kdbx'): NotFound,
       const HidlinsApiError.invalidInput(field: 'name', reason: 'empty'):
@@ -44,6 +46,14 @@ void main() {
       );
       expect(result, isA<VaultContended>());
       expect((result as VaultContended).holderPid, 99);
+    });
+
+    test('UnsupportedPlatform preserves capability', () {
+      final result = mapApiError(
+        const HidlinsApiError.unsupportedPlatform(capability: 'clipboard'),
+      );
+      expect(result, isA<UnsupportedPlatformFailure>());
+      expect((result as UnsupportedPlatformFailure).capability, 'clipboard');
     });
 
     test('SyncConflict preserves backupPath', () {

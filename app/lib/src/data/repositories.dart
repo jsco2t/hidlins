@@ -13,8 +13,9 @@ abstract class SessionRepository {
   Future<void> shutdown();
   Stream<LockEvent> lockEvents();
   BigInt droppedLockEvents();
+  Future<List<String>> startupWarnings();
   void reportActivity();
-  void reportLifecycleState(LifecycleStateDto state);
+  LockEvent reportLifecycleState(LifecycleStateDto state);
 
   Future<List<VaultSummary>> listVaults();
   Future<VaultSummary> createVault({
@@ -23,6 +24,11 @@ abstract class SessionRepository {
     String? fileName,
     KeyfileRef? keyfile,
     required bool confirmedNoRecovery,
+  });
+  Future<VaultSummary> registerExistingVault({
+    required String name,
+    required String kdbxPath,
+    KeyfileRef? keyfile,
   });
   Future<void> deregisterVault(String name, {required bool deleteFile});
   Future<void> changeMasterPassword(String current, String newPassword);
@@ -85,7 +91,6 @@ abstract class SyncRepository {
   Future<void> syncNow();
   Future<void> clearSyncConfig(String name);
   Stream<SyncEvent> syncEvents();
-  Stream<ClipboardEvent> clipboardEvents();
 }
 
 abstract class PrefsRepository {

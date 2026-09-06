@@ -1,4 +1,4 @@
-import 'package:flutter/material.dart';
+import 'package:material_ui/material_ui.dart';
 
 import '../tokens.dart';
 
@@ -26,6 +26,13 @@ class _CopyRowState extends State<CopyRow> {
   @override
   Widget build(BuildContext context) {
     final colorScheme = Theme.of(context).colorScheme;
+    final usesHover = switch (Theme.of(context).platform) {
+      TargetPlatform.linux ||
+      TargetPlatform.macOS ||
+      TargetPlatform.windows => true,
+      _ => false,
+    };
+    final showCopyAction = !usesHover || _hovered;
     return MouseRegion(
       onEnter: (_) => setState(() => _hovered = true),
       onExit: (_) => setState(() => _hovered = false),
@@ -43,9 +50,8 @@ class _CopyRowState extends State<CopyRow> {
                 children: [
                   Text(
                     widget.label,
-                    style: Theme.of(context).textTheme.labelSmall?.copyWith(
-                      color: colorScheme.onSurfaceVariant,
-                    ),
+                    style: Theme.of(context).textTheme.labelSmall
+                        ?.copyWith(color: colorScheme.onSurfaceVariant),
                   ),
                   const SizedBox(height: 2),
                   Text(
@@ -55,13 +61,22 @@ class _CopyRowState extends State<CopyRow> {
                 ],
               ),
             ),
-            AnimatedOpacity(
-              opacity: _hovered ? 1.0 : 0.0,
-              duration: const Duration(milliseconds: 150),
-              child: IconButton(
-                icon: const Icon(Icons.copy, size: 18),
-                tooltip: widget.copyTooltip,
-                onPressed: widget.onCopy,
+            IgnorePointer(
+              ignoring: !showCopyAction,
+              child: AnimatedOpacity(
+                opacity: showCopyAction ? 1.0 : 0.0,
+                duration: const Duration(milliseconds: 150),
+                child: Semantics(
+                  label: widget.copyTooltip,
+                  button: true,
+                  onTap: widget.onCopy,
+                  excludeSemantics: true,
+                  child: IconButton(
+                    icon: const Icon(Icons.copy, size: 18),
+                    tooltip: widget.copyTooltip,
+                    onPressed: widget.onCopy,
+                  ),
+                ),
               ),
             ),
           ],

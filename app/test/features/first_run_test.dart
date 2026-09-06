@@ -1,6 +1,8 @@
 import 'package:flutter_test/flutter_test.dart';
 
 import 'package:app/src/features/vaults/first_run_page.dart';
+import 'package:app/src/ui/widgets/brand_mark.dart';
+
 import '../helpers/feature_test_helpers.dart';
 
 void main() {
@@ -17,6 +19,7 @@ void main() {
         findsOneWidget,
       );
       expect(find.text('Import a .kdbx file'), findsOneWidget);
+      expect(find.byType(BrandMark), findsOneWidget);
     });
 
     testWidgets('create choice fires callback', (tester) async {

@@ -12,3 +12,7 @@ PRODUCT_BUNDLE_IDENTIFIER = app.hidlins.macos
 
 // The copyright displayed in application information
 PRODUCT_COPYRIGHT = Copyright © 2026 app.hidlins. All rights reserved.
+
+// Runner-target only: do not impose first-party warning policy on Pods or SPM packages.
+GCC_TREAT_WARNINGS_AS_ERRORS = YES
+SWIFT_TREAT_WARNINGS_AS_ERRORS = YES

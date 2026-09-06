@@ -166,6 +166,9 @@ _hidlins() {
             hidlins__subcmd__help__subcmd__vault,open)
                 cmd="hidlins__subcmd__help__subcmd__vault__subcmd__open"
                 ;;
+            hidlins__subcmd__help__subcmd__vault,register)
+                cmd="hidlins__subcmd__help__subcmd__vault__subcmd__register"
+                ;;
             hidlins__subcmd__help__subcmd__vault,set-lock)
                 cmd="hidlins__subcmd__help__subcmd__vault__subcmd__set__subcmd__lock"
                 ;;
@@ -208,6 +211,9 @@ _hidlins() {
             hidlins__subcmd__vault,open)
                 cmd="hidlins__subcmd__vault__subcmd__open"
                 ;;
+            hidlins__subcmd__vault,register)
+                cmd="hidlins__subcmd__vault__subcmd__register"
+                ;;
             hidlins__subcmd__vault,set-lock)
                 cmd="hidlins__subcmd__vault__subcmd__set__subcmd__lock"
                 ;;
@@ -225,6 +231,9 @@ _hidlins() {
                 ;;
             hidlins__subcmd__vault__subcmd__help,open)
                 cmd="hidlins__subcmd__vault__subcmd__help__subcmd__open"
+                ;;
+            hidlins__subcmd__vault__subcmd__help,register)
+                cmd="hidlins__subcmd__vault__subcmd__help__subcmd__register"
                 ;;
             hidlins__subcmd__vault__subcmd__help,set-lock)
                 cmd="hidlins__subcmd__vault__subcmd__help__subcmd__set__subcmd__lock"
@@ -1061,7 +1070,7 @@ _hidlins() {
             return 0
             ;;
         hidlins__subcmd__help__subcmd__vault)
-            opts="create open list set-sync set-lock"
+            opts="create register open list set-sync set-lock"
             if [[ ${cur} == -* || ${COMP_CWORD} -eq 3 ]] ; then
                 COMPREPLY=( $(compgen -W "${opts}" -- "${cur}") )
                 return 0
@@ -1103,6 +1112,20 @@ _hidlins() {
             return 0
             ;;
         hidlins__subcmd__help__subcmd__vault__subcmd__open)
+            opts=""
+            if [[ ${cur} == -* || ${COMP_CWORD} -eq 4 ]] ; then
+                COMPREPLY=( $(compgen -W "${opts}" -- "${cur}") )
+                return 0
+            fi
+            case "${prev}" in
+                *)
+                    COMPREPLY=()
+                    ;;
+            esac
+            COMPREPLY=( $(compgen -W "${opts}" -- "${cur}") )
+            return 0
+            ;;
+        hidlins__subcmd__help__subcmd__vault__subcmd__register)
             opts=""
             if [[ ${cur} == -* || ${COMP_CWORD} -eq 4 ]] ; then
                 COMPREPLY=( $(compgen -W "${opts}" -- "${cur}") )
@@ -1387,7 +1410,7 @@ _hidlins() {
             return 0
             ;;
         hidlins__subcmd__vault)
-            opts="-h --format --registry --help create open list set-sync set-lock help"
+            opts="-h --format --registry --help create register open list set-sync set-lock help"
             if [[ ${cur} == -* || ${COMP_CWORD} -eq 2 ]] ; then
                 COMPREPLY=( $(compgen -W "${opts}" -- "${cur}") )
                 return 0
@@ -1443,7 +1466,7 @@ _hidlins() {
             return 0
             ;;
         hidlins__subcmd__vault__subcmd__help)
-            opts="create open list set-sync set-lock help"
+            opts="create register open list set-sync set-lock help"
             if [[ ${cur} == -* || ${COMP_CWORD} -eq 3 ]] ; then
                 COMPREPLY=( $(compgen -W "${opts}" -- "${cur}") )
                 return 0
@@ -1499,6 +1522,20 @@ _hidlins() {
             return 0
             ;;
         hidlins__subcmd__vault__subcmd__help__subcmd__open)
+            opts=""
+            if [[ ${cur} == -* || ${COMP_CWORD} -eq 4 ]] ; then
+                COMPREPLY=( $(compgen -W "${opts}" -- "${cur}") )
+                return 0
+            fi
+            case "${prev}" in
+                *)
+                    COMPREPLY=()
+                    ;;
+            esac
+            COMPREPLY=( $(compgen -W "${opts}" -- "${cur}") )
+            return 0
+            ;;
+        hidlins__subcmd__vault__subcmd__help__subcmd__register)
             opts=""
             if [[ ${cur} == -* || ${COMP_CWORD} -eq 4 ]] ; then
                 COMPREPLY=( $(compgen -W "${opts}" -- "${cur}") )
@@ -1570,6 +1607,40 @@ _hidlins() {
             fi
             case "${prev}" in
                 --id)
+                    COMPREPLY=($(compgen -f "${cur}"))
+                    return 0
+                    ;;
+                --format)
+                    COMPREPLY=($(compgen -W "human json" -- "${cur}"))
+                    return 0
+                    ;;
+                --registry)
+                    COMPREPLY=($(compgen -f "${cur}"))
+                    return 0
+                    ;;
+                *)
+                    COMPREPLY=()
+                    ;;
+            esac
+            COMPREPLY=( $(compgen -W "${opts}" -- "${cur}") )
+            return 0
+            ;;
+        hidlins__subcmd__vault__subcmd__register)
+            opts="-h --id --path --keyfile --format --registry --help"
+            if [[ ${cur} == -* || ${COMP_CWORD} -eq 3 ]] ; then
+                COMPREPLY=( $(compgen -W "${opts}" -- "${cur}") )
+                return 0
+            fi
+            case "${prev}" in
+                --id)
+                    COMPREPLY=($(compgen -f "${cur}"))
+                    return 0
+                    ;;
+                --path)
+                    COMPREPLY=($(compgen -f "${cur}"))
+                    return 0
+                    ;;
+                --keyfile)
                     COMPREPLY=($(compgen -f "${cur}"))
                     return 0
                     ;;

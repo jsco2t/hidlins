@@ -1,6 +1,6 @@
 import 'dart:math';
 
-import 'package:flutter/material.dart';
+import 'package:material_ui/material_ui.dart';
 
 import '../tokens.dart';
 
@@ -40,10 +40,8 @@ class CountdownRing extends StatelessWidget {
         child: Center(
           child: Text(
             '$remainingSecs',
-            style: Theme.of(context).textTheme.labelSmall?.copyWith(
-              color: color,
-              fontWeight: FontWeight.bold,
-            ),
+            style: Theme.of(context).textTheme.labelSmall
+                ?.copyWith(color: color, fontWeight: FontWeight.bold),
           ),
         ),
       ),

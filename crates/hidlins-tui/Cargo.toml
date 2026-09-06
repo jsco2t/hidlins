@@ -11,6 +11,12 @@ rust-version.workspace = true
 [lints]
 workspace = true
 
+[features]
+default = []
+# Builds the cross-process App/CLI advisory-lock case only for the Task 006
+# integration target; it adds no dependency and is absent from release builds.
+process-interop-tests = []
+
 [dependencies]
 # First-party (workspace path deps).
 hidlins-core = { path = "../hidlins-core", version = "0.1" }

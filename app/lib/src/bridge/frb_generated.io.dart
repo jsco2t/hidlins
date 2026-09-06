@@ -6,12 +6,15 @@
 // ignore_for_file: unused_import, unused_element, unnecessary_import, duplicate_ignore, invalid_use_of_internal_member, annotate_overrides, non_constant_identifier_names, curly_braces_in_flow_control_structures, prefer_const_literals_to_create_immutables, unused_field
 
 import 'api/session.dart';
+
 import 'dart:async';
 import 'dart:convert';
 import 'dart:ffi' as ffi;
+
 import 'dto.dart';
 import 'error.dart';
 import 'frb_generated.dart';
+
 import 'package:flutter_rust_bridge/flutter_rust_bridge_for_generated_io.dart';
 
 abstract class RustLibApiImplPlatform extends BaseApiImpl<RustLibWire> {
@@ -44,11 +47,6 @@ abstract class RustLibApiImplPlatform extends BaseApiImpl<RustLibWire> {
   @protected
   AppSession
   dco_decode_RustOpaque_flutter_rust_bridgefor_generatedRustAutoOpaqueInnerAppSession(
-    dynamic raw,
-  );
-
-  @protected
-  RustStreamSink<ClipboardEvent> dco_decode_StreamSink_clipboard_event_Sse(
     dynamic raw,
   );
 
@@ -124,7 +122,7 @@ abstract class RustLibApiImplPlatform extends BaseApiImpl<RustLibWire> {
   UiPrefs dco_decode_box_autoadd_ui_prefs(dynamic raw);
 
   @protected
-  ClipboardEvent dco_decode_clipboard_event(dynamic raw);
+  ClipboardTransferTicket dco_decode_clipboard_transfer_ticket(dynamic raw);
 
   @protected
   CopyField dco_decode_copy_field(dynamic raw);
@@ -339,11 +337,6 @@ abstract class RustLibApiImplPlatform extends BaseApiImpl<RustLibWire> {
   );
 
   @protected
-  RustStreamSink<ClipboardEvent> sse_decode_StreamSink_clipboard_event_Sse(
-    SseDeserializer deserializer,
-  );
-
-  @protected
   RustStreamSink<LockEvent> sse_decode_StreamSink_lock_event_Sse(
     SseDeserializer deserializer,
   );
@@ -435,7 +428,9 @@ abstract class RustLibApiImplPlatform extends BaseApiImpl<RustLibWire> {
   UiPrefs sse_decode_box_autoadd_ui_prefs(SseDeserializer deserializer);
 
   @protected
-  ClipboardEvent sse_decode_clipboard_event(SseDeserializer deserializer);
+  ClipboardTransferTicket sse_decode_clipboard_transfer_ticket(
+    SseDeserializer deserializer,
+  );
 
   @protected
   CopyField sse_decode_copy_field(SseDeserializer deserializer);
@@ -688,12 +683,6 @@ abstract class RustLibApiImplPlatform extends BaseApiImpl<RustLibWire> {
   );
 
   @protected
-  void sse_encode_StreamSink_clipboard_event_Sse(
-    RustStreamSink<ClipboardEvent> self,
-    SseSerializer serializer,
-  );
-
-  @protected
   void sse_encode_StreamSink_lock_event_Sse(
     RustStreamSink<LockEvent> self,
     SseSerializer serializer,
@@ -811,8 +800,8 @@ abstract class RustLibApiImplPlatform extends BaseApiImpl<RustLibWire> {
   void sse_encode_box_autoadd_ui_prefs(UiPrefs self, SseSerializer serializer);
 
   @protected
-  void sse_encode_clipboard_event(
-    ClipboardEvent self,
+  void sse_encode_clipboard_transfer_ticket(
+    ClipboardTransferTicket self,
     SseSerializer serializer,
   );
 

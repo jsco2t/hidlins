@@ -121,3 +121,34 @@ pub fn add_corpus_entries(paths: &HidlinsPaths, name: &str, password: &str) {
 
     vault.save().expect("save vault with corpus");
 }
+
+/// Add `count` deterministic credential entries with one final KDBX save.
+///
+/// This is intentionally test-only: building the fixture through 5,000 public
+/// one-entry transactions would benchmark repeated disk encryption rather than
+/// bridge list/search behavior.
+///
+/// # Panics
+///
+/// Panics if the fixture vault cannot be opened, populated, or saved.
+pub fn add_search_corpus_entries(paths: &HidlinsPaths, name: &str, password: &str, count: usize) {
+    let vault_path = paths.state_dir().join(format!("{name}.kdbx"));
+    let master = MasterPassword::new(password.to_string());
+    let mut vault = Vault::open(&vault_path, &master, None).expect("open search fixture vault");
+    let root = vault.root_group_uuid();
+
+    for index in 0..count {
+        let title = format!("Entry-{index:05}");
+        let username = format!("user-{index:05}@example.invalid");
+        vault
+            .add_entry(
+                root,
+                EntryBuilder::credential(&title)
+                    .username(&username)
+                    .password("fixture-secret")
+                    .build(),
+            )
+            .expect("add search fixture entry");
+    }
+    vault.save().expect("save search fixture vault");
+}

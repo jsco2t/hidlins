@@ -1,15 +1,15 @@
-                           ┌ Hidlins startup ──────────────┐
-        .--------.         │HIDLINS                        │
-      .'          '.       │Please select a vault:         │
-     /    .----.    \      │Selected: alpha                │
-    |    |      |    |     │Vault: beta                    │
-.---'----'------'----'---. │Vault: gamma                   │
-| o      HIDLINS      o  | │                               │
-|                        | │                               │
-|       HH     HH        | │                               │
-|       HH     HH        | │                               │
-|       HHHHHHHHH        | │Status: Ready                  │
-|       HH     HH        | │                               │
-| o     HH     HH     o  | │Up/Down or j/k: Select         │
-'------------------------' │Enter: Continue   Ctrl+Q: Exit │
-                           └───────────────────────────────┘
+                        ┌ Hidlins startup ─────────────────┐
+         ▄▄▄▄▄▄▄        │HIDLINS                           │
+       ▄██▀▀▀▀▀██▄      │Please select a vault:            │
+       ██       ██      │▶ alpha                           │
+       ██       ██      │  beta                            │
+  ╔════██═══════██════╗ │  gamma                           │
+  ║  ┌─────────────┐  ║ │                                  │
+  ║  │o  HIDLINS  o│  ║ │                                  │
+  ║  └─────────────┘  ║ │                                  │
+  ║       ▄▄▄▄▄       ║ │                                  │
+  ║         █         ║ │Status: Ready                     │
+  ║       ▄▄█▄▄       ║ │                                  │
+  ╚═══════════════════╝ │j/k: Select  Enter: Open          │
+                        │a: Add existing vault Ctrl+Q: Exit│
+                        └──────────────────────────────────┘

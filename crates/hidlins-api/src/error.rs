@@ -28,6 +28,9 @@ pub enum HidlinsApiError {
     #[error("keyfile is required")]
     KeyfileRequired,
 
+    #[error("platform capability is unsupported: {capability}")]
+    UnsupportedPlatform { capability: String },
+
     #[error("vault registry changed concurrently; reload and retry")]
     RegistryChanged,
 
@@ -79,8 +82,11 @@ impl From<VaultError> for HidlinsApiError {
             VaultError::HomeUnresolvable => Self::Io {
                 context: "HOME is not set or not resolvable".to_string(),
             },
-            VaultError::Io { path, .. } => Self::Io {
-                context: format!("on {}", path.display()),
+            VaultError::Io { source, path } => Self::Io {
+                // Keep the portable error category for actionable diagnostics,
+                // but never forward the OS/source message: a source supplied by
+                // a dependency can contain secret-bearing input.
+                context: format!("on {} ({:?})", path.display(), source.kind()),
             },
             VaultError::WriteFailed { .. } => Self::Io {
                 context: "KDBX write failed".to_string(),
@@ -381,7 +387,7 @@ mod tests {
                     path: PathBuf::from("/test"),
                 },
                 HidlinsApiError::Io {
-                    context: "on /test".to_string(),
+                    context: "on /test (Other)".to_string(),
                 },
             ),
             (

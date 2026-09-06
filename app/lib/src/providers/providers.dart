@@ -44,15 +44,25 @@ final vaultListProvider = FutureProvider<List<VaultSummary>>((ref) {
   return repo.listVaults();
 });
 
+final startupWarningsProvider = FutureProvider<List<String>>((ref) {
+  return ref.watch(sessionRepositoryProvider).startupWarnings();
+});
+
 final syncEventsProvider = StreamProvider<SyncEvent>((ref) {
   final repo = ref.watch(syncRepositoryProvider);
   return repo.syncEvents();
 });
 
-final clipboardEventsProvider = StreamProvider<ClipboardEvent>((ref) {
-  final repo = ref.watch(syncRepositoryProvider);
-  return repo.clipboardEvents();
-});
+final selectedEntryProvider = NotifierProvider<SelectedEntryNotifier, String?>(
+  SelectedEntryNotifier.new,
+);
+
+class SelectedEntryNotifier extends Notifier<String?> {
+  @override
+  String? build() => null;
+
+  void select(String? uuid) => state = uuid;
+}
 
 final prefsProvider = AsyncNotifierProvider<PrefsNotifier, UiPrefs>(
   PrefsNotifier.new,

@@ -241,6 +241,63 @@ fn change_master_password_reencrypts_sync_credentials() {
 }
 
 #[test]
+fn change_master_password_preserves_sync_divergence_pointers() {
+    let env = TestEnv::new();
+    let vault_path = create_test_vault(&env, "pointer-preserve", "old-pass");
+    register_vault(&env, "pointer-preserve", &vault_path);
+
+    let session = AppSession::for_test(env.paths_clone()).expect("create session");
+    session
+        .unlock("pointer-preserve".to_string(), "old-pass".to_string(), None)
+        .expect("unlock");
+    session
+        .configure_sync(s3_cfg("marker-secret"))
+        .expect("configure sync");
+    session.shutdown();
+
+    // Model a vault that has completed at least one sync. Password rotation
+    // must not reset these pointers: doing so makes the next sync classify the
+    // old-password remote and new-password local as a first-time divergence,
+    // then fail while attempting to decrypt the remote with the new password.
+    let mut registry = hidlins_core::VaultRegistry::load(env.paths_clone()).expect("load registry");
+    let mut updated = registry
+        .get("pointer-preserve")
+        .expect("registered vault")
+        .clone();
+    let mut cfg = hidlins_sync::SyncConfig::from_vault_entry(&updated).expect("sync config");
+    cfg.last_synced_remote_etag = Some("etag-before-password-change".to_string());
+    cfg.last_synced_local_sha256 = Some("ab".repeat(32));
+    cfg.to_vault_entry(&mut updated);
+    registry
+        .deregister("pointer-preserve", false)
+        .expect("replace old record");
+    registry.register(updated).expect("replace record");
+    registry.save().expect("save pointers");
+
+    let session = AppSession::for_test(env.paths_clone()).expect("reload session");
+    session
+        .unlock("pointer-preserve".to_string(), "old-pass".to_string(), None)
+        .expect("unlock reloaded session");
+    session
+        .change_master_password("old-pass".to_string(), "new-pass".to_string())
+        .expect("change password");
+
+    let registry = hidlins_core::VaultRegistry::load(env.paths_clone()).expect("reload registry");
+    let cfg = hidlins_sync::SyncConfig::from_vault_entry(
+        registry.get("pointer-preserve").expect("vault remains"),
+    )
+    .expect("sync config remains");
+    assert_eq!(
+        cfg.last_synced_remote_etag.as_deref(),
+        Some("etag-before-password-change")
+    );
+    assert_eq!(
+        cfg.last_synced_local_sha256.as_deref(),
+        Some("ab".repeat(32).as_str())
+    );
+}
+
+#[test]
 fn change_master_password_credentials_replaced_before_registry_write() {
     let env = TestEnv::new();
     let vault_path = create_test_vault(&env, "cred-replace", "old-pass");

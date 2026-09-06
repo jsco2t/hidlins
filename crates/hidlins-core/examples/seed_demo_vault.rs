@@ -1,4 +1,4 @@
-//! One-off generator for the committed demo test vault.
+//! Generator for a disposable demo test vault.
 //!
 //! Builds a KDBX4 vault populated with a broad spread of secret types so
 //! the TUI and CLI have something realistic to exercise: credentials,
@@ -8,10 +8,10 @@
 //! Master password: `Password123` (this is a throwaway fixture — never a
 //! real secret).
 //!
-//! Run:
+//! Run from the repository root through the canonical build interface:
 //!
 //! ```text
-//! cargo run --example seed_demo_vault -p hidlins-core --offline --locked -- test-vaults/demo.kdbx
+//! make demo-vault DEMO_VAULT=/absolute/path/to/demo.kdbx
 //! ```
 
 use hidlins_core::{fields, Database, KdfParams, MasterPassword, NoRecoveryConfirmed, Vault};
@@ -23,9 +23,6 @@ fn main() {
         .nth(1)
         .expect("usage: seed_demo_vault <output.kdbx>");
     let path = PathBuf::from(out);
-    // Regenerate cleanly: `Vault::create` refuses to overwrite.
-    let _ = std::fs::remove_file(&path);
-
     let master = MasterPassword::new("Password123".to_string());
     let mut vault = Vault::create(
         &path,

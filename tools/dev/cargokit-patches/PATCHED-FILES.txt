@@ -1,4 +1,5 @@
 app/rust_builder/cargokit/build_pod.sh
+app/rust_builder/cargokit/build_tool/lib/src/android_environment.dart
 app/rust_builder/cargokit/build_tool/lib/src/artifacts_provider.dart
 app/rust_builder/cargokit/build_tool/lib/src/builder.dart
 app/rust_builder/cargokit/build_tool/lib/src/build_pod.dart

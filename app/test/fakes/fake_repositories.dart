@@ -11,6 +11,8 @@ class FakeSessionRepository implements SessionRepository {
   LockEvent currentLockState = LockEvent.locked;
   BigInt droppedLockEventCount = BigInt.zero;
   Object? droppedLockEventsError;
+  List<String> startupWarningMessages = [];
+  Object? startupWarningsError;
 
   bool unlockCalled = false;
   String? lastUnlockName;
@@ -25,6 +27,8 @@ class FakeSessionRepository implements SessionRepository {
   String? lastCreateName;
   bool? lastConfirmedNoRecovery;
   AppFailure? createVaultError;
+  bool registerExistingVaultCalled = false;
+  String? lastRegisteredVaultPath;
 
   bool deregisterCalled = false;
   String? lastDeregisterName;
@@ -74,6 +78,12 @@ class FakeSessionRepository implements SessionRepository {
     return droppedLockEventCount;
   }
 
+  @override
+  Future<List<String>> startupWarnings() async {
+    if (startupWarningsError case final error?) throw error;
+    return startupWarningMessages;
+  }
+
   void emitLockState(LockEvent state) {
     currentLockState = state;
     lockController.add(state);
@@ -88,8 +98,9 @@ class FakeSessionRepository implements SessionRepository {
   }
 
   @override
-  void reportLifecycleState(LifecycleStateDto state) {
+  LockEvent reportLifecycleState(LifecycleStateDto state) {
     lifecycleStates.add(state);
+    return currentLockState;
   }
 
   @override
@@ -110,6 +121,24 @@ class FakeSessionRepository implements SessionRepository {
     final vault = VaultSummary(
       name: name,
       path: '/vaults/$name.kdbx',
+      hasKeyfile: keyfile != null,
+      hasSync: false,
+    );
+    vaults.add(vault);
+    return vault;
+  }
+
+  @override
+  Future<VaultSummary> registerExistingVault({
+    required String name,
+    required String kdbxPath,
+    KeyfileRef? keyfile,
+  }) async {
+    registerExistingVaultCalled = true;
+    lastRegisteredVaultPath = kdbxPath;
+    final vault = VaultSummary(
+      name: name,
+      path: kdbxPath,
       hasKeyfile: keyfile != null,
       hasSync: false,
     );
@@ -191,7 +220,10 @@ class FakeEntryRepository implements EntryRepository {
   bool removeAttachmentCalled = false;
   String? lastRemovedAttachmentKey;
   bool saveAttachmentCalled = false;
+  String? lastSaveAttachmentUuid;
+  String? lastSaveAttachmentKey;
   String? lastSaveAttachmentDest;
+  AppFailure? saveAttachmentError;
 
   AppFailure? attachmentError;
 
@@ -315,7 +347,10 @@ class FakeEntryRepository implements EntryRepository {
     String destPath,
   ) async {
     saveAttachmentCalled = true;
+    lastSaveAttachmentUuid = uuid;
+    lastSaveAttachmentKey = key;
     lastSaveAttachmentDest = destPath;
+    if (saveAttachmentError != null) throw saveAttachmentError!;
   }
 }
 
@@ -405,12 +440,11 @@ class FakeSyncRepository implements SyncRepository {
   bool syncNowCalled = false;
   bool configureCalled = false;
   S3ConfigDto? lastConfig;
+  AppFailure? configureError;
+  AppFailure? syncNowError;
 
   final StreamController<SyncEvent> syncController =
       StreamController<SyncEvent>.broadcast();
-
-  final StreamController<ClipboardEvent> clipController =
-      StreamController<ClipboardEvent>.broadcast();
 
   @override
   Future<SyncStatusDto> syncStatus() async => status;
@@ -419,11 +453,14 @@ class FakeSyncRepository implements SyncRepository {
   Future<void> configureSync(S3ConfigDto config) async {
     configureCalled = true;
     lastConfig = config;
+    if (configureError != null) throw configureError!;
+    status = const SyncStatusDto(configured: true, inFlight: false);
   }
 
   @override
   Future<void> syncNow() async {
     syncNowCalled = true;
+    if (syncNowError != null) throw syncNowError!;
   }
 
   @override
@@ -432,12 +469,8 @@ class FakeSyncRepository implements SyncRepository {
   @override
   Stream<SyncEvent> syncEvents() => syncController.stream;
 
-  @override
-  Stream<ClipboardEvent> clipboardEvents() => clipController.stream;
-
   void dispose() {
     unawaited(syncController.close());
-    unawaited(clipController.close());
   }
 }
 

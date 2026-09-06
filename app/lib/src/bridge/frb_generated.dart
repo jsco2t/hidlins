@@ -6,13 +6,16 @@
 // ignore_for_file: unused_import, unused_element, unnecessary_import, duplicate_ignore, invalid_use_of_internal_member, annotate_overrides, non_constant_identifier_names, curly_braces_in_flow_control_structures, prefer_const_literals_to_create_immutables, unused_field
 
 import 'api/session.dart';
+
 import 'dart:async';
 import 'dart:convert';
+
 import 'dto.dart';
 import 'error.dart';
 import 'frb_generated.dart';
 import 'frb_generated.io.dart'
     if (dart.library.js_interop) 'frb_generated.web.dart';
+
 import 'package:flutter_rust_bridge/flutter_rust_bridge_for_generated.dart';
 
 /// Main entrypoint of the Rust API
@@ -68,7 +71,7 @@ class RustLib extends BaseEntrypoint<RustLibApi, RustLibApiImpl, RustLibWire> {
   String get codegenVersion => '2.12.0';
 
   @override
-  int get rustContentHash => 229842155;
+  int get rustContentHash => 1315655542;
 
   static const kDefaultExternalLibraryLoaderConfig =
       ExternalLibraryLoaderConfig(
@@ -108,10 +111,6 @@ abstract class RustLibApi extends BaseApi {
   Future<void> crateApiSessionAppSessionClearSyncConfig({
     required AppSession that,
     required String name,
-  });
-
-  Stream<ClipboardEvent> crateApiSessionAppSessionClipboardEvents({
-    required AppSession that,
   });
 
   Future<void> crateApiSessionAppSessionConfigureSync({
@@ -218,6 +217,13 @@ abstract class RustLibApi extends BaseApi {
     required String parent,
   });
 
+  Future<ClipboardTransferTicket>
+  crateApiSessionAppSessionPrepareClipboardTransfer({
+    required AppSession that,
+    required String uuid,
+    required CopyField field,
+  });
+
   Future<void> crateApiSessionAppSessionPurgeEntry({
     required AppSession that,
     required String uuid,
@@ -244,7 +250,7 @@ abstract class RustLibApi extends BaseApi {
 
   void crateApiSessionAppSessionReportActivity({required AppSession that});
 
-  void crateApiSessionAppSessionReportLifecycleState({
+  LockEvent crateApiSessionAppSessionReportLifecycleState({
     required AppSession that,
     required LifecycleStateDto state,
   });
@@ -541,47 +547,6 @@ class RustLibApiImpl extends RustLibApiImplPlatform implements RustLibApi {
       );
 
   @override
-  Stream<ClipboardEvent> crateApiSessionAppSessionClipboardEvents({
-    required AppSession that,
-  }) {
-    final sink = RustStreamSink<ClipboardEvent>();
-    unawaited(
-      handler.executeNormal(
-        NormalTask(
-          callFfi: (port_) {
-            final serializer = SseSerializer(generalizedFrbRustBinding);
-            sse_encode_Auto_Ref_RustOpaque_flutter_rust_bridgefor_generatedRustAutoOpaqueInnerAppSession(
-              that,
-              serializer,
-            );
-            sse_encode_StreamSink_clipboard_event_Sse(sink, serializer);
-            pdeCallFfi(
-              generalizedFrbRustBinding,
-              serializer,
-              funcId: 6,
-              port: port_,
-            );
-          },
-          codec: SseCodec(
-            decodeSuccessData: sse_decode_unit,
-            decodeErrorData: null,
-          ),
-          constMeta: kCrateApiSessionAppSessionClipboardEventsConstMeta,
-          argValues: [that, sink],
-          apiImpl: this,
-        ),
-      ),
-    );
-    return sink.stream;
-  }
-
-  TaskConstMeta get kCrateApiSessionAppSessionClipboardEventsConstMeta =>
-      const TaskConstMeta(
-        debugName: "AppSession_clipboard_events",
-        argNames: ["that", "sink"],
-      );
-
-  @override
   Future<void> crateApiSessionAppSessionConfigureSync({
     required AppSession that,
     required S3ConfigDto cfg,
@@ -598,7 +563,7 @@ class RustLibApiImpl extends RustLibApiImplPlatform implements RustLibApi {
           pdeCallFfi(
             generalizedFrbRustBinding,
             serializer,
-            funcId: 7,
+            funcId: 6,
             port: port_,
           );
         },
@@ -638,7 +603,7 @@ class RustLibApiImpl extends RustLibApiImplPlatform implements RustLibApi {
           pdeCallFfi(
             generalizedFrbRustBinding,
             serializer,
-            funcId: 8,
+            funcId: 7,
             port: port_,
           );
         },
@@ -678,7 +643,7 @@ class RustLibApiImpl extends RustLibApiImplPlatform implements RustLibApi {
           pdeCallFfi(
             generalizedFrbRustBinding,
             serializer,
-            funcId: 9,
+            funcId: 8,
             port: port_,
           );
         },
@@ -718,7 +683,7 @@ class RustLibApiImpl extends RustLibApiImplPlatform implements RustLibApi {
           pdeCallFfi(
             generalizedFrbRustBinding,
             serializer,
-            funcId: 10,
+            funcId: 9,
             port: port_,
           );
         },
@@ -764,7 +729,7 @@ class RustLibApiImpl extends RustLibApiImplPlatform implements RustLibApi {
           pdeCallFfi(
             generalizedFrbRustBinding,
             serializer,
-            funcId: 11,
+            funcId: 10,
             port: port_,
           );
         },
@@ -816,7 +781,7 @@ class RustLibApiImpl extends RustLibApiImplPlatform implements RustLibApi {
           pdeCallFfi(
             generalizedFrbRustBinding,
             serializer,
-            funcId: 12,
+            funcId: 11,
             port: port_,
           );
         },
@@ -856,7 +821,7 @@ class RustLibApiImpl extends RustLibApiImplPlatform implements RustLibApi {
           pdeCallFfi(
             generalizedFrbRustBinding,
             serializer,
-            funcId: 13,
+            funcId: 12,
             port: port_,
           );
         },
@@ -896,7 +861,7 @@ class RustLibApiImpl extends RustLibApiImplPlatform implements RustLibApi {
           pdeCallFfi(
             generalizedFrbRustBinding,
             serializer,
-            funcId: 14,
+            funcId: 13,
             port: port_,
           );
         },
@@ -929,7 +894,7 @@ class RustLibApiImpl extends RustLibApiImplPlatform implements RustLibApi {
             that,
             serializer,
           );
-          return pdeCallFfi(generalizedFrbRustBinding, serializer, funcId: 15)!;
+          return pdeCallFfi(generalizedFrbRustBinding, serializer, funcId: 14)!;
         },
         codec: SseCodec(
           decodeSuccessData: sse_decode_u_64,
@@ -965,7 +930,7 @@ class RustLibApiImpl extends RustLibApiImplPlatform implements RustLibApi {
           pdeCallFfi(
             generalizedFrbRustBinding,
             serializer,
-            funcId: 16,
+            funcId: 15,
             port: port_,
           );
         },
@@ -1003,7 +968,7 @@ class RustLibApiImpl extends RustLibApiImplPlatform implements RustLibApi {
           pdeCallFfi(
             generalizedFrbRustBinding,
             serializer,
-            funcId: 17,
+            funcId: 16,
             port: port_,
           );
         },
@@ -1041,7 +1006,7 @@ class RustLibApiImpl extends RustLibApiImplPlatform implements RustLibApi {
           pdeCallFfi(
             generalizedFrbRustBinding,
             serializer,
-            funcId: 18,
+            funcId: 17,
             port: port_,
           );
         },
@@ -1079,7 +1044,7 @@ class RustLibApiImpl extends RustLibApiImplPlatform implements RustLibApi {
           pdeCallFfi(
             generalizedFrbRustBinding,
             serializer,
-            funcId: 19,
+            funcId: 18,
             port: port_,
           );
         },
@@ -1115,7 +1080,7 @@ class RustLibApiImpl extends RustLibApiImplPlatform implements RustLibApi {
           pdeCallFfi(
             generalizedFrbRustBinding,
             serializer,
-            funcId: 20,
+            funcId: 19,
             port: port_,
           );
         },
@@ -1153,7 +1118,7 @@ class RustLibApiImpl extends RustLibApiImplPlatform implements RustLibApi {
           pdeCallFfi(
             generalizedFrbRustBinding,
             serializer,
-            funcId: 21,
+            funcId: 20,
             port: port_,
           );
         },
@@ -1189,7 +1154,7 @@ class RustLibApiImpl extends RustLibApiImplPlatform implements RustLibApi {
           pdeCallFfi(
             generalizedFrbRustBinding,
             serializer,
-            funcId: 22,
+            funcId: 21,
             port: port_,
           );
         },
@@ -1225,7 +1190,7 @@ class RustLibApiImpl extends RustLibApiImplPlatform implements RustLibApi {
           pdeCallFfi(
             generalizedFrbRustBinding,
             serializer,
-            funcId: 23,
+            funcId: 22,
             port: port_,
           );
         },
@@ -1264,7 +1229,7 @@ class RustLibApiImpl extends RustLibApiImplPlatform implements RustLibApi {
             pdeCallFfi(
               generalizedFrbRustBinding,
               serializer,
-              funcId: 24,
+              funcId: 23,
               port: port_,
             );
           },
@@ -1300,7 +1265,7 @@ class RustLibApiImpl extends RustLibApiImplPlatform implements RustLibApi {
           pdeCallFfi(
             generalizedFrbRustBinding,
             serializer,
-            funcId: 25,
+            funcId: 24,
             port: port_,
           );
         },
@@ -1337,7 +1302,7 @@ class RustLibApiImpl extends RustLibApiImplPlatform implements RustLibApi {
           pdeCallFfi(
             generalizedFrbRustBinding,
             serializer,
-            funcId: 26,
+            funcId: 25,
             port: port_,
           );
         },
@@ -1377,7 +1342,7 @@ class RustLibApiImpl extends RustLibApiImplPlatform implements RustLibApi {
           pdeCallFfi(
             generalizedFrbRustBinding,
             serializer,
-            funcId: 27,
+            funcId: 26,
             port: port_,
           );
         },
@@ -1396,6 +1361,48 @@ class RustLibApiImpl extends RustLibApiImplPlatform implements RustLibApi {
       const TaskConstMeta(
         debugName: "AppSession_move_group",
         argNames: ["that", "uuid", "parent"],
+      );
+
+  @override
+  Future<ClipboardTransferTicket>
+  crateApiSessionAppSessionPrepareClipboardTransfer({
+    required AppSession that,
+    required String uuid,
+    required CopyField field,
+  }) {
+    return handler.executeNormal(
+      NormalTask(
+        callFfi: (port_) {
+          final serializer = SseSerializer(generalizedFrbRustBinding);
+          sse_encode_Auto_Ref_RustOpaque_flutter_rust_bridgefor_generatedRustAutoOpaqueInnerAppSession(
+            that,
+            serializer,
+          );
+          sse_encode_String(uuid, serializer);
+          sse_encode_box_autoadd_copy_field(field, serializer);
+          pdeCallFfi(
+            generalizedFrbRustBinding,
+            serializer,
+            funcId: 27,
+            port: port_,
+          );
+        },
+        codec: SseCodec(
+          decodeSuccessData: sse_decode_clipboard_transfer_ticket,
+          decodeErrorData: sse_decode_hidlins_api_error,
+        ),
+        constMeta: kCrateApiSessionAppSessionPrepareClipboardTransferConstMeta,
+        argValues: [that, uuid, field],
+        apiImpl: this,
+      ),
+    );
+  }
+
+  TaskConstMeta
+  get kCrateApiSessionAppSessionPrepareClipboardTransferConstMeta =>
+      const TaskConstMeta(
+        debugName: "AppSession_prepare_clipboard_transfer",
+        argNames: ["that", "uuid", "field"],
       );
 
   @override
@@ -1588,7 +1595,7 @@ class RustLibApiImpl extends RustLibApiImplPlatform implements RustLibApi {
       );
 
   @override
-  void crateApiSessionAppSessionReportLifecycleState({
+  LockEvent crateApiSessionAppSessionReportLifecycleState({
     required AppSession that,
     required LifecycleStateDto state,
   }) {
@@ -1604,7 +1611,7 @@ class RustLibApiImpl extends RustLibApiImplPlatform implements RustLibApi {
           return pdeCallFfi(generalizedFrbRustBinding, serializer, funcId: 33)!;
         },
         codec: SseCodec(
-          decodeSuccessData: sse_decode_unit,
+          decodeSuccessData: sse_decode_lock_event,
           decodeErrorData: null,
         ),
         constMeta: kCrateApiSessionAppSessionReportLifecycleStateConstMeta,
@@ -2244,14 +2251,6 @@ class RustLibApiImpl extends RustLibApiImplPlatform implements RustLibApi {
   }
 
   @protected
-  RustStreamSink<ClipboardEvent> dco_decode_StreamSink_clipboard_event_Sse(
-    dynamic raw,
-  ) {
-    // Codec=Dco (DartCObject based), see doc to use other codecs
-    throw UnimplementedError();
-  }
-
-  @protected
   RustStreamSink<LockEvent> dco_decode_StreamSink_lock_event_Sse(dynamic raw) {
     // Codec=Dco (DartCObject based), see doc to use other codecs
     throw UnimplementedError();
@@ -2404,14 +2403,14 @@ class RustLibApiImpl extends RustLibApiImplPlatform implements RustLibApi {
   }
 
   @protected
-  ClipboardEvent dco_decode_clipboard_event(dynamic raw) {
+  ClipboardTransferTicket dco_decode_clipboard_transfer_ticket(dynamic raw) {
     // Codec=Dco (DartCObject based), see doc to use other codecs
     final arr = raw as List<dynamic>;
     if (arr.length != 2)
       throw Exception('unexpected arr length: expect 2 but see ${arr.length}');
-    return ClipboardEvent(
-      remainingSecs: dco_decode_u_32(arr[0]),
-      cleared: dco_decode_bool(arr[1]),
+    return ClipboardTransferTicket(
+      id: dco_decode_String(arr[0]),
+      expiresAfterSecs: dco_decode_u_32(arr[1]),
     );
   }
 
@@ -2602,35 +2601,39 @@ class RustLibApiImpl extends RustLibApiImplPlatform implements RustLibApi {
       case 6:
         return HidlinsApiError_KeyfileRequired();
       case 7:
-        return HidlinsApiError_RegistryChanged();
+        return HidlinsApiError_UnsupportedPlatform(
+          capability: dco_decode_String(raw[1]),
+        );
       case 8:
-        return HidlinsApiError_InvalidFormat();
+        return HidlinsApiError_RegistryChanged();
       case 9:
-        return HidlinsApiError_RegistryMalformed();
+        return HidlinsApiError_InvalidFormat();
       case 10:
-        return HidlinsApiError_SyncNotConfigured();
+        return HidlinsApiError_RegistryMalformed();
       case 11:
+        return HidlinsApiError_SyncNotConfigured();
+      case 12:
         return HidlinsApiError_SyncRemoteUnreachable(
           endpoint: dco_decode_opt_String(raw[1]),
         );
-      case 12:
-        return HidlinsApiError_SyncAuthFailed();
       case 13:
+        return HidlinsApiError_SyncAuthFailed();
+      case 14:
         return HidlinsApiError_SyncConflictUnresolvable(
           backupPath: dco_decode_String(raw[1]),
         );
-      case 14:
+      case 15:
         return HidlinsApiError_SyncDuplicateTarget(
           existingVault: dco_decode_String(raw[1]),
         );
-      case 15:
+      case 16:
         return HidlinsApiError_InvalidInput(
           field: dco_decode_String(raw[1]),
           reason: dco_decode_String(raw[2]),
         );
-      case 16:
-        return HidlinsApiError_Io(context: dco_decode_String(raw[1]));
       case 17:
+        return HidlinsApiError_Io(context: dco_decode_String(raw[1]));
+      case 18:
         return HidlinsApiError_Internal(context: dco_decode_String(raw[1]));
       default:
         throw Exception("unreachable");
@@ -3143,14 +3146,6 @@ class RustLibApiImpl extends RustLibApiImplPlatform implements RustLibApi {
   }
 
   @protected
-  RustStreamSink<ClipboardEvent> sse_decode_StreamSink_clipboard_event_Sse(
-    SseDeserializer deserializer,
-  ) {
-    // Codec=Sse (Serialization based), see doc to use other codecs
-    throw UnimplementedError('Unreachable ()');
-  }
-
-  @protected
   RustStreamSink<LockEvent> sse_decode_StreamSink_lock_event_Sse(
     SseDeserializer deserializer,
   ) {
@@ -3318,13 +3313,15 @@ class RustLibApiImpl extends RustLibApiImplPlatform implements RustLibApi {
   }
 
   @protected
-  ClipboardEvent sse_decode_clipboard_event(SseDeserializer deserializer) {
+  ClipboardTransferTicket sse_decode_clipboard_transfer_ticket(
+    SseDeserializer deserializer,
+  ) {
     // Codec=Sse (Serialization based), see doc to use other codecs
-    var var_remainingSecs = sse_decode_u_32(deserializer);
-    var var_cleared = sse_decode_bool(deserializer);
-    return ClipboardEvent(
-      remainingSecs: var_remainingSecs,
-      cleared: var_cleared,
+    var var_id = sse_decode_String(deserializer);
+    var var_expiresAfterSecs = sse_decode_u_32(deserializer);
+    return ClipboardTransferTicket(
+      id: var_id,
+      expiresAfterSecs: var_expiresAfterSecs,
     );
   }
 
@@ -3552,39 +3549,42 @@ class RustLibApiImpl extends RustLibApiImplPlatform implements RustLibApi {
       case 6:
         return HidlinsApiError_KeyfileRequired();
       case 7:
-        return HidlinsApiError_RegistryChanged();
+        var var_capability = sse_decode_String(deserializer);
+        return HidlinsApiError_UnsupportedPlatform(capability: var_capability);
       case 8:
-        return HidlinsApiError_InvalidFormat();
+        return HidlinsApiError_RegistryChanged();
       case 9:
-        return HidlinsApiError_RegistryMalformed();
+        return HidlinsApiError_InvalidFormat();
       case 10:
-        return HidlinsApiError_SyncNotConfigured();
+        return HidlinsApiError_RegistryMalformed();
       case 11:
+        return HidlinsApiError_SyncNotConfigured();
+      case 12:
         var var_endpoint = sse_decode_opt_String(deserializer);
         return HidlinsApiError_SyncRemoteUnreachable(endpoint: var_endpoint);
-      case 12:
-        return HidlinsApiError_SyncAuthFailed();
       case 13:
+        return HidlinsApiError_SyncAuthFailed();
+      case 14:
         var var_backupPath = sse_decode_String(deserializer);
         return HidlinsApiError_SyncConflictUnresolvable(
           backupPath: var_backupPath,
         );
-      case 14:
+      case 15:
         var var_existingVault = sse_decode_String(deserializer);
         return HidlinsApiError_SyncDuplicateTarget(
           existingVault: var_existingVault,
         );
-      case 15:
+      case 16:
         var var_field = sse_decode_String(deserializer);
         var var_reason = sse_decode_String(deserializer);
         return HidlinsApiError_InvalidInput(
           field: var_field,
           reason: var_reason,
         );
-      case 16:
+      case 17:
         var var_context = sse_decode_String(deserializer);
         return HidlinsApiError_Io(context: var_context);
-      case 17:
+      case 18:
         var var_context = sse_decode_String(deserializer);
         return HidlinsApiError_Internal(context: var_context);
       default:
@@ -4256,23 +4256,6 @@ class RustLibApiImpl extends RustLibApiImplPlatform implements RustLibApi {
   }
 
   @protected
-  void sse_encode_StreamSink_clipboard_event_Sse(
-    RustStreamSink<ClipboardEvent> self,
-    SseSerializer serializer,
-  ) {
-    // Codec=Sse (Serialization based), see doc to use other codecs
-    sse_encode_String(
-      self.setupAndSerialize(
-        codec: SseCodec(
-          decodeSuccessData: sse_decode_clipboard_event,
-          decodeErrorData: sse_decode_AnyhowException,
-        ),
-      ),
-      serializer,
-    );
-  }
-
-  @protected
   void sse_encode_StreamSink_lock_event_Sse(
     RustStreamSink<LockEvent> self,
     SseSerializer serializer,
@@ -4480,13 +4463,13 @@ class RustLibApiImpl extends RustLibApiImplPlatform implements RustLibApi {
   }
 
   @protected
-  void sse_encode_clipboard_event(
-    ClipboardEvent self,
+  void sse_encode_clipboard_transfer_ticket(
+    ClipboardTransferTicket self,
     SseSerializer serializer,
   ) {
     // Codec=Sse (Serialization based), see doc to use other codecs
-    sse_encode_u_32(self.remainingSecs, serializer);
-    sse_encode_bool(self.cleared, serializer);
+    sse_encode_String(self.id, serializer);
+    sse_encode_u_32(self.expiresAfterSecs, serializer);
   }
 
   @protected
@@ -4653,41 +4636,44 @@ class RustLibApiImpl extends RustLibApiImplPlatform implements RustLibApi {
         sse_encode_String(path, serializer);
       case HidlinsApiError_KeyfileRequired():
         sse_encode_i_32(6, serializer);
-      case HidlinsApiError_RegistryChanged():
+      case HidlinsApiError_UnsupportedPlatform(capability: final capability):
         sse_encode_i_32(7, serializer);
-      case HidlinsApiError_InvalidFormat():
+        sse_encode_String(capability, serializer);
+      case HidlinsApiError_RegistryChanged():
         sse_encode_i_32(8, serializer);
-      case HidlinsApiError_RegistryMalformed():
+      case HidlinsApiError_InvalidFormat():
         sse_encode_i_32(9, serializer);
-      case HidlinsApiError_SyncNotConfigured():
+      case HidlinsApiError_RegistryMalformed():
         sse_encode_i_32(10, serializer);
-      case HidlinsApiError_SyncRemoteUnreachable(endpoint: final endpoint):
+      case HidlinsApiError_SyncNotConfigured():
         sse_encode_i_32(11, serializer);
+      case HidlinsApiError_SyncRemoteUnreachable(endpoint: final endpoint):
+        sse_encode_i_32(12, serializer);
         sse_encode_opt_String(endpoint, serializer);
       case HidlinsApiError_SyncAuthFailed():
-        sse_encode_i_32(12, serializer);
+        sse_encode_i_32(13, serializer);
       case HidlinsApiError_SyncConflictUnresolvable(
         backupPath: final backupPath,
       ):
-        sse_encode_i_32(13, serializer);
+        sse_encode_i_32(14, serializer);
         sse_encode_String(backupPath, serializer);
       case HidlinsApiError_SyncDuplicateTarget(
         existingVault: final existingVault,
       ):
-        sse_encode_i_32(14, serializer);
+        sse_encode_i_32(15, serializer);
         sse_encode_String(existingVault, serializer);
       case HidlinsApiError_InvalidInput(
         field: final field,
         reason: final reason,
       ):
-        sse_encode_i_32(15, serializer);
+        sse_encode_i_32(16, serializer);
         sse_encode_String(field, serializer);
         sse_encode_String(reason, serializer);
       case HidlinsApiError_Io(context: final context):
-        sse_encode_i_32(16, serializer);
+        sse_encode_i_32(17, serializer);
         sse_encode_String(context, serializer);
       case HidlinsApiError_Internal(context: final context):
-        sse_encode_i_32(17, serializer);
+        sse_encode_i_32(18, serializer);
         sse_encode_String(context, serializer);
     }
   }
@@ -5313,9 +5299,6 @@ class AppSessionImpl extends RustOpaque implements AppSession {
   Future<void> clearSyncConfig({required String name}) => RustLib.instance.api
       .crateApiSessionAppSessionClearSyncConfig(that: this, name: name);
 
-  Stream<ClipboardEvent> clipboardEvents() =>
-      RustLib.instance.api.crateApiSessionAppSessionClipboardEvents(that: this);
-
   Future<void> configureSync({required S3ConfigDto cfg}) => RustLib.instance.api
       .crateApiSessionAppSessionConfigureSync(that: this, cfg: cfg);
 
@@ -5466,6 +5449,21 @@ class AppSessionImpl extends RustOpaque implements AppSession {
         parent: parent,
       );
 
+  /// Prepare a non-secret, single-use native clipboard handoff.
+  ///
+  /// Desktop uses the Rust clipboard directly and therefore returns a typed
+  /// unsupported result. Mobile Dart receives only this ticket; the
+  /// protected value remains zeroizing Rust state until a native adapter
+  /// consumes it or the session locks.
+  Future<ClipboardTransferTicket> prepareClipboardTransfer({
+    required String uuid,
+    required CopyField field,
+  }) => RustLib.instance.api.crateApiSessionAppSessionPrepareClipboardTransfer(
+    that: this,
+    uuid: uuid,
+    field: field,
+  );
+
   Future<void> purgeEntry({required String uuid}) => RustLib.instance.api
       .crateApiSessionAppSessionPurgeEntry(that: this, uuid: uuid);
 
@@ -5497,7 +5495,7 @@ class AppSessionImpl extends RustOpaque implements AppSession {
   void reportActivity() =>
       RustLib.instance.api.crateApiSessionAppSessionReportActivity(that: this);
 
-  void reportLifecycleState({required LifecycleStateDto state}) => RustLib
+  LockEvent reportLifecycleState({required LifecycleStateDto state}) => RustLib
       .instance
       .api
       .crateApiSessionAppSessionReportLifecycleState(that: this, state: state);

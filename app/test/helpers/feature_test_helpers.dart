@@ -1,11 +1,15 @@
-import 'package:flutter/material.dart';
+import 'package:material_ui/material_ui.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:flutter_test/flutter_test.dart';
 
 import 'package:app/src/l10n/app_localizations.dart';
+import 'package:app/src/l10n/hidlins_localizations.dart';
+import 'package:app/src/data/models.dart';
 import 'package:app/src/providers/providers.dart';
 import 'package:app/src/ui/theme.dart';
+
 import '../fakes/fake_repositories.dart';
+import '../fakes/fake_platform_capabilities.dart';
 
 class TestHarness {
   final FakeSessionRepository session = FakeSessionRepository();
@@ -16,6 +20,10 @@ class TestHarness {
   final FakeGeneratorRepository generator = FakeGeneratorRepository();
   final FakeSyncRepository sync = FakeSyncRepository();
   final FakePrefsRepository prefs = FakePrefsRepository();
+  final FakeKeyfileAccessCapability keyfiles = FakeKeyfileAccessCapability();
+  final FakeVaultImportCapability vaultImport = FakeVaultImportCapability([]);
+  FakeAttachmentExportCapability attachmentExport =
+      FakeAttachmentExportCapability([]);
 
   List<Override> get overrides => [
     sessionRepositoryProvider.overrideWithValue(session),
@@ -26,12 +34,26 @@ class TestHarness {
     generatorRepositoryProvider.overrideWithValue(generator),
     syncRepositoryProvider.overrideWithValue(sync),
     prefsRepositoryProvider.overrideWithValue(prefs),
+    keyfileAccessCapabilityProvider.overrideWithValue(keyfiles),
+    vaultImportCapabilityProvider.overrideWithValue(vaultImport),
+    attachmentExportCapabilityProvider.overrideWithValue(attachmentExport),
   ];
 
   void dispose() {
     session.dispose();
     sync.dispose();
   }
+}
+
+void registerTestVault(TestHarness harness) {
+  harness.session.vaults = const [
+    VaultSummary(
+      name: 'personal',
+      path: '/vaults/personal.kdbx',
+      hasKeyfile: false,
+      hasSync: false,
+    ),
+  ];
 }
 
 extension FeatureTesterExtensions on WidgetTester {
@@ -47,12 +69,32 @@ extension FeatureTesterExtensions on WidgetTester {
           theme: brightness == Brightness.dark
               ? hidlinsDarkTheme()
               : hidlinsLightTheme(),
-          localizationsDelegates: AppLocalizations.localizationsDelegates,
+          localizationsDelegates: hidlinsLocalizationsDelegates,
           supportedLocales: AppLocalizations.supportedLocales,
           home: child,
         ),
       ),
     );
     return harness;
+  }
+
+  Future<void> pumpFeatureWithHarness(
+    Widget child,
+    TestHarness harness, {
+    Brightness brightness = Brightness.light,
+  }) async {
+    await pumpWidget(
+      ProviderScope(
+        overrides: harness.overrides,
+        child: MaterialApp(
+          theme: brightness == Brightness.dark
+              ? hidlinsDarkTheme()
+              : hidlinsLightTheme(),
+          localizationsDelegates: hidlinsLocalizationsDelegates,
+          supportedLocales: AppLocalizations.supportedLocales,
+          home: child,
+        ),
+      ),
+    );
   }
 }

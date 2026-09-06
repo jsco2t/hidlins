@@ -3,6 +3,8 @@ import 'dart:async';
 import '../bridge/api/session.dart' as bridge_api;
 import '../bridge/dto.dart' as bridge;
 import '../bridge/error.dart';
+import '../platform/platform_result.dart';
+import '../platform/secure_clipboard.dart';
 import 'failures.dart';
 import 'models.dart';
 import 'repositories.dart';
@@ -164,12 +166,15 @@ final class BridgeSessionRepository implements SessionRepository {
   BigInt droppedLockEvents() => _bridgeSync(_session.droppedLockEvents);
 
   @override
+  Future<List<String>> startupWarnings() =>
+      _bridgeFuture(_session.startupWarnings);
+
+  @override
   void reportActivity() => _bridgeSync(_session.reportActivity);
 
   @override
-  void reportLifecycleState(LifecycleStateDto state) {
-    _bridgeSync(() => _session.reportLifecycleState(state: state));
-  }
+  LockEvent reportLifecycleState(LifecycleStateDto state) =>
+      _bridgeSync(() => _session.reportLifecycleState(state: state));
 
   @override
   Future<List<VaultSummary>> listVaults() async {
@@ -192,6 +197,22 @@ final class BridgeSessionRepository implements SessionRepository {
         fileName: fileName,
         keyfile: keyfile,
         confirmedNoRecovery: confirmedNoRecovery,
+      ),
+    );
+    return _vaultSummary(value);
+  }
+
+  @override
+  Future<VaultSummary> registerExistingVault({
+    required String name,
+    required String kdbxPath,
+    KeyfileRef? keyfile,
+  }) async {
+    final value = await _bridgeFuture(
+      () => _session.registerExistingVault(
+        name: name,
+        kdbxPath: kdbxPath,
+        keyfile: keyfile,
       ),
     );
     return _vaultSummary(value);
@@ -370,9 +391,15 @@ final class BridgeEntryRepository implements EntryRepository {
 }
 
 final class BridgeSecretsRepository implements SecretsRepository {
-  const BridgeSecretsRepository(this._session);
+  const BridgeSecretsRepository(this._session) : _mobileClipboard = null;
+
+  const BridgeSecretsRepository.mobile(
+    this._session,
+    SecureClipboardCapability mobileClipboard,
+  ) : _mobileClipboard = mobileClipboard;
 
   final bridge_api.AppSession _session;
+  final SecureClipboardCapability? _mobileClipboard;
 
   @override
   Future<String> revealField(String uuid, RevealField field) {
@@ -382,10 +409,53 @@ final class BridgeSecretsRepository implements SecretsRepository {
   }
 
   @override
-  Future<void> copyEntryField(String uuid, CopyField field) {
-    return _bridgeFuture(
-      () => _session.copyEntryField(uuid: uuid, field: _copyField(field)),
+  Future<void> copyEntryField(String uuid, CopyField field) async {
+    final mobileClipboard = _mobileClipboard;
+    if (mobileClipboard == null) {
+      return _bridgeFuture(
+        () => _session.copyEntryField(uuid: uuid, field: _copyField(field)),
+      );
+    }
+
+    final ticket = await _bridgeFuture(
+      () => _session.prepareClipboardTransfer(
+        uuid: uuid,
+        field: _copyField(field),
+      ),
     );
+    final result = await mobileClipboard.copyPrepared(
+      PreparedClipboardTransfer(
+        id: ticket.id,
+        expiresAfterSeconds: ticket.expiresAfterSecs.toInt(),
+      ),
+    );
+    switch (result) {
+      case PlatformSuccess<PlatformUnit>():
+        return;
+      case PlatformUnsupported<PlatformUnit>():
+        throw const UnsupportedPlatformFailure('clipboard');
+      case PlatformCanceled<PlatformUnit>():
+        throw const PlatformOperationFailure(
+          capability: 'clipboard',
+          state: 'canceled',
+        );
+      case PlatformDenied<PlatformUnit>():
+        throw const PlatformOperationFailure(
+          capability: 'clipboard',
+          state: 'denied',
+        );
+      case PlatformStale<PlatformUnit>():
+        throw const PlatformOperationFailure(
+          capability: 'clipboard',
+          state: 'stale',
+        );
+      case PlatformFailure<PlatformUnit>(:final code):
+        throw PlatformOperationFailure(
+          capability: 'clipboard',
+          state: 'failure',
+          code: code,
+        );
+    }
   }
 }
 
@@ -528,16 +598,6 @@ final class BridgeSyncRepository implements SyncRepository {
 
   @override
   Stream<SyncEvent> syncEvents() => _bridgeStream(_session.syncEvents);
-
-  @override
-  Stream<ClipboardEvent> clipboardEvents() {
-    return _bridgeStream(_session.clipboardEvents).map(
-      (event) => ClipboardEvent(
-        remainingSecs: event.remainingSecs,
-        cleared: event.cleared,
-      ),
-    );
-  }
 }
 
 final class BridgePrefsRepository implements PrefsRepository {

@@ -41,7 +41,7 @@ flutter_rust_bridge::frb_generated_boilerplate!(
     default_rust_auto_opaque = RustAutoOpaqueMoi,
 );
 pub(crate) const FLUTTER_RUST_BRIDGE_CODEGEN_VERSION: &str = "2.12.0";
-pub(crate) const FLUTTER_RUST_BRIDGE_CODEGEN_CONTENT_HASH: i32 = 229842155;
+pub(crate) const FLUTTER_RUST_BRIDGE_CODEGEN_CONTENT_HASH: i32 = 1315655542;
 
 // Section: executor
 
@@ -318,64 +318,6 @@ fn wire__crate__api__session__AppSession_clear_sync_config_impl(
                         &*api_that_guard,
                         api_name,
                     )?;
-                    Ok(output_ok)
-                })())
-            }
-        },
-    )
-}
-fn wire__crate__api__session__AppSession_clipboard_events_impl(
-    port_: flutter_rust_bridge::for_generated::MessagePort,
-    ptr_: flutter_rust_bridge::for_generated::PlatformGeneralizedUint8ListPtr,
-    rust_vec_len_: i32,
-    data_len_: i32,
-) {
-    FLUTTER_RUST_BRIDGE_HANDLER.wrap_normal::<flutter_rust_bridge::for_generated::SseCodec, _, _>(
-        flutter_rust_bridge::for_generated::TaskInfo {
-            debug_name: "AppSession_clipboard_events",
-            port: Some(port_),
-            mode: flutter_rust_bridge::for_generated::FfiCallMode::Normal,
-        },
-        move || {
-            let message = unsafe {
-                flutter_rust_bridge::for_generated::Dart2RustMessageSse::from_wire(
-                    ptr_,
-                    rust_vec_len_,
-                    data_len_,
-                )
-            };
-            let mut deserializer =
-                flutter_rust_bridge::for_generated::SseDeserializer::new(message);
-            let api_that = <RustOpaqueMoi<
-                flutter_rust_bridge::for_generated::RustAutoOpaqueInner<AppSession>,
-            >>::sse_decode(&mut deserializer);
-            let api__sink = <StreamSink<
-                crate::dto::ClipboardEvent,
-                flutter_rust_bridge::for_generated::SseCodec,
-            >>::sse_decode(&mut deserializer);
-            deserializer.end();
-            move |context| {
-                transform_result_sse::<_, ()>((move || {
-                    let mut api_that_guard = None;
-                    let decode_indices_ =
-                        flutter_rust_bridge::for_generated::lockable_compute_decode_order(vec![
-                            flutter_rust_bridge::for_generated::LockableOrderInfo::new(
-                                &api_that, 0, false,
-                            ),
-                        ]);
-                    for i in decode_indices_ {
-                        match i {
-                            0 => api_that_guard = Some(api_that.lockable_decode_sync_ref()),
-                            _ => unreachable!(),
-                        }
-                    }
-                    let api_that_guard = api_that_guard.unwrap();
-                    let output_ok = Result::<_, ()>::Ok({
-                        crate::api::session::AppSession::clipboard_events(
-                            &*api_that_guard,
-                            api__sink,
-                        );
-                    })?;
                     Ok(output_ok)
                 })())
             }
@@ -1490,6 +1432,61 @@ fn wire__crate__api__session__AppSession_move_group_impl(
         },
     )
 }
+fn wire__crate__api__session__AppSession_prepare_clipboard_transfer_impl(
+    port_: flutter_rust_bridge::for_generated::MessagePort,
+    ptr_: flutter_rust_bridge::for_generated::PlatformGeneralizedUint8ListPtr,
+    rust_vec_len_: i32,
+    data_len_: i32,
+) {
+    FLUTTER_RUST_BRIDGE_HANDLER.wrap_normal::<flutter_rust_bridge::for_generated::SseCodec, _, _>(
+        flutter_rust_bridge::for_generated::TaskInfo {
+            debug_name: "AppSession_prepare_clipboard_transfer",
+            port: Some(port_),
+            mode: flutter_rust_bridge::for_generated::FfiCallMode::Normal,
+        },
+        move || {
+            let message = unsafe {
+                flutter_rust_bridge::for_generated::Dart2RustMessageSse::from_wire(
+                    ptr_,
+                    rust_vec_len_,
+                    data_len_,
+                )
+            };
+            let mut deserializer =
+                flutter_rust_bridge::for_generated::SseDeserializer::new(message);
+            let api_that = <RustOpaqueMoi<
+                flutter_rust_bridge::for_generated::RustAutoOpaqueInner<AppSession>,
+            >>::sse_decode(&mut deserializer);
+            let api_uuid = <String>::sse_decode(&mut deserializer);
+            let api_field = <crate::dto::CopyField>::sse_decode(&mut deserializer);
+            deserializer.end();
+            move |context| {
+                transform_result_sse::<_, crate::error::HidlinsApiError>((move || {
+                    let mut api_that_guard = None;
+                    let decode_indices_ =
+                        flutter_rust_bridge::for_generated::lockable_compute_decode_order(vec![
+                            flutter_rust_bridge::for_generated::LockableOrderInfo::new(
+                                &api_that, 0, false,
+                            ),
+                        ]);
+                    for i in decode_indices_ {
+                        match i {
+                            0 => api_that_guard = Some(api_that.lockable_decode_sync_ref()),
+                            _ => unreachable!(),
+                        }
+                    }
+                    let api_that_guard = api_that_guard.unwrap();
+                    let output_ok = crate::api::session::AppSession::prepare_clipboard_transfer(
+                        &*api_that_guard,
+                        api_uuid,
+                        api_field,
+                    )?;
+                    Ok(output_ok)
+                })())
+            }
+        },
+    )
+}
 fn wire__crate__api__session__AppSession_purge_entry_impl(
     port_: flutter_rust_bridge::for_generated::MessagePort,
     ptr_: flutter_rust_bridge::for_generated::PlatformGeneralizedUint8ListPtr,
@@ -1797,12 +1794,11 @@ fn wire__crate__api__session__AppSession_report_lifecycle_state_impl(
                     }
                 }
                 let api_that_guard = api_that_guard.unwrap();
-                let output_ok = Result::<_, ()>::Ok({
-                    crate::api::session::AppSession::report_lifecycle_state(
+                let output_ok =
+                    Result::<_, ()>::Ok(crate::api::session::AppSession::report_lifecycle_state(
                         &*api_that_guard,
                         api_state,
-                    );
-                })?;
+                    ))?;
                 Ok(output_ok)
             })())
         },
@@ -2643,16 +2639,6 @@ impl SseDecode
     }
 }
 
-impl SseDecode
-    for StreamSink<crate::dto::ClipboardEvent, flutter_rust_bridge::for_generated::SseCodec>
-{
-    // Codec=Sse (Serialization based), see doc to use other codecs
-    fn sse_decode(deserializer: &mut flutter_rust_bridge::for_generated::SseDeserializer) -> Self {
-        let mut inner = <String>::sse_decode(deserializer);
-        return StreamSink::deserialize(inner);
-    }
-}
-
 impl SseDecode for StreamSink<crate::dto::LockEvent, flutter_rust_bridge::for_generated::SseCodec> {
     // Codec=Sse (Serialization based), see doc to use other codecs
     fn sse_decode(deserializer: &mut flutter_rust_bridge::for_generated::SseDeserializer) -> Self {
@@ -2708,14 +2694,14 @@ impl SseDecode for bool {
     }
 }
 
-impl SseDecode for crate::dto::ClipboardEvent {
+impl SseDecode for crate::dto::ClipboardTransferTicket {
     // Codec=Sse (Serialization based), see doc to use other codecs
     fn sse_decode(deserializer: &mut flutter_rust_bridge::for_generated::SseDeserializer) -> Self {
-        let mut var_remainingSecs = <u32>::sse_decode(deserializer);
-        let mut var_cleared = <bool>::sse_decode(deserializer);
-        return crate::dto::ClipboardEvent {
-            remaining_secs: var_remainingSecs,
-            cleared: var_cleared,
+        let mut var_id = <String>::sse_decode(deserializer);
+        let mut var_expiresAfterSecs = <u32>::sse_decode(deserializer);
+        return crate::dto::ClipboardTransferTicket {
+            id: var_id,
+            expires_after_secs: var_expiresAfterSecs,
         };
     }
 }
@@ -2976,39 +2962,45 @@ impl SseDecode for crate::error::HidlinsApiError {
                 return crate::error::HidlinsApiError::KeyfileRequired;
             }
             7 => {
-                return crate::error::HidlinsApiError::RegistryChanged;
+                let mut var_capability = <String>::sse_decode(deserializer);
+                return crate::error::HidlinsApiError::UnsupportedPlatform {
+                    capability: var_capability,
+                };
             }
             8 => {
-                return crate::error::HidlinsApiError::InvalidFormat;
+                return crate::error::HidlinsApiError::RegistryChanged;
             }
             9 => {
-                return crate::error::HidlinsApiError::RegistryMalformed;
+                return crate::error::HidlinsApiError::InvalidFormat;
             }
             10 => {
-                return crate::error::HidlinsApiError::SyncNotConfigured;
+                return crate::error::HidlinsApiError::RegistryMalformed;
             }
             11 => {
+                return crate::error::HidlinsApiError::SyncNotConfigured;
+            }
+            12 => {
                 let mut var_endpoint = <Option<String>>::sse_decode(deserializer);
                 return crate::error::HidlinsApiError::SyncRemoteUnreachable {
                     endpoint: var_endpoint,
                 };
             }
-            12 => {
+            13 => {
                 return crate::error::HidlinsApiError::SyncAuthFailed;
             }
-            13 => {
+            14 => {
                 let mut var_backupPath = <String>::sse_decode(deserializer);
                 return crate::error::HidlinsApiError::SyncConflictUnresolvable {
                     backup_path: var_backupPath,
                 };
             }
-            14 => {
+            15 => {
                 let mut var_existingVault = <String>::sse_decode(deserializer);
                 return crate::error::HidlinsApiError::SyncDuplicateTarget {
                     existing_vault: var_existingVault,
                 };
             }
-            15 => {
+            16 => {
                 let mut var_field = <String>::sse_decode(deserializer);
                 let mut var_reason = <String>::sse_decode(deserializer);
                 return crate::error::HidlinsApiError::InvalidInput {
@@ -3016,13 +3008,13 @@ impl SseDecode for crate::error::HidlinsApiError {
                     reason: var_reason,
                 };
             }
-            16 => {
+            17 => {
                 let mut var_context = <String>::sse_decode(deserializer);
                 return crate::error::HidlinsApiError::Io {
                     context: var_context,
                 };
             }
-            17 => {
+            18 => {
                 let mut var_context = <String>::sse_decode(deserializer);
                 return crate::error::HidlinsApiError::Internal {
                     context: var_context,
@@ -3744,117 +3736,117 @@ fn pde_ffi_dispatcher_primary_impl(
             rust_vec_len,
             data_len,
         ),
-        6 => wire__crate__api__session__AppSession_clipboard_events_impl(
+        6 => wire__crate__api__session__AppSession_configure_sync_impl(
             port,
             ptr,
             rust_vec_len,
             data_len,
         ),
-        7 => wire__crate__api__session__AppSession_configure_sync_impl(
+        7 => wire__crate__api__session__AppSession_copy_entry_field_impl(
             port,
             ptr,
             rust_vec_len,
             data_len,
         ),
-        8 => wire__crate__api__session__AppSession_copy_entry_field_impl(
+        8 => wire__crate__api__session__AppSession_create_entry_impl(
             port,
             ptr,
             rust_vec_len,
             data_len,
         ),
-        9 => wire__crate__api__session__AppSession_create_entry_impl(
+        9 => wire__crate__api__session__AppSession_create_group_impl(
             port,
             ptr,
             rust_vec_len,
             data_len,
         ),
-        10 => wire__crate__api__session__AppSession_create_group_impl(
+        10 => wire__crate__api__session__AppSession_create_vault_impl(
             port,
             ptr,
             rust_vec_len,
             data_len,
         ),
-        11 => wire__crate__api__session__AppSession_create_vault_impl(
+        11 => wire__crate__api__session__AppSession_delete_entry_impl(
             port,
             ptr,
             rust_vec_len,
             data_len,
         ),
-        12 => wire__crate__api__session__AppSession_delete_entry_impl(
+        12 => wire__crate__api__session__AppSession_delete_group_impl(
             port,
             ptr,
             rust_vec_len,
             data_len,
         ),
-        13 => wire__crate__api__session__AppSession_delete_group_impl(
+        13 => wire__crate__api__session__AppSession_deregister_vault_impl(
             port,
             ptr,
             rust_vec_len,
             data_len,
         ),
-        14 => wire__crate__api__session__AppSession_deregister_vault_impl(
+        15 => wire__crate__api__session__AppSession_entry_detail_impl(
             port,
             ptr,
             rust_vec_len,
             data_len,
         ),
-        16 => wire__crate__api__session__AppSession_entry_detail_impl(
+        16 => wire__crate__api__session__AppSession_entry_history_impl(
             port,
             ptr,
             rust_vec_len,
             data_len,
         ),
-        17 => wire__crate__api__session__AppSession_entry_history_impl(
+        17 => wire__crate__api__session__AppSession_generate_passphrase_impl(
             port,
             ptr,
             rust_vec_len,
             data_len,
         ),
-        18 => wire__crate__api__session__AppSession_generate_passphrase_impl(
+        18 => wire__crate__api__session__AppSession_generate_password_impl(
             port,
             ptr,
             rust_vec_len,
             data_len,
         ),
-        19 => wire__crate__api__session__AppSession_generate_password_impl(
-            port,
-            ptr,
-            rust_vec_len,
-            data_len,
-        ),
-        20 => {
+        19 => {
             wire__crate__api__session__AppSession_get_prefs_impl(port, ptr, rust_vec_len, data_len)
         }
-        21 => wire__crate__api__session__AppSession_list_attachments_impl(
+        20 => wire__crate__api__session__AppSession_list_attachments_impl(
             port,
             ptr,
             rust_vec_len,
             data_len,
         ),
-        22 => {
+        21 => {
             wire__crate__api__session__AppSession_list_tags_impl(port, ptr, rust_vec_len, data_len)
         }
-        23 => wire__crate__api__session__AppSession_list_vaults_impl(
+        22 => wire__crate__api__session__AppSession_list_vaults_impl(
             port,
             ptr,
             rust_vec_len,
             data_len,
         ),
-        24 => wire__crate__api__session__AppSession_lock_events_impl(
+        23 => wire__crate__api__session__AppSession_lock_events_impl(
             port,
             ptr,
             rust_vec_len,
             data_len,
         ),
-        25 => {
+        24 => {
             wire__crate__api__session__AppSession_lock_now_impl(port, ptr, rust_vec_len, data_len)
         }
-        26 => {
+        25 => {
             wire__crate__api__session__AppSession_move_entry_impl(port, ptr, rust_vec_len, data_len)
         }
-        27 => {
+        26 => {
             wire__crate__api__session__AppSession_move_group_impl(port, ptr, rust_vec_len, data_len)
         }
+        27 => wire__crate__api__session__AppSession_prepare_clipboard_transfer_impl(
+            port,
+            ptr,
+            rust_vec_len,
+            data_len,
+        ),
         28 => wire__crate__api__session__AppSession_purge_entry_impl(
             port,
             ptr,
@@ -3949,7 +3941,7 @@ fn pde_ffi_dispatcher_sync_impl(
 ) -> flutter_rust_bridge::for_generated::WireSyncRust2DartSse {
     // Codec=Pde (Serialization + dispatch), see doc to use other codecs
     match func_id {
-        15 => wire__crate__api__session__AppSession_dropped_lock_events_impl(
+        14 => wire__crate__api__session__AppSession_dropped_lock_events_impl(
             ptr,
             rust_vec_len,
             data_len,
@@ -4017,18 +4009,23 @@ impl flutter_rust_bridge::IntoIntoDart<crate::dto::AttachmentMeta> for crate::dt
     }
 }
 // Codec=Dco (DartCObject based), see doc to use other codecs
-impl flutter_rust_bridge::IntoDart for crate::dto::ClipboardEvent {
+impl flutter_rust_bridge::IntoDart for crate::dto::ClipboardTransferTicket {
     fn into_dart(self) -> flutter_rust_bridge::for_generated::DartAbi {
         [
-            self.remaining_secs.into_into_dart().into_dart(),
-            self.cleared.into_into_dart().into_dart(),
+            self.id.into_into_dart().into_dart(),
+            self.expires_after_secs.into_into_dart().into_dart(),
         ]
         .into_dart()
     }
 }
-impl flutter_rust_bridge::for_generated::IntoDartExceptPrimitive for crate::dto::ClipboardEvent {}
-impl flutter_rust_bridge::IntoIntoDart<crate::dto::ClipboardEvent> for crate::dto::ClipboardEvent {
-    fn into_into_dart(self) -> crate::dto::ClipboardEvent {
+impl flutter_rust_bridge::for_generated::IntoDartExceptPrimitive
+    for crate::dto::ClipboardTransferTicket
+{
+}
+impl flutter_rust_bridge::IntoIntoDart<crate::dto::ClipboardTransferTicket>
+    for crate::dto::ClipboardTransferTicket
+{
+    fn into_into_dart(self) -> crate::dto::ClipboardTransferTicket {
         self
     }
 }
@@ -4279,31 +4276,34 @@ impl flutter_rust_bridge::IntoDart for crate::error::HidlinsApiError {
                 [5.into_dart(), path.into_into_dart().into_dart()].into_dart()
             }
             crate::error::HidlinsApiError::KeyfileRequired => [6.into_dart()].into_dart(),
-            crate::error::HidlinsApiError::RegistryChanged => [7.into_dart()].into_dart(),
-            crate::error::HidlinsApiError::InvalidFormat => [8.into_dart()].into_dart(),
-            crate::error::HidlinsApiError::RegistryMalformed => [9.into_dart()].into_dart(),
-            crate::error::HidlinsApiError::SyncNotConfigured => [10.into_dart()].into_dart(),
-            crate::error::HidlinsApiError::SyncRemoteUnreachable { endpoint } => {
-                [11.into_dart(), endpoint.into_into_dart().into_dart()].into_dart()
+            crate::error::HidlinsApiError::UnsupportedPlatform { capability } => {
+                [7.into_dart(), capability.into_into_dart().into_dart()].into_dart()
             }
-            crate::error::HidlinsApiError::SyncAuthFailed => [12.into_dart()].into_dart(),
+            crate::error::HidlinsApiError::RegistryChanged => [8.into_dart()].into_dart(),
+            crate::error::HidlinsApiError::InvalidFormat => [9.into_dart()].into_dart(),
+            crate::error::HidlinsApiError::RegistryMalformed => [10.into_dart()].into_dart(),
+            crate::error::HidlinsApiError::SyncNotConfigured => [11.into_dart()].into_dart(),
+            crate::error::HidlinsApiError::SyncRemoteUnreachable { endpoint } => {
+                [12.into_dart(), endpoint.into_into_dart().into_dart()].into_dart()
+            }
+            crate::error::HidlinsApiError::SyncAuthFailed => [13.into_dart()].into_dart(),
             crate::error::HidlinsApiError::SyncConflictUnresolvable { backup_path } => {
-                [13.into_dart(), backup_path.into_into_dart().into_dart()].into_dart()
+                [14.into_dart(), backup_path.into_into_dart().into_dart()].into_dart()
             }
             crate::error::HidlinsApiError::SyncDuplicateTarget { existing_vault } => {
-                [14.into_dart(), existing_vault.into_into_dart().into_dart()].into_dart()
+                [15.into_dart(), existing_vault.into_into_dart().into_dart()].into_dart()
             }
             crate::error::HidlinsApiError::InvalidInput { field, reason } => [
-                15.into_dart(),
+                16.into_dart(),
                 field.into_into_dart().into_dart(),
                 reason.into_into_dart().into_dart(),
             ]
             .into_dart(),
             crate::error::HidlinsApiError::Io { context } => {
-                [16.into_dart(), context.into_into_dart().into_dart()].into_dart()
+                [17.into_dart(), context.into_into_dart().into_dart()].into_dart()
             }
             crate::error::HidlinsApiError::Internal { context } => {
-                [17.into_dart(), context.into_into_dart().into_dart()].into_dart()
+                [18.into_dart(), context.into_into_dart().into_dart()].into_dart()
             }
             _ => {
                 unimplemented!("");
@@ -4773,15 +4773,6 @@ impl SseEncode
     }
 }
 
-impl SseEncode
-    for StreamSink<crate::dto::ClipboardEvent, flutter_rust_bridge::for_generated::SseCodec>
-{
-    // Codec=Sse (Serialization based), see doc to use other codecs
-    fn sse_encode(self, serializer: &mut flutter_rust_bridge::for_generated::SseSerializer) {
-        unimplemented!("")
-    }
-}
-
 impl SseEncode for StreamSink<crate::dto::LockEvent, flutter_rust_bridge::for_generated::SseCodec> {
     // Codec=Sse (Serialization based), see doc to use other codecs
     fn sse_encode(self, serializer: &mut flutter_rust_bridge::for_generated::SseSerializer) {
@@ -4826,11 +4817,11 @@ impl SseEncode for bool {
     }
 }
 
-impl SseEncode for crate::dto::ClipboardEvent {
+impl SseEncode for crate::dto::ClipboardTransferTicket {
     // Codec=Sse (Serialization based), see doc to use other codecs
     fn sse_encode(self, serializer: &mut flutter_rust_bridge::for_generated::SseSerializer) {
-        <u32>::sse_encode(self.remaining_secs, serializer);
-        <bool>::sse_encode(self.cleared, serializer);
+        <String>::sse_encode(self.id, serializer);
+        <u32>::sse_encode(self.expires_after_secs, serializer);
     }
 }
 
@@ -5025,44 +5016,48 @@ impl SseEncode for crate::error::HidlinsApiError {
             crate::error::HidlinsApiError::KeyfileRequired => {
                 <i32>::sse_encode(6, serializer);
             }
-            crate::error::HidlinsApiError::RegistryChanged => {
+            crate::error::HidlinsApiError::UnsupportedPlatform { capability } => {
                 <i32>::sse_encode(7, serializer);
+                <String>::sse_encode(capability, serializer);
             }
-            crate::error::HidlinsApiError::InvalidFormat => {
+            crate::error::HidlinsApiError::RegistryChanged => {
                 <i32>::sse_encode(8, serializer);
             }
-            crate::error::HidlinsApiError::RegistryMalformed => {
+            crate::error::HidlinsApiError::InvalidFormat => {
                 <i32>::sse_encode(9, serializer);
             }
-            crate::error::HidlinsApiError::SyncNotConfigured => {
+            crate::error::HidlinsApiError::RegistryMalformed => {
                 <i32>::sse_encode(10, serializer);
             }
-            crate::error::HidlinsApiError::SyncRemoteUnreachable { endpoint } => {
+            crate::error::HidlinsApiError::SyncNotConfigured => {
                 <i32>::sse_encode(11, serializer);
+            }
+            crate::error::HidlinsApiError::SyncRemoteUnreachable { endpoint } => {
+                <i32>::sse_encode(12, serializer);
                 <Option<String>>::sse_encode(endpoint, serializer);
             }
             crate::error::HidlinsApiError::SyncAuthFailed => {
-                <i32>::sse_encode(12, serializer);
+                <i32>::sse_encode(13, serializer);
             }
             crate::error::HidlinsApiError::SyncConflictUnresolvable { backup_path } => {
-                <i32>::sse_encode(13, serializer);
+                <i32>::sse_encode(14, serializer);
                 <String>::sse_encode(backup_path, serializer);
             }
             crate::error::HidlinsApiError::SyncDuplicateTarget { existing_vault } => {
-                <i32>::sse_encode(14, serializer);
+                <i32>::sse_encode(15, serializer);
                 <String>::sse_encode(existing_vault, serializer);
             }
             crate::error::HidlinsApiError::InvalidInput { field, reason } => {
-                <i32>::sse_encode(15, serializer);
+                <i32>::sse_encode(16, serializer);
                 <String>::sse_encode(field, serializer);
                 <String>::sse_encode(reason, serializer);
             }
             crate::error::HidlinsApiError::Io { context } => {
-                <i32>::sse_encode(16, serializer);
+                <i32>::sse_encode(17, serializer);
                 <String>::sse_encode(context, serializer);
             }
             crate::error::HidlinsApiError::Internal { context } => {
-                <i32>::sse_encode(17, serializer);
+                <i32>::sse_encode(18, serializer);
                 <String>::sse_encode(context, serializer);
             }
             _ => {

@@ -1,6 +1,8 @@
 import 'package:flutter_test/flutter_test.dart';
 
 import 'package:app/src/features/settings/settings_page.dart';
+import 'package:app/src/ui/widgets/brand_mark.dart';
+
 import '../helpers/feature_test_helpers.dart';
 
 void main() {
@@ -38,14 +40,23 @@ void main() {
 
       expect(find.text('Auto-lock timeout'), findsOneWidget);
       expect(find.text('Configured via CLI or TUI'), findsOneWidget);
+      expect(find.text('Keyboard shortcuts'), findsOneWidget);
+      expect(find.textContaining('Ctrl/Cmd-F'), findsOneWidget);
     });
 
-    testWidgets('license page link is present', (tester) async {
+    testWidgets('license page carries the decorative brand mark', (
+      tester,
+    ) async {
       final harness = await tester.pumpFeature(const SettingsPage());
       addTearDown(harness.dispose);
       await tester.pumpAndSettle();
 
       expect(find.text('Open source licenses'), findsOneWidget);
+      expect(find.byType(BrandMark), findsOneWidget);
+
+      await tester.tap(find.text('Open source licenses'));
+      await tester.pumpAndSettle();
+      expect(find.byType(BrandMark), findsOneWidget);
     });
   });
 }

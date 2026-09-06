@@ -1,5 +1,5 @@
 //! Vault subcommand view structs — the JSON-schema contract for
-//! `hidlins vault {create, open, list, set-lock}`.
+//! `hidlins vault {create, register, open, list, set-lock}`.
 //!
 //! ## Schema stability
 //!
@@ -160,6 +160,39 @@ impl HumanFormat for VaultCreateView<'_> {
             "  kdf: {} (memory={} KiB, iterations={}, parallelism={})",
             self.kdf.algorithm, self.kdf.memory_kib, self.kdf.iterations, self.kdf.parallelism,
         )
+    }
+}
+
+// ---------------------------------------------------------------------------
+// vault register
+// ---------------------------------------------------------------------------
+
+/// JSON output for `hidlins vault register`.
+#[derive(Serialize, Debug)]
+pub struct VaultRegisterView<'a> {
+    /// Registry name assigned to the existing vault.
+    pub id: &'a str,
+    /// Canonical on-disk path of the existing `.kdbx` file.
+    pub path: &'a Path,
+    /// Canonical keyfile path, when supplied.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub keyfile: Option<&'a Path>,
+    /// Always `"registered"`.
+    pub status: &'static str,
+}
+
+impl HumanFormat for VaultRegisterView<'_> {
+    fn write_human(&self, out: &mut dyn std::io::Write) -> std::io::Result<()> {
+        writeln!(
+            out,
+            "registered existing vault '{}' at {}",
+            self.id,
+            self.path.display()
+        )?;
+        if let Some(keyfile) = self.keyfile {
+            writeln!(out, "  keyfile: {}", keyfile.display())?;
+        }
+        Ok(())
     }
 }
 
@@ -416,6 +449,61 @@ mod tests {
         };
         let v = json_of(&view);
         assert!(v.get("keyfile").is_none(), "keyfile must be absent");
+    }
+
+    // ---- register ----
+
+    #[test]
+    fn vault_register_view_schema_with_keyfile() {
+        let path = PathBuf::from("/tmp/existing.kdbx");
+        let keyfile = PathBuf::from("/tmp/existing.key");
+        let view = VaultRegisterView {
+            id: "existing",
+            path: &path,
+            keyfile: Some(&keyfile),
+            status: "registered",
+        };
+        assert_eq!(
+            json_of(&view),
+            json!({
+                "id": "existing",
+                "path": "/tmp/existing.kdbx",
+                "keyfile": "/tmp/existing.key",
+                "status": "registered",
+            })
+        );
+
+        let mut human = Vec::new();
+        view.write_human(&mut human).unwrap();
+        let human = String::from_utf8(human).unwrap();
+        assert!(human.contains("registered existing vault 'existing'"));
+        assert!(human.contains("/tmp/existing.key"));
+    }
+
+    #[test]
+    fn vault_register_view_omits_keyfile_and_has_no_secret_fields() {
+        let path = PathBuf::from("/tmp/existing.kdbx");
+        let view = VaultRegisterView {
+            id: "existing",
+            path: &path,
+            keyfile: None,
+            status: "registered",
+        };
+        let value = json_of(&view);
+        assert_eq!(
+            value,
+            json!({
+                "id": "existing",
+                "path": "/tmp/existing.kdbx",
+                "status": "registered",
+            })
+        );
+        for forbidden in ["password", "master_password", "keyfile_contents"] {
+            assert!(
+                value.get(forbidden).is_none(),
+                "registration view exposed {forbidden}"
+            );
+        }
     }
 
     // ---- open ----

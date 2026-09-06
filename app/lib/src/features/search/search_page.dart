@@ -1,7 +1,8 @@
 import 'dart:async';
 
-import 'package:flutter/material.dart';
+import 'package:material_ui/material_ui.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
+import 'package:go_router/go_router.dart';
 
 import '../../data/models.dart';
 import '../../l10n/app_localizations.dart';
@@ -95,12 +96,14 @@ class _SearchPageState extends ConsumerState<SearchPage> {
                   child: SearchBar(
                     controller: _searchController,
                     focusNode: _focusNode,
+                    autoFocus: true,
                     hintText: l10n.searchHintText,
                     leading: const Icon(Icons.search),
                     trailing: [
                       if (_searchController.text.isNotEmpty)
                         IconButton(
                           icon: const Icon(Icons.close),
+                          tooltip: l10n.actionClose,
                           onPressed: () {
                             _searchController.clear();
                             _onQueryChanged('');
@@ -108,38 +111,40 @@ class _SearchPageState extends ConsumerState<SearchPage> {
                         ),
                     ],
                     onChanged: _onQueryChanged,
+                    onSubmitted: (_) {
+                      if (_results.isNotEmpty) {
+                        context.go('/entries/${_results.first.entry.uuid}');
+                      }
+                    },
                   ),
                 ),
                 const SizedBox(height: HidlinsSpacing.sm),
-                Row(
-                  children: [
-                    Expanded(
-                      child: SegmentedButton<SearchModeDto>(
-                        segments: [
-                          ButtonSegment(
-                            value: SearchModeDto.substring,
-                            label: Text(l10n.searchModeSubstring),
-                          ),
-                          ButtonSegment(
-                            value: SearchModeDto.fuzzy,
-                            label: Text(l10n.searchModeFuzzy),
-                          ),
-                          ButtonSegment(
-                            value: SearchModeDto.wildcard,
-                            label: Text(l10n.searchModeWildcard),
-                          ),
-                        ],
-                        selected: {_mode},
-                        onSelectionChanged: (s) async {
-                          setState(() => _mode = s.first);
-                          if (_searchController.text.isNotEmpty) {
-                            await _search(_searchController.text);
-                          }
-                        },
-                      ),
-                    ),
-                    const SizedBox(width: HidlinsSpacing.sm),
-                    FilterChip(
+                LayoutBuilder(
+                  builder: (context, constraints) {
+                    final modes = SegmentedButton<SearchModeDto>(
+                      segments: [
+                        ButtonSegment(
+                          value: SearchModeDto.substring,
+                          label: Text(l10n.searchModeSubstring),
+                        ),
+                        ButtonSegment(
+                          value: SearchModeDto.fuzzy,
+                          label: Text(l10n.searchModeFuzzy),
+                        ),
+                        ButtonSegment(
+                          value: SearchModeDto.wildcard,
+                          label: Text(l10n.searchModeWildcard),
+                        ),
+                      ],
+                      selected: {_mode},
+                      onSelectionChanged: (s) async {
+                        setState(() => _mode = s.first);
+                        if (_searchController.text.isNotEmpty) {
+                          await _search(_searchController.text);
+                        }
+                      },
+                    );
+                    final recycled = FilterChip(
                       label: Text(l10n.searchIncludeRecycled),
                       selected: _includeRecycled,
                       onSelected: (v) async {
@@ -148,8 +153,28 @@ class _SearchPageState extends ConsumerState<SearchPage> {
                           await _search(_searchController.text);
                         }
                       },
-                    ),
-                  ],
+                    );
+                    if (constraints.maxWidth < HidlinsBreakpoints.compact) {
+                      return Column(
+                        crossAxisAlignment: CrossAxisAlignment.stretch,
+                        children: [
+                          modes,
+                          const SizedBox(height: HidlinsSpacing.sm),
+                          Align(
+                            alignment: Alignment.centerLeft,
+                            child: recycled,
+                          ),
+                        ],
+                      );
+                    }
+                    return Row(
+                      children: [
+                        Expanded(child: modes),
+                        const SizedBox(width: HidlinsSpacing.sm),
+                        recycled,
+                      ],
+                    );
+                  },
                 ),
               ],
             ),
@@ -207,6 +232,7 @@ class _SearchResultRow extends StatelessWidget {
         .firstOrNull;
 
     return ListTile(
+      onTap: () => context.go('/entries/${entry.uuid}'),
       leading: EntryAvatar(title: entry.title),
       title: titleMatch != null && titleMatch.ranges.isNotEmpty
           ? _HighlightedText(text: entry.title, ranges: titleMatch.ranges)

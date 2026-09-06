@@ -13,12 +13,13 @@
 //!
 //! Stabilized in Rust 1.89 (`std::fs::File::{lock, lock_shared, try_lock,
 //! try_lock_shared, unlock}` + [`std::fs::TryLockError`]). Internally uses
-//! `flock(2)` on Unix and `LockFileEx` on Windows — identical syscalls to
-//! the previous `fs2` dependency on macOS/Linux. The std API is preferred
-//! because [`std::fs::TryLockError`] has a dedicated `WouldBlock` variant,
-//! making contention structurally distinct from generic I/O errors (notably
-//! `Interrupted`/EINTR, which we'd otherwise have to disambiguate by
-//! `ErrorKind` matching).
+//! `flock(2)` on supported Unix targets and `LockFileEx` on Windows — identical
+//! syscalls to the previous `fs2` dependency on macOS/Linux. Rust 1.95 still
+//! reports these methods as `Unsupported` on Android, despite Android's Bionic
+//! libc exposing `flock(2)`, so the Android build calls that same primitive
+//! through the already-required `libc` crate. The result is normalized back to
+//! [`std::fs::TryLockError`] so contention remains structurally distinct from
+//! generic I/O errors.
 //!
 //! This is a deviation from design §3.3, which selected `fs2` — recorded
 //! there as superseded once Rust 1.89 made the dep unnecessary.
@@ -33,6 +34,9 @@
 use std::fs::{File, OpenOptions, TryLockError};
 use std::io;
 use std::path::{Path, PathBuf};
+
+#[cfg(target_os = "android")]
+use std::os::fd::AsRawFd as _;
 
 use crate::VaultError;
 
@@ -171,13 +175,13 @@ impl SharedLock {
 
 impl Drop for ExclusiveLock {
     fn drop(&mut self) {
-        let _ = self.file.unlock();
+        let _ = unlock_file(&self.file);
     }
 }
 
 impl Drop for SharedLock {
     fn drop(&mut self) {
-        let _ = self.file.unlock();
+        let _ = unlock_file(&self.file);
     }
 }
 
@@ -229,16 +233,67 @@ impl AcquireError {
 /// otherwise-non-blocking call. Retrying is the standard POSIX idiom.
 fn try_acquire_with_eintr_retry(file: &File, kind: LockKind) -> Result<(), AcquireError> {
     loop {
-        let result = match kind {
-            LockKind::Exclusive => file.try_lock(),
-            LockKind::Shared => file.try_lock_shared(),
-        };
+        let result = try_lock_file(file, kind);
         match result {
             Ok(()) => return Ok(()),
             Err(TryLockError::WouldBlock) => return Err(AcquireError::Contended),
             Err(TryLockError::Error(e)) if e.kind() == io::ErrorKind::Interrupted => {}
             Err(TryLockError::Error(e)) => return Err(AcquireError::Io(e)),
         }
+    }
+}
+
+/// Acquire a non-blocking exclusive lock using the platform implementation.
+///
+/// Atomic temp-file cleanup uses the same primitive as vault sidecar locking so
+/// Android cannot accidentally regress through a second direct std call.
+pub(crate) fn try_lock_exclusive(file: &File) -> Result<(), TryLockError> {
+    try_lock_file(file, LockKind::Exclusive)
+}
+
+#[cfg(not(target_os = "android"))]
+fn try_lock_file(file: &File, kind: LockKind) -> Result<(), TryLockError> {
+    match kind {
+        LockKind::Exclusive => file.try_lock(),
+        LockKind::Shared => file.try_lock_shared(),
+    }
+}
+
+#[cfg(target_os = "android")]
+#[allow(unsafe_code)] // audited single libc flock call; descriptor stays borrowed
+fn try_lock_file(file: &File, kind: LockKind) -> Result<(), TryLockError> {
+    let operation = match kind {
+        LockKind::Exclusive => libc::LOCK_EX,
+        LockKind::Shared => libc::LOCK_SH,
+    } | libc::LOCK_NB;
+
+    // SAFETY: `file.as_raw_fd()` is a live descriptor borrowed for the duration
+    // of this call, and `flock` neither retains nor takes ownership of it.
+    if unsafe { libc::flock(file.as_raw_fd(), operation) } == 0 {
+        return Ok(());
+    }
+    let error = io::Error::last_os_error();
+    if error.kind() == io::ErrorKind::WouldBlock {
+        Err(TryLockError::WouldBlock)
+    } else {
+        Err(TryLockError::Error(error))
+    }
+}
+
+#[cfg(not(target_os = "android"))]
+fn unlock_file(file: &File) -> io::Result<()> {
+    file.unlock()
+}
+
+#[cfg(target_os = "android")]
+#[allow(unsafe_code)] // audited single libc flock call; descriptor stays borrowed
+fn unlock_file(file: &File) -> io::Result<()> {
+    // SAFETY: `file.as_raw_fd()` is a live descriptor borrowed for the duration
+    // of this call, and `flock` neither retains nor takes ownership of it.
+    if unsafe { libc::flock(file.as_raw_fd(), libc::LOCK_UN) } == 0 {
+        Ok(())
+    } else {
+        Err(io::Error::last_os_error())
     }
 }
 

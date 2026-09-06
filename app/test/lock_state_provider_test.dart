@@ -2,6 +2,7 @@ import 'package:flutter_test/flutter_test.dart';
 
 import 'package:app/src/bridge/dto.dart';
 import 'package:app/src/providers/lock_state_provider.dart';
+
 import 'fakes/fake_repositories.dart';
 
 void main() {

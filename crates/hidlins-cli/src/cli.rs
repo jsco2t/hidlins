@@ -14,11 +14,11 @@ use std::path::PathBuf;
 
 /// ASCII-art banner shown above every `hidlins --help` output.
 pub const BANNER: &str = r"
-    ______      __           __
-   / ____/___ _/ /___ ______/ /_
-  / /_  / __ `/ / __ `/ ___/ __ \
- / __/ / /_/ / / /_/ / /__/ / / /
-/_/    \__,_/_/\__,_/\___/_/ /_/
+ _   _ ___ ____  _     ___ _   _ ____
+| | | |_ _|  _ \| |   |_ _| \ | / ___|
+| |_| || || | | | |    | ||  \| \___ \
+|  _  || || |_| | |___ | || |\  |___) |
+|_| |_|___|____/|_____|___|_| \_|____/
 
 ";
 
@@ -131,6 +131,8 @@ pub struct VaultArgs {
 pub enum VaultVerb {
     /// Create a new vault and register it.
     Create(VaultCreateArgs),
+    /// Authenticate and register an existing KDBX vault.
+    Register(VaultRegisterArgs),
     /// Probe vault unlock with the given master password.
     ///
     /// In Phase 0 MVP this is a one-shot probe: prompts for the master
@@ -166,6 +168,20 @@ pub struct VaultCreateArgs {
     /// master-password recovery in Hidlins.
     #[arg(long)]
     pub no_recovery_warning: bool,
+}
+
+/// Flags for `hidlins vault register`.
+#[derive(Args, Debug)]
+pub struct VaultRegisterArgs {
+    /// Registry name for the existing vault (unique).
+    #[arg(long)]
+    pub id: String,
+    /// Path to an existing KDBX vault.
+    #[arg(long)]
+    pub path: std::path::PathBuf,
+    /// Optional keyfile required to unlock this vault.
+    #[arg(long)]
+    pub keyfile: Option<std::path::PathBuf>,
 }
 
 /// Flags for `hidlins vault open`.
@@ -617,15 +633,17 @@ mod tests {
     use clap::CommandFactory;
 
     #[test]
-    fn banner_starts_with_hidlins_logo_first_glyph() {
-        // The banner is a 5-line ASCII rendering whose first non-empty
-        // line begins with whitespace + the "F" top stroke `______`. This
-        // test guards against accidental trimming.
-        let first_real_line = BANNER.lines().find(|l| !l.trim().is_empty()).unwrap();
-        assert!(
-            first_real_line.contains("____"),
-            "banner first line should start with F glyph: {first_real_line:?}"
-        );
+    fn banner_is_the_complete_hidlins_wordmark() {
+        const EXPECTED: &str = r"
+ _   _ ___ ____  _     ___ _   _ ____
+| | | |_ _|  _ \| |   |_ _| \ | / ___|
+| |_| || || | | | |    | ||  \| \___ \
+|  _  || || |_| | |___ | || |\  |___) |
+|_| |_|___|____/|_____|___|_| \_|____/
+
+";
+        assert_eq!(BANNER, EXPECTED);
+        assert!(!BANNER.contains("/_/    \\__,_/"));
     }
 
     #[test]

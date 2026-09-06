@@ -23,10 +23,11 @@ fn first_run_journey_authenticates_before_save_and_reloads_as_configured() {
     empty.assert_contains_in_order(&[
         "HIDLINS",
         "Please select a vault file:",
-        "Focused field: Vault path",
+        "▶ Vault path — active",
         "Enter: Open vault",
         "Esc or Ctrl+Q: Exit",
     ]);
+    empty.assert_excludes(&["Focused field"]);
 
     type_text(&mut app, &vault_path.to_string_lossy());
     app.handle_event(&key_code(KeyCode::Enter));
@@ -36,8 +37,7 @@ fn first_run_journey_authenticates_before_save_and_reloads_as_configured() {
     password.assert_contains_in_order(&[
         "HIDLINS",
         "Unlock vault: first-vault",
-        "Focused field: Master password",
-        "Password (masked):",
+        "▶ Master password — active",
         "Enter: Unlock",
         "Esc: Back to vault path",
         "Ctrl+Q: Exit",
@@ -52,7 +52,7 @@ fn first_run_journey_authenticates_before_save_and_reloads_as_configured() {
     type_text(&mut app, "wrong-password");
     app.handle_event(&key_code(KeyCode::Enter));
     let retry = render_at(&app, 60, 16, Instant::now());
-    retry.assert_contains_all(&["Authentication failed (1/3)", "Password (masked):"]);
+    retry.assert_contains_all(&["Authentication failed (1/3)", "▶ Master password — active"]);
     retry.assert_excludes(&["wrong-password", MASTER_PASSWORD, SECRET_CANARY]);
     assert!(
         !registry_path.exists(),
@@ -99,7 +99,7 @@ fn first_run_registration_conflict_is_a_reviewable_recoverable_frame() {
     recovered.assert_contains_in_order(&[
         "HIDLINS",
         "Unlock vault: first-vault",
-        "Focused field: Master password",
+        "▶ Master password — active",
         "Could not register vault:",
         "Enter: Unlock",
     ]);
@@ -116,7 +116,7 @@ fn configured_single_and_multiple_vault_startup_journeys_are_complete() {
         "HIDLINS",
         "Unlock vault: personal",
         "Enter: Unlock",
-        "Esc: Exit",
+        "Esc: Choose a vault",
         "Ctrl+Q: Exit",
     ]);
     unlock(&mut single);
@@ -127,8 +127,8 @@ fn configured_single_and_multiple_vault_startup_journeys_are_complete() {
     initial.assert_contains_in_order(&[
         "HIDLINS",
         "Please select a vault:",
-        "Selected: alpha",
-        "Enter: Continue",
+        "▶ alpha",
+        "a: Add existing vault",
         "Ctrl+Q: Exit",
     ]);
     multiple.handle_event(&key('j'));
@@ -141,7 +141,7 @@ fn configured_single_and_multiple_vault_startup_journeys_are_complete() {
     ]);
     multiple.handle_event(&key_code(KeyCode::Esc));
     let restored = render_at(&multiple, 40, 12, Instant::now());
-    restored.assert_contains_all(&["Please select a vault:", "Selected: beta"]);
+    restored.assert_contains_all(&["Please select a vault:", "▶ beta"]);
     multiple.handle_event(&key('j'));
     multiple.handle_event(&key_code(KeyCode::Enter));
     type_text(&mut multiple, MASTER_PASSWORD);

@@ -144,6 +144,15 @@ class RustBuilder {
   /// Returns the path of directory containing build artifacts.
   Future<String> build() async {
     final extraArgs = _buildOptions?.flags ?? [];
+    // Hidlins patch: the api crate's default feature enables desktop
+    // clipboard backends. Mobile uses the audited native transfer boundary,
+    // so compiling desktop/Wayland code for iOS or Android is both incorrect
+    // and unsupported by those targets.
+    final mobileArgs = target.android != null ||
+            target.darwinPlatform == 'iphoneos' ||
+            target.darwinPlatform == 'iphonesimulator'
+        ? ['--no-default-features']
+        : <String>[];
     final manifestPath = path.join(environment.manifestDir, 'Cargo.toml');
     // Hidlins patch: --offline --locked enforces the vendored/pinned
     // build posture. Cargo resolves from vendor/ via .cargo/config.toml.
@@ -158,6 +167,7 @@ class RustBuilder {
             : 'build',
         '--offline',
         '--locked',
+        ...mobileArgs,
         ...extraArgs,
         '--manifest-path',
         manifestPath,
@@ -172,6 +182,10 @@ class RustBuilder {
         '--target-dir',
         environment.targetTempDir,
       ],
+      // Hidlins patch: Cargo discovers .cargo/config.toml from its working
+      // directory, not --manifest-path. Start at the workspace crate so iOS
+      // pod builds use the repository's vendored-source replacement.
+      workingDirectory: environment.manifestDir,
       environment: await _buildEnvironment(),
     );
     return path.join(

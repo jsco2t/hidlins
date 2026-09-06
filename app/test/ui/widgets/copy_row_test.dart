@@ -1,5 +1,5 @@
 import 'package:flutter/gestures.dart';
-import 'package:flutter/material.dart';
+import 'package:material_ui/material_ui.dart';
 import 'package:flutter_test/flutter_test.dart';
 
 import 'package:app/src/ui/widgets/copy_row.dart';
@@ -22,6 +22,7 @@ void main() {
       var copied = false;
       await tester.pumpApp(
         CopyRow(label: 'Password', value: '***', onCopy: () => copied = true),
+        platform: TargetPlatform.macOS,
       );
 
       // Hover to make the button fully opaque.
@@ -38,12 +39,25 @@ void main() {
     testWidgets('copy icon is hidden when not hovered', (tester) async {
       await tester.pumpApp(
         CopyRow(label: 'URL', value: 'https://x', onCopy: () {}),
+        platform: TargetPlatform.macOS,
       );
       await tester.pumpAndSettle();
       final opacity = tester.widget<AnimatedOpacity>(
         find.byType(AnimatedOpacity),
       );
       expect(opacity.opacity, 0.0);
+    });
+
+    testWidgets('copy icon remains visible on touch platforms', (tester) async {
+      await tester.pumpApp(
+        CopyRow(label: 'URL', value: 'https://x', onCopy: () {}),
+        platform: TargetPlatform.android,
+      );
+      await tester.pumpAndSettle();
+      final opacity = tester.widget<AnimatedOpacity>(
+        find.byType(AnimatedOpacity),
+      );
+      expect(opacity.opacity, 1.0);
     });
   });
 }

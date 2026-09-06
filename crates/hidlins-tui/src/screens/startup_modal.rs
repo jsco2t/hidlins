@@ -6,25 +6,24 @@ use ratatui::text::Line;
 use ratatui::widgets::{Block, Borders, Clear, List, ListItem, ListState, Paragraph, Wrap};
 use ratatui::Frame;
 
-use crate::app::{App, Phase, UnlockOrigin, MAX_UNLOCK_ATTEMPTS};
+use crate::app::{App, OnboardingOrigin, Phase, UnlockOrigin, MAX_UNLOCK_ATTEMPTS};
 
-/// The requested decorative mark. Keep these thirteen rows byte-for-byte.
-pub(crate) const HIDLINS_STARTUP_ART: &str = r"        .--------.
-      .'          '.
-     /    .----.    \
-    |    |      |    |
-.---'----'------'----'---.
-| o      HIDLINS      o  |
-|                        |
-|       HH     HH        |
-|       HH     HH        |
-|       HHHHHHHHH        |
-|       HH     HH        |
-| o     HH     HH     o  |
-'------------------------'";
+/// The requested decorative mark. Keep these twelve rows byte-for-byte.
+pub(crate) const HIDLINS_STARTUP_ART: &str = r"         ▄▄▄▄▄▄▄
+       ▄██▀▀▀▀▀██▄
+       ██       ██
+       ██       ██
+  ╔════██═══════██════╗
+  ║  ┌─────────────┐  ║
+  ║  │o  HIDLINS  o│  ║
+  ║  └─────────────┘  ║
+  ║       ▄▄▄▄▄       ║
+  ║         █         ║
+  ║       ▄▄█▄▄       ║
+  ╚═══════════════════╝";
 
-const ART_WIDTH: u16 = 26;
-const ART_HEIGHT: u16 = 13;
+const ART_WIDTH: u16 = 23;
+const ART_HEIGHT: u16 = 12;
 const FULL_MODAL_HEIGHT: u16 = 15;
 const FULL_MODAL_MAX_WIDTH: u16 = 76;
 const COMPACT_MODAL_MAX_WIDTH: u16 = 56;
@@ -47,7 +46,9 @@ pub(crate) fn render(app: &App, frame: &mut Frame) {
     }
 
     match &app.phase {
-        Phase::VaultOnboarding { input } => render_onboarding(app, frame, form_area, input.value()),
+        Phase::VaultOnboarding { input, origin } => {
+            render_onboarding(app, frame, form_area, input, *origin);
+        }
         Phase::UnlockList => render_vault_list(app, frame, form_area),
         Phase::UnlockPrompt {
             origin,
@@ -86,37 +87,37 @@ fn layout(area: Rect, full: bool) -> (Option<Rect>, Rect) {
     }
 }
 
-fn render_onboarding(app: &App, frame: &mut Frame, area: Rect, path: &str) {
-    let [heading, prompt, label, field, status, actions] = Layout::vertical([
+fn render_onboarding(
+    app: &App,
+    frame: &mut Frame,
+    area: Rect,
+    input: &tui_input::Input,
+    origin: OnboardingOrigin,
+) {
+    let [heading, prompt, field, status, actions] = Layout::vertical([
         Constraint::Length(1),
         Constraint::Length(1),
-        Constraint::Length(1),
-        Constraint::Length(1),
+        Constraint::Length(3),
         Constraint::Length(2),
-        Constraint::Min(2),
+        Constraint::Min(3),
     ])
     .areas(area);
 
     render_heading(app, frame, heading);
     frame.render_widget(Paragraph::new("Please select a vault file:"), prompt);
-    frame.render_widget(
-        Paragraph::new("Focused field: Vault path").style(app.theme.header()),
-        label,
-    );
-    let value = if path.is_empty() {
-        "Path: [type an existing KDBX path]".to_string()
-    } else {
-        format!("Path: {}", reviewable(path))
-    };
-    frame.render_widget(Paragraph::new(value), field);
+    render_path_field(app, frame, field, input);
     render_status(app, frame, status, None);
-    frame.render_widget(
-        Paragraph::new(vec![
+    let action_lines = match origin {
+        OnboardingOrigin::FirstRun => vec![
             Line::from("Enter: Open vault"),
             Line::from("Esc or Ctrl+Q: Exit"),
-        ]),
-        actions,
-    );
+        ],
+        OnboardingOrigin::VaultList { .. } => vec![
+            Line::from("Enter: Open vault"),
+            Line::from("Esc: Back   Ctrl+Q: Exit"),
+        ],
+    };
+    frame.render_widget(Paragraph::new(action_lines), actions);
 }
 
 fn render_vault_list(app: &App, frame: &mut Frame, area: Rect) {
@@ -139,9 +140,9 @@ fn render_vault_list(app: &App, frame: &mut Frame, area: Rect) {
             let name = reviewable(&vault.name);
             let selected = index == app.list_index;
             let text = if selected {
-                format!("Selected: {name}")
+                format!("▶ {name}")
             } else {
-                format!("Vault: {name}")
+                format!("  {name}")
             };
             let style = if selected {
                 app.theme.selected()
@@ -156,8 +157,8 @@ fn render_vault_list(app: &App, frame: &mut Frame, area: Rect) {
     render_status(app, frame, status, None);
     frame.render_widget(
         Paragraph::new(vec![
-            Line::from("Up/Down or j/k: Select"),
-            Line::from("Enter: Continue   Ctrl+Q: Exit"),
+            Line::from("j/k: Select  Enter: Open"),
+            Line::from("a: Add existing vault Ctrl+Q: Exit"),
         ]),
         actions,
     );
@@ -172,11 +173,10 @@ fn render_password(
     attempts: u8,
 ) {
     let action_height = 3;
-    let [heading, prompt, label, field, status, actions] = Layout::vertical([
+    let [heading, prompt, field, status, actions] = Layout::vertical([
         Constraint::Length(1),
         Constraint::Length(1),
-        Constraint::Length(1),
-        Constraint::Length(1),
+        Constraint::Length(3),
         Constraint::Length(2),
         Constraint::Length(action_height),
     ])
@@ -187,29 +187,11 @@ fn render_password(
         Paragraph::new(format!("Unlock vault: {}", reviewable(origin.vault_name()))),
         prompt,
     );
-    frame.render_widget(
-        Paragraph::new("Focused field: Master password").style(app.theme.header()),
-        label,
-    );
-    frame.render_widget(Paragraph::new("Password (masked):"), field);
-    let prefix_width = u16::try_from("Password (masked): ".chars().count())
-        .expect("password label width fits in u16");
-    if field.width > prefix_width {
-        input.render(
-            frame,
-            Rect::new(
-                field.x + prefix_width,
-                field.y,
-                field.width - prefix_width,
-                field.height,
-            ),
-            &app.theme,
-        );
-    }
+    render_password_field(app, frame, field, input);
     render_status(app, frame, status, Some(attempts));
 
     let back = match origin {
-        UnlockOrigin::Direct { .. } => "Esc: Exit",
+        UnlockOrigin::Direct { .. } => "Esc: Choose a vault",
         UnlockOrigin::VaultList { .. } => "Esc: Back to vault list",
         UnlockOrigin::Onboarding { .. } => "Esc: Back to vault path",
     };
@@ -221,6 +203,56 @@ fn render_password(
         ]),
         actions,
     );
+}
+
+fn render_path_field(app: &App, frame: &mut Frame, area: Rect, input: &tui_input::Input) {
+    let block = Block::default()
+        .borders(Borders::ALL)
+        .title(" ▶ Vault path — active ")
+        .border_style(app.theme.selected());
+    let inner = block.inner(area);
+    frame.render_widget(block, area);
+    if inner.width == 0 {
+        return;
+    }
+
+    let scroll = input.visual_scroll(inner.width as usize);
+    let value = if input.value().is_empty() {
+        "[type an existing KDBX path]".to_string()
+    } else {
+        reviewable(input.value())
+    };
+    frame.render_widget(
+        Paragraph::new(value).scroll((0, u16::try_from(scroll).unwrap_or(u16::MAX))),
+        inner,
+    );
+    let cursor = input
+        .visual_cursor()
+        .saturating_sub(scroll)
+        .min(inner.width.saturating_sub(1) as usize);
+    frame.set_cursor_position((inner.x + u16::try_from(cursor).unwrap_or(0), inner.y));
+}
+
+fn render_password_field(
+    app: &App,
+    frame: &mut Frame,
+    area: Rect,
+    input: &crate::widgets::password_input::PasswordInput,
+) {
+    let block = Block::default()
+        .borders(Borders::ALL)
+        .title(" ▶ Master password — active ")
+        .border_style(app.theme.selected());
+    let inner = block.inner(area);
+    frame.render_widget(block, area);
+    if inner.width == 0 {
+        return;
+    }
+    input.render(frame, inner, &app.theme);
+    let cursor = input
+        .cursor_chars()
+        .min(inner.width.saturating_sub(1) as usize);
+    frame.set_cursor_position((inner.x + u16::try_from(cursor).unwrap_or(0), inner.y));
 }
 
 fn render_heading(app: &App, frame: &mut Frame, area: Rect) {
@@ -266,13 +298,18 @@ fn reviewable(value: &str) -> String {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use ratatui::backend::TestBackend;
+    use ratatui::Terminal;
+    use unicode_width::UnicodeWidthStr;
+
+    use crate::test_support::{configured_app, onboarding_app, type_text};
 
     #[test]
-    fn decorative_art_is_thirteen_rows_with_the_declared_geometry() {
+    fn decorative_art_is_twelve_rows_with_the_declared_display_geometry() {
         let rows: Vec<_> = HIDLINS_STARTUP_ART.lines().collect();
         assert_eq!(rows.len(), ART_HEIGHT as usize);
         assert_eq!(
-            rows.iter().map(|row| row.len()).max(),
+            rows.iter().map(|row| UnicodeWidthStr::width(*row)).max(),
             Some(ART_WIDTH as usize)
         );
     }
@@ -281,5 +318,36 @@ mod tests {
     fn reviewable_text_removes_terminal_controls_without_changing_normal_text() {
         assert_eq!(reviewable("alpha\u{1b}[31m\u{85}beta"), "alpha�[31m�beta");
         assert_eq!(reviewable("Personal vault"), "Personal vault");
+    }
+
+    #[test]
+    fn active_startup_fields_move_the_terminal_cursor_with_typed_input() {
+        let (_dir, mut onboarding, _) = onboarding_app();
+        let mut terminal = Terminal::new(TestBackend::new(40, 12)).unwrap();
+        terminal
+            .draw(|frame| onboarding.render(frame, std::time::Instant::now()))
+            .unwrap();
+        let path_start = terminal.get_cursor_position().unwrap();
+        type_text(&mut onboarding, "abc");
+        terminal
+            .draw(|frame| onboarding.render(frame, std::time::Instant::now()))
+            .unwrap();
+        let path_typed = terminal.get_cursor_position().unwrap();
+        assert_eq!(path_typed.y, path_start.y);
+        assert_eq!(path_typed.x, path_start.x + 3);
+
+        let (_dir, mut configured) = configured_app(&["personal"]);
+        let mut terminal = Terminal::new(TestBackend::new(40, 12)).unwrap();
+        terminal
+            .draw(|frame| configured.render(frame, std::time::Instant::now()))
+            .unwrap();
+        let password_start = terminal.get_cursor_position().unwrap();
+        type_text(&mut configured, "abc");
+        terminal
+            .draw(|frame| configured.render(frame, std::time::Instant::now()))
+            .unwrap();
+        let password_typed = terminal.get_cursor_position().unwrap();
+        assert_eq!(password_typed.y, password_start.y);
+        assert_eq!(password_typed.x, password_start.x + 3);
     }
 }

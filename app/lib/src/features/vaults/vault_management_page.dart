@@ -1,8 +1,10 @@
-import 'package:flutter/material.dart';
+import 'package:material_ui/material_ui.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 
 import '../../data/models.dart';
 import '../../l10n/app_localizations.dart';
+import '../../platform/platform_result.dart';
+import '../../platform/vault_import.dart';
 import '../../providers/providers.dart';
 import '../../ui/tokens.dart';
 import 'change_password_dialog.dart';
@@ -29,6 +31,13 @@ class VaultManagementPage extends ConsumerWidget {
         mainAxisSize: MainAxisSize.min,
         crossAxisAlignment: CrossAxisAlignment.end,
         children: [
+          FloatingActionButton.small(
+            heroTag: 'import-vault',
+            onPressed: () => _openImport(context, ref),
+            tooltip: l10n.firstRunImportVault,
+            child: const Icon(Icons.file_open_outlined),
+          ),
+          const SizedBox(height: HidlinsSpacing.sm),
           FloatingActionButton.small(
             heroTag: 'connect-sync',
             onPressed: () => _openConnectSync(context, ref),
@@ -59,6 +68,32 @@ class VaultManagementPage extends ConsumerWidget {
       context,
     ).push<bool>(MaterialPageRoute(builder: (_) => const ConnectSyncDialog()));
     if (result == true) ref.invalidate(vaultListProvider);
+  }
+
+  Future<void> _openImport(BuildContext context, WidgetRef ref) async {
+    final l10n = AppLocalizations.of(context)!;
+    final picked = await ref.read(vaultImportCapabilityProvider).pickVault();
+    if (!context.mounted) return;
+    if (picked case PlatformSuccess<ImportedVault>(:final value)) {
+      try {
+        await ref
+            .read(sessionRepositoryProvider)
+            .registerExistingVault(
+              name: value.displayName,
+              kdbxPath: value.sourceReference,
+            );
+        ref.invalidate(vaultListProvider);
+      } on Object {
+        if (context.mounted) {
+          ScaffoldMessenger.of(context)
+              .showSnackBar(SnackBar(content: Text(l10n.errorGeneric)));
+        }
+      }
+    } else if (picked is PlatformFailure<ImportedVault> ||
+        picked is PlatformStale<ImportedVault>) {
+      ScaffoldMessenger.of(context)
+          .showSnackBar(SnackBar(content: Text(l10n.errorGeneric)));
+    }
   }
 }
 

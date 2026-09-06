@@ -435,4 +435,31 @@ impl AppSession {
         hidlins_core::atomic::write_atomic(std::path::Path::new(&dest_path), &bytes)?;
         Ok(())
     }
+
+    #[cfg(not(feature = "desktop"))]
+    #[allow(clippy::unused_self, clippy::needless_pass_by_value)]
+    pub fn add_attachment(
+        &self,
+        _uuid: String,
+        _source_path: String,
+    ) -> Result<(), HidlinsApiError> {
+        Err(super::desktop_only("add_attachment", "FR-016"))
+    }
+
+    #[cfg(not(feature = "desktop"))]
+    #[allow(clippy::unused_self, clippy::needless_pass_by_value)]
+    pub fn remove_attachment(&self, _uuid: String, _key: String) -> Result<(), HidlinsApiError> {
+        Err(super::desktop_only("remove_attachment", "FR-016"))
+    }
+
+    #[cfg(not(feature = "desktop"))]
+    #[allow(clippy::unused_self, clippy::needless_pass_by_value)]
+    pub fn save_attachment_to(
+        &self,
+        _uuid: String,
+        _key: String,
+        _dest_path: String,
+    ) -> Result<(), HidlinsApiError> {
+        Err(super::desktop_only("save_attachment_to", "FR-016"))
+    }
 }

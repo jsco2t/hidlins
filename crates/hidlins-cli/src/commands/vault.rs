@@ -1,4 +1,4 @@
-//! `hidlins vault {create, open, list, set-sync, set-lock}` dispatcher.
+//! `hidlins vault {create, register, open, list, set-sync, set-lock}` dispatcher.
 //!
 //! `set-sync` configures a vault's S3 sync target — resolving a
 //! credential source (default `prompt` seals the secret via RST-CRED-1),
@@ -31,7 +31,8 @@ use zeroize::Zeroizing;
 
 use crate::agent::NoAgentClient;
 use crate::cli::{
-    Cli, VaultArgs, VaultCreateArgs, VaultOpenArgs, VaultSetLockArgs, VaultSetSyncArgs, VaultVerb,
+    Cli, VaultArgs, VaultCreateArgs, VaultOpenArgs, VaultRegisterArgs, VaultSetLockArgs,
+    VaultSetSyncArgs, VaultVerb,
 };
 use crate::commands::{resolve_paths, write_success};
 use crate::exit::CliExit;
@@ -40,7 +41,7 @@ use crate::prompt::{
 };
 use crate::views::vault::{
     VaultCreateKdfView, VaultCreateView, VaultListEntry, VaultListView, VaultOpenView,
-    VaultSetLockView, VaultSetSyncView,
+    VaultRegisterView, VaultSetLockView, VaultSetSyncView,
 };
 
 /// Phase 2 entry point — dispatches to the verb handler.
@@ -51,6 +52,7 @@ use crate::views::vault::{
 pub fn run(cli: &Cli, args: &VaultArgs) -> Result<(), CliExit> {
     match &args.verb {
         Some(VaultVerb::Create(create)) => run_create(cli, create),
+        Some(VaultVerb::Register(register)) => run_register(cli, register),
         Some(VaultVerb::Open(open)) => run_open(cli, open),
         Some(VaultVerb::List(_)) => run_list(cli),
         Some(VaultVerb::SetSync(set_sync)) => run_set_sync(cli, set_sync),
@@ -59,6 +61,71 @@ pub fn run(cli: &Cli, args: &VaultArgs) -> Result<(), CliExit> {
             "missing subcommand verb (try `hidlins vault --help`)".to_string(),
         )),
     }
+}
+
+// ---------------------------------------------------------------------------
+// vault register
+// ---------------------------------------------------------------------------
+
+fn run_register(cli: &Cli, args: &VaultRegisterArgs) -> Result<(), CliExit> {
+    let paths = resolve_paths(cli)?;
+    let mut registry = VaultRegistry::load(paths).map_err(CliExit::from)?;
+    if registry.get(&args.id).is_some() {
+        return Err(CliExit::from(VaultError::AlreadyRegistered {
+            name: args.id.clone(),
+        }));
+    }
+
+    let agent = NoAgentClient;
+    let opts = PromptOpts {
+        vault: &args.id,
+        agent: &agent,
+        prompt_label: "Master password: ",
+    };
+    let master = master_password(&opts)?;
+    let keyfile = args.keyfile.clone().map(Keyfile::Path);
+
+    // Authentication deliberately precedes all registry mutation. Opening an
+    // existing vault is read-only; drop its file lock before taking the
+    // independent registry write lock below.
+    let vault = Vault::open(&args.path, &master, keyfile.as_ref()).map_err(CliExit::from)?;
+    drop(vault);
+
+    // Persist stable absolute paths so later ID-based commands do not depend on
+    // the working directory used for this one registration invocation.
+    let vault_path = canonicalize_registration_path(&args.path)?;
+    let keyfile_path = args
+        .keyfile
+        .as_deref()
+        .map(canonicalize_registration_path)
+        .transpose()?;
+
+    registry
+        .register_and_save(RegisteredVault {
+            name: args.id.clone(),
+            path: vault_path.clone(),
+            created_at: chrono::Utc::now().to_rfc3339(),
+            keyfile_path: keyfile_path.clone(),
+            extra: toml::Table::new(),
+        })
+        .map_err(CliExit::from)?;
+
+    let view = VaultRegisterView {
+        id: &args.id,
+        path: &vault_path,
+        keyfile: keyfile_path.as_deref(),
+        status: "registered",
+    };
+    write_success(cli, &view)
+}
+
+fn canonicalize_registration_path(path: &std::path::Path) -> Result<std::path::PathBuf, CliExit> {
+    std::fs::canonicalize(path).map_err(|source| {
+        CliExit::from(VaultError::Io {
+            source,
+            path: path.to_path_buf(),
+        })
+    })
 }
 
 // ---------------------------------------------------------------------------

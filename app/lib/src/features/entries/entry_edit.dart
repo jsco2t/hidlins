@@ -1,4 +1,4 @@
-import 'package:flutter/material.dart';
+import 'package:material_ui/material_ui.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 
 import '../../data/models.dart';
@@ -133,8 +133,9 @@ class _EntryEditDialogState extends ConsumerState<EntryEditDialog> {
                           labelText: l10n.entryEditTitleLabel,
                           border: const OutlineInputBorder(),
                         ),
-                        validator: (v) =>
-                            (v == null || v.isEmpty) ? 'Required' : null,
+                        validator: (v) => (v == null || v.isEmpty)
+                            ? l10n.validatorRequired
+                            : null,
                       ),
                       const SizedBox(height: HidlinsSpacing.md),
 

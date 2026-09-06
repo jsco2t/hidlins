@@ -42,11 +42,12 @@ grep -rn "Hidlins patch\|HIDLINS PATCH" app/rust_builder/cargokit/ \
 
 | File | Change | Why |
 | --- | --- | --- |
+| `build_tool/lib/src/android_environment.dart` | preserves and encodes inherited `RUSTFLAGS` before adding the Android linker workaround | otherwise Cargokit's `CARGO_ENCODED_RUSTFLAGS` replaces Make's fatal-warning policy for Android Rust bridge builds |
 | `build_tool/lib/src/cargo.dart` | `CrateInfo` tracks `libraryName` alongside `packageName`; reads `[lib] name`, else normalizes hyphens to underscores | package is `hidlins-api`, library is `hidlins_api` |
 | `build_tool/lib/src/artifacts_provider.dart` | artifact lookup uses `libraryName` | otherwise no artifact is found |
 | `build_tool/lib/src/build_pod.dart` | lipo output name uses `libraryName` | emitted `libhidlins-api.a` while both podspecs `-force_load libhidlins_api.a`; **broke every macOS/iOS link** |
 | `build_tool/lib/src/precompile_binaries.dart` | `libraryName` parameter fed `libraryName` | same class of bug, currently dormant |
 | `build_tool/lib/src/verify_binaries.dart` | same | same |
-| `build_tool/lib/src/builder.dart` | passes `--offline --locked` to cargo | vendored/offline build posture |
+| `build_tool/lib/src/builder.dart` | passes `--offline --locked`, runs Cargo from the workspace manifest directory, and disables desktop defaults for Android/iOS targets | preserves vendored/offline resolution and prevents mobile builds from compiling desktop-only clipboard/windowing dependencies |
 | `run_build_tool.sh` | vendored `PUB_CACHE` + `dart pub get --offline` | vendored/offline build posture |
 | `build_pod.sh` | removed a bare `env` dump | it printed the whole environment — signing credentials, CI tokens, keychain vars — into build logs |

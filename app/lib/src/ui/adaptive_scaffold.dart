@@ -1,4 +1,4 @@
-import 'package:flutter/material.dart';
+import 'package:material_ui/material_ui.dart';
 
 import 'tokens.dart';
 import '../l10n/app_localizations.dart';
@@ -131,7 +131,7 @@ class _CompactLayout extends StatelessWidget {
   @override
   Widget build(BuildContext context) {
     return Scaffold(
-      body: body,
+      body: SafeArea(bottom: false, child: body),
       bottomNavigationBar: NavigationBar(
         selectedIndex: selectedIndex,
         onDestinationSelected: onDestinationSelected,
@@ -162,27 +162,29 @@ class _MediumLayout extends StatelessWidget {
   @override
   Widget build(BuildContext context) {
     return Scaffold(
-      body: Row(
-        children: [
-          NavigationRail(
-            selectedIndex: selectedIndex,
-            onDestinationSelected: onDestinationSelected,
-            labelType: NavigationRailLabelType.all,
-            destinations: [
-              for (final d in destinations)
-                NavigationRailDestination(
-                  icon: Icon(d.icon),
-                  label: Text(d.label),
-                ),
-            ],
-          ),
-          const VerticalDivider(thickness: 1, width: 1),
-          Expanded(child: body),
-          if (secondaryBody != null) ...[
+      body: SafeArea(
+        child: Row(
+          children: [
+            NavigationRail(
+              selectedIndex: selectedIndex,
+              onDestinationSelected: onDestinationSelected,
+              labelType: NavigationRailLabelType.all,
+              destinations: [
+                for (final d in destinations)
+                  NavigationRailDestination(
+                    icon: Icon(d.icon),
+                    label: Text(d.label),
+                  ),
+              ],
+            ),
             const VerticalDivider(thickness: 1, width: 1),
-            Expanded(child: secondaryBody!),
+            Expanded(child: body),
+            if (secondaryBody != null) ...[
+              const VerticalDivider(thickness: 1, width: 1),
+              Expanded(child: secondaryBody!),
+            ],
           ],
-        ],
+        ),
       ),
     );
   }
@@ -212,25 +214,34 @@ class _ExpandedLayout extends StatelessWidget {
   @override
   Widget build(BuildContext context) {
     return Scaffold(
-      body: Row(
-        children: [
-          NavigationRail(
-            selectedIndex: selectedIndex,
-            onDestinationSelected: onDestinationSelected,
-            extended: true,
-            destinations: [
-              for (final d in destinations)
-                NavigationRailDestination(
-                  icon: Icon(d.icon),
-                  label: Text(d.label),
-                ),
+      body: SafeArea(
+        child: Row(
+          children: [
+            NavigationRail(
+              selectedIndex: selectedIndex,
+              onDestinationSelected: onDestinationSelected,
+              extended: true,
+              destinations: [
+                for (final d in destinations)
+                  NavigationRailDestination(
+                    icon: Icon(d.icon),
+                    label: Text(d.label),
+                  ),
+              ],
+            ),
+            const VerticalDivider(thickness: 1, width: 1),
+            if (secondaryBody == null)
+              Expanded(child: body)
+            else ...[
+              SizedBox(width: listPaneWidth, child: body),
+              _DraggableDivider(
+                onDrag: onDividerDrag,
+                onDragEnd: onDividerDragEnd,
+              ),
+              Expanded(child: secondaryBody!),
             ],
-          ),
-          const VerticalDivider(thickness: 1, width: 1),
-          SizedBox(width: listPaneWidth, child: body),
-          _DraggableDivider(onDrag: onDividerDrag, onDragEnd: onDividerDragEnd),
-          Expanded(child: secondaryBody ?? const SizedBox.shrink()),
-        ],
+          ],
+        ),
       ),
     );
   }

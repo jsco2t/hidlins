@@ -47,7 +47,24 @@ fn reencrypt_sync_credentials(
         access_key_id: resolved.access_key_id.clone(),
         secret_access_key_encrypted: re_encrypted,
     });
-    Sync::configure_remote(registry, name, new_s3, &new_creds.master)?;
+
+    // Credential rotation is not target reconfiguration. In particular, it
+    // must preserve the last-synced ETag and local SHA pointers. Calling
+    // `Sync::configure_remote` here rebuilt a fresh `SyncConfig`, clearing
+    // both pointers; the next sync then treated the new-password local vault
+    // and old-password remote as a first-time divergence and attempted to
+    // decrypt the remote with the new password.
+    let mut updated_sync = sync_cfg;
+    updated_sync.s3 = Some(new_s3);
+    let mut updated_entry = registry
+        .get(name)
+        .ok_or_else(|| HidlinsApiError::Internal {
+            context: "password-changed vault disappeared from registry".to_string(),
+        })?
+        .clone();
+    updated_sync.to_vault_entry(&mut updated_entry);
+    registry.deregister(name, false)?;
+    registry.register(updated_entry)?;
     Ok(())
 }
 

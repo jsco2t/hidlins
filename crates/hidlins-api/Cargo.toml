@@ -16,7 +16,7 @@ crate-type = ["lib", "cdylib", "staticlib"]
 hidlins-core = { path = "../hidlins-core", version = "0.1" }
 hidlins-genpw = { path = "../hidlins-genpw", version = "0.1" }
 hidlins-sync = { path = "../hidlins-sync", version = "0.1" }
-hidlins-security = { path = "../hidlins-security", version = "0.1" }
+hidlins-security = { path = "../hidlins-security", version = "0.1", default-features = false }
 chrono = { version = "0.4", default-features = false, features = ["clock", "std"] }
 flutter_rust_bridge = "=2.12.0"
 thiserror = "2.0"
@@ -24,6 +24,13 @@ secrecy = "0.10"
 tempfile = { version = "3", optional = true }
 toml = "0.8"
 zeroize = { version = "1", features = ["derive"] }
+
+# Android-only promotion of dependencies already present in the vendored
+# ureq/rustls graph. The verifier requirement must resolve to the same crate
+# instance used by hidlins-sync; the Android build gate enforces that invariant.
+[target.'cfg(target_os = "android")'.dependencies]
+rustls-platform-verifier = "0.6"
+jni = "0.21"
 
 [features]
 default = ["desktop"]

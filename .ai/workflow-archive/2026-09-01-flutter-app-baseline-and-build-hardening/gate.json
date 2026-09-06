@@ -1,0 +1,10 @@
+{
+  "standard_commands": [
+    "make check",
+    "make app-check"
+  ],
+  "final_commands": [
+    "make verify",
+    "make app-build-macos"
+  ]
+}

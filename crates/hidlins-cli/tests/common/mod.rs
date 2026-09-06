@@ -81,6 +81,63 @@ pub fn seed_vault(reg: &VaultsToml, id: &str, password: &str) -> PathBuf {
     path
 }
 
+/// Create a fast-KDF KDBX fixture without adding it to the registry.
+///
+/// Used by existing-vault registration tests: registering the fixture must be
+/// the spawned CLI's responsibility, not hidden in test setup.
+pub fn create_unregistered_vault(reg: &VaultsToml, name: &str, password: &str) -> PathBuf {
+    use hidlins_core::{KdfParams, MasterPassword, NoRecoveryConfirmed, Vault};
+
+    let path = reg.tempdir.path().join(format!("{name}.kdbx"));
+    let kdf = KdfParams {
+        memory_kib: 1_024,
+        iterations: 1,
+        parallelism: 1,
+    };
+    drop(
+        Vault::create(
+            &path,
+            &MasterPassword::new(password.to_string()),
+            None,
+            kdf,
+            NoRecoveryConfirmed::yes(),
+        )
+        .expect("create unregistered vault fixture"),
+    );
+    path
+}
+
+/// Create an unregistered fast-KDF KDBX fixture that requires a keyfile.
+pub fn create_unregistered_vault_with_keyfile(
+    reg: &VaultsToml,
+    name: &str,
+    password: &str,
+) -> (PathBuf, PathBuf) {
+    use hidlins_core::{KdfParams, Keyfile, MasterPassword, NoRecoveryConfirmed, Vault};
+
+    let path = reg.tempdir.path().join(format!("{name}.kdbx"));
+    let keyfile_path = reg.tempdir.path().join(format!("{name}.key"));
+    std::fs::write(&keyfile_path, b"synthetic registration keyfile")
+        .expect("write registration keyfile fixture");
+    let keyfile = Keyfile::Path(keyfile_path.clone());
+    let kdf = KdfParams {
+        memory_kib: 1_024,
+        iterations: 1,
+        parallelism: 1,
+    };
+    drop(
+        Vault::create(
+            &path,
+            &MasterPassword::new(password.to_string()),
+            Some(&keyfile),
+            kdf,
+            NoRecoveryConfirmed::yes(),
+        )
+        .expect("create keyfile-protected unregistered vault fixture"),
+    );
+    (path, keyfile_path)
+}
+
 /// Run a `hidlins` invocation with the given args and return
 /// `(exit_code, stdout, stderr)`.
 pub fn run_args(args: &[&str]) -> (i32, String, String) {

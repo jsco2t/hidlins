@@ -170,6 +170,7 @@ impl Keymap {
             (Command::Help, ch('?')),
             (Command::Cancel, code(KeyCode::Esc)),
             (Command::Confirm, code(KeyCode::Enter)),
+            (Command::AddVault, ch('a')),
             // Navigation — vim + arrows
             (Command::Next, ch('j')),
             (Command::Next, code(KeyCode::Down)),

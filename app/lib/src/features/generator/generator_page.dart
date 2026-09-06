@@ -1,6 +1,6 @@
 import 'dart:async';
 
-import 'package:flutter/material.dart';
+import 'package:material_ui/material_ui.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 
 import '../../data/models.dart';
@@ -50,6 +50,15 @@ class _GeneratorPageState extends ConsumerState<GeneratorPage>
   }
 
   @override
+  void didChangeDependencies() {
+    super.didChangeDependencies();
+    _rotateCtrl.duration = HidlinsMotion.resolve(
+      context,
+      const Duration(milliseconds: 400),
+    );
+  }
+
+  @override
   void dispose() {
     _separatorCtrl.dispose();
     _rotateCtrl.dispose();
@@ -95,139 +104,133 @@ class _GeneratorPageState extends ConsumerState<GeneratorPage>
     final colorScheme = Theme.of(context).colorScheme;
 
     return Scaffold(
-      body: Padding(
+      body: ListView(
         padding: const EdgeInsets.all(HidlinsSpacing.md),
-        child: Column(
-          crossAxisAlignment: CrossAxisAlignment.stretch,
-          children: [
-            Text(
-              l10n.generatorTitle,
-              style: Theme.of(context).textTheme.headlineSmall,
-            ),
-            const SizedBox(height: HidlinsSpacing.lg),
+        children: [
+          Text(
+            l10n.generatorTitle,
+            style: Theme.of(context).textTheme.headlineSmall,
+          ),
+          const SizedBox(height: HidlinsSpacing.lg),
 
-            // Generated output
-            Card(
-              color: colorScheme.surfaceContainerLow,
-              child: Padding(
-                padding: const EdgeInsets.all(HidlinsSpacing.lg),
-                child: Column(
-                  children: [
-                    if (_result != null)
-                      PasswordText(password: _result!.value, fontSize: 20)
-                    else if (_generating)
-                      const CircularProgressIndicator()
-                    else
-                      const SizedBox(height: 28),
-                    const SizedBox(height: HidlinsSpacing.md),
-                    if (_result != null)
-                      _EntropyMeter(bits: _result!.entropyBits),
-                  ],
-                ),
+          // Generated output
+          Card(
+            color: colorScheme.surfaceContainerLow,
+            child: Padding(
+              padding: const EdgeInsets.all(HidlinsSpacing.lg),
+              child: Column(
+                children: [
+                  if (_result != null)
+                    PasswordText(password: _result!.value, fontSize: 20)
+                  else if (_generating)
+                    const CircularProgressIndicator()
+                  else
+                    const SizedBox(height: 28),
+                  const SizedBox(height: HidlinsSpacing.md),
+                  if (_result != null)
+                    _EntropyMeter(bits: _result!.entropyBits),
+                ],
               ),
             ),
-            const SizedBox(height: HidlinsSpacing.md),
+          ),
+          const SizedBox(height: HidlinsSpacing.md),
 
-            // Action buttons
-            Row(
-              mainAxisAlignment: MainAxisAlignment.center,
-              children: [
-                RotationTransition(
-                  turns: _rotateCtrl,
-                  child: IconButton.filled(
-                    icon: const Icon(Icons.refresh),
-                    tooltip: l10n.generatorRegenerate,
-                    onPressed: _generating ? null : _generate,
-                  ),
+          // Action buttons
+          Row(
+            mainAxisAlignment: MainAxisAlignment.center,
+            children: [
+              RotationTransition(
+                turns: _rotateCtrl,
+                child: IconButton.filled(
+                  icon: const Icon(Icons.refresh),
+                  tooltip: l10n.generatorRegenerate,
+                  onPressed: _generating ? null : _generate,
                 ),
+              ),
+              const SizedBox(width: HidlinsSpacing.md),
+              IconButton.filled(
+                icon: const Icon(Icons.copy),
+                tooltip: l10n.generatorCopy,
+                onPressed: _result == null ? null : _copyResult,
+              ),
+              if (widget.onUse != null) ...[
                 const SizedBox(width: HidlinsSpacing.md),
-                IconButton.filled(
-                  icon: const Icon(Icons.copy),
-                  tooltip: l10n.generatorCopy,
-                  onPressed: _result == null ? null : _copyResult,
+                FilledButton(
+                  onPressed: _result == null
+                      ? null
+                      : () => widget.onUse!(_result!.value),
+                  child: Text(l10n.actionUse),
                 ),
-                if (widget.onUse != null) ...[
-                  const SizedBox(width: HidlinsSpacing.md),
-                  FilledButton(
-                    onPressed: _result == null
-                        ? null
-                        : () => widget.onUse!(_result!.value),
-                    child: Text(l10n.actionUse),
-                  ),
-                ],
               ],
-            ),
-            const SizedBox(height: HidlinsSpacing.lg),
+            ],
+          ),
+          const SizedBox(height: HidlinsSpacing.lg),
 
-            // Mode toggle
-            SegmentedButton<_GeneratorMode>(
-              segments: [
-                ButtonSegment(
-                  value: _GeneratorMode.random,
-                  label: Text(l10n.generatorRandom),
-                ),
-                ButtonSegment(
-                  value: _GeneratorMode.diceware,
-                  label: Text(l10n.generatorDiceware),
-                ),
-              ],
-              selected: {_mode},
-              onSelectionChanged: (s) async {
-                setState(() => _mode = s.first);
+          // Mode toggle
+          SegmentedButton<_GeneratorMode>(
+            segments: [
+              ButtonSegment(
+                value: _GeneratorMode.random,
+                label: Text(l10n.generatorRandom),
+              ),
+              ButtonSegment(
+                value: _GeneratorMode.diceware,
+                label: Text(l10n.generatorDiceware),
+              ),
+            ],
+            selected: {_mode},
+            onSelectionChanged: (s) async {
+              setState(() => _mode = s.first);
+              await _generate();
+            },
+          ),
+          const SizedBox(height: HidlinsSpacing.md),
+
+          // Options
+          if (_mode == _GeneratorMode.random)
+            _RandomOptions(
+              length: _length,
+              onLengthChanged: (v) async {
+                setState(() => _length = v);
                 await _generate();
               },
+              lowercase: _lowercase,
+              onLowercaseChanged: (v) async {
+                setState(() => _lowercase = v);
+                await _generate();
+              },
+              uppercase: _uppercase,
+              onUppercaseChanged: (v) async {
+                setState(() => _uppercase = v);
+                await _generate();
+              },
+              digits: _digits,
+              onDigitsChanged: (v) async {
+                setState(() => _digits = v);
+                await _generate();
+              },
+              symbols: _symbols,
+              onSymbolsChanged: (v) async {
+                setState(() => _symbols = v);
+                await _generate();
+              },
+              excludeAmbiguous: _excludeAmbiguous,
+              onExcludeAmbiguousChanged: (v) async {
+                setState(() => _excludeAmbiguous = v);
+                await _generate();
+              },
+            )
+          else
+            _DicewareOptions(
+              wordCount: _wordCount,
+              onWordCountChanged: (v) async {
+                setState(() => _wordCount = v);
+                await _generate();
+              },
+              separatorCtrl: _separatorCtrl,
+              onSeparatorChanged: () async => _generate(),
             ),
-            const SizedBox(height: HidlinsSpacing.md),
-
-            // Options
-            Expanded(
-              child: SingleChildScrollView(
-                child: _mode == _GeneratorMode.random
-                    ? _RandomOptions(
-                        length: _length,
-                        onLengthChanged: (v) async {
-                          setState(() => _length = v);
-                          await _generate();
-                        },
-                        lowercase: _lowercase,
-                        onLowercaseChanged: (v) async {
-                          setState(() => _lowercase = v);
-                          await _generate();
-                        },
-                        uppercase: _uppercase,
-                        onUppercaseChanged: (v) async {
-                          setState(() => _uppercase = v);
-                          await _generate();
-                        },
-                        digits: _digits,
-                        onDigitsChanged: (v) async {
-                          setState(() => _digits = v);
-                          await _generate();
-                        },
-                        symbols: _symbols,
-                        onSymbolsChanged: (v) async {
-                          setState(() => _symbols = v);
-                          await _generate();
-                        },
-                        excludeAmbiguous: _excludeAmbiguous,
-                        onExcludeAmbiguousChanged: (v) async {
-                          setState(() => _excludeAmbiguous = v);
-                          await _generate();
-                        },
-                      )
-                    : _DicewareOptions(
-                        wordCount: _wordCount,
-                        onWordCountChanged: (v) async {
-                          setState(() => _wordCount = v);
-                          await _generate();
-                        },
-                        separatorCtrl: _separatorCtrl,
-                        onSeparatorChanged: () async => _generate(),
-                      ),
-              ),
-            ),
-          ],
-        ),
+        ],
       ),
     );
   }
@@ -239,15 +242,13 @@ class _GeneratorPageState extends ConsumerState<GeneratorPage>
       final repo = ref.read(secretsRepositoryProvider);
       await repo.copyEntryField('generator', CopyField.password);
       if (mounted) {
-        ScaffoldMessenger.of(
-          context,
-        ).showSnackBar(SnackBar(content: Text(l10n.copiedSnackbar(30))));
+        ScaffoldMessenger.of(context)
+            .showSnackBar(SnackBar(content: Text(l10n.copiedSnackbar(30))));
       }
     } on Exception {
       if (!mounted) return;
-      ScaffoldMessenger.of(
-        context,
-      ).showSnackBar(SnackBar(content: Text(l10n.errorCopyFailed)));
+      ScaffoldMessenger.of(context)
+          .showSnackBar(SnackBar(content: Text(l10n.errorCopyFailed)));
     }
   }
 }
