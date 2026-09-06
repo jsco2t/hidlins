@@ -30,24 +30,24 @@ Future<PlatformResult<T>> invokePlatform<T>({
   try {
     final raw = await client.invoke(channel, method, arguments);
     if (raw is! Map<Object?, Object?>) {
-      return const PlatformFailure('invalid-native-result');
+      return PlatformFailure<T>('invalid-native-result');
     }
     final PlatformResult<T> result = switch (raw['status']) {
       'success' => PlatformSuccess(decode(raw['value'])),
-      'canceled' => const PlatformCanceled(),
-      'denied' => const PlatformDenied(),
-      'stale' => const PlatformStale(),
-      'unsupported' => const PlatformUnsupported(),
-      'failure' => PlatformFailure(_safeCode(raw['code'])),
-      _ => const PlatformFailure('invalid-native-status'),
+      'canceled' => PlatformCanceled<T>(),
+      'denied' => PlatformDenied<T>(),
+      'stale' => PlatformStale<T>(),
+      'unsupported' => PlatformUnsupported<T>(),
+      'failure' => PlatformFailure<T>(_safeCode(raw['code'])),
+      _ => PlatformFailure<T>('invalid-native-status'),
     };
     return result;
   } on MissingPluginException {
-    return const PlatformUnsupported();
+    return PlatformUnsupported<T>();
   } on PlatformException catch (error) {
-    return PlatformFailure(_safeCode(error.code));
+    return PlatformFailure<T>(_safeCode(error.code));
   } on Object {
-    return const PlatformFailure('platform-dispatch-failed');
+    return PlatformFailure<T>('platform-dispatch-failed');
   }
 }
 

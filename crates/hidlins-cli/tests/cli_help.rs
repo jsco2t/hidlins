@@ -4,6 +4,16 @@
 mod common;
 
 use common::run_args;
+use hidlins_cli::cli::BANNER;
+
+const EXPECTED_HIDLINS_BANNER: &str = r"
+ _   _ ___ ____  _     ___ _   _ ____
+| | | |_ _|  _ \| |   |_ _| \ | / ___|
+| |_| || || | | | |    | ||  \| \___ \
+|  _  || || |_| | |___ | || |\  |___) |
+|_| |_|___|____/|_____|___|_| \_|____/
+
+";
 
 #[test]
 fn top_level_help_exits_zero_and_lists_every_subcommand() {
@@ -19,16 +29,22 @@ fn top_level_help_exits_zero_and_lists_every_subcommand() {
 
 #[test]
 fn top_level_help_contains_ascii_art_banner() {
-    // The user-supplied banner — guard that clap's `before_help` is
-    // actually wiring it onto the help output.
-    let (code, stdout, _stderr) = run_args(&["--help"]);
-    assert_eq!(code, 0);
-    // Pick a glyph fragment that's unmistakable — the bottom row of the
-    // "Hidlins" slant logo.
-    assert!(
-        stdout.contains("/_/    \\__,_/"),
-        "expected ASCII-art banner on --help; got:\n{stdout}"
-    );
+    assert_eq!(BANNER, EXPECTED_HIDLINS_BANNER);
+    // clap trims the leading newline from `before_help`, but preserves the
+    // complete five-row wordmark and its trailing separation from the body.
+    let emitted_banner = EXPECTED_HIDLINS_BANNER.trim_start_matches('\n');
+    for flag in ["-h", "--help"] {
+        let (code, stdout, stderr) = run_args(&[flag]);
+        assert_eq!(code, 0, "stderr was: {stderr}");
+        assert!(
+            stdout.starts_with(emitted_banner),
+            "expected complete HIDLINS banner before {flag} output; got:\n{stdout}"
+        );
+        assert!(
+            !stdout.contains("/_/    \\__,_/"),
+            "legacy Falach banner leaked into {flag} output:\n{stdout}"
+        );
+    }
 }
 
 #[test]

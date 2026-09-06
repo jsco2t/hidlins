@@ -1,0 +1,62 @@
+Running Gradle task 'assembleDebug'...                          
+  OK: Android native artifacts match API, profile, source, ABI, hash, and 16 KiB contract
+  OK: Android native artifacts match API, profile, source, ABI, hash, and 16 KiB contract
+Running Gradle task 'assembleDebug'...                              7.3s
+✓ Built build/app/outputs/flutter-apk/app-debug.apk
+Installing build/app/outputs/flutter-apk/app-debug.apk...          303ms
+D/EGL_emulation( 2282): eglMakeCurrent: 0x756a1006c0: ver 3 1 (tinfo 0x75ff990480)
+E/libc    ( 2282): Access denied finding property "ro.vendor.mediatek.platform"
+W/1.raster( 2282): type=1400 audit(0.0:65): avc: denied { read } for name="u:object_r:vendor_default_prop:s0" dev="tmpfs" ino=7358 scontext=u:r:untrusted_app:s0:c119,c256,c512,c768 tcontext=u:object_r:vendor_default_prop:s0 tclass=file permissive=0 app=app.hidlins
+D/EGL_emulation( 2282): eglMakeCurrent: 0x756a1006c0: ver 3 1 (tinfo 0x75ff990480)
+D/FlutterJNI( 2282): Sending viewport metrics to the engine.
+VMServiceFlutterDriver: Connecting to Flutter application at http://127.0.0.1:56984/SogjDD8hPeM=/
+VMServiceFlutterDriver: Isolate found with number: 6876549121302875
+VMServiceFlutterDriver: Isolate 6876549121302875 is runnable.
+VMServiceFlutterDriver: Isolate is paused at start.
+VMServiceFlutterDriver: Attempting to resume isolate
+I/flutter ( 2282): 00:00 +0: (setUpAll)
+VMServiceFlutterDriver: Connected to Flutter application.
+I/flutter ( 2282): 00:00 +1: real bridge covers vault lifecycle and representative CRUD
+I/flutter ( 2282): 00:00 +1: real bridge covers vault lifecycle and representative CRUD [E]
+I/flutter ( 2282):   HidlinsApiError.io(context: on /data/user/0/app.hidlins/code_cache/hidlins-real-bridge-lifecycle-WNRZXJ/desktop-alpha.kdbx)
+I/flutter ( 2282):   package:flutter_rust_bridge/src/codec/base.dart 32:9                                                       SimpleDecoder.decode
+I/flutter ( 2282):   package:flutter_rust_bridge/src/codec/sse.dart 45:55                                                       SseCodec._decode
+I/flutter ( 2282):   package:flutter_rust_bridge/src/codec/sse.dart 35:12                                                       SseCodec.decodeObject
+I/flutter ( 2282):   dart:async/zone_root.dart 48:47                                                                            _rootRunUnary
+I/flutter ( 2282):   dart:async/zone.dart 816:35                                                                                _CustomZone.runUnary
+I/flutter ( 2282):   ===== asynchronous gap ===========================
+I/flutter ( 2282):   Users/jason/Developer/sources/personal/hidlins/app/integration_test/real_bridge_lifecycle_test.dart 44:23  main.<fn>
+I/flutter ( 2282):   ===== asynchronous gap ===========================
+I/flutter ( 2282):   package:test_api/src/backend/declarer.dart 253:15                                                          Declarer.test.<fn>.<fn>
+I/flutter ( 2282):   ===== asynchronous gap 
+I/flutter ( 2282): 00:00 +1 -1: real bridge registers an existing KDBX without rewriting it
+I/flutter ( 2282): 00:00 +1 -1: real bridge registers an existing KDBX without rewriting it [E]
+I/flutter ( 2282):   HidlinsApiError.io(context: on /data/user/0/app.hidlins/code_cache/hidlins-real-bridge-import-source-EYICHB/source.kdbx)
+I/flutter ( 2282):   package:flutter_rust_bridge/src/codec/base.dart 32:9                                                        SimpleDecoder.decode
+I/flutter ( 2282):   package:flutter_rust_bridge/src/codec/sse.dart 45:55                                                        SseCodec._decode
+I/flutter ( 2282):   package:flutter_rust_bridge/src/codec/sse.dart 35:12                                                        SseCodec.decodeObject
+I/flutter ( 2282):   dart:async/zone_root.dart 48:47                                                                             _rootRunUnary
+I/flutter ( 2282):   dart:async/zone.dart 816:35                                                                                 _CustomZone.runUnary
+I/flutter ( 2282):   ===== asynchronous gap ===========================
+I/flutter ( 2282):   Users/jason/Developer/sources/personal/hidlins/app/integration_test/real_bridge_lifecycle_test.dart 171:23  main.<fn>
+I/flutter ( 2282):   ===== asynchronous gap ===========================
+I/flutter ( 2282):   package:test_api/src/backend/declarer.dart 253:15                                                           Declarer.test.<fn>.<fn>
+I/flutter ( 2282):   ===== asynchrono
+I/flutter ( 2282): 00:00 +1 -2: per-vault idle timeout auto-locks through the real ticker
+I/flutter ( 2282): 00:00 +1 -2: per-vault idle timeout auto-locks through the real ticker [E]
+I/flutter ( 2282):   HidlinsApiError.io(context: on /data/user/0/app.hidlins/code_cache/hidlins-real-bridge-autolock-MGVBQL/auto-lock.kdbx)
+I/flutter ( 2282):   package:flutter_rust_bridge/src/codec/base.dart 32:9                                                       SimpleDecoder.decode
+I/flutter ( 2282):   package:flutter_rust_bridge/src/codec/sse.dart 45:55                                                       SseCodec._decode
+I/flutter ( 2282):   package:flutter_rust_bridge/src/codec/sse.dart 35:12                                                       SseCodec.decodeObject
+I/flutter ( 2282):   dart:async/zone_root.dart 48:47                                                                            _rootRunUnary
+I/flutter ( 2282):   dart:async/zone.dart 816:35                                                                                _CustomZone.runUnary
+I/flutter ( 2282):   ===== asynchronous gap ===========================
+I/flutter ( 2282):   Users/jason/Developer/sources/personal/hidlins/app/integration_test/real_bridge_lifecycle_test.dart 209:7  main.<fn>
+I/flutter ( 2282):   ===== asynchronous gap ===========================
+I/flutter ( 2282):   package:test_api/src/backend/declarer.dart 253:15                                                          Declarer.test.<fn>.<fn>
+I/flutter ( 2282):   ===== asynchronous gap 
+I/flutter ( 2282): 00:00 +1 -3: (tearDownAll)
+W/app.hidlins( 2282): Accessing hidden method Lsun/misc/Unsafe;->compareAndSwapObject(Ljava/lang/Object;JLjava/lang/Object;Ljava/lang/Object;)Z (greylist, linking, allowed)
+W/app.hidlins( 2282): Accessing hidden method Lsun/misc/Unsafe;->getObject(Ljava/lang/Object;J)Ljava/lang/Object; (greylist, linking, allowed)
+I/flutter ( 2282): 00:00 +2 -3: Some tests failed.
+All tests passed.

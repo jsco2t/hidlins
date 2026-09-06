@@ -220,7 +220,10 @@ class FakeEntryRepository implements EntryRepository {
   bool removeAttachmentCalled = false;
   String? lastRemovedAttachmentKey;
   bool saveAttachmentCalled = false;
+  String? lastSaveAttachmentUuid;
+  String? lastSaveAttachmentKey;
   String? lastSaveAttachmentDest;
+  AppFailure? saveAttachmentError;
 
   AppFailure? attachmentError;
 
@@ -344,7 +347,10 @@ class FakeEntryRepository implements EntryRepository {
     String destPath,
   ) async {
     saveAttachmentCalled = true;
+    lastSaveAttachmentUuid = uuid;
+    lastSaveAttachmentKey = key;
     lastSaveAttachmentDest = destPath;
+    if (saveAttachmentError != null) throw saveAttachmentError!;
   }
 }
 

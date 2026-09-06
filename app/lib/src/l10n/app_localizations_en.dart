@@ -421,6 +421,22 @@ class AppLocalizationsEn extends AppLocalizations {
   String get attachmentDetachConfirm => 'Remove this attachment?';
 
   @override
+  String attachmentExportAction(String name) {
+    return 'Save $name as…';
+  }
+
+  @override
+  String get attachmentExportWarning => 'Saved copies are unencrypted.';
+
+  @override
+  String attachmentExportSuccess(String name) {
+    return 'Saved an unencrypted copy of $name';
+  }
+
+  @override
+  String get attachmentExportFailed => 'Could not save attachment';
+
+  @override
   String attachmentBytes(String size) {
     return '$size bytes';
   }

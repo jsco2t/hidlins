@@ -4,6 +4,8 @@ import 'package:flutter_riverpod/flutter_riverpod.dart';
 import '../../data/failures.dart';
 import '../../data/models.dart';
 import '../../l10n/app_localizations.dart';
+import '../../platform/attachment_export.dart';
+import '../../platform/platform_result.dart';
 import '../../providers/providers.dart';
 import '../../ui/tokens.dart';
 import '../../ui/widgets/copy_row.dart';
@@ -368,6 +370,11 @@ class _AttachmentSection extends ConsumerStatefulWidget {
 class _AttachmentSectionState extends ConsumerState<_AttachmentSection> {
   String? _error;
 
+  bool _supportsExport(BuildContext context) {
+    final platform = Theme.of(context).platform;
+    return platform == TargetPlatform.macOS || platform == TargetPlatform.linux;
+  }
+
   @override
   Widget build(BuildContext context) {
     final l10n = AppLocalizations.of(context)!;
@@ -385,13 +392,30 @@ class _AttachmentSectionState extends ConsumerState<_AttachmentSection> {
               subtitle: Text(l10n.attachmentBytes('${a.sizeBytes}')),
               dense: true,
               contentPadding: EdgeInsets.zero,
-              trailing: IconButton(
-                icon: const Icon(Icons.close, size: 18),
-                tooltip: l10n.actionDetach,
-                onPressed: () async => _confirmDetach(a.name),
+              trailing: Row(
+                mainAxisSize: MainAxisSize.min,
+                children: [
+                  if (_supportsExport(context))
+                    IconButton(
+                      icon: const Icon(Icons.save_alt, size: 18),
+                      tooltip: l10n.attachmentExportAction(a.name),
+                      onPressed: () async => _export(a.name),
+                    ),
+                  IconButton(
+                    icon: const Icon(Icons.close, size: 18),
+                    tooltip: l10n.actionDetach,
+                    onPressed: () async => _confirmDetach(a.name),
+                  ),
+                ],
               ),
             ),
           ),
+          if (_supportsExport(context) && widget.attachments.isNotEmpty)
+            Text(
+              l10n.attachmentExportWarning,
+              style: Theme.of(context).textTheme.bodySmall
+                  ?.copyWith(color: colorScheme.onSurfaceVariant),
+            ),
           if (_error != null)
             Padding(
               padding: const EdgeInsets.only(top: HidlinsSpacing.sm),
@@ -436,6 +460,40 @@ class _AttachmentSectionState extends ConsumerState<_AttachmentSection> {
       setState(() {
         _error = AppLocalizations.of(context)!.errorGeneric;
       });
+    }
+  }
+
+  Future<void> _export(String key) async {
+    final l10n = AppLocalizations.of(context)!;
+    final capability = ref.read(attachmentExportCapabilityProvider);
+    final result = await capability.chooseDestination(
+      sanitizeAttachmentSuggestedName(key),
+    );
+    if (!mounted) return;
+
+    final destination = switch (result) {
+      PlatformSuccess<String>(:final value) => value,
+      PlatformCanceled<String>() => null,
+      _ => '',
+    };
+    if (destination == null) return;
+    if (destination.isEmpty) {
+      setState(() => _error = l10n.attachmentExportFailed);
+      return;
+    }
+
+    try {
+      await ref
+          .read(entryRepositoryProvider)
+          .saveAttachmentTo(widget.uuid, key, destination);
+      if (!mounted) return;
+      setState(() => _error = null);
+      ScaffoldMessenger.of(context).showSnackBar(
+        SnackBar(content: Text(l10n.attachmentExportSuccess(key))),
+      );
+    } on Exception {
+      if (!mounted) return;
+      setState(() => _error = l10n.attachmentExportFailed);
     }
   }
 

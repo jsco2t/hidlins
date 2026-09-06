@@ -143,12 +143,12 @@ platform_output=""
 if ! platform_output=$(python3 "$REPO_ROOT/tools/dev/platform-boundary-check.py" check 2>&1); then
   err "platform channel capability manifest failed" "$platform_output"
 else
-  ok "platform channels match the fixed lifecycle/clipboard/path/import/keyfile manifest"
+  ok "platform channels match the fixed lifecycle/clipboard/path/import/keyfile/attachment-export manifest"
 fi
 if ! platform_output=$(python3 "$REPO_ROOT/tools/dev/platform-boundary-check.py" self-test 2>&1); then
   err "platform channel negative controls failed" "$platform_output"
 else
-  ok "platform channel negative controls reject channel/method/location bypasses"
+  ok "platform channel negative controls reject channel/method/location/native-registration bypasses"
 fi
 
 # ---------------------------------------------------------------------------

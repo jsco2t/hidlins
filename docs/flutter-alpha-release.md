@@ -5,6 +5,10 @@ The Flutter alpha baseline is Flutter 3.47.2 / Dart 3.13.2 with Rust 1.95.0.
 unsigned development/alpha outputs: this work does not sign, notarize, publish,
 or prepare store submissions.
 
+For startup commands, a disposable kitchen-sink vault, manual smoke journeys,
+and the corresponding automated gates, see
+[`running-and-testing.md`](running-and-testing.md).
+
 ## Build matrix
 
 | Output | Host | Command | Location |

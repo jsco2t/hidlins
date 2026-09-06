@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""Fail closed around Hidlins' five fixed native capability adapters."""
+"""Fail closed around Hidlins' six fixed native capability adapters."""
 
 from __future__ import annotations
 
@@ -18,6 +18,30 @@ EXPECTED = {
         "keyfile_access.dart",
         "app.hidlins/keyfile",
         ("pickReference", "resolveReference", "releaseReference"),
+    ),
+    "attachment_export": (
+        "attachment_export.dart",
+        "app.hidlins/attachment_export",
+        ("chooseDestination",),
+    ),
+}
+NATIVE_ATTACHMENT_EXPORT = {
+    "app/macos/Runner/HidlinsAttachmentExport.swift": (
+        "app.hidlins/attachment_export",
+        "chooseDestination",
+        "NSSavePanel",
+    ),
+    "app/macos/Runner/MainFlutterWindow.swift": (
+        "HidlinsAttachmentExport()",
+        "attachmentExport.register",
+    ),
+    "app/macos/Runner.xcodeproj/project.pbxproj": (
+        "HidlinsAttachmentExport.swift in Sources",
+    ),
+    "app/linux/runner/my_application.cc": (
+        "app.hidlins/attachment_export",
+        "chooseDestination",
+        "GTK_FILE_CHOOSER_ACTION_SAVE",
     ),
 }
 CHANNEL_DECL = re.compile(r"channelName\s*=\s*['\"]([^'\"]+)['\"]")
@@ -92,6 +116,17 @@ def validate(root: Path) -> list[str]:
     dispatcher = platform / "platform_channel.dart"
     if "MethodChannel(channel)" not in dispatcher.read_text(encoding="utf-8"):
         errors.append("fixed dispatcher must own the sole dynamic MethodChannel constructor")
+    for relative, required_tokens in NATIVE_ATTACHMENT_EXPORT.items():
+        try:
+            source = (root / relative).read_text(encoding="utf-8")
+        except OSError as error:
+            errors.append(f"missing attachment export native registration {relative}: {error}")
+            continue
+        for token in required_tokens:
+            if token not in source:
+                errors.append(
+                    f"attachment export native registration {relative} is missing {token}"
+                )
     return errors
 
 
@@ -121,6 +156,10 @@ def write_fixture(root: Path) -> None:
     (platform / "platform_channel.dart").write_text(
         "final value = MethodChannel(channel);\n", encoding="utf-8"
     )
+    for relative, required_tokens in NATIVE_ATTACHMENT_EXPORT.items():
+        path = root / relative
+        path.parent.mkdir(parents=True, exist_ok=True)
+        path.write_text("\n".join(required_tokens), encoding="utf-8")
 
 
 def self_test() -> None:
@@ -137,6 +176,15 @@ def self_test() -> None:
             "method: 'reportState',\nmethod: 'lockNow',\n",
             encoding="utf-8",
         ),
+        "missing native attachment registration": lambda root: (
+            root / "app/macos/Runner/HidlinsAttachmentExport.swift"
+        ).unlink(),
+        "wrong native attachment method": lambda root: (
+            root / "app/linux/runner/my_application.cc"
+        ).write_text(
+            "app.hidlins/attachment_export\nwrongMethod\nGTK_FILE_CHOOSER_ACTION_SAVE\n",
+            encoding="utf-8",
+        ),
     }
     for label, mutate in mutations.items():
         with tempfile.TemporaryDirectory(prefix="hidlins-platform-boundary-") as scratch:
@@ -148,7 +196,9 @@ def self_test() -> None:
             mutate(root)
             if not validate(root):
                 raise SystemExit(f"error: {label} negative control was accepted")
-    print("  OK: undeclared channel, wrong location, and unlisted method controls fail")
+    print(
+        "  OK: undeclared channel, wrong location, unlisted method, and native registration controls fail"
+    )
 
 
 def main() -> None:
@@ -162,7 +212,7 @@ def main() -> None:
     errors = validate(args.root)
     if errors:
         raise SystemExit("\n".join(f"error: {error}" for error in errors))
-    print("  OK: platform channels match the fixed five-capability manifest")
+    print("  OK: platform channels match the fixed six-capability manifest")
 
 
 if __name__ == "__main__":

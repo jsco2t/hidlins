@@ -37,16 +37,17 @@ complete -c hidlins -n "__fish_hidlins_needs_command" -f -a "ssh" -d 'SSH key en
 complete -c hidlins -n "__fish_hidlins_needs_command" -f -a "completions" -d 'Generate shell completion scripts'
 complete -c hidlins -n "__fish_hidlins_needs_command" -f -a "keys" -d 'Print the TUI\'s effective keymap (command name, keys, description, group)'
 complete -c hidlins -n "__fish_hidlins_needs_command" -f -a "help" -d 'Print this message or the help of the given subcommand(s)'
-complete -c hidlins -n "__fish_hidlins_using_subcommand vault; and not __fish_seen_subcommand_from create open list set-sync set-lock help" -l format -d 'Output format. `human` (default) is line-oriented for terminals; `json` is the stable machine-readable schema for scripts' -r -f -a "human\t'Line-oriented human-readable output (default)'
+complete -c hidlins -n "__fish_hidlins_using_subcommand vault; and not __fish_seen_subcommand_from create register open list set-sync set-lock help" -l format -d 'Output format. `human` (default) is line-oriented for terminals; `json` is the stable machine-readable schema for scripts' -r -f -a "human\t'Line-oriented human-readable output (default)'
 json\t'Stable JSON schema — see `views/` for per-subcommand shapes'"
-complete -c hidlins -n "__fish_hidlins_using_subcommand vault; and not __fish_seen_subcommand_from create open list set-sync set-lock help" -l registry -d 'Path to the vault registry file. Defaults to `$HOME/.local/state/hidlins/vaults.toml` (per `hidlins_core::HidlinsPaths`)' -r -F
-complete -c hidlins -n "__fish_hidlins_using_subcommand vault; and not __fish_seen_subcommand_from create open list set-sync set-lock help" -s h -l help -d 'Print help (see more with \'--help\')'
-complete -c hidlins -n "__fish_hidlins_using_subcommand vault; and not __fish_seen_subcommand_from create open list set-sync set-lock help" -f -a "create" -d 'Create a new vault and register it'
-complete -c hidlins -n "__fish_hidlins_using_subcommand vault; and not __fish_seen_subcommand_from create open list set-sync set-lock help" -f -a "open" -d 'Probe vault unlock with the given master password'
-complete -c hidlins -n "__fish_hidlins_using_subcommand vault; and not __fish_seen_subcommand_from create open list set-sync set-lock help" -f -a "list" -d 'List registered vaults'
-complete -c hidlins -n "__fish_hidlins_using_subcommand vault; and not __fish_seen_subcommand_from create open list set-sync set-lock help" -f -a "set-sync" -d 'Configure the S3 target for a vault'
-complete -c hidlins -n "__fish_hidlins_using_subcommand vault; and not __fish_seen_subcommand_from create open list set-sync set-lock help" -f -a "set-lock" -d 'Configure the per-vault idle-lock timeout'
-complete -c hidlins -n "__fish_hidlins_using_subcommand vault; and not __fish_seen_subcommand_from create open list set-sync set-lock help" -f -a "help" -d 'Print this message or the help of the given subcommand(s)'
+complete -c hidlins -n "__fish_hidlins_using_subcommand vault; and not __fish_seen_subcommand_from create register open list set-sync set-lock help" -l registry -d 'Path to the vault registry file. Defaults to `$HOME/.local/state/hidlins/vaults.toml` (per `hidlins_core::HidlinsPaths`)' -r -F
+complete -c hidlins -n "__fish_hidlins_using_subcommand vault; and not __fish_seen_subcommand_from create register open list set-sync set-lock help" -s h -l help -d 'Print help (see more with \'--help\')'
+complete -c hidlins -n "__fish_hidlins_using_subcommand vault; and not __fish_seen_subcommand_from create register open list set-sync set-lock help" -f -a "create" -d 'Create a new vault and register it'
+complete -c hidlins -n "__fish_hidlins_using_subcommand vault; and not __fish_seen_subcommand_from create register open list set-sync set-lock help" -f -a "register" -d 'Authenticate and register an existing KDBX vault'
+complete -c hidlins -n "__fish_hidlins_using_subcommand vault; and not __fish_seen_subcommand_from create register open list set-sync set-lock help" -f -a "open" -d 'Probe vault unlock with the given master password'
+complete -c hidlins -n "__fish_hidlins_using_subcommand vault; and not __fish_seen_subcommand_from create register open list set-sync set-lock help" -f -a "list" -d 'List registered vaults'
+complete -c hidlins -n "__fish_hidlins_using_subcommand vault; and not __fish_seen_subcommand_from create register open list set-sync set-lock help" -f -a "set-sync" -d 'Configure the S3 target for a vault'
+complete -c hidlins -n "__fish_hidlins_using_subcommand vault; and not __fish_seen_subcommand_from create register open list set-sync set-lock help" -f -a "set-lock" -d 'Configure the per-vault idle-lock timeout'
+complete -c hidlins -n "__fish_hidlins_using_subcommand vault; and not __fish_seen_subcommand_from create register open list set-sync set-lock help" -f -a "help" -d 'Print this message or the help of the given subcommand(s)'
 complete -c hidlins -n "__fish_hidlins_using_subcommand vault; and __fish_seen_subcommand_from create" -l id -d 'Registry name for the new vault (unique)' -r
 complete -c hidlins -n "__fish_hidlins_using_subcommand vault; and __fish_seen_subcommand_from create" -l path -d 'Absolute or relative path where the `.kdbx` file will be created' -r -F
 complete -c hidlins -n "__fish_hidlins_using_subcommand vault; and __fish_seen_subcommand_from create" -l keyfile -d 'Optional keyfile required to unlock this vault' -r -F
@@ -55,6 +56,13 @@ json\t'Stable JSON schema — see `views/` for per-subcommand shapes'"
 complete -c hidlins -n "__fish_hidlins_using_subcommand vault; and __fish_seen_subcommand_from create" -l registry -d 'Path to the vault registry file. Defaults to `$HOME/.local/state/hidlins/vaults.toml` (per `hidlins_core::HidlinsPaths`)' -r -F
 complete -c hidlins -n "__fish_hidlins_using_subcommand vault; and __fish_seen_subcommand_from create" -l no-recovery-warning -d 'Acknowledge the no-recovery warning. Required — there is no master-password recovery in Hidlins'
 complete -c hidlins -n "__fish_hidlins_using_subcommand vault; and __fish_seen_subcommand_from create" -s h -l help -d 'Print help (see more with \'--help\')'
+complete -c hidlins -n "__fish_hidlins_using_subcommand vault; and __fish_seen_subcommand_from register" -l id -d 'Registry name for the existing vault (unique)' -r
+complete -c hidlins -n "__fish_hidlins_using_subcommand vault; and __fish_seen_subcommand_from register" -l path -d 'Path to an existing KDBX vault' -r -F
+complete -c hidlins -n "__fish_hidlins_using_subcommand vault; and __fish_seen_subcommand_from register" -l keyfile -d 'Optional keyfile required to unlock this vault' -r -F
+complete -c hidlins -n "__fish_hidlins_using_subcommand vault; and __fish_seen_subcommand_from register" -l format -d 'Output format. `human` (default) is line-oriented for terminals; `json` is the stable machine-readable schema for scripts' -r -f -a "human\t'Line-oriented human-readable output (default)'
+json\t'Stable JSON schema — see `views/` for per-subcommand shapes'"
+complete -c hidlins -n "__fish_hidlins_using_subcommand vault; and __fish_seen_subcommand_from register" -l registry -d 'Path to the vault registry file. Defaults to `$HOME/.local/state/hidlins/vaults.toml` (per `hidlins_core::HidlinsPaths`)' -r -F
+complete -c hidlins -n "__fish_hidlins_using_subcommand vault; and __fish_seen_subcommand_from register" -s h -l help -d 'Print help (see more with \'--help\')'
 complete -c hidlins -n "__fish_hidlins_using_subcommand vault; and __fish_seen_subcommand_from open" -l id -d 'Registry name of the vault to probe' -r
 complete -c hidlins -n "__fish_hidlins_using_subcommand vault; and __fish_seen_subcommand_from open" -l format -d 'Output format. `human` (default) is line-oriented for terminals; `json` is the stable machine-readable schema for scripts' -r -f -a "human\t'Line-oriented human-readable output (default)'
 json\t'Stable JSON schema — see `views/` for per-subcommand shapes'"
@@ -83,6 +91,7 @@ complete -c hidlins -n "__fish_hidlins_using_subcommand vault; and __fish_seen_s
 complete -c hidlins -n "__fish_hidlins_using_subcommand vault; and __fish_seen_subcommand_from set-lock" -l clear -d 'Remove the per-vault override and fall back to the default'
 complete -c hidlins -n "__fish_hidlins_using_subcommand vault; and __fish_seen_subcommand_from set-lock" -s h -l help -d 'Print help (see more with \'--help\')'
 complete -c hidlins -n "__fish_hidlins_using_subcommand vault; and __fish_seen_subcommand_from help" -f -a "create" -d 'Create a new vault and register it'
+complete -c hidlins -n "__fish_hidlins_using_subcommand vault; and __fish_seen_subcommand_from help" -f -a "register" -d 'Authenticate and register an existing KDBX vault'
 complete -c hidlins -n "__fish_hidlins_using_subcommand vault; and __fish_seen_subcommand_from help" -f -a "open" -d 'Probe vault unlock with the given master password'
 complete -c hidlins -n "__fish_hidlins_using_subcommand vault; and __fish_seen_subcommand_from help" -f -a "list" -d 'List registered vaults'
 complete -c hidlins -n "__fish_hidlins_using_subcommand vault; and __fish_seen_subcommand_from help" -f -a "set-sync" -d 'Configure the S3 target for a vault'
@@ -260,6 +269,7 @@ complete -c hidlins -n "__fish_hidlins_using_subcommand help; and not __fish_see
 complete -c hidlins -n "__fish_hidlins_using_subcommand help; and not __fish_seen_subcommand_from vault entry gen sync ssh completions keys help" -f -a "keys" -d 'Print the TUI\'s effective keymap (command name, keys, description, group)'
 complete -c hidlins -n "__fish_hidlins_using_subcommand help; and not __fish_seen_subcommand_from vault entry gen sync ssh completions keys help" -f -a "help" -d 'Print this message or the help of the given subcommand(s)'
 complete -c hidlins -n "__fish_hidlins_using_subcommand help; and __fish_seen_subcommand_from vault" -f -a "create" -d 'Create a new vault and register it'
+complete -c hidlins -n "__fish_hidlins_using_subcommand help; and __fish_seen_subcommand_from vault" -f -a "register" -d 'Authenticate and register an existing KDBX vault'
 complete -c hidlins -n "__fish_hidlins_using_subcommand help; and __fish_seen_subcommand_from vault" -f -a "open" -d 'Probe vault unlock with the given master password'
 complete -c hidlins -n "__fish_hidlins_using_subcommand help; and __fish_seen_subcommand_from vault" -f -a "list" -d 'List registered vaults'
 complete -c hidlins -n "__fish_hidlins_using_subcommand help; and __fish_seen_subcommand_from vault" -f -a "set-sync" -d 'Configure the S3 target for a vault'

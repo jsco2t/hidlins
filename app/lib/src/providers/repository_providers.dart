@@ -5,6 +5,7 @@ import '../bridge/api/session.dart' as bridge;
 import '../data/bridge_repositories.dart';
 import '../data/repositories.dart';
 import '../platform/secure_clipboard.dart';
+import '../platform/attachment_export.dart';
 import '../platform/keyfile_access.dart';
 import '../platform/vault_import.dart';
 
@@ -33,6 +34,12 @@ final keyfileAccessCapabilityProvider = Provider<KeyfileAccessCapability>((_) {
 final vaultImportCapabilityProvider = Provider<VaultImportCapability>((_) {
   return const MethodChannelVaultImport();
 });
+
+final attachmentExportCapabilityProvider = Provider<AttachmentExportCapability>(
+  (_) {
+    return const MethodChannelAttachmentExport();
+  },
+);
 
 final secretsRepositoryProvider = Provider<SecretsRepository>((ref) {
   final session = ref.watch(appSessionProvider);

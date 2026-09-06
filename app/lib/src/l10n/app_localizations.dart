@@ -892,6 +892,30 @@ abstract class AppLocalizations {
   /// **'Remove this attachment?'**
   String get attachmentDetachConfirm;
 
+  /// No description provided for @attachmentExportAction.
+  ///
+  /// In en, this message translates to:
+  /// **'Save {name} as…'**
+  String attachmentExportAction(String name);
+
+  /// No description provided for @attachmentExportWarning.
+  ///
+  /// In en, this message translates to:
+  /// **'Saved copies are unencrypted.'**
+  String get attachmentExportWarning;
+
+  /// No description provided for @attachmentExportSuccess.
+  ///
+  /// In en, this message translates to:
+  /// **'Saved an unencrypted copy of {name}'**
+  String attachmentExportSuccess(String name);
+
+  /// No description provided for @attachmentExportFailed.
+  ///
+  /// In en, this message translates to:
+  /// **'Could not save attachment'**
+  String get attachmentExportFailed;
+
   /// No description provided for @attachmentBytes.
   ///
   /// In en, this message translates to:

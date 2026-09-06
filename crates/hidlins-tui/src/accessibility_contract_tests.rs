@@ -23,8 +23,7 @@ fn compact_accessible_startup_keeps_the_complete_semantic_password_form() {
     prompt.assert_contains_in_order(&[
         "HIDLINS",
         "Unlock vault: personal",
-        "Focused field: Master password",
-        "Password (masked):",
+        "▶ Master password — active",
         "Enter: Unlock",
         "Ctrl+Q: Exit",
     ]);
@@ -36,7 +35,7 @@ fn compact_accessible_startup_keeps_the_complete_semantic_password_form() {
 fn normal_supported_startup_sizes_render_every_exact_art_row_in_order() {
     let (_dir, app) = configured_app(&["personal"]);
     let expected: Vec<_> = HIDLINS_STARTUP_ART.lines().collect();
-    assert_eq!(expected.len(), 13);
+    assert_eq!(expected.len(), 12);
     for (width, height) in [(80, 24), (60, 16)] {
         let frame = render_at(&app, width, height, Instant::now());
         frame.assert_contains_in_order(&expected);
@@ -57,7 +56,7 @@ fn accessible_and_compact_startup_forms_preserve_semantics_without_art() {
     onboarding.assert_contains_in_order(&[
         "HIDLINS",
         "Please select a vault file:",
-        "Focused field: Vault path",
+        "▶ Vault path — active",
         "Enter: Open vault",
         "Esc or Ctrl+Q: Exit",
     ]);
@@ -69,7 +68,7 @@ fn accessible_and_compact_startup_forms_preserve_semantics_without_art() {
     invalid.assert_contains_in_order(&[
         "HIDLINS",
         "Please select a vault file:",
-        "Focused field: Vault path",
+        "▶ Vault path — active",
         "Vault file does not exist or cannot be",
         "accessed.",
         "Enter: Open vault",
@@ -84,8 +83,8 @@ fn accessible_and_compact_startup_forms_preserve_semantics_without_art() {
     picker.assert_contains_in_order(&[
         "HIDLINS",
         "Please select a vault:",
-        "Selected: beta",
-        "Enter: Continue",
+        "▶ beta",
+        "a: Add existing vault",
         "Ctrl+Q: Exit",
     ]);
     picker.assert_excludes(&[".--------."]);
@@ -94,8 +93,7 @@ fn accessible_and_compact_startup_forms_preserve_semantics_without_art() {
     prompt.assert_contains_in_order(&[
         "HIDLINS",
         "Unlock vault: beta",
-        "Focused field: Master password",
-        "Password (masked):",
+        "▶ Master password — active",
         "Enter: Unlock",
         "Esc: Back to vault list",
         "Ctrl+Q: Exit",
@@ -113,7 +111,7 @@ fn long_vault_lists_scroll_the_textual_selection_into_view() {
         app.handle_event(&key('j'));
     }
     let frame = render_at(&app, 40, 12, Instant::now());
-    frame.assert_contains_all(&["Please select a vault:", "Selected: vault-11"]);
+    frame.assert_contains_all(&["Please select a vault:", "▶ vault-11"]);
     frame.assert_no_terminal_controls();
 }
 

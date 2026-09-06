@@ -22,6 +22,8 @@ class TestHarness {
   final FakePrefsRepository prefs = FakePrefsRepository();
   final FakeKeyfileAccessCapability keyfiles = FakeKeyfileAccessCapability();
   final FakeVaultImportCapability vaultImport = FakeVaultImportCapability([]);
+  FakeAttachmentExportCapability attachmentExport =
+      FakeAttachmentExportCapability([]);
 
   List<Override> get overrides => [
     sessionRepositoryProvider.overrideWithValue(session),
@@ -34,6 +36,7 @@ class TestHarness {
     prefsRepositoryProvider.overrideWithValue(prefs),
     keyfileAccessCapabilityProvider.overrideWithValue(keyfiles),
     vaultImportCapabilityProvider.overrideWithValue(vaultImport),
+    attachmentExportCapabilityProvider.overrideWithValue(attachmentExport),
   ];
 
   void dispose() {

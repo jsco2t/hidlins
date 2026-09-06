@@ -153,6 +153,20 @@
   "recycleBin": "Recycle bin",
   "attachmentSizeExceeded": "File too large",
   "attachmentDetachConfirm": "Remove this attachment?",
+  "attachmentExportAction": "Save {name} as…",
+  "@attachmentExportAction": {
+    "placeholders": {
+      "name": { "type": "String" }
+    }
+  },
+  "attachmentExportWarning": "Saved copies are unencrypted.",
+  "attachmentExportSuccess": "Saved an unencrypted copy of {name}",
+  "@attachmentExportSuccess": {
+    "placeholders": {
+      "name": { "type": "String" }
+    }
+  },
+  "attachmentExportFailed": "Could not save attachment",
   "attachmentBytes": "{size} bytes",
   "@attachmentBytes": {
     "placeholders": {

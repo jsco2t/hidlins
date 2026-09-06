@@ -108,3 +108,50 @@ retaining the old AGP DSL compatibility flag, and its settings-level Kotlin
 plugin declaration may remain with `apply false` solely to pin the compiler
 toolchain. The Kotlin Android plugin must not be applied to the application or
 any Hidlins Android module.
+
+## Acceptance follow-up — Round 2
+
+In `docs/running-and-testing.md`, the guide states:
+
+> The CLI has no command that registers an arbitrary existing vault, so the
+> CLI section creates a separate disposable vault through its supported
+> `vault create` flow.
+
+This is nonsensical. Why cannot the CLI open an existing vault? That seems
+broken. Unless there is a reason why the CLI cannot open, register, or both,
+fix the limitation.
+
+## Acceptance follow-up — Round 3
+
+Before this work package is wrapped up, fix these acceptance bugs:
+
+1. `hidlins -h` currently renders an ASCII-art application name that reads
+   `falach`. It must identify the application as `hidlins`.
+2. The TUI startup vault modal is very difficult to understand. Its text is
+   presented as one undifferentiated block, it lacks a clear visual marker for
+   the field accepting input, and the phrase `Focused field` is not a useful or
+   conventional affordance. Redesign the modal so the active entry field is
+   visually obvious.
+3. When the TUI opens with a vault already selected, there is no apparent way
+   to choose a different vault. Provide a discoverable way to choose or add a
+   different vault.
+4. Replace the decorative ASCII art on the TUI login/startup modal with this
+   exact logo:
+
+   ```text
+            ▄▄▄▄▄▄▄
+          ▄██▀▀▀▀▀██▄
+          ██       ██
+          ██       ██
+     ╔════██═══════██════╗
+     ║  ┌─────────────┐  ║
+     ║  │o  HIDLINS  o│  ║
+     ║  └─────────────┘  ║
+     ║       ▄▄▄▄▄       ║
+     ║         █         ║
+     ║       ▄▄█▄▄       ║
+     ╚═══════════════════╝
+   ```
+5. In the desktop Flutter application, an entry with attachments currently
+   offers no way to download or view them. Add a usable attachment-access
+   action.

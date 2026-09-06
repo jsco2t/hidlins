@@ -43,7 +43,7 @@ UNAME_S        := $(shell uname -s)
 # Devs who know what they want type `make build`, `make test`, `make check`.
 .DEFAULT_GOAL := help
 
-.PHONY: help toolchain build release build-policy-check _build-policy-check acceptance-evidence-check check-android build-android android-artifacts-check android-verifier-build android-verifier-test android-harness-check android-emulator-provision app-android-config-check app-build-android app-test-android-integration app-test-android-emulator app-test-android-emulator-minio app-test-android-emulator-s3 check-ios ios-harness-check app-test-ios-simulator app-test-ios-integration app-test-ios-simulator-minio app-test-ios-simulator-s3 app-test-ios-device app-build-ios app-prepare-ios-observation test test-ignored test-all test-tui-contracts test-update-snapshots test-clipboard test-os-events \
+.PHONY: help toolchain build release demo-vault build-policy-check _build-policy-check acceptance-evidence-check check-android build-android android-artifacts-check android-verifier-build android-verifier-test android-harness-check android-emulator-provision app-android-config-check app-build-android app-test-android-integration app-test-android-emulator app-test-android-emulator-minio app-test-android-emulator-s3 check-ios ios-harness-check app-test-ios-simulator app-test-ios-integration app-test-ios-simulator-minio app-test-ios-simulator-s3 app-test-ios-device app-build-ios app-prepare-ios-observation test test-ignored test-all test-tui-contracts test-update-snapshots test-clipboard test-os-events \
         test-sigv4 minio-up minio-down minio-bucket test-s3-integration test-minio-managed interop-sync \
         fmt fmt-check lint lint-fix check-feature-gates \
         check verify interop interop-app interop-entry bench bench-search bench-search-gate bench-search-gate-ci \
@@ -77,6 +77,22 @@ build:  ## Build the workspace (offline, vendored).
 
 release:  ## Build optimized CLI, TUI, and agent artifacts in target/release/ (host platform).
 	$(CARGO) build $(CARGO_FLAGS) --release
+
+demo-vault:  ## Create a disposable kitchen-sink KDBX vault at DEMO_VAULT (absolute path; refuses overwrite).
+	@output="$(DEMO_VAULT)"; \
+	if [ -z "$$output" ]; then \
+		echo "error: set DEMO_VAULT=/absolute/path/to/demo.kdbx" >&2; exit 2; \
+	fi; \
+	case "$$output" in \
+		/*) ;; \
+		*) echo "error: DEMO_VAULT must be an absolute path" >&2; exit 2 ;; \
+	esac; \
+	if [ -e "$$output" ]; then \
+		echo "error: refusing to overwrite existing path: $$output" >&2; exit 2; \
+	fi; \
+	mkdir -p "$$(dirname "$$output")"
+	$(CARGO) run -p hidlins-core --example seed_demo_vault --offline --locked -- "$(DEMO_VAULT)"
+	@echo "Demo vault password: Password123"
 
 acceptance-evidence-check:  ## Audit release/CI/PRD evidence, skipped residuals, and all 45 July tasks.
 	python3 tools/acceptance/check.py self-test

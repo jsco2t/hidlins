@@ -775,3 +775,339 @@ deterministic package criterion maps to existing or new automated unit/widget/
 native/integration/artifact/simulator/emulator coverage. Manual acceptance and
 live credentialed-S3 execution are explicitly skipped/non-gating by user decision;
 their automated precursors and residual uncertainty remain auditable.
+
+## Acceptance follow-up — Round 2: Existing-vault CLI registration
+
+### Observed acceptance failure
+
+The new application-running guide had to tell CLI users to create a second
+throwaway vault because the CLI cannot register an existing KDBX file. This is a
+real product capability gap, not a KDBX, security, or architectural constraint.
+`hidlins vault open` only accepts an existing registry ID and performs a one-shot
+authentication probe; every entry and sync command also addresses vaults by
+registry ID. Consequently, accepting an unregistered path in `vault open` alone
+would not make that vault usable by the rest of the CLI.
+
+Repository evidence supports authenticated registration directly:
+
+- `crates/hidlins-tui/src/app.rs` already resolves an existing file, opens it
+  with the supplied master password, and persists the registration only after
+  authentication succeeds.
+- `hidlins_core::VaultRegistry::register_and_save` already performs an atomic,
+  advisory-locked, latest-state registration and rechecks duplicate names under
+  the lock.
+- `crates/hidlins-cli/src/commands/vault.rs` already has the secure no-echo
+  password path, keyfile handling, KDBX open behavior, registry resolution, and
+  exit-code mappings needed by the new command.
+
+The malformed workflow field that initially prevented this round from opening
+was repaired before planning: round 1 incorrectly had `completed_rounds: [1]`.
+For a first completed round that collection must be empty; the workflow helper
+then preserved round 1 as the required metadata object and moved its final
+evidence to `evidence/final-round-001.md`.
+
+### Additive fix strategy
+
+Add an explicit command:
+
+```text
+hidlins vault register --id <name> --path <existing.kdbx> [--keyfile <path>]
+```
+
+`register` will resolve the selected registry, reject an already-used ID before
+prompting, securely collect the master password, open the existing vault with
+the optional keyfile, and write the registration only after successful
+authentication. It will canonicalize the successfully opened vault and keyfile
+paths before persistence so later commands do not depend on the invoking working
+directory. The opened handle will be dropped before the registry transaction.
+`register_and_save` will perform the final concurrency-safe duplicate check and
+atomic write. The command will never create, rewrite, migrate, or otherwise
+modify the selected KDBX file.
+
+Keep `vault open --id` as the probe for an already-registered vault. This avoids
+an ambiguous `open --path` mode that cannot support subsequent ID-based CLI
+operations, while giving users the complete path from arbitrary existing KDBX
+to every CLI operation: register once, then open/entry/sync by ID.
+
+Add a dedicated, secret-free human/JSON registration result, update CLI help
+and generated bash/zsh/fish completions, and update the CLI surface documentation.
+Correct `docs/running-and-testing.md` to register and exercise the generated
+kitchen-sink fixture through the CLI instead of creating an unrelated vault.
+The already-drafted safe `make demo-vault` workflow and guide are included in
+this round's review and validation because they were added after round 1
+completed and are the acceptance surface that exposed the gap.
+
+No external dependency is required.
+
+### Architecture and security decisions
+
+- CLI remains a thin presentation layer. KDBX authentication stays in
+  `Vault::open`; durable registry concurrency and atomicity stay in
+  `VaultRegistry::register_and_save`.
+- Authentication must precede persistence. Wrong passwords, missing/invalid
+  KDBX files, and missing/incorrect keyfiles leave the registry absent or
+  byte-for-byte unchanged.
+- Master passwords remain confined to the existing secure stdin and
+  zeroize-on-drop path. They never enter arguments, environment variables,
+  output views, logs, registry data, or error messages.
+- The selected KDBX bytes must be identical before and after both successful
+  and failed registration attempts.
+- A preflight duplicate-ID check avoids unnecessary password prompts; the core
+  transaction remains authoritative against concurrent registration races.
+- Registration aliases by path are not newly prohibited. The existing registry
+  identity contract is name-based, and advisory file locking already protects
+  the shared underlying file. Adding a path-uniqueness migration is unrelated
+  to this acceptance failure.
+
+### Test strategy
+
+Follow the repository's test-before-fix rule. First add an end-to-end CLI
+regression demonstrating that an existing unregistered fixture cannot yet be
+registered. Record the red result, then implement the minimum command and record
+the green result.
+
+Automated coverage will prove:
+
+- a valid existing KDBX registers and immediately works with `vault open` and
+  an ID-based entry command;
+- the persisted vault path is canonical and the original KDBX bytes are
+  unchanged;
+- optional keyfile registration succeeds and stores a canonical keyfile path;
+- wrong passwords, missing/invalid files, bad keyfiles, and duplicate IDs fail
+  with the established exit-code/error mapping and do not change the registry;
+- human and JSON output are secret-free and have a pinned schema;
+- command help and all committed shell completions include `vault register`;
+- `make demo-vault` creates a KeePassXC-readable kitchen-sink fixture and
+  refuses missing, relative, and pre-existing output paths; and
+- the running/testing guide uses only commands supported by the resulting CLI.
+
+The standard and final quality gates remain unchanged. `make check` covers the
+Rust CLI integration and view tests; `make app-check` protects the shared app
+surface. Task-specific `make completions-check` covers generated CLI artifacts.
+The existing final `make verify` and `make app-build-macos` remain the full
+cross-package acceptance gate.
+
+### Task sequence
+
+15. `tasks/015-existing-vault-cli-registration.md` — implement authenticated,
+    atomic existing-vault registration; regenerate completions; and correct and
+    validate the application-running guide and demo-vault workflow.
+
+### Risks and out of scope
+
+- Production KDF authentication makes happy-path process tests slower; reuse a
+  fast-KDF test fixture while retaining real `Vault::open` behavior.
+- Canonicalization resolves symlinks. This matches TUI onboarding and prevents
+  registrations that later depend on a shell working directory, but the output
+  path may differ textually from user input.
+- Direct unregistered-path support for every entry/sync command, registry
+  deregistration UX, path-alias prohibition, agent caching, and desktop native
+  file-picker work are outside this focused correction.
+
+### Round 2 acceptance criteria
+
+- `hidlins vault register --id NAME --path FILE [--keyfile FILE]` authenticates
+  and atomically registers an existing supported KDBX vault without modifying
+  it.
+- A failed registration never creates or changes a registry entry and never
+  leaks secret material.
+- The registered ID works with the existing `vault open`, entry, and sync
+  command architecture.
+- Human/JSON help and output contracts plus committed shell completions expose
+  the new command accurately.
+- `docs/running-and-testing.md` uses the generated kitchen-sink vault directly
+  in its isolated CLI walkthrough and accurately distinguishes registration
+  from the one-shot open probe.
+- The demo-vault target and all round-specific, standard, and final automated
+  validations pass without new dependencies.
+
+## Acceptance follow-up — Round 3: identity, startup UX, and attachment export
+
+### Observed acceptance failures
+
+The latest hands-on acceptance pass found four independent product gaps:
+
+1. `crates/hidlins-cli/src/cli.rs::BANNER` is the old Falach wordmark even
+   though the clap command name and surrounding comments say Hidlins. The unit
+   test only checks for underscores and its comment explicitly describes an
+   `F`; the integration test pins a fragment of the incorrect logo. The tests
+   therefore preserve the defect instead of identifying it.
+2. `crates/hidlins-tui/src/screens/startup_modal.rs` renders the onboarding and
+   password inputs as plain adjacent text rows headed by `Focused field:`.
+   There is no bordered control, active marker, or cursor affordance separating
+   input from instructions. Existing snapshot, journey, and accessibility
+   tests pin this confusing presentation.
+3. `App::from_registry` sends a one-vault registry directly to a `Direct`
+   password prompt, and cancelling that prompt exits. The picker appears only
+   when two or more vaults were already registered. The picker itself has no
+   action for registering another existing vault. After a lock, the screen says
+   it will return to the vault list, but a one-vault registry instead returns
+   directly to the password prompt. These state transitions make selecting a
+   different vault undiscoverable or impossible from the TUI in the common
+   one-vault case.
+4. The Flutter entry detail already receives attachment metadata, and the
+   desktop bridge already implements `EntryRepository.saveAttachmentTo` through
+   Rust's atomic attachment export. `_AttachmentSection` exposes only attach and
+   detach actions and never calls that method. No dependency-free desktop save
+   destination adapter currently exists, so production UI cannot safely ask the
+   user where plaintext attachment output should be written.
+
+### Additive fix strategy
+
+First replace the CLI banner with an unambiguous HIDLINS wordmark. Strengthen
+the tests to pin the complete banner and its placement in top-level help so a
+different product name cannot pass on a generic glyph fragment.
+
+Then redesign the TUI startup surface around recognizable controls. In normal
+layouts, render the active vault-path and master-password fields inside their
+own titled borders with active-focus styling and a visible terminal cursor. In
+compact/accessibility layouts, retain complete text semantics with an explicit
+active-input marker when a bordered control cannot fit. Remove `Focused field`
+entirely. Render the selected vault row with both a textual marker and theme
+highlight so selection remains understandable without color. Replace
+`HIDLINS_STARTUP_ART` byte-for-byte with the requested 12-row, 23-cell-wide
+Unicode logo and validate terminal-cell width rather than UTF-8 byte length.
+The existing direct `unicode-width` dependency is sufficient.
+
+Make the TUI chooser a stable navigation destination for every non-empty
+registry. Cancelling a direct password prompt returns to the chooser instead of
+quitting, and leaving the lock screen returns to the chooser with the last
+vault highlighted. Add a centrally registered, discoverable `Add existing
+vault` command on the chooser (default `a`) that reuses the existing
+authenticate-before-register onboarding flow. Track whether onboarding began
+as first-run or from the chooser so Escape returns to the correct screen.
+`Ctrl+Q` remains the explicit exit everywhere. Do not add an unlocked hot-swap
+that could bypass the existing sync-on-lock path; switching an unlocked session
+continues to require locking first.
+
+Finally add a desktop-only `Save as…` action beside every attachment. A narrow
+`AttachmentExportCapability` asks the native desktop shell for a destination
+path through one reviewed method channel. macOS uses `NSSavePanel`; Linux uses
+the GTK 3 file chooser already linked by the runner. The channel carries only a
+sanitized suggested filename and the chosen destination path. Attachment bytes
+never enter Dart or the native channel: after selection the widget invokes the
+existing repository method, and Rust remains responsible for reading the KDBX
+attachment and performing the atomic write. Cancellation is silent; typed
+failures are localized and secret-free; success is announced accessibly.
+
+Direct `Open/View` is intentionally not used for this correction. Launching an
+external viewer would require creating and governing a plaintext temporary
+copy, deciding its retention/deletion lifecycle, and trusting another process.
+An explicit user-selected export satisfies attachment access while making the
+plaintext destination and persistence decision visible to the user.
+
+No new external dependency is required.
+
+### Architecture and security decisions
+
+- The CLI fix changes presentation only; clap remains the command-surface
+  owner and the banner has no product-state responsibility.
+- TUI rendering remains in `screens/startup_modal.rs`, while phase provenance,
+  registration, selection, and unlock transitions remain in `App`. The command
+  registry remains the single source for discoverable keys and palette/help
+  projections.
+- The chooser is the canonical locked navigation hub whenever at least one
+  vault exists. First-run onboarding remains the only zero-vault start state.
+- Existing-vault registration still authenticates before the atomic registry
+  transaction. Cancelling or failing the add flow cannot register a vault,
+  alter an existing KDBX, or lose the prior chooser selection.
+- Password input remains masked and zeroize-on-drop. A visual caret may expose
+  only position/length, never password characters or content.
+- The Flutter widget coordinates presentation only. Native code owns the OS
+  save-panel mechanism, while the Rust API remains the only owner of attachment
+  bytes and filesystem writes.
+- The new channel is added to `channels.json` and the fail-closed platform
+  boundary checker. It is desktop-only in the product UI; mobile attachment
+  behavior remains unchanged.
+- Suggested attachment names are untrusted metadata. Strip path separators and
+  control characters and use a safe fallback before presenting a native default
+  filename. The native selection is only a suggestion and must not create a
+  file before Rust performs the export.
+
+### Automated test strategy
+
+Each code task begins with the smallest regression that fails against the
+current implementation and records fail-before/pass-after evidence.
+
+For the CLI, unit and process-level help tests will compare the intended full
+banner, require HIDLINS identity, and reject the known Falach fragments.
+
+For the TUI, state-machine tests will cover direct-prompt cancellation into the
+chooser, lock-to-chooser behavior, preservation of the selected row, chooser
+entry into add-existing onboarding, Escape provenance, authentication before
+registration, successful addition/unlock, and failure/cancellation without
+registry mutation. Ratatui `TestBackend` journeys, semantic contracts, and
+reviewed snapshots will pin bordered/marked fields, textual selection, compact
+fallbacks, password concealment, control-character filtering, and the exact new
+logo at supported normal sizes. Geometry tests will use display-cell width.
+
+For desktop export, Dart adapter tests will exhaust success, cancellation,
+unsupported, malformed, and safe failure envelopes; widget tests will cover
+desktop visibility, accessible labels, sanitized suggestions, selected-path
+forwarding to `saveAttachmentTo`, cancellation, repository failure, and success
+feedback. The platform-boundary checker and its planted negative controls will
+pin the new channel's exact Dart/native ownership and method surface. The
+existing macOS and Linux app build targets compile the native `NSSavePanel` and
+GTK implementations on their respective CI hosts; the round's available-host
+final gate compiles macOS. No manual validation gate is added.
+
+### Task sequence
+
+16. `tasks/016-correct-cli-hidlins-banner.md` — replace and strongly pin the
+    incorrect CLI wordmark.
+17. `tasks/017-redesign-tui-startup-and-vault-selection.md` — make input focus
+    obvious, install the requested startup art, and provide a durable chooser
+    and add-existing-vault path.
+18. `tasks/018-desktop-attachment-export.md` — add dependency-free native
+    desktop Save As selection and wire it to Rust's existing atomic export.
+
+Tasks remain sequential under the workflow even though their code surfaces are
+largely independent. The standard and final gates remain unchanged: `make
+check` includes the CLI/TUI Rust suites, `make app-check` includes Flutter unit
+and widget coverage plus boundary checks, `make verify` runs the integrated
+package gate, and `make app-build-macos` compiles the available desktop shell.
+The existing CI matrix additionally runs `make app-build-linux` on Linux.
+
+### Risks and out of scope
+
+- Unicode block and box-drawing characters occupy terminal cells differently
+  from UTF-8 bytes. Layout and tests must use display width, retain a compact
+  no-art fallback, and avoid panics at the supported 40×12 floor.
+- Adding chooser provenance affects authentication-error recovery as well as
+  Escape. Every recovery branch must return to a usable locked state without
+  retaining a password buffer.
+- Native save panels are interactive OS components and are not reliably driven
+  by headless widget tests. Their request/result contracts, registration,
+  sanitization, and call sequencing are automated; each runner is compiled on
+  its supported CI host. Manual dialog testing remains skipped by user decision.
+- CLI subcommand behavior, TUI entry/workspace UX, registry deregistration or
+  rename, direct switching while unlocked, mobile attachment export, attachment
+  preview, external-viewer launching, and plaintext temporary-file management
+  are outside this round.
+- The existing attachment Add button is not expanded by this correction. This
+  round addresses access to attachments already present in a desktop vault.
+
+### Round 3 acceptance criteria
+
+- `hidlins -h` and `hidlins --help` render a tested HIDLINS banner and contain
+  no Falach wordmark fragments.
+- Normal TUI startup frames visually separate and mark the active input;
+  compact/accessibility frames retain an explicit active-input marker; the
+  phrase `Focused field` is absent.
+- The TUI renders the user's exact 12-row startup logo without clipping at
+  supported normal terminal sizes and safely falls back without art at compact
+  sizes.
+- From any configured-vault password prompt, the user can reach a chooser; the
+  chooser can select a registered vault or start authenticated registration of
+  another existing KDBX; `Ctrl+Q` remains the explicit exit.
+- After manual or automatic locking, the next key reaches the chooser with the
+  prior vault highlighted, allowing selection of another vault before unlock.
+- Failed or cancelled TUI addition never mutates the registry or KDBX, and no
+  startup frame exposes password or entry-secret contents.
+- On macOS and Linux desktop builds, each attachment has an accessible `Save
+  as…` action that asks for a destination and invokes Rust's existing atomic
+  export. Cancel is non-destructive; success and failure receive clear feedback.
+- Attachment bytes never cross the Dart/native method channel, no temporary
+  plaintext file is created for viewing, and mobile behavior is unchanged.
+- All round-specific, standard, and final automated validation passes with no
+  new external dependency and no new manual acceptance gate.

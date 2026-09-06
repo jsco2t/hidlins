@@ -1,6 +1,59 @@
 # Cargo
 /target/
 **/*.rs.bk
+/tools/build-policy/rust-warning-fixture/target/
+
+# Generated verification/build output and interpreter caches
+/build/
+/tools/android-verifier/build/
+**/__pycache__/
+*.py[cod]
+**/.pytest_cache/
+**/.mypy_cache/
+**/.ruff_cache/
+/vendor/ring/core
+
+# Generated tool caches. Keep these global so new native harnesses do not need
+# to rediscover the same Gradle, CMake, Dart, CocoaPods, or Xcode exclusions.
+**/.gradle/
+**/.cxx/
+**/.dart_tool/
+**/.pub/
+**/.swiftpm/
+**/DerivedData/
+**/Pods/
+
+# Packaged applications, installers, archives, and native debug bundles are
+# release outputs, never source. Native libraries and executables are not
+# ignored by extension because the audited Rust/Pub vendor trees legitimately
+# contain upstream binary fixtures and platform import libraries.
+*.apk
+*.aab
+*.apks
+*.ipa
+*.app/
+*.xcarchive/
+*.xcresult/
+*.dSYM/
+*.dmg
+*.pkg
+*.AppImage
+*.deb
+*.rpm
+*.msix
+*.mobileprovision
+
+# Crash/profiling and transient compiler output outside normal build trees.
+core.[0-9]*
+*.core
+hs_err_pid*.log
+*.profraw
+*.profdata
+*.gcda
+*.gcno
+*.tmp
+*.temp
+*.rej
 
 # Repository-local toolchain/download scratch. This may contain complete Git
 # checkouts (for example a Flutter SDK) and must never become an embedded repo

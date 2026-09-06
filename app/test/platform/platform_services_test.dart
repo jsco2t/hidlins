@@ -2,6 +2,7 @@ import 'package:flutter/services.dart';
 import 'package:flutter_test/flutter_test.dart';
 import 'package:app/src/bridge/dto.dart' show LockEvent;
 import 'package:app/src/platform/app_paths.dart';
+import 'package:app/src/platform/attachment_export.dart';
 import 'package:app/src/platform/keyfile_access.dart';
 import 'package:app/src/platform/lifecycle.dart';
 import 'package:app/src/platform/platform_channel.dart';
@@ -44,6 +45,59 @@ String _kind(PlatformResult<Object?> result) => switch (result) {
 };
 
 void main() {
+  test(
+    'attachment export sends only a sanitized filename suggestion',
+    () async {
+      final client = _RecordingClient(
+        result: {'status': 'success', 'value': '/chosen/export.txt'},
+      );
+      final service = MethodChannelAttachmentExport(client);
+
+      final result = await service.chooseDestination('../folder\\secret\n.txt');
+
+      expect((result as PlatformSuccess<String>).value, '/chosen/export.txt');
+      expect(client.channel, 'app.hidlins/attachment_export');
+      expect(client.method, 'chooseDestination');
+      expect(client.arguments, {'suggestedName': '..foldersecret.txt'});
+      expect(client.arguments.toString(), isNot(contains('bytes')));
+      expect(client.arguments.toString(), isNot(contains('entry')));
+    },
+  );
+
+  test('attachment filename sanitization uses a safe fallback', () {
+    expect(sanitizeAttachmentSuggestedName('/\\\n\u0000'), 'attachment');
+    expect(sanitizeAttachmentSuggestedName('.'), 'attachment');
+    expect(sanitizeAttachmentSuggestedName('..'), 'attachment');
+    expect(sanitizeAttachmentSuggestedName(' report\u0085.txt '), 'report.txt');
+  });
+
+  test('attachment export exhausts safe adapter outcomes', () async {
+    for (final entry in <(Object?, Type)>[
+      ({'status': 'canceled'}, PlatformCanceled<String>),
+      ({'status': 'unsupported'}, PlatformUnsupported<String>),
+      ({'status': 'denied'}, PlatformDenied<String>),
+      ({'status': 'stale'}, PlatformStale<String>),
+      ({'status': 'success', 'value': ''}, PlatformFailure<String>),
+      ({'status': 'success', 'value': 42}, PlatformFailure<String>),
+      ('malformed', PlatformFailure<String>),
+    ]) {
+      final result = await MethodChannelAttachmentExport(
+        _RecordingClient(result: entry.$1),
+      ).chooseDestination('attachment.txt');
+      expect(result.runtimeType, entry.$2);
+    }
+
+    final unsafe = await MethodChannelAttachmentExport(
+      _RecordingClient(result: {'status': 'failure', 'code': 'secret\nleak'}),
+    ).chooseDestination('attachment.txt');
+    expect((unsafe as PlatformFailure<String>).code, 'platform-error');
+
+    final missing = await MethodChannelAttachmentExport(
+      _RecordingClient(error: MissingPluginException()),
+    ).chooseDestination('attachment.txt');
+    expect(missing, isA<PlatformUnsupported<String>>());
+  });
+
   test(
     'lifecycle adapter reports one raw transition and owns no lock policy',
     () async {
@@ -232,6 +286,20 @@ void main() {
 
     final importer = FakeVaultImportCapability([const PlatformCanceled()]);
     expect(await importer.pickVault(), isA<PlatformCanceled<ImportedVault>>());
+
+    final attachmentExport = FakeAttachmentExportCapability([
+      const PlatformSuccess('/chosen/file'),
+      const PlatformFailure('native-error'),
+    ]);
+    expect(
+      await attachmentExport.chooseDestination('first.txt'),
+      isA<PlatformSuccess<String>>(),
+    );
+    expect(
+      await attachmentExport.chooseDestination('second.txt'),
+      isA<PlatformFailure<String>>(),
+    );
+    expect(attachmentExport.suggestedNames, ['first.txt', 'second.txt']);
 
     final keyfiles = FakeKeyfileAccessCapability(
       pickResults: [const PlatformDenied()],

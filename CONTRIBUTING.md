@@ -747,6 +747,7 @@ with the implementing feature, which fills in only the body.
 | Subcommand                | Purpose                                                                 | Status                       |
 | ------------------------- | ----------------------------------------------------------------------- | ---------------------------- |
 | `hidlins vault create`    | Create + register a new KDBX vault. Prompts for the master password.    | Implemented                  |
+| `hidlins vault register`  | Authenticate + register an existing KDBX vault without modifying it.    | Implemented                  |
 | `hidlins vault open`      | Probe vault unlock (MVP one-shot; agent caches in post-MVP).            | Implemented                  |
 | `hidlins vault list`      | List registered vaults from `vaults.toml`.                              | Implemented                  |
 | `hidlins vault set-lock`  | Configure or clear the per-vault idle-lock timeout.                     | Implemented                  |
@@ -765,9 +766,9 @@ with the implementing feature, which fills in only the body.
 | `hidlins ssh generate`    | Generate a new SSH keypair and store it in a vault.                      | Slot → `features/ssh-keys/`  |
 | `hidlins completions`     | Emit a shell completion script (`bash`, `zsh`, `fish`).                  | Implemented                  |
 
-`vault create` / `vault open` and every `entry` verb prompt for the
-master password via the secure stdin path; `gen password` and
-`gen passphrase` never touch the vault and never prompt.
+`vault create` / `vault register` / `vault open` and every `entry` verb prompt
+for the master password via the secure stdin path; `gen password` and `gen
+passphrase` never touch the vault and never prompt.
 
 ### Shell completions
 

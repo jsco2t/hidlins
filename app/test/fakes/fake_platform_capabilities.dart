@@ -1,6 +1,7 @@
 import 'dart:collection';
 
 import 'package:app/src/platform/app_paths.dart';
+import 'package:app/src/platform/attachment_export.dart';
 import 'package:app/src/platform/keyfile_access.dart';
 import 'package:app/src/platform/lifecycle.dart';
 import 'package:app/src/platform/platform_result.dart';
@@ -66,6 +67,21 @@ final class FakeVaultImportCapability implements VaultImportCapability {
   @override
   Future<PlatformResult<ImportedVault>> pickVault() async {
     calls += 1;
+    return _take(results);
+  }
+}
+
+final class FakeAttachmentExportCapability
+    implements AttachmentExportCapability {
+  FakeAttachmentExportCapability(Iterable<PlatformResult<String>> results)
+    : results = Queue.of(results);
+
+  final Queue<PlatformResult<String>> results;
+  final List<String> suggestedNames = [];
+
+  @override
+  Future<PlatformResult<String>> chooseDestination(String suggestedName) async {
+    suggestedNames.add(suggestedName);
     return _take(results);
   }
 }

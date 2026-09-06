@@ -40,6 +40,14 @@
       "methods": ["pickReference", "resolveReference", "releaseReference"],
       "policy_owner": "rust",
       "mechanism_owner": "native"
+    },
+    {
+      "name": "attachment_export",
+      "file": "attachment_export.dart",
+      "channel": "app.hidlins/attachment_export",
+      "methods": ["chooseDestination"],
+      "policy_owner": "rust",
+      "mechanism_owner": "native"
     }
   ]
 }

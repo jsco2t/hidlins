@@ -1,0 +1,226 @@
+{
+  "schema_version": 2,
+  "work_id": "2026-09-01-flutter-app-baseline-and-build-hardening",
+  "title": "Flutter App Baseline and Build Hardening",
+  "phase": "DONE",
+  "created_at": "2026-09-01T16:55:59Z",
+  "updated_at": "2026-09-05T23:47:46Z",
+  "approved_at": "2026-09-05T22:59:28Z",
+  "completed_at": "2026-09-05T23:47:46Z",
+  "archived_at": "2026-09-06T02:07:40Z",
+  "baseline_sha": "ae2b2e5f1e5f23619613d56389c576f98dc361a1",
+  "final_sha": "e6ebbba6d08ae3093a53fb971e2ec39d8235df28",
+  "plan_revision": 8,
+  "acceptance_round": 3,
+  "completed_rounds": [
+    {
+      "round": 1,
+      "plan_revision": 6,
+      "approved_at": "2026-09-02T15:19:25Z",
+      "completed_at": "2026-09-02T18:46:56Z",
+      "approved_plan_sha256": "62e624845217631cdf993dbce2de0a25d1e18ea6d89a132ff1828ff8c4e46d06",
+      "final_sha": "ae2b2e5f1e5f23619613d56389c576f98dc361a1",
+      "task_ids": [
+        "001",
+        "002",
+        "003",
+        "004",
+        "005",
+        "006",
+        "007",
+        "008",
+        "009",
+        "010",
+        "011",
+        "012",
+        "013",
+        "014"
+      ],
+      "final_evidence": "evidence/final-round-001.md"
+    },
+    {
+      "round": 2,
+      "plan_revision": 7,
+      "approved_at": "2026-09-05T02:59:17Z",
+      "completed_at": "2026-09-05T03:22:16Z",
+      "approved_plan_sha256": "4b304e4b249b411b8c9e64931e924cb7e35051da83c07fe5014c559af8c2dc9f",
+      "final_sha": "e6ebbba6d08ae3093a53fb971e2ec39d8235df28",
+      "task_ids": [
+        "015"
+      ],
+      "final_evidence": "evidence/final-round-002.md"
+    }
+  ],
+  "approved_plan_sha256": "dbc94141947a98b172467feb0e13678d23ce5140e426cd6c7c482c022f49a11e",
+  "current_task": null,
+  "tasks": [
+    {
+      "id": "001",
+      "path": "tasks/001-flutter-347-baseline.md",
+      "round": 1,
+      "status": "COMPLETE",
+      "attempts": 3,
+      "implementation": "main",
+      "evidence": "evidence/001.md"
+    },
+    {
+      "id": "002",
+      "path": "tasks/002-standalone-material-migration.md",
+      "round": 1,
+      "status": "COMPLETE",
+      "attempts": 3,
+      "implementation": "main",
+      "evidence": "evidence/002.md"
+    },
+    {
+      "id": "003",
+      "path": "tasks/003-build-hardening-and-release.md",
+      "round": 1,
+      "status": "COMPLETE",
+      "attempts": 1,
+      "implementation": "main",
+      "evidence": "evidence/003.md"
+    },
+    {
+      "id": "004",
+      "path": "tasks/004-brand-assets-and-launcher-icons.md",
+      "round": 1,
+      "status": "COMPLETE",
+      "attempts": 1,
+      "implementation": "main",
+      "evidence": "evidence/004.md"
+    },
+    {
+      "id": "005",
+      "path": "tasks/005-desktop-alpha-closure.md",
+      "round": 1,
+      "status": "COMPLETE",
+      "attempts": 2,
+      "implementation": "main",
+      "evidence": "evidence/005.md"
+    },
+    {
+      "id": "006",
+      "path": "tasks/006-desktop-real-bridge-interop.md",
+      "round": 1,
+      "status": "COMPLETE",
+      "attempts": 2,
+      "implementation": "main",
+      "evidence": "evidence/006.md"
+    },
+    {
+      "id": "007",
+      "path": "tasks/007-android-rust-jni-foundation.md",
+      "round": 1,
+      "status": "COMPLETE",
+      "attempts": 1,
+      "implementation": "main",
+      "evidence": "evidence/007.md"
+    },
+    {
+      "id": "008",
+      "path": "tasks/008-stable-mobile-boundary.md",
+      "round": 1,
+      "status": "COMPLETE",
+      "attempts": 3,
+      "implementation": "main",
+      "evidence": "evidence/008.md"
+    },
+    {
+      "id": "009",
+      "path": "tasks/009-ios-security-storage-foundation.md",
+      "round": 1,
+      "status": "COMPLETE",
+      "attempts": 1,
+      "implementation": "main",
+      "evidence": "evidence/009.md"
+    },
+    {
+      "id": "010",
+      "path": "tasks/010-ios-alpha-verification.md",
+      "round": 1,
+      "status": "COMPLETE",
+      "attempts": 1,
+      "implementation": "main",
+      "evidence": "evidence/010.md"
+    },
+    {
+      "id": "011",
+      "path": "tasks/011-android-production-integration.md",
+      "round": 1,
+      "status": "COMPLETE",
+      "attempts": 3,
+      "implementation": "main",
+      "evidence": "evidence/011.md"
+    },
+    {
+      "id": "012",
+      "path": "tasks/012-android-security-storage.md",
+      "round": 1,
+      "status": "COMPLETE",
+      "attempts": 1,
+      "implementation": "main",
+      "evidence": "evidence/012.md"
+    },
+    {
+      "id": "013",
+      "path": "tasks/013-android-alpha-verification.md",
+      "round": 1,
+      "status": "COMPLETE",
+      "attempts": 1,
+      "implementation": "main",
+      "evidence": "evidence/013.md"
+    },
+    {
+      "id": "014",
+      "path": "tasks/014-release-ci-and-acceptance.md",
+      "round": 1,
+      "status": "COMPLETE",
+      "attempts": 1,
+      "implementation": "main",
+      "evidence": "evidence/014.md"
+    },
+    {
+      "id": "015",
+      "path": "tasks/015-existing-vault-cli-registration.md",
+      "round": 2,
+      "status": "COMPLETE",
+      "attempts": 1,
+      "implementation": "main",
+      "evidence": "evidence/015.md"
+    },
+    {
+      "id": "016",
+      "path": "tasks/016-correct-cli-hidlins-banner.md",
+      "round": 3,
+      "status": "COMPLETE",
+      "attempts": 1,
+      "implementation": "main",
+      "evidence": "evidence/016.md"
+    },
+    {
+      "id": "017",
+      "path": "tasks/017-redesign-tui-startup-and-vault-selection.md",
+      "round": 3,
+      "status": "COMPLETE",
+      "attempts": 2,
+      "implementation": "main",
+      "evidence": "evidence/017.md"
+    },
+    {
+      "id": "018",
+      "path": "tasks/018-desktop-attachment-export.md",
+      "round": 3,
+      "status": "COMPLETE",
+      "attempts": 2,
+      "implementation": "main",
+      "evidence": "evidence/018.md"
+    }
+  ],
+  "task_retry_limit": 3,
+  "final_retry_limit": 2,
+  "final_attempts": 1,
+  "stop_continuations": 0,
+  "max_stop_continuations": 50,
+  "block_reason": null
+}

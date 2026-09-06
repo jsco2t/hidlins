@@ -10,6 +10,252 @@ mod common;
 
 use common::{run_with_stdin, VaultsToml};
 
+/// An existing KDBX can be authenticated, registered, and immediately used by
+/// the CLI without creating a replacement vault or modifying its bytes.
+#[test]
+fn vault_register_existing_vault_enables_id_based_commands() {
+    let reg = VaultsToml::new();
+    let path = common::create_unregistered_vault(&reg, "kitchen-sink", "fixture-password");
+    let before = std::fs::read(&path).expect("read fixture before registration");
+
+    let (code, stdout, stderr) = run_with_stdin(
+        &reg,
+        &[
+            "--format",
+            "json",
+            "vault",
+            "register",
+            "--id",
+            "demo",
+            "--path",
+            path.to_str().unwrap(),
+        ],
+        "fixture-password\n",
+    );
+    assert_eq!(code, 0, "register stderr:\n{stderr}");
+    let result: serde_json::Value = serde_json::from_str(stdout.trim()).unwrap();
+    assert_eq!(result["id"], "demo");
+    assert_eq!(result["status"], "registered");
+    assert!(
+        result.get("keyfile").is_none(),
+        "an omitted keyfile must not serialize as null"
+    );
+    assert_eq!(
+        result["path"],
+        std::fs::canonicalize(&path)
+            .expect("canonical fixture path")
+            .display()
+            .to_string()
+    );
+    assert_eq!(
+        std::fs::read(&path).expect("read fixture after registration"),
+        before,
+        "registration must not modify the KDBX"
+    );
+
+    let (open_code, _, open_stderr) = run_with_stdin(
+        &reg,
+        &["vault", "open", "--id", "demo"],
+        "fixture-password\n",
+    );
+    assert_eq!(open_code, 0, "open stderr:\n{open_stderr}");
+
+    let (entry_code, _, entry_stderr) = run_with_stdin(
+        &reg,
+        &["entry", "list", "--vault", "demo"],
+        "fixture-password\n",
+    );
+    assert_eq!(entry_code, 0, "entry list stderr:\n{entry_stderr}");
+
+    let (list_code, list_stdout, list_stderr) =
+        run_with_stdin(&reg, &["--format", "json", "vault", "list"], "");
+    assert_eq!(list_code, 0, "list stderr:\n{list_stderr}");
+    let list: serde_json::Value = serde_json::from_str(list_stdout.trim()).unwrap();
+    assert_eq!(list["vaults"][0]["path"], result["path"]);
+}
+
+#[test]
+fn vault_register_keyfile_vault_persists_canonical_paths_and_reopens() {
+    let reg = VaultsToml::new();
+    let (path, keyfile) =
+        common::create_unregistered_vault_with_keyfile(&reg, "protected", "correct-password");
+
+    let (code, stdout, stderr) = run_with_stdin(
+        &reg,
+        &[
+            "--format",
+            "json",
+            "vault",
+            "register",
+            "--id",
+            "protected",
+            "--path",
+            path.to_str().unwrap(),
+            "--keyfile",
+            keyfile.to_str().unwrap(),
+        ],
+        "correct-password\n",
+    );
+    assert_eq!(code, 0, "register stderr:\n{stderr}");
+    let result: serde_json::Value = serde_json::from_str(stdout.trim()).unwrap();
+    assert_eq!(
+        result["path"],
+        std::fs::canonicalize(&path)
+            .expect("canonical vault")
+            .display()
+            .to_string()
+    );
+    assert_eq!(
+        result["keyfile"],
+        std::fs::canonicalize(&keyfile)
+            .expect("canonical keyfile")
+            .display()
+            .to_string()
+    );
+
+    let (open_code, _, open_stderr) = run_with_stdin(
+        &reg,
+        &["vault", "open", "--id", "protected"],
+        "correct-password\n",
+    );
+    assert_eq!(open_code, 0, "open stderr:\n{open_stderr}");
+}
+
+#[test]
+fn vault_register_wrong_password_leaves_vault_and_registry_unchanged() {
+    let reg = VaultsToml::new();
+    let path = common::create_unregistered_vault(&reg, "wrong-password", "correct-password");
+    let before = std::fs::read(&path).expect("read vault before failed registration");
+
+    let (code, stdout, stderr) = run_with_stdin(
+        &reg,
+        &[
+            "vault",
+            "register",
+            "--id",
+            "wrong-password",
+            "--path",
+            path.to_str().unwrap(),
+        ],
+        "incorrect-password\n",
+    );
+    assert_eq!(code, 2, "stderr:\n{stderr}");
+    assert!(
+        stdout.is_empty(),
+        "failed registration wrote stdout: {stdout}"
+    );
+    assert!(
+        !stderr.contains("incorrect-password") && !stderr.contains("correct-password"),
+        "registration error leaked password material: {stderr}"
+    );
+    assert!(
+        !reg.vaults_toml.exists(),
+        "failed authentication must not create a registry"
+    );
+    assert_eq!(std::fs::read(&path).unwrap(), before);
+}
+
+#[test]
+fn vault_register_missing_invalid_and_bad_keyfile_never_write_registry() {
+    let cases = ["missing", "invalid", "bad-keyfile"];
+    for case in cases {
+        let reg = VaultsToml::new();
+        let (path, keyfile) = match case {
+            "missing" => (reg.tempdir.path().join("missing.kdbx"), None),
+            "invalid" => {
+                let path = reg.tempdir.path().join("invalid.kdbx");
+                std::fs::write(&path, b"synthetic invalid KDBX marker").unwrap();
+                (path, None)
+            }
+            "bad-keyfile" => {
+                let (path, _) = common::create_unregistered_vault_with_keyfile(
+                    &reg,
+                    "bad-keyfile",
+                    "correct-password",
+                );
+                let wrong = reg.tempdir.path().join("wrong.key");
+                std::fs::write(&wrong, b"wrong synthetic keyfile").unwrap();
+                (path, Some(wrong))
+            }
+            _ => unreachable!(),
+        };
+        let before = path.exists().then(|| std::fs::read(&path).unwrap());
+        let mut args = vec![
+            "vault",
+            "register",
+            "--id",
+            case,
+            "--path",
+            path.to_str().unwrap(),
+        ];
+        if let Some(keyfile) = keyfile.as_ref() {
+            args.extend(["--keyfile", keyfile.to_str().unwrap()]);
+        }
+        let (code, stdout, stderr) = run_with_stdin(&reg, &args, "correct-password\n");
+        assert_ne!(code, 0, "{case} unexpectedly registered");
+        assert!(stdout.is_empty(), "{case} wrote stdout: {stdout}");
+        assert!(
+            !stderr.contains("correct-password"),
+            "{case} leaked password: {stderr}"
+        );
+        assert!(
+            !reg.vaults_toml.exists(),
+            "{case} must not create a registry"
+        );
+        if let Some(before) = before {
+            assert_eq!(
+                std::fs::read(&path).unwrap(),
+                before,
+                "{case} modified KDBX"
+            );
+        }
+    }
+}
+
+#[test]
+fn vault_register_duplicate_id_fails_before_password_prompt_or_registry_change() {
+    let reg = VaultsToml::new();
+    let first = common::create_unregistered_vault(&reg, "first", "first-password");
+    let second = common::create_unregistered_vault(&reg, "second", "second-password");
+    let (first_code, _, first_stderr) = run_with_stdin(
+        &reg,
+        &[
+            "vault",
+            "register",
+            "--id",
+            "duplicate",
+            "--path",
+            first.to_str().unwrap(),
+        ],
+        "first-password\n",
+    );
+    assert_eq!(first_code, 0, "first register stderr:\n{first_stderr}");
+    let registry_before = std::fs::read(&reg.vaults_toml).unwrap();
+    let second_before = std::fs::read(&second).unwrap();
+
+    let (code, stdout, stderr) = run_with_stdin(
+        &reg,
+        &[
+            "vault",
+            "register",
+            "--id",
+            "duplicate",
+            "--path",
+            second.to_str().unwrap(),
+        ],
+        "",
+    );
+    assert_eq!(code, 1, "stderr:\n{stderr}");
+    assert!(stdout.is_empty());
+    assert!(stderr.contains("already registered"), "stderr:\n{stderr}");
+    assert!(
+        !stderr.contains("Master password"),
+        "duplicate ID prompted before rejection: {stderr}"
+    );
+    assert_eq!(std::fs::read(&reg.vaults_toml).unwrap(), registry_before);
+    assert_eq!(std::fs::read(&second).unwrap(), second_before);
+}
+
 /// Full happy path: create → list (one entry) → open (probe) →
 /// set-lock 300 → list (timeout=300) → set-lock --clear → list
 /// (no timeout).
