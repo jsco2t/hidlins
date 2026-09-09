@@ -378,46 +378,65 @@ impl fmt::Debug for GeneratedSecret {
 // Sync
 // ---------------------------------------------------------------------------
 
-#[derive(Clone, Zeroize)]
-pub struct S3ConfigDto {
-    pub bucket: String,
-    pub key: String,
-    pub region: String,
-    pub endpoint: Option<String>,
-    pub path_style: bool,
-    pub access_key_id: String,
-    pub secret_access_key: String,
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+pub enum LocalSyncRoleDto {
+    Server,
+    Client,
 }
 
-impl fmt::Debug for S3ConfigDto {
-    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
-        f.debug_struct("S3ConfigDto")
-            .field("bucket", &self.bucket)
-            .field("key", &self.key)
-            .field("region", &self.region)
-            .field("endpoint", &self.endpoint)
-            .field("path_style", &self.path_style)
-            .field("access_key_id", &"***")
-            .field("secret_access_key", &"***")
-            .finish()
-    }
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub struct LocalEndpointDto {
+    pub address: String,
+    pub port: u16,
+    pub scope_id: u32,
 }
 
-impl fmt::Display for S3ConfigDto {
-    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
-        write!(
-            f,
-            "S3ConfigDto {{ bucket: {}, key: {}, region: {} }}",
-            self.bucket, self.key, self.region
-        )
-    }
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+pub enum DiscoveryPermissionDto {
+    NotDetermined,
+    Granted,
+    Denied,
+    Restricted,
+    Unavailable,
+}
+
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+pub enum DiscoveryServiceDto {
+    Trusted,
+    Pairing,
+}
+
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub struct DiscoveryStatusDto {
+    pub permission: DiscoveryPermissionDto,
+    pub candidates: Vec<LocalEndpointDto>,
+}
+
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub struct SyncPeerDto {
+    pub peer_id: String,
+    pub display_name: String,
+    pub revoked: bool,
+}
+
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub struct PairingPromptDto {
+    pub transaction_handle: String,
+    pub sas: String,
 }
 
 #[derive(Clone, Debug)]
+#[allow(clippy::struct_excessive_bools)] // A bridge status snapshot avoids UI-owned state derivation.
 pub struct SyncStatusDto {
     pub configured: bool,
     pub in_flight: bool,
     pub last_outcome: Option<SyncOutcomeDto>,
+    pub role: Option<LocalSyncRoleDto>,
+    pub paired: bool,
+    pub active_peer_count: usize,
+    pub server_enabled: bool,
+    pub server_running: bool,
+    pub pairing_open: bool,
 }
 
 #[derive(Clone, Debug, Eq, PartialEq)]
@@ -437,10 +456,13 @@ pub enum SyncOutcomeDto {
 
 #[derive(Clone, Debug)]
 pub enum SyncEvent {
-    Started,
+    Started { automatic: bool },
     Activity,
     Done(SyncOutcomeDto),
     Failed(HidlinsApiError),
+    PairingRequested(PairingPromptDto),
+    ServerStarted(LocalEndpointDto),
+    ServerStopped,
 }
 
 // ---------------------------------------------------------------------------

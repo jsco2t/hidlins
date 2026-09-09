@@ -11,8 +11,8 @@ import '../frb_generated.dart';
 
 import 'package:flutter_rust_bridge/flutter_rust_bridge_for_generated.dart';
 
-// These functions are ignored because they are not marked as `pub`: `attach_platform_lock_sources`, `clear_totp_cache_inner`, `clear_totp_cache`, `do_lock`, `install_lock_sink`, `invalidate_totp`, `is_unlocked`, `kill`, `lifecycle_from_u8`, `lifecycle_to_u8`, `lock_state`, `maybe_sync_after_save`, `new`, `push_lock_event`, `push_sync_event`, `require_vault_mut`, `require_vault`, `secret_uri`, `spawn_ticker`, `tick_inner`, `unlock_inner`
-// These types are ignored because they are neither used by any `pub` functions nor (for structs and enums) marked `#[frb(unignore)]`: `ClearUnlockingOnDrop`, `SessionCredentials`, `SessionState`, `TickerProgress`, `TotpSnapshot`
+// These functions are ignored because they are not marked as `pub`: `attach_platform_lock_sources`, `clear_totp_cache_inner`, `clear_totp_cache`, `do_lock`, `install_lock_sink`, `invalidate_totp`, `is_unlocked`, `kill`, `lifecycle_from_u8`, `lifecycle_to_u8`, `lock_state`, `new`, `push_lock_event`, `push_sync_event`, `require_vault_mut`, `require_vault`, `secret_uri`, `spawn_ticker`, `stop_server_runtime`, `tick_inner`, `unlock_inner`
+// These types are ignored because they are neither used by any `pub` functions nor (for structs and enums) marked `#[frb(unignore)]`: `ClearUnlockingOnDrop`, `SessionCredentials`, `SessionServerRuntime`, `SessionState`, `TickerProgress`, `TotpSnapshot`
 // These function are ignored because they are on traits that is not defined in current crate (put an empty `#[frb]` on it to unignore): `drop`, `drop`, `drop`, `drop`, `fmt`, `fmt`
 // These functions are ignored (category: IgnoreBecauseOwnerTyShouldIgnore): `default`
 
@@ -28,39 +28,21 @@ abstract class AppSession implements RustOpaqueInterface {
     required String sourcePath,
   });
 
-  /// Bootstrap a vault from a remote S3 target (design A3).
-  ///
-  /// State machine:
-  /// 1. Guards (duplicate target, name/path exists)
-  /// 2. Build transport from config, fetch remote object
-  /// 3. Validate password/keyfile via `Vault::open_from_bytes` —
-  ///    wrong password fails BEFORE any install
-  /// 4. `write_atomic` install into the state dir
-  /// 5. Register vault + persist pre-sealed sync config
-  /// 6. One standard `sync_now` establishes synced-base pointers
-  /// 7. Rollback on any failure after step 4
-  Future<VaultSummary> bootstrapVaultFromRemote({
+  /// Begin pair-and-import without creating a local vault or registration.
+  Future<PairingPromptDto> beginPairImport({
     required String name,
-    required S3ConfigDto cfg,
     required String masterPassword,
     KeyfileRef? keyfile,
+    required List<LocalEndpointDto> candidates,
   });
 
-  /// Change the master password (design A5, FR-004).
-  ///
-  /// Sequence: verify current → change vault password → REPLACE
-  /// `SessionCredentials` immediately (before the registry write) →
-  /// if RST-CRED-1 sync credentials exist, decrypt with old master,
-  /// re-encrypt with new master, persist → registry save → vault save.
-  ///
-  /// On registry-write failure the vault change AND the credential
-  /// replacement both stand; the error instructs re-entering S3
-  /// credentials (no silent auth breakage).
-  ///
-  /// # Panics
-  ///
-  /// Panics if the vault is present but not registered (impossible via
-  /// the session API).
+  /// Begin XX pairing for the currently unlocked client vault.
+  Future<PairingPromptDto> beginPairing();
+
+  /// Cancel foreground client transfer/pairing work without changing trust.
+  Future<void> cancelSync();
+
+  /// Change the vault password and rewrap (never replace) its local Noise identity.
   Future<void> changeMasterPassword({
     required String current,
     required String newPassword,
@@ -70,7 +52,17 @@ abstract class AppSession implements RustOpaqueInterface {
 
   Future<void> clearSyncConfig({required String name});
 
-  Future<void> configureSync({required S3ConfigDto cfg});
+  Future<void> closePairingWindow();
+
+  Future<void> configureLocalSync({required LocalSyncRoleDto role});
+
+  /// Confirm either a local client prompt or an inbound server prompt.
+  /// Key material and transcript hashes never cross this boundary.
+  Future<VaultSummary?> confirmPairing({
+    required String transactionHandle,
+    required bool accepted,
+    required String peerDisplayName,
+  });
 
   Future<void> copyEntryField({required String uuid, required CopyField field});
 
@@ -128,9 +120,19 @@ abstract class AppSession implements RustOpaqueInterface {
 
   Future<List<AttachmentMeta>> listAttachments({required String uuid});
 
+  Future<List<SyncPeerDto>> listSyncPeers();
+
   Future<List<String>> listTags();
 
   Future<List<VaultSummary>> listVaults();
+
+  Future<DiscoveryStatusDto> localDiscoveryStatus();
+
+  /// Return policy-approved local bind candidates for a desktop server.
+  /// Mobile targets reject this before interface enumeration.
+  Future<List<LocalEndpointDto>> localServerEndpoints();
+
+  Future<SyncStatusDto> localSyncStatus();
 
   /// Subscribe to lock-state events.
   ///
@@ -152,6 +154,11 @@ abstract class AppSession implements RustOpaqueInterface {
   Future<void> moveEntry({required String uuid, required String group});
 
   Future<void> moveGroup({required String uuid, required String parent});
+
+  Future<void> openPairingWindow();
+
+  /// Poll the platform discovery adapter and apply only Rust-validated routes.
+  Future<DiscoveryStatusDto> pollLocalDiscovery();
 
   /// Prepare a non-secret, single-use native clipboard handoff.
   ///
@@ -176,6 +183,11 @@ abstract class AppSession implements RustOpaqueInterface {
 
   Future<void> renameGroup({required String uuid, required String name});
 
+  Future<void> renameSyncPeer({
+    required String peerId,
+    required String displayName,
+  });
+
   void reportActivity();
 
   LockEvent reportLifecycleState({required LifecycleStateDto state});
@@ -185,6 +197,8 @@ abstract class AppSession implements RustOpaqueInterface {
     required RevealField field,
   });
 
+  Future<void> revokeSyncPeer({required String peerId});
+
   Future<void> saveAttachmentTo({
     required String uuid,
     required String key,
@@ -192,6 +206,11 @@ abstract class AppSession implements RustOpaqueInterface {
   });
 
   Future<List<SearchHit>> search({required SearchOptionsDto opts});
+
+  Future<void> setDiscoveryCandidates({
+    required DiscoveryPermissionDto permission,
+    required List<LocalEndpointDto> candidates,
+  });
 
   Future<void> setExpiration({
     required String uuid,
@@ -203,27 +222,24 @@ abstract class AppSession implements RustOpaqueInterface {
 
   Future<void> shutdown();
 
+  /// Consume the once-per-process startup attempt after the application has
+  /// completed its platform discovery pass.
+  ///
+  /// The work remains nonblocking and best effort: the already-open local
+  /// vault stays available, and any network failure is reported through the
+  /// sync event stream.
+  Future<void> startStartupSync();
+
+  Future<LocalEndpointDto> startSyncServer({
+    required LocalEndpointDto endpoint,
+  });
+
   Future<List<String>> startupWarnings();
+
+  Future<void> stopSyncServer();
 
   Stream<SyncEvent> syncEvents();
 
-  /// Run a sync cycle using the three-phase protocol.
-  ///
-  /// Phase 1 (short guard): validate, resolve vault name, clone
-  ///   credentials, move vault + registry out, set `syncing = true`.
-  /// Phase 2 (no guard): run `Sync::sync_now` wrapped in
-  ///   `catch_unwind`. The session mutex is NOT held across the
-  ///   network round-trips.
-  /// Phase 3 (short guard): if `lock_pending` was set during phase 2,
-  ///   discard the returned vault + registry and credentials, lock
-  ///   the session. On panic, also lock (vault may be corrupted).
-  ///   On success, restore vault + registry and clear the TOTP cache
-  ///   (sync may have merged changed OTP fields).
-  ///
-  /// # Panics
-  ///
-  /// Internal `expect` for state that was validated in the same
-  /// critical section — unreachable in normal operation.
   Future<SyncOutcomeDto> syncNow();
 
   Future<SyncStatusDto> syncStatus();

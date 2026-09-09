@@ -68,9 +68,26 @@ def normalized_host(value: str) -> str:
     raise SystemExit(f"unsupported Android emulator host architecture: {value}")
 
 
+def scenario_entries(kind: str, host: str) -> list[dict[str, object]]:
+    """Return a distinct authority-side AVD matching each client image."""
+
+    if kind not in {"authority", "replacement"}:
+        raise SystemExit(f"unsupported Android scenario AVD kind: {kind}")
+    normalized = normalized_host(host)
+    suffix = "-authority" if kind == "authority" else "-authority-replacement"
+    selected = [entry.copy() for entry in load() if entry["host_arch"] == normalized]
+    if len(selected) != 2:
+        raise SystemExit(f"Android matrix has no complete two-API selection for {normalized}")
+    for entry in selected:
+        entry["avd"] = f'{entry["avd"]}{suffix}'
+    return selected
+
+
 def main() -> None:
     parser = argparse.ArgumentParser()
-    parser.add_argument("command", choices=("check", "select"))
+    parser.add_argument(
+        "command", choices=("check", "select", "authority", "replacement")
+    )
     parser.add_argument("--host", default=platform.machine())
     args = parser.parse_args()
     entries = load()
@@ -81,6 +98,15 @@ def main() -> None:
     selected = [entry for entry in entries if entry["host_arch"] == host]
     if len(selected) != 2:
         raise SystemExit(f"Android matrix has no complete two-API selection for {host}")
+    if args.command in {"authority", "replacement"}:
+        for entry in scenario_entries(args.command, host):
+            print(
+                "\t".join(
+                    str(entry[key])
+                    for key in ("avd", "api", "abi", "form_factor", "system_image")
+                )
+            )
+        return
     for entry in selected:
         print("\t".join(str(entry[key]) for key in ("avd", "api", "abi", "form_factor", "system_image")))
 

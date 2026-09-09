@@ -1,15 +1,10 @@
 //! `settings` — the Settings/Sync tab body (T6.3 / T6.4).
 //!
-//! Two regions: (a) a settings editor — a `List` of non-secret rows the user
-//! cycles/toggles inline (default sort, the two sync-trigger toggles, and a row
-//! that launches the secure credential overlay); and (b) a **secret-free**
-//! sync-status sub-view (the configured target + the last outcome/error).
+//! Two regions: local preferences/actions and a secret-free local-sync status.
 //!
 //! Key handling lives on `App` (`on_settings_key`); this module only renders.
-//! Per ADR-T3 nothing here is secret: `config.toml` holds preferences,
-//! `tui.toml` holds pins/recents, and the S3
-//! credential is collected in [`crate::overlay::sync_config`] and written to
-//! `vaults.toml` as ciphertext.
+//! Local role, trust, and sealed identity live in `vaults.toml`; the explicit
+//! server request is process-local and is never persisted.
 
 use ratatui::layout::{Constraint, Layout, Rect};
 use ratatui::text::{Line, Span};
@@ -24,9 +19,12 @@ pub(crate) const ROW_LABELS: &[&str] = &[
     "Default sort",
     "Theme",
     "Auto-lock",
-    "Auto-sync on unlock",
-    "Auto-sync on lock/quit",
-    "Configure sync target…",
+    "Configure as sync server",
+    "Pair this vault",
+    "Import paired vault",
+    "Start sync server",
+    "Allow pairing for 3 minutes",
+    "Manage peers",
 ];
 
 /// Render the Settings tab into `area`: the editable rows on top, and a
@@ -46,15 +44,34 @@ fn render_editor(app: &App, frame: &mut Frame, area: Rect) {
         app.user_config.default_sort().label().to_string(),
         app.current_theme_name().to_string(),
         format!("{} min", app.current_auto_lock_seconds() / 60),
-        on_off(app.user_config.sync_on_unlock()),
-        on_off(app.user_config.sync_on_lock_quit()),
-        String::new(), // the action row has no value
+        String::new(),
+        String::new(),
+        String::new(),
+        if app.sync_server_running() {
+            "running"
+        } else {
+            "off"
+        }
+        .to_string(),
+        app.pairing_countdown(),
+        app.sync_peer_count().to_string(),
     ];
 
+    let visible_rows = usize::from(area.height.saturating_sub(2)).max(1);
+    let first = app
+        .settings_index
+        .saturating_add(1)
+        .saturating_sub(visible_rows);
     let items: Vec<ListItem> = ROW_LABELS
         .iter()
         .enumerate()
+        .skip(first)
         .map(|(i, label)| {
+            let label = if i == 6 && app.sync_server_running() {
+                "Stop sync server"
+            } else {
+                label
+            };
             let selected = i == app.settings_index;
             let marker = if selected { "> " } else { "  " };
             let value = &values[i];
@@ -87,7 +104,7 @@ fn render_editor(app: &App, frame: &mut Frame, area: Rect) {
 fn render_status(app: &App, frame: &mut Frame, area: Rect) {
     let target = app
         .sync_target_summary()
-        .unwrap_or_else(|| "(no sync target configured)".to_string());
+        .unwrap_or_else(|| "(local sync not configured)".to_string());
     let last = app.sync_status_line().unwrap_or("Last sync: —").to_string();
 
     let body = vec![
@@ -116,17 +133,9 @@ fn render_status(app: &App, frame: &mut Frame, area: Rect) {
             Block::default()
                 .borders(Borders::ALL)
                 .border_style(app.theme.border())
-                .title("Status")
+                .title("Local sync Status")
                 .title_style(app.theme.header()),
         ),
         area,
     );
-}
-
-fn on_off(on: bool) -> String {
-    if on {
-        "[x] on".to_string()
-    } else {
-        "[ ] off".to_string()
-    }
 }

@@ -1,8 +1,6 @@
 package app.hidlins;
 
-import android.content.Context;
-
-/** Exact Java ABI for the Rust TLS verifier initializer. */
+/** Exact Java ABI for the Rust clipboard boundary. */
 public final class HidlinsNative {
     private HidlinsNative() {}
 
@@ -11,6 +9,5 @@ public final class HidlinsNative {
         boolean receive(byte[] value);
     }
 
-    public static native boolean initVerifier(Context context);
     public static native int consumeClipboard(String transferId, ClipboardReceiver receiver);
 }

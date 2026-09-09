@@ -149,6 +149,56 @@ target/release/hidlins-agent
 The agent feature has not landed. This executable currently prints a stub
 message and exits; there is no background unlock service to exercise yet.
 
+## Local-network sync across two devices
+
+Use two disposable copies of a vault on the same private/local network. On the
+authoritative macOS or Linux machine, open a bounded pairing window and keep the
+server in the foreground:
+
+```sh
+target/release/hidlins sync serve --vault demo --pairing-window
+```
+
+On the client, allow discovery to choose the current DHCP route:
+
+```sh
+target/release/hidlins sync pair --vault demo --name authority
+```
+
+Compare the six-digit SAS displayed on both applications. Accept only if both
+values match; rejecting or closing either prompt must leave no trusted peer.
+After successful bilateral acceptance, stop the foreground server with
+`Ctrl+C`, restart it without opening a pairing window, then request sync:
+
+```sh
+target/release/hidlins sync serve --vault demo
+target/release/hidlins sync now --vault demo
+```
+
+Discovery provides candidate routes only. The saved Noise identity pin is the
+authority; a discovered replacement key must fail. If multicast is unavailable,
+`--address` and `--port` accept an IP literal diagnostic route. Both discovered
+and manual routes are restricted to IPv4 `10/8`, `172.16/12`, `192.168/16`,
+`169.254/16`, `127/8`, or IPv6 `fc00::/7`, scoped `fe80::/10`, and `::1`.
+There is no public-address or DNS override.
+
+The TUI and Flutter desktop app expose the same explicit Start server, Stop
+server, Pair, Sync now, and peer-management operations while the application is
+running. They do not silently start a persistent server. Each configured client
+vault gets one best-effort startup sync per application process and then manual
+sync only; save, lock, network reconnection, and timers do not sync. iOS and
+Android are client-only and stop foreground network work when backgrounded.
+
+The automated simulator/CLI acceptance procedure and optional human/physical
+confidence observations are in
+[local-network-sync-manual-verification.md](local-network-sync-manual-verification.md).
+Android acceptance uses a separate emulator for the real CLI authority and an
+instrumentation-only `NsdManager` registrar on that authority. The shipping app
+discovers the private route through its normal platform adapter; no sync
+endpoint is passed to it. Desktop `mdns-sd` publisher/browser interoperability
+is tested separately. A physical desktop-to-Android run remains an optional
+router-firmware confidence check, not a completion gate.
+
 ## Flutter desktop app
 
 The desktop app and terminal applications use the same Rust core, KDBX format,
@@ -193,9 +243,11 @@ launch on Flutter's selected device instead of running a release artifact, use:
 HOME="$HIDLINS_DEMO_DIR/home" make app-run
 ```
 
-## iOS simulator
+## iOS simulator and optional physical device observations
 
-iOS builds require macOS and Xcode. Physical hardware is not required.
+iOS builds require macOS and Xcode. The real simulator/CLI scenario is the
+authoritative client-sync acceptance gate. A physical device is useful only for
+the optional OS-owned permission wording and assistive-technology observations.
 
 Build the simulator and unsigned device artifacts, then install and launch the
 inspected simulator build:
@@ -220,21 +272,22 @@ The deterministic simulator gates are:
 ```sh
 make app-test-ios-simulator
 make app-test-ios-integration
-make app-test-ios-simulator-minio
+make test-local-sync-mobile-scenarios-ios
 ```
 
 See [`app/ios/VERIFICATION.md`](../app/ios/VERIFICATION.md) for coverage and
 requirements.
 
-## Android emulator
+## Android emulator and optional physical device observations
 
-Provision the repository's host-native API 29 phone and API 36 tablet AVDs:
+Provision the repository's host-native API 29 phone and API 36 tablet client,
+authority, and replacement-authority AVDs:
 
 ```sh
 make android-emulator-provision
 ```
 
-On Apple Silicon, start the phone manually with:
+For application-only diagnosis on Apple Silicon, start the phone manually with:
 
 ```sh
 /Users/jason/Library/Android/sdk/emulator/emulator -avd hidlins-api29
@@ -271,12 +324,22 @@ The deterministic emulator gates are:
 ```sh
 make app-test-android-integration
 make app-test-android-emulator
-make app-test-android-emulator-minio
+make test-local-sync-mobile-scenarios-android HIDLINS_ANDROID_STRICT=1
 ```
 
 `app-test-android-integration` uses an already selected emulator. The full
-emulator targets manage the declared host-native matrix. See
+emulator targets manage the declared host-native matrix. The local-sync target
+runs a release CLI inside the authority emulator, advertises only its bound port
+through a test-APK-only Android NSD registrar, and drives the shipping client
+over the private emulator Wi-Fi data path. Its `10.0.2.2` traffic is an
+authenticated orchestration-only channel and never supplies or proxies a sync
+route. See
 [`app/android/VERIFICATION.md`](../app/android/VERIFICATION.md) for details.
+Physical Android hardware is optional and adds confidence about OS/vendor-owned
+permission wording and TalkBack speech. A physical desktop Rust publisher to
+Android `NsdManager` client run across a representative access point is also
+optional because simulator networking cannot prove arbitrary router multicast
+behavior. Neither observation is a release gate.
 
 ## Automated verification summary
 
@@ -289,6 +352,7 @@ make app-check
 make app-test-integration
 make app-test-integration-performance
 make interop-app
+make test-local-sync-mobile-scenarios HIDLINS_ANDROID_STRICT=1
 make verify
 ```
 
@@ -300,9 +364,20 @@ make verify
 - `make app-test-integration-performance` checks the 5,000-entry path through
   the compiled bridge.
 - `make interop-app` checks application KDBX interoperability.
+- `make test-local-sync-mobile-scenarios` is the isolated, expensive macOS gate
+  that drives an iPhone, iPad, Android API 29 phone, and Android API 36 tablet
+  against a separate release CLI authority. Android uses platform NSD and a
+  direct emulator-Wi-Fi Noise/data path, including discovery after a distinct
+  replacement-authority DHCP address. Per-device JSON and redacted logs are
+  stored under `build/verification/mobile-local-sync/`. API 29's legacy
+  explicit Wi-Fi link otherwise presents synthetic cellular and Wi-Fi as
+  duplicate same-subnet paths, so the runner disables cellular data to model a
+  Wi-Fi-only device; it does not inject a route or choose the NSD address. API
+  36 retains platform-default network state on shared emulator Wi-Fi.
 - `make verify` is the broad repository gate.
 
-Managed-MinIO targets require Docker Desktop on macOS. Live credentialed S3,
-physical-device tests, and manual assistive-technology observations are
-optional, non-gating confidence checks for the current alpha baseline; do not
-record an unexecuted check as passing.
+Human SAS perception, physical OS permission presentation, representative
+consumer-router firmware, and assistive-technology speech observations in the
+local-network sync guide are optional, non-blocking confidence checks. The
+automated real simulator/emulator scenarios are the acceptance authority. Never
+record an unexecuted optional observation as passing.

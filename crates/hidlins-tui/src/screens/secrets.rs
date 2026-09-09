@@ -266,15 +266,18 @@ mod tests {
             "personal".to_string(),
             "Work".to_string(),
             "Cloud".to_string(),
-            "AWS root key".to_string(),
+            "Production root key".to_string(),
         ];
         // Wide: the full path fits.
         assert_eq!(
             middle_truncate(&parts, 80),
-            "personal › Work › Cloud › AWS root key"
+            "personal › Work › Cloud › Production root key"
         );
         // Narrow: middle elided to `first › … › last`.
-        assert_eq!(middle_truncate(&parts, 30), "personal › … › AWS root key");
+        assert_eq!(
+            middle_truncate(&parts, 40),
+            "personal › … › Production root key"
+        );
     }
 
     #[test]
@@ -282,7 +285,7 @@ mod tests {
         let parts = vec![
             "personal".to_string(),
             "Work".to_string(),
-            "AWS root key".to_string(),
+            "Production root key".to_string(),
         ];
         // Width 10 forces a hard truncation of the elided form; no panic, ≤ width.
         let out = middle_truncate(&parts, 10);
@@ -296,7 +299,7 @@ mod tests {
 
     #[test]
     fn two_component_overflow_retains_both_endpoints() {
-        let parts = vec!["personal".to_string(), "AWS root key".to_string()];
+        let parts = vec!["personal".to_string(), "Production root key".to_string()];
         let out = middle_truncate(&parts, 10);
         assert!(out.width() <= 10);
         assert!(out.starts_with("per"), "vault remains visible: {out:?}");

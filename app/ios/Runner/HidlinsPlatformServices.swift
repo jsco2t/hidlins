@@ -82,6 +82,175 @@ final class SnapshotShieldController {
   }
 }
 
+enum LocalDiscoveryPermission: String {
+  case notDetermined, granted, denied, restricted, unavailable
+}
+
+enum LocalDiscoveryPayload {
+  static let maximumCandidates = 8
+
+  static func make(
+    permission: LocalDiscoveryPermission,
+    candidates: [[String: Any]]
+  ) -> [String: Any] {
+    let bounded = candidates.prefix(maximumCandidates).compactMap { candidate -> [String: Any]? in
+      guard let address = candidate["address"] as? String,
+            let port = candidate["port"] as? Int,
+            let scopeID = candidate["scopeId"] as? Int,
+            !address.isEmpty,
+            address.count <= 64,
+            (1...65_535).contains(port),
+            scopeID >= 0
+      else { return nil }
+      return ["address": address, "port": port, "scopeId": scopeID]
+    }
+    return [
+      "permission": permission.rawValue,
+      "candidates": bounded,
+    ]
+  }
+}
+
+/// Bonjour is only a discovery mechanism. This adapter returns bounded numeric
+/// routes; Rust independently normalizes and applies the local-only policy.
+final class LocalDiscoveryService: NSObject, NetServiceBrowserDelegate, NetServiceDelegate {
+  private var browser: NetServiceBrowser?
+  private var services: [NetService] = []
+  private var candidates: [[String: Any]] = []
+  private var completion: FlutterResult?
+  private(set) var permission: LocalDiscoveryPermission = .notDetermined
+
+  func status() -> [String: Any] {
+    LocalDiscoveryPayload.make(permission: permission, candidates: [])
+  }
+
+  func discover(kind: String, timeoutMilliseconds: Int, result: @escaping FlutterResult) {
+    guard completion == nil,
+          ["trusted", "pairing"].contains(kind),
+          (100...5_000).contains(timeoutMilliseconds)
+    else {
+      result(PlatformEnvelope.failure(code: "invalid-discovery-request"))
+      return
+    }
+    completion = result
+    candidates = []
+    services = []
+    let browser = NetServiceBrowser()
+    browser.delegate = self
+    self.browser = browser
+    let type = kind == "pairing" ? "_hidlins-pair._tcp." : "_hidlins-sync._tcp."
+    browser.searchForServices(ofType: type, inDomain: "local.")
+    DispatchQueue.main.asyncAfter(deadline: .now() + .milliseconds(timeoutMilliseconds)) {
+      [weak self] in self?.finish()
+    }
+  }
+
+  func stop() {
+    browser?.stop()
+    browser = nil
+    services.forEach { $0.stop() }
+    services = []
+    candidates = []
+    if let completion {
+      self.completion = nil
+      completion(PlatformEnvelope.canceled())
+    }
+  }
+
+  func netServiceBrowserWillSearch(_ browser: NetServiceBrowser) {
+    permission = .granted
+  }
+
+  func netServiceBrowser(
+    _ browser: NetServiceBrowser,
+    didNotSearch errorDict: [String: NSNumber]
+  ) {
+    let code = errorDict[NetService.errorCode]?.intValue
+    permission = code == -72_008 ? .denied : .restricted
+    finish()
+  }
+
+  func netServiceBrowser(
+    _ browser: NetServiceBrowser,
+    didFind service: NetService,
+    moreComing: Bool
+  ) {
+    guard services.count < LocalDiscoveryPayload.maximumCandidates else { return }
+    services.append(service)
+    service.delegate = self
+    service.resolve(withTimeout: 1)
+  }
+
+  func netServiceDidResolveAddress(_ sender: NetService) {
+    guard let addresses = sender.addresses else { return }
+    for data in addresses {
+      guard candidates.count < LocalDiscoveryPayload.maximumCandidates,
+            let route = Self.numericRoute(data: data, port: sender.port),
+            !candidates.contains(where: {
+              ($0["address"] as? String) == route["address"] as? String &&
+                ($0["port"] as? Int) == route["port"] as? Int &&
+                ($0["scopeId"] as? Int) == route["scopeId"] as? Int
+            })
+      else { continue }
+      candidates.append(route)
+    }
+  }
+
+  private func finish() {
+    guard let completion else { return }
+    self.completion = nil
+    browser?.stop()
+    browser = nil
+    services.forEach { $0.stop() }
+    services = []
+    completion(
+      PlatformEnvelope.success(
+        LocalDiscoveryPayload.make(permission: permission, candidates: candidates)
+      )
+    )
+    candidates = []
+  }
+
+  static func numericRoute(data: Data, port: Int) -> [String: Any]? {
+    guard port > 0, port <= 65_535 else { return nil }
+    return data.withUnsafeBytes { raw in
+      guard let base = raw.baseAddress,
+            raw.count >= MemoryLayout<sockaddr>.size
+      else { return nil }
+      let address = base.assumingMemoryBound(to: sockaddr.self)
+      var host = [CChar](repeating: 0, count: Int(NI_MAXHOST))
+      guard getnameinfo(
+        address,
+        socklen_t(raw.count),
+        &host,
+        socklen_t(host.count),
+        nil,
+        0,
+        NI_NUMERICHOST
+      ) == 0 else { return nil }
+      let scopeID: Int
+      if Int32(address.pointee.sa_family) == AF_INET6,
+         raw.count >= MemoryLayout<sockaddr_in6>.size
+      {
+        scopeID = Int(base.assumingMemoryBound(to: sockaddr_in6.self).pointee.sin6_scope_id)
+      } else {
+        scopeID = 0
+      }
+      guard let numericHost = routeHost(String(cString: host)) else { return nil }
+      return [
+        "address": numericHost,
+        "port": port,
+        "scopeId": scopeID,
+      ]
+    }
+  }
+
+  static func routeHost(_ value: String) -> String? {
+    let host = value.split(separator: "%", maxSplits: 1).first.map(String.init) ?? ""
+    return host.isEmpty || host.count > 64 ? nil : host
+  }
+}
+
 struct ApplicationSupportStore {
   let baseDirectory: URL
 
@@ -202,6 +371,7 @@ final class HidlinsPlatformServices: NSObject, UIDocumentPickerDelegate {
 
   let snapshotShield = SnapshotShieldController()
   private let keyfiles = SecurityScopedKeyfileStore()
+  private let localDiscovery = LocalDiscoveryService()
   private var lifecycleChannel: FlutterMethodChannel?
   private var pendingPickerResult: FlutterResult?
   private var pickerPurpose: PickerPurpose?
@@ -252,6 +422,9 @@ final class HidlinsPlatformServices: NSObject, UIDocumentPickerDelegate {
     registerChannel("app.hidlins/keyfile", messenger: messenger) { [weak self] call, result in
       self?.handleKeyfile(call: call, result: result)
     }
+    registerChannel("app.hidlins/local_discovery", messenger: messenger) { [weak self] call, result in
+      self?.handleLocalDiscovery(call: call, result: result)
+    }
   }
 
   private func registerChannel(
@@ -264,7 +437,37 @@ final class HidlinsPlatformServices: NSObject, UIDocumentPickerDelegate {
 
   func reportLifecycle(_ state: String, window: UIWindow?) {
     if state != "resumed" { snapshotShield.show(in: window) }
+    if state != "resumed" { localDiscovery.stop() }
     lifecycleChannel?.invokeMethod("reportState", arguments: ["state": state])
+  }
+
+  private func handleLocalDiscovery(call: FlutterMethodCall, result: @escaping FlutterResult) {
+    switch call.method {
+    case "permissionStatus":
+      result(PlatformEnvelope.success(localDiscovery.status()))
+    case "discover":
+      guard let arguments = call.arguments as? [String: Any],
+            let kind = arguments["kind"] as? String,
+            let timeout = arguments["timeoutMs"] as? Int
+      else {
+        result(PlatformEnvelope.failure(code: "invalid-discovery-request"))
+        return
+      }
+      localDiscovery.discover(kind: kind, timeoutMilliseconds: timeout, result: result)
+    case "openSettings":
+      guard let url = URL(string: UIApplication.openSettingsURLString) else {
+        result(PlatformEnvelope.failure(code: "settings-unavailable"))
+        return
+      }
+      UIApplication.shared.open(url) { opened in
+        result(opened ? PlatformEnvelope.success() : PlatformEnvelope.failure(code: "settings-unavailable"))
+      }
+    case "stop":
+      localDiscovery.stop()
+      result(PlatformEnvelope.success())
+    default:
+      result(PlatformEnvelope.unsupported())
+    }
   }
 
   private func handleClipboard(call: FlutterMethodCall, result: @escaping FlutterResult) {

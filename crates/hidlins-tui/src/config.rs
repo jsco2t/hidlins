@@ -13,7 +13,7 @@
 //! Stray legacy pref keys in an existing `tui.toml` are inert (they round-trip
 //! through the lenient `extra` mechanism; A-5: no migration).
 //!
-//! **Non-secret only** (CLAUDE.md): no passwords, no S3 keys, no master
+//! **Non-secret only** (CLAUDE.md): no passwords, no remote credentials, no master
 //! password — only entry UUIDs (which are not secret). Sync secrets live in
 //! `vaults.toml` via `configure_remote`; vault contents only in the KDBX itself.
 //!

@@ -38,6 +38,18 @@ sealed class HidlinsApiError with _$HidlinsApiError implements FrbException {
       HidlinsApiError_RegistryMalformed;
   const factory HidlinsApiError.syncNotConfigured() =
       HidlinsApiError_SyncNotConfigured;
+  const factory HidlinsApiError.localSyncConfiguration() =
+      HidlinsApiError_LocalSyncConfiguration;
+  const factory HidlinsApiError.syncPermissionDenied() =
+      HidlinsApiError_SyncPermissionDenied;
+  const factory HidlinsApiError.syncNotFound() = HidlinsApiError_SyncNotFound;
+  const factory HidlinsApiError.syncKeyMismatch() =
+      HidlinsApiError_SyncKeyMismatch;
+  const factory HidlinsApiError.syncRevoked() = HidlinsApiError_SyncRevoked;
+  const factory HidlinsApiError.syncBusy() = HidlinsApiError_SyncBusy;
+  const factory HidlinsApiError.syncConflict() = HidlinsApiError_SyncConflict;
+  const factory HidlinsApiError.syncCanceled() = HidlinsApiError_SyncCanceled;
+  const factory HidlinsApiError.syncOffline() = HidlinsApiError_SyncOffline;
   const factory HidlinsApiError.syncRemoteUnreachable({String? endpoint}) =
       HidlinsApiError_SyncRemoteUnreachable;
   const factory HidlinsApiError.syncAuthFailed() =
@@ -45,9 +57,6 @@ sealed class HidlinsApiError with _$HidlinsApiError implements FrbException {
   const factory HidlinsApiError.syncConflictUnresolvable({
     required String backupPath,
   }) = HidlinsApiError_SyncConflictUnresolvable;
-  const factory HidlinsApiError.syncDuplicateTarget({
-    required String existingVault,
-  }) = HidlinsApiError_SyncDuplicateTarget;
   const factory HidlinsApiError.invalidInput({
     required String field,
     required String reason,

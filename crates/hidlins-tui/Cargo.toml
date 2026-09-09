@@ -1,6 +1,6 @@
 [package]
 name = "hidlins-tui"
-description = "Hidlins keyboard-driven terminal UI for vault, entry, generator, security, and S3 sync operations."
+description = "Hidlins keyboard-driven terminal UI for vault, entry, generator, security, and local sync operations."
 version.workspace = true
 edition.workspace = true
 license.workspace = true
@@ -23,7 +23,7 @@ hidlins-core = { path = "../hidlins-core", version = "0.1" }
 # Real sync engine. The TUI consumes `hidlins_sync::Sync` directly (the
 # abandoned `sync-git` placeholder is gone); `TuiError` bridges
 # `hidlins_sync::SyncError` via `#[from]` (design U.5 / ADR-T4).
-hidlins-sync = { path = "../hidlins-sync", version = "0.1" }
+hidlins-sync = { path = "../hidlins-sync", version = "0.1", features = ["desktop-discovery"] }
 # Auto-lock + clipboard. `AutoLockController` enforces FR-073 idle locking;
 # `Clipboard`/`AutoClearGuard` protect copy actions.
 hidlins-security = { path = "../hidlins-security", version = "0.1" }

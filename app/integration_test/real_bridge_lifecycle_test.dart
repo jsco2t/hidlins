@@ -1,3 +1,4 @@
+import 'dart:async';
 import 'dart:io';
 
 import 'package:flutter_rust_bridge/flutter_rust_bridge_for_generated.dart'
@@ -203,6 +204,134 @@ void main() {
       importDir.deleteSync(recursive: true);
     }
   }, timeout: const Timeout(Duration(minutes: 2)));
+
+  test(
+    'real bridge completes local pair/import, sync, and peer control',
+    () async {
+      final serverDir = Directory.systemTemp.createTempSync(
+        'hidlins-real-bridge-local-server-',
+      );
+      final clientDir = Directory.systemTemp.createTempSync(
+        'hidlins-real-bridge-local-client-',
+      );
+      final server = await api.initApp(
+        cfg: AppInitConfig(stateDir: serverDir.path),
+      );
+      final client = await api.initApp(
+        cfg: AppInitConfig(stateDir: clientDir.path),
+      );
+      final serverPrompt = Completer<PairingPromptDto>();
+      final startupSync = Completer<SyncEvent>();
+      final subscription = server.syncEvents().listen((event) {
+        if (event case SyncEvent_PairingRequested(:final field0)) {
+          if (!serverPrompt.isCompleted) serverPrompt.complete(field0);
+        }
+      });
+      final clientSubscription = client.syncEvents().listen((event) {
+        if ((event is SyncEvent_Done || event is SyncEvent_Failed) &&
+            !startupSync.isCompleted) {
+          startupSync.complete(event);
+        }
+      });
+
+      try {
+        await server.createVault(
+          name: 'local-shared',
+          masterPassword: _master,
+          confirmedNoRecovery: true,
+        );
+        await server.unlock(name: 'local-shared', masterPassword: _master);
+        await server.configureLocalSync(role: LocalSyncRoleDto.server);
+
+        final candidates = await server.localServerEndpoints();
+        expect(candidates, isNotEmpty);
+        expect(candidates.every((candidate) => candidate.port > 0), isTrue);
+        final requested = candidates.firstWhere(
+          (candidate) => candidate.address == '127.0.0.1',
+          orElse: () => candidates.first,
+        );
+        final endpoint = await server.startSyncServer(endpoint: requested);
+        await server.openPairingWindow();
+        expect((await server.localSyncStatus()).serverRunning, isTrue);
+        expect((await server.localSyncStatus()).pairingOpen, isTrue);
+
+        final clientSide = await client.beginPairImport(
+          name: 'local-shared',
+          masterPassword: _master,
+          candidates: [endpoint],
+        );
+        final serverSide = await serverPrompt.future.timeout(
+          const Duration(seconds: 10),
+        );
+        expect(clientSide.sas, serverSide.sas);
+        expect(clientSide.toString(), isNot(contains(clientSide.sas)));
+
+        await server.confirmPairing(
+          transactionHandle: serverSide.transactionHandle,
+          accepted: true,
+          peerDisplayName: 'Desktop client',
+        );
+        final imported = await client.confirmPairing(
+          transactionHandle: clientSide.transactionHandle,
+          accepted: true,
+          peerDisplayName: 'Desktop authority',
+        );
+        expect(imported?.name, 'local-shared');
+        expect(File(imported!.path).existsSync(), isTrue);
+
+        await client.setDiscoveryCandidates(
+          permission: DiscoveryPermissionDto.granted,
+          candidates: [endpoint],
+        );
+        await client.unlock(name: 'local-shared', masterPassword: _master);
+        expect(
+          await startupSync.future.timeout(const Duration(seconds: 15)),
+          isA<SyncEvent_Done>(),
+        );
+        await client.setDiscoveryCandidates(
+          permission: DiscoveryPermissionDto.granted,
+          candidates: [
+            LocalEndpointDto(
+              address: endpoint.address,
+              port: 9,
+              scopeId: endpoint.scopeId,
+            ),
+          ],
+        );
+        await client.setDiscoveryCandidates(
+          permission: DiscoveryPermissionDto.granted,
+          candidates: [endpoint],
+        );
+        final discovery = await client.localDiscoveryStatus();
+        expect(discovery.candidates, [endpoint]);
+        expect(await client.syncNow(), isA<SyncOutcomeDto_AlreadyInSync>());
+
+        var peers = await server.listSyncPeers();
+        expect(peers, hasLength(1));
+        await server.renameSyncPeer(
+          peerId: peers.single.peerId,
+          displayName: 'Renamed desktop client',
+        );
+        peers = await server.listSyncPeers();
+        expect(peers.single.displayName, 'Renamed desktop client');
+        await server.revokeSyncPeer(peerId: peers.single.peerId);
+        expect((await server.listSyncPeers()).single.revoked, isTrue);
+        expect((await server.localSyncStatus()).activePeerCount, BigInt.zero);
+      } finally {
+        await client.shutdown();
+        await server.stopSyncServer();
+        await server.shutdown();
+        await subscription.cancel();
+        await clientSubscription.cancel();
+        serverDir.deleteSync(recursive: true);
+        clientDir.deleteSync(recursive: true);
+      }
+    },
+    skip: Platform.isIOS || Platform.isAndroid
+        ? 'mobile client scenarios use a separate CLI authority'
+        : false,
+    timeout: const Timeout(Duration(minutes: 2)),
+  );
 
   test('per-vault idle timeout auto-locks through the real ticker', () async {
     final fixture = Directory.systemTemp.createTempSync(

@@ -979,7 +979,7 @@ abstract class AppLocalizations {
   /// No description provided for @vaultConnectSyncTitle.
   ///
   /// In en, this message translates to:
-  /// **'Connect to sync'**
+  /// **'Import paired vault'**
   String get vaultConnectSyncTitle;
 
   /// No description provided for @vaultCreateNameLabel.
@@ -1081,7 +1081,7 @@ abstract class AppLocalizations {
   /// No description provided for @vaultChangePasswordReenterSync.
   ///
   /// In en, this message translates to:
-  /// **'Password changed. Re-enter your S3 sync credentials.'**
+  /// **'Password changed. Your local sync identity was re-protected.'**
   String get vaultChangePasswordReenterSync;
 
   /// No description provided for @vaultPasswordMismatch.
@@ -1105,7 +1105,7 @@ abstract class AppLocalizations {
   /// No description provided for @firstRunConnectSync.
   ///
   /// In en, this message translates to:
-  /// **'Connect to an existing vault via sync'**
+  /// **'Import paired vault'**
   String get firstRunConnectSync;
 
   /// No description provided for @firstRunImportVault.
@@ -1150,54 +1150,6 @@ abstract class AppLocalizations {
   /// **'Required'**
   String get validatorRequired;
 
-  /// No description provided for @syncS3BucketLabel.
-  ///
-  /// In en, this message translates to:
-  /// **'S3 Bucket'**
-  String get syncS3BucketLabel;
-
-  /// No description provided for @syncObjectKeyLabel.
-  ///
-  /// In en, this message translates to:
-  /// **'Object key'**
-  String get syncObjectKeyLabel;
-
-  /// No description provided for @syncRegionLabel.
-  ///
-  /// In en, this message translates to:
-  /// **'Region'**
-  String get syncRegionLabel;
-
-  /// No description provided for @syncEndpointLabel.
-  ///
-  /// In en, this message translates to:
-  /// **'Endpoint (optional)'**
-  String get syncEndpointLabel;
-
-  /// No description provided for @syncPathStyleLabel.
-  ///
-  /// In en, this message translates to:
-  /// **'Path-style addressing'**
-  String get syncPathStyleLabel;
-
-  /// No description provided for @syncAccessKeyIdLabel.
-  ///
-  /// In en, this message translates to:
-  /// **'Access key ID'**
-  String get syncAccessKeyIdLabel;
-
-  /// No description provided for @syncSecretAccessKeyLabel.
-  ///
-  /// In en, this message translates to:
-  /// **'Secret access key'**
-  String get syncSecretAccessKeyLabel;
-
-  /// No description provided for @syncErrorDuplicate.
-  ///
-  /// In en, this message translates to:
-  /// **'Duplicate sync target: already used by \"{existingVault}\"'**
-  String syncErrorDuplicate(String existingVault);
-
   /// No description provided for @syncErrorUnreachable.
   ///
   /// In en, this message translates to:
@@ -1207,20 +1159,14 @@ abstract class AppLocalizations {
   /// No description provided for @syncErrorAuthFailed.
   ///
   /// In en, this message translates to:
-  /// **'S3 authentication failed'**
+  /// **'The discovered server identity did not match this vault'**
   String get syncErrorAuthFailed;
 
   /// No description provided for @syncConfigureTitle.
   ///
   /// In en, this message translates to:
-  /// **'Configure sync'**
+  /// **'Local network sync'**
   String get syncConfigureTitle;
-
-  /// No description provided for @syncSaveConfiguration.
-  ///
-  /// In en, this message translates to:
-  /// **'Save sync configuration'**
-  String get syncSaveConfiguration;
 
   /// No description provided for @syncNow.
   ///
@@ -1233,6 +1179,204 @@ abstract class AppLocalizations {
   /// In en, this message translates to:
   /// **'Sync is not configured'**
   String get syncNotConfigured;
+
+  /// No description provided for @syncLocalOnlyDescription.
+  ///
+  /// In en, this message translates to:
+  /// **'Sync directly with a trusted Hidlins device on this local network. Public addresses are always rejected.'**
+  String get syncLocalOnlyDescription;
+
+  /// No description provided for @syncPairVault.
+  ///
+  /// In en, this message translates to:
+  /// **'Pair this vault'**
+  String get syncPairVault;
+
+  /// No description provided for @syncImportPairedVault.
+  ///
+  /// In en, this message translates to:
+  /// **'Import paired vault'**
+  String get syncImportPairedVault;
+
+  /// No description provided for @syncCompareCode.
+  ///
+  /// In en, this message translates to:
+  /// **'Compare this code on both devices'**
+  String get syncCompareCode;
+
+  /// No description provided for @syncCompareCodeHelp.
+  ///
+  /// In en, this message translates to:
+  /// **'Accept only when every digit matches. Hidlins will not pair without confirmation on both devices.'**
+  String get syncCompareCodeHelp;
+
+  /// No description provided for @syncPeerName.
+  ///
+  /// In en, this message translates to:
+  /// **'Device name'**
+  String get syncPeerName;
+
+  /// No description provided for @syncConfirmMatches.
+  ///
+  /// In en, this message translates to:
+  /// **'Codes match'**
+  String get syncConfirmMatches;
+
+  /// No description provided for @syncRejectPairing.
+  ///
+  /// In en, this message translates to:
+  /// **'Reject'**
+  String get syncRejectPairing;
+
+  /// No description provided for @syncDiscovering.
+  ///
+  /// In en, this message translates to:
+  /// **'Looking for Hidlins devices on your local network…'**
+  String get syncDiscovering;
+
+  /// No description provided for @syncNoDevices.
+  ///
+  /// In en, this message translates to:
+  /// **'No Hidlins devices were found. Keep the other app open, then retry.'**
+  String get syncNoDevices;
+
+  /// No description provided for @syncPermissionTitle.
+  ///
+  /// In en, this message translates to:
+  /// **'Allow local network access'**
+  String get syncPermissionTitle;
+
+  /// No description provided for @syncPermissionRationale.
+  ///
+  /// In en, this message translates to:
+  /// **'Hidlins uses local network access only to find and connect directly to your trusted devices. It never uses this permission for internet sync.'**
+  String get syncPermissionRationale;
+
+  /// No description provided for @syncPermissionDenied.
+  ///
+  /// In en, this message translates to:
+  /// **'Local network access is denied. You can continue using your vault offline or enable access in system settings.'**
+  String get syncPermissionDenied;
+
+  /// No description provided for @syncPermissionRestricted.
+  ///
+  /// In en, this message translates to:
+  /// **'Local network access is restricted on this device.'**
+  String get syncPermissionRestricted;
+
+  /// No description provided for @syncPermissionUnsupported.
+  ///
+  /// In en, this message translates to:
+  /// **'Local network discovery is unavailable on this device.'**
+  String get syncPermissionUnsupported;
+
+  /// No description provided for @syncOpenSettings.
+  ///
+  /// In en, this message translates to:
+  /// **'Open system settings'**
+  String get syncOpenSettings;
+
+  /// No description provided for @syncRetryDiscovery.
+  ///
+  /// In en, this message translates to:
+  /// **'Retry discovery'**
+  String get syncRetryDiscovery;
+
+  /// No description provided for @syncManualEndpoint.
+  ///
+  /// In en, this message translates to:
+  /// **'Use an IP address manually'**
+  String get syncManualEndpoint;
+
+  /// No description provided for @syncManualEndpointHint.
+  ///
+  /// In en, this message translates to:
+  /// **'Private IP:port or [link-local IPv6%scope]:port'**
+  String get syncManualEndpointHint;
+
+  /// No description provided for @syncManualPolicy.
+  ///
+  /// In en, this message translates to:
+  /// **'Only private and link-local IP literals are accepted.'**
+  String get syncManualPolicy;
+
+  /// No description provided for @syncConfigureServer.
+  ///
+  /// In en, this message translates to:
+  /// **'Configure as sync server'**
+  String get syncConfigureServer;
+
+  /// No description provided for @syncStartServer.
+  ///
+  /// In en, this message translates to:
+  /// **'Start sync server'**
+  String get syncStartServer;
+
+  /// No description provided for @syncStopServer.
+  ///
+  /// In en, this message translates to:
+  /// **'Stop sync server'**
+  String get syncStopServer;
+
+  /// No description provided for @syncServerRunning.
+  ///
+  /// In en, this message translates to:
+  /// **'Sync server running while Hidlins is open'**
+  String get syncServerRunning;
+
+  /// No description provided for @syncAllowPairing.
+  ///
+  /// In en, this message translates to:
+  /// **'Allow pairing for 3 minutes'**
+  String get syncAllowPairing;
+
+  /// No description provided for @syncPairingRemaining.
+  ///
+  /// In en, this message translates to:
+  /// **'Pairing open: {seconds}s remaining'**
+  String syncPairingRemaining(int seconds);
+
+  /// No description provided for @syncManagePeers.
+  ///
+  /// In en, this message translates to:
+  /// **'Manage peers'**
+  String get syncManagePeers;
+
+  /// No description provided for @syncRenamePeer.
+  ///
+  /// In en, this message translates to:
+  /// **'Rename'**
+  String get syncRenamePeer;
+
+  /// No description provided for @syncRevokePeer.
+  ///
+  /// In en, this message translates to:
+  /// **'Revoke'**
+  String get syncRevokePeer;
+
+  /// No description provided for @syncRevokeConfirm.
+  ///
+  /// In en, this message translates to:
+  /// **'Revoke this peer? It must pair again before it can sync.'**
+  String get syncRevokeConfirm;
+
+  /// No description provided for @syncRoleClient.
+  ///
+  /// In en, this message translates to:
+  /// **'Paired client'**
+  String get syncRoleClient;
+
+  /// No description provided for @syncRoleServer.
+  ///
+  /// In en, this message translates to:
+  /// **'Authoritative server'**
+  String get syncRoleServer;
+
+  /// No description provided for @syncCancelForeground.
+  ///
+  /// In en, this message translates to:
+  /// **'Cancel'**
+  String get syncCancelForeground;
 
   /// No description provided for @syncWorkspaceAvailable.
   ///

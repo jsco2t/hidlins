@@ -5,7 +5,6 @@
   "android_api_level": 29,
   "ndk_version": "28.2.13676358",
   "minimum_load_alignment": 16384,
-  "jni_init_symbol": "Java_app_hidlins_HidlinsNative_initVerifier",
   "artifacts": [
     {
       "target": "aarch64-linux-android",
@@ -17,15 +16,5 @@
       "abi": "x86_64",
       "elf_machine": 62
     }
-  ],
-  "verifier": {
-    "rust_crate": "rustls-platform-verifier",
-    "rust_version": "0.6.2",
-    "android_crate": "rustls-platform-verifier-android",
-    "android_version": "0.1.1",
-    "maven_coordinate": "rustls:rustls-platform-verifier:0.1.1",
-    "license": "MIT OR Apache-2.0",
-    "aar_sha256": "667292cadd8fa589229dd0f716541236a761f29b774930868d218175633830fd",
-    "pom_sha256": "5468629ab3793f4768c0527b8ecca25219a00b5d9503d1ad657cc664c87e9081"
-  }
+  ]
 }

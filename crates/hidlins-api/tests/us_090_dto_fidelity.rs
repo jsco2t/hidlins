@@ -1,13 +1,13 @@
 use hidlins_api::dto::{
     AttachmentMeta, CustomFieldDto, CustomFieldInputDto, EntryDetail, EntryDraftDto, EntryEditDto,
-    EntryKindDto, EntrySummary, GeneratedSecret, HistorySummary, KeyfileRef, S3ConfigDto,
-    SearchModeDto, SearchOptionsDto, SearchScopeDto, TotpCode,
+    EntryKindDto, EntrySummary, GeneratedSecret, HistorySummary, KeyfileRef, SearchModeDto,
+    SearchOptionsDto, SearchScopeDto, TotpCode,
 };
 use zeroize::Zeroize;
 
 fn assert_zeroize<T: Zeroize>() {}
 
-const MARKER: &str = "dto-marker-p@ss-S3CR3T";
+const MARKER: &str = "dto-marker-p@ss-CR3D3NTIAL";
 
 fn assert_debug_values_are_redacted(values: impl IntoIterator<Item = String>) {
     for rendered in values {
@@ -25,7 +25,6 @@ fn every_secret_bearing_boundary_type_zeroizes_on_drop() {
     assert_zeroize::<CustomFieldInputDto>();
     assert_zeroize::<TotpCode>();
     assert_zeroize::<GeneratedSecret>();
-    assert_zeroize::<S3ConfigDto>();
 
     // KeyfileRef cannot implement Drop: frb's generated SseEncode/SseDecode
     // destructure it by value, and Rust forbids moving out of a Drop type
@@ -70,18 +69,6 @@ fn inbound_secret_types_redact_debug_output() {
             GeneratedSecret {
                 value: MARKER.to_string(),
                 entropy_bits: 64.0,
-            }
-        ),
-        format!(
-            "{:?}",
-            S3ConfigDto {
-                bucket: "bucket".to_string(),
-                key: "key".to_string(),
-                region: "region".to_string(),
-                endpoint: None,
-                path_style: false,
-                access_key_id: MARKER.to_string(),
-                secret_access_key: MARKER.to_string(),
             }
         ),
         format!("{:?}", KeyfileRef::Bytes(MARKER.as_bytes().to_vec())),
@@ -245,7 +232,7 @@ fn explicit_zeroize_clears_entry_input_secrets() {
 }
 
 #[test]
-fn explicit_zeroize_clears_generated_keyfile_totp_and_s3_secrets() {
+fn explicit_zeroize_clears_generated_keyfile_and_totp_secrets() {
     let mut generated = GeneratedSecret {
         value: "secret".to_string(),
         entropy_bits: 64.0,
@@ -278,22 +265,4 @@ fn explicit_zeroize_clears_generated_keyfile_totp_and_s3_secrets() {
     assert!(totp.code.is_empty());
     assert_eq!(totp.remaining_secs, 0);
     assert_eq!(totp.period, 0);
-
-    let mut s3 = S3ConfigDto {
-        bucket: "bucket".to_string(),
-        key: "key".to_string(),
-        region: "region".to_string(),
-        endpoint: Some("endpoint".to_string()),
-        path_style: true,
-        access_key_id: "access-key".to_string(),
-        secret_access_key: "secret-key".to_string(),
-    };
-    s3.zeroize();
-    assert!(s3.bucket.is_empty());
-    assert!(s3.key.is_empty());
-    assert!(s3.region.is_empty());
-    assert!(s3.endpoint.as_deref().is_none_or(str::is_empty));
-    assert!(!s3.path_style);
-    assert!(s3.access_key_id.is_empty());
-    assert!(s3.secret_access_key.is_empty());
 }

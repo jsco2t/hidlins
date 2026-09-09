@@ -1,94 +1,427 @@
-//! `hidlins sync` — configure-remote-aware sync of a registered vault
-//! (features/cli-sync-wiring/ Phase 3).
-//!
-//! Resolves the target vault (`--vault`, or the sole registered vault),
-//! unlocks it via the secure master-password prompt, runs
-//! [`hidlins_sync::Sync::sync_now`], renders the [`hidlins_sync::SyncOutcome`] as a
-//! [`SyncView`], and maps any [`hidlins_sync::SyncError`] onto the stable
-//! exit-code contract.
-//!
-//! ## Output channels
-//!
-//! `--format json` writes the `SyncView` JSON to **stdout** (the stable
-//! machine-readable contract). Human mode writes the one-line summary to
-//! **stderr**, keeping stdout clean for scripts that only care about the
-//! exit code (design §3.6 / task AC).
+//! Local-network sync, pairing, import, peer management, and foreground serving.
 
-use std::io::Write as _;
-use std::time::Instant;
+use std::{
+    io::{BufRead as _, Write as _},
+    sync::{
+        atomic::{AtomicBool, AtomicUsize, Ordering},
+        mpsc, Arc, Mutex,
+    },
+    time::{Duration, Instant, SystemTime, UNIX_EPOCH},
+};
 
-use hidlins_core::{Keyfile, Vault, VaultError, VaultRegistry};
-use hidlins_sync::sync::format_outcome;
-use hidlins_sync::{Sync, SyncOptions};
+use hidlins_core::{HidlinsPaths, Keyfile, MasterPassword, Vault, VaultError, VaultRegistry};
+use hidlins_sync::{
+    address::LocalEndpoint,
+    client::{self, ClientPairingSession},
+    config::local::LocalSyncConfig,
+    discovery::{self, CandidateCache, ServiceKind},
+    identity::{PublicIdentity, SyncRole},
+    server::{
+        AuthoritativeVault, HostQueue, PairingAuthority, PairingAuthorityError, ServerController,
+    },
+    trust::{PeerRecord, PeerStatus, TrustError},
+    SyncOptions,
+};
+use serde::Serialize;
 
-use crate::agent::NoAgentClient;
-use crate::cli::{Cli, OutputFormat, SyncArgs};
-use crate::commands::{resolve_paths, write_json_success};
-use crate::exit::CliExit;
-use crate::prompt::{master_password, PromptOpts};
-use crate::views::sync::SyncView;
+use crate::{
+    agent::NoAgentClient,
+    cli::{
+        Cli, OutputFormat, SyncArgs, SyncImportArgs, SyncNowArgs, SyncPairArgs, SyncPeerListArgs,
+        SyncPeerRenameArgs, SyncPeerRevokeArgs, SyncPeersVerb, SyncServeArgs, SyncStatusArgs,
+        SyncVerb,
+    },
+    commands::{resolve_paths, write_json_success},
+    exit::CliExit,
+    prompt::{master_password, PromptOpts},
+    views::sync::SyncView,
+};
 
-/// Sync a registered vault against its configured S3 remote.
-///
-/// # Errors
-///
-/// - [`CliExit::UserError`] (1) — no/ambiguous vault, unknown vault, or a
-///   sync that is not configured (`SyncError::NotConfigured`).
-/// - [`CliExit::VaultLocked`] (2) — wrong master password at unlock.
-/// - [`CliExit::SyncConflict`] (3) — an unresolvable same-second merge.
-/// - [`CliExit::Internal`] (10+) — transport / S3 / backup failures.
+const DISCOVERY_WAIT: Duration = Duration::from_secs(2);
+const POLL: Duration = Duration::from_millis(20);
+
+/// Dispatch a local-network sync operation.
 pub fn run(cli: &Cli, args: &SyncArgs) -> Result<(), CliExit> {
+    match args.verb.as_ref() {
+        Some(SyncVerb::Now(args)) => run_now(cli, args),
+        Some(SyncVerb::Serve(args)) => run_serve(cli, args),
+        Some(SyncVerb::Pair(args)) => run_pair(cli, args),
+        Some(SyncVerb::Import(args)) => run_import(cli, args),
+        Some(SyncVerb::Status(args)) => run_status(cli, args),
+        Some(SyncVerb::Peers(args)) => match args.verb.as_ref() {
+            Some(SyncPeersVerb::List(args)) => run_peers_list(cli, args),
+            Some(SyncPeersVerb::Rename(args)) => run_peer_rename(cli, args),
+            Some(SyncPeersVerb::Revoke(args)) => run_peer_revoke(cli, args),
+            None => Err(CliExit::UserError("missing sync peers operation".into())),
+        },
+        None => Err(CliExit::UserError("missing sync operation".into())),
+    }
+}
+
+fn run_now(cli: &Cli, args: &SyncNowArgs) -> Result<(), CliExit> {
     let paths = resolve_paths(cli)?;
     let mut registry = VaultRegistry::load(paths).map_err(CliExit::from)?;
-
-    let vault_name = resolve_vault_name(&registry, args.vault.as_deref())?;
-    let record = registry
-        .get(&vault_name)
-        .ok_or_else(|| {
-            CliExit::from(VaultError::NotRegistered {
-                name: vault_name.clone(),
-            })
-        })?
-        .clone();
-
-    // Unlock first: a wrong master password short-circuits here as exit 2,
-    // before any network call.
-    let agent = NoAgentClient;
-    let opts = PromptOpts {
-        vault: &vault_name,
-        agent: &agent,
-        prompt_label: "Master password: ",
-    };
-    let master = master_password(&opts)?;
-    let keyfile = record.keyfile_path.clone().map(Keyfile::Path);
-    let mut vault = Vault::open(&record.path, &master, keyfile.as_ref()).map_err(CliExit::from)?;
-
+    let name = resolve_vault_name(&registry, args.vault.as_deref())?;
+    let (mut vault, master, keyfile) = unlock(&registry, &name)?;
+    let candidates = candidates(args.address.as_deref(), args.port, ServiceKind::Trusted)?;
     let started = Instant::now();
-    let outcome = Sync::sync_now(
+    let outcome = client::sync_vault(
         &mut vault,
-        &vault_name,
+        &name,
         &mut registry,
         &master,
         keyfile.as_ref(),
+        candidates,
         SyncOptions::default(),
     )
-    .map_err(|e| attach_vault_name(CliExit::from(e), &vault_name))?;
-    let elapsed = started.elapsed();
-
-    let view = SyncView::from(&outcome);
-
-    // JSON → stdout (machine contract). Human → stderr (stdout stays clean).
+    .map_err(|error| attach_vault_name(CliExit::from(error), &name))?;
     if matches!(cli.format, OutputFormat::Json) {
-        return write_json_success(&view);
+        write_json_success(&SyncView::from(&outcome))
+    } else {
+        writeln!(
+            std::io::stderr().lock(),
+            "{}",
+            hidlins_sync::sync::format_outcome(&outcome, started.elapsed())
+        )
+        .map_err(output_error)
     }
-    let mut stderr = std::io::stderr().lock();
-    writeln!(stderr, "{}", format_outcome(&outcome, elapsed))
-        .map_err(|e| CliExit::Internal(format!("failed to write output: {e}")))
 }
 
-/// Resolve which vault to sync: an explicit `--vault <name>`, or — when the
-/// flag is omitted — the sole registered vault. Zero or multiple registered
-/// vaults with no `--vault` is a user error.
+fn run_pair(cli: &Cli, args: &SyncPairArgs) -> Result<(), CliExit> {
+    let paths = resolve_paths(cli)?;
+    let mut registry = VaultRegistry::load(paths).map_err(CliExit::from)?;
+    let name = resolve_vault_name(&registry, args.vault.as_deref())?;
+    let (_, master, _) = unlock(&registry, &name)?;
+    let mut config = match registry
+        .get(&name)
+        .and_then(LocalSyncConfig::from_vault_entry)
+    {
+        Some(config) if config.role() == SyncRole::Client && !config.is_active_client() => config,
+        Some(_) => {
+            return Err(CliExit::UserError(
+                "vault is already paired or configured as an authority".into(),
+            ))
+        }
+        None => LocalSyncConfig::configure(&mut registry, &name, SyncRole::Client, &master)
+            .map_err(|error| CliExit::from(hidlins_sync::SyncError::from(error)))?,
+    };
+    let routes = candidates(args.address.as_deref(), args.port, ServiceKind::Pairing)?;
+    let identity = config
+        .identity()
+        .unlock(&name, SyncRole::Client, &master)
+        .map_err(|_| CliExit::VaultLocked("local sync identity could not be unlocked".into()))?;
+    let session = ClientPairingSession::begin(&identity, routes)
+        .map_err(|error| CliExit::from(hidlins_sync::SyncError::from(error)))?;
+    let endpoint = session.endpoint();
+    confirm_sas(&session.sas().to_string())?;
+    session
+        .confirm(&mut config, args.name.clone(), epoch_seconds()?)
+        .map_err(|error| CliExit::from(hidlins_sync::SyncError::from(error)))?;
+    config.set_routing_hint(Some(endpoint));
+    config
+        .persist(&mut registry, &name)
+        .map_err(|error| CliExit::from(hidlins_sync::SyncError::from(error)))?;
+    success(
+        cli,
+        &PairView {
+            status: "paired",
+            vault: &name,
+        },
+    )
+}
+
+fn run_import(cli: &Cli, args: &SyncImportArgs) -> Result<(), CliExit> {
+    let paths = resolve_paths(cli)?;
+    let mut registry = VaultRegistry::load(paths).map_err(CliExit::from)?;
+    if registry.get(&args.id).is_some() {
+        return Err(CliExit::UserError(format!(
+            "vault already registered: {}",
+            args.id
+        )));
+    }
+    let target = args.path.clone().unwrap_or_else(|| {
+        registry
+            .paths()
+            .state_dir()
+            .join(format!("{}.kdbx", args.id))
+    });
+    if target.exists() {
+        return Err(CliExit::UserError(format!(
+            "path already exists: {}",
+            target.display()
+        )));
+    }
+    let master = prompt_master(&args.id)?;
+    let keyfile = args.keyfile.clone().map(Keyfile::Path);
+    let mut config = LocalSyncConfig::create(&args.id, SyncRole::Client, &master)
+        .map_err(|error| CliExit::from(hidlins_sync::SyncError::from(error)))?;
+    let routes = candidates(args.address.as_deref(), args.port, ServiceKind::Pairing)?;
+    let identity = config
+        .identity()
+        .unlock(&args.id, SyncRole::Client, &master)
+        .map_err(|_| CliExit::VaultLocked("local sync identity could not be unlocked".into()))?;
+    let session = ClientPairingSession::begin(&identity, routes.clone())
+        .map_err(|error| CliExit::from(hidlins_sync::SyncError::from(error)))?;
+    let endpoint = session.endpoint();
+    confirm_sas(&session.sas().to_string())?;
+    session
+        .confirm(&mut config, args.name.clone(), epoch_seconds()?)
+        .map_err(|error| CliExit::from(hidlins_sync::SyncError::from(error)))?;
+    config.set_routing_hint(Some(endpoint));
+    // The authority sends PairActivated before its pairing worker has fully
+    // released the connection slot. Retry only this immediate, idempotent
+    // encrypted fetch within a small fixed bound.
+    let mut fetched = None;
+    let mut last_error = hidlins_sync::client::LanError::Unreachable;
+    for _ in 0..3 {
+        match client::fetch_paired_vault(&args.id, &master, &config, routes.clone()) {
+            Ok(value) => {
+                fetched = Some(value);
+                break;
+            }
+            Err(error) => {
+                last_error = error;
+                std::thread::sleep(Duration::from_millis(50));
+            }
+        }
+    }
+    let (bytes, version) =
+        fetched.ok_or_else(|| CliExit::from(hidlins_sync::SyncError::from(last_error)))?;
+    config.set_sync_versions(Some(version), Some(version));
+    client::import_paired_vault(
+        &bytes,
+        &target,
+        &args.id,
+        &master,
+        keyfile.as_ref(),
+        &config,
+        &mut registry,
+    )
+    .map_err(|error| CliExit::UserError(error.to_string()))?;
+    success(
+        cli,
+        &ImportView {
+            status: "imported",
+            vault: &args.id,
+            path: target.display().to_string(),
+        },
+    )
+}
+
+fn run_serve(cli: &Cli, args: &SyncServeArgs) -> Result<(), CliExit> {
+    let paths = resolve_paths(cli)?;
+    let mut registry = VaultRegistry::load(paths.clone()).map_err(CliExit::from)?;
+    let name = resolve_vault_name(&registry, args.vault.as_deref())?;
+    let (mut vault, master, keyfile) = unlock(&registry, &name)?;
+    let config = match registry
+        .get(&name)
+        .and_then(LocalSyncConfig::from_vault_entry)
+    {
+        Some(config) if config.role() == SyncRole::Server => config,
+        Some(_) => {
+            return Err(CliExit::UserError(
+                "a paired client vault cannot serve".into(),
+            ))
+        }
+        None => LocalSyncConfig::configure(&mut registry, &name, SyncRole::Server, &master)
+            .map_err(|error| CliExit::from(hidlins_sync::SyncError::from(error)))?,
+    };
+    let endpoint = if let Some(address) = args.address.as_deref() {
+        manual_endpoint(address, args.port)?
+    } else {
+        hidlins_sync::discovery::desktop::allowed_interface_endpoints(args.port)
+            .map_err(|_| CliExit::UserError("no active local interface is available".into()))?
+            .into_iter()
+            .next()
+            .ok_or_else(|| CliExit::UserError("no active local interface is available".into()))?
+    };
+    let identity = Arc::new(
+        config
+            .identity()
+            .unlock(&name, SyncRole::Server, &master)
+            .map_err(|_| {
+                CliExit::VaultLocked("local sync identity could not be unlocked".into())
+            })?,
+    );
+    let (queue, mut processor) = HostQueue::new();
+    let authority: Arc<dyn PairingAuthority> =
+        Arc::new(CliPairingAuthority::new(paths, name.clone()));
+    let mut controller = ServerController::start_with_pairing_authority(
+        endpoint,
+        identity,
+        active_peer_keys(&config),
+        queue,
+        Some(authority),
+    )
+    .map_err(|error| CliExit::Internal(error.to_string()))?;
+    if args.pairing_window {
+        controller
+            .open_pairing()
+            .map_err(|error| CliExit::Internal(error.to_string()))?;
+    }
+    let bound = controller.endpoint();
+    success(
+        cli,
+        &ServeView {
+            status: "serving",
+            endpoint: bound.to_string(),
+            pairing_window: args.pairing_window,
+        },
+    )?;
+    let signals = signals::SignalGuard::install()?;
+    let mut host = AuthoritativeVault::new(&mut vault, &master, keyfile.as_ref());
+    while !signals.interrupted() {
+        match processor.process_one(&mut host) {
+            Ok(true) => {}
+            Ok(false) => std::thread::sleep(POLL),
+            Err(hidlins_sync::server::ServerError::Stopped) => break,
+            Err(error) => return Err(CliExit::Internal(error.to_string())),
+        }
+        let _ = controller.advertisements();
+        if let Ok(latest) = VaultRegistry::load(registry.paths().clone()) {
+            if let Some(config) = latest
+                .get(&name)
+                .and_then(LocalSyncConfig::from_vault_entry)
+            {
+                controller.replace_trusted(active_peer_keys(&config));
+            }
+        }
+    }
+    processor.shutdown();
+    controller.stop();
+    Ok(())
+}
+
+fn run_status(cli: &Cli, args: &SyncStatusArgs) -> Result<(), CliExit> {
+    let registry = VaultRegistry::load(resolve_paths(cli)?).map_err(CliExit::from)?;
+    let name = resolve_vault_name(&registry, args.vault.as_deref())?;
+    let config = local_config(&registry, &name)?;
+    let status = config.status();
+    success(
+        cli,
+        &StatusView {
+            vault: &name,
+            role: role_name(config.role()),
+            paired: status.paired,
+            active_clients: status.active_clients,
+        },
+    )
+}
+
+fn run_peers_list(cli: &Cli, args: &SyncPeerListArgs) -> Result<(), CliExit> {
+    let registry = VaultRegistry::load(resolve_paths(cli)?).map_err(CliExit::from)?;
+    let name = resolve_vault_name(&registry, args.vault.as_deref())?;
+    let config = local_config(&registry, &name)?;
+    let peers = peer_refs(&config)
+        .into_iter()
+        .enumerate()
+        .map(|(index, peer)| PeerView {
+            peer: format!("peer-{index}"),
+            name: peer.display_name().to_string(),
+            revoked: peer.status() == PeerStatus::Revoked,
+        })
+        .collect();
+    success(
+        cli,
+        &PeersView {
+            vault: &name,
+            peers,
+        },
+    )
+}
+
+fn run_peer_rename(cli: &Cli, args: &SyncPeerRenameArgs) -> Result<(), CliExit> {
+    update_peer(cli, args.vault.as_deref(), &args.peer, |config, key| {
+        config.rename_peer(key, args.name.clone())
+    })?;
+    success(
+        cli,
+        &PeerChangeView {
+            status: "renamed",
+            peer: &args.peer,
+        },
+    )
+}
+
+fn run_peer_revoke(cli: &Cli, args: &SyncPeerRevokeArgs) -> Result<(), CliExit> {
+    update_peer(
+        cli,
+        args.vault.as_deref(),
+        &args.peer,
+        LocalSyncConfig::revoke_peer,
+    )?;
+    success(
+        cli,
+        &PeerChangeView {
+            status: "revoked",
+            peer: &args.peer,
+        },
+    )
+}
+
+fn update_peer(
+    cli: &Cli,
+    requested: Option<&str>,
+    id: &str,
+    update: impl FnOnce(&mut LocalSyncConfig, PublicIdentity) -> Result<(), TrustError>,
+) -> Result<(), CliExit> {
+    let mut registry = VaultRegistry::load(resolve_paths(cli)?).map_err(CliExit::from)?;
+    let name = resolve_vault_name(&registry, requested)?;
+    let index = parse_peer_id(id)?;
+    LocalSyncConfig::transactional_update(&mut registry, &name, |config| {
+        let key = peer_refs(config)
+            .get(index)
+            .map(|peer| peer.public_key())
+            .ok_or(TrustError::NotActive)?;
+        update(config, key)
+    })
+    .map_err(|_| CliExit::UserError(format!("peer not found or update rejected: {id}")))
+}
+
+fn local_config(registry: &VaultRegistry, name: &str) -> Result<LocalSyncConfig, CliExit> {
+    registry
+        .get(name)
+        .and_then(LocalSyncConfig::from_vault_entry)
+        .ok_or_else(|| CliExit::UserError("local sync is not configured for this vault".into()))
+}
+
+fn peer_refs(config: &LocalSyncConfig) -> Vec<&PeerRecord> {
+    match config.role() {
+        SyncRole::Server => config.trusted_peers().iter().collect(),
+        SyncRole::Client => config.pinned_server().into_iter().collect(),
+    }
+}
+
+fn parse_peer_id(value: &str) -> Result<usize, CliExit> {
+    value
+        .strip_prefix("peer-")
+        .and_then(|value| value.parse().ok())
+        .ok_or_else(|| CliExit::UserError("peer must be an opaque peer-N handle".into()))
+}
+
+fn unlock(
+    registry: &VaultRegistry,
+    name: &str,
+) -> Result<(Vault, MasterPassword, Option<Keyfile>), CliExit> {
+    let record = registry.get(name).ok_or_else(|| {
+        CliExit::from(VaultError::NotRegistered {
+            name: name.to_string(),
+        })
+    })?;
+    let master = prompt_master(name)?;
+    let keyfile = record.keyfile_path.clone().map(Keyfile::Path);
+    let vault = Vault::open(&record.path, &master, keyfile.as_ref()).map_err(CliExit::from)?;
+    Ok((vault, master, keyfile))
+}
+
+fn prompt_master(name: &str) -> Result<MasterPassword, CliExit> {
+    master_password(&PromptOpts {
+        vault: name,
+        agent: &NoAgentClient,
+        prompt_label: "Master password: ",
+    })
+}
+
 fn resolve_vault_name(
     registry: &VaultRegistry,
     requested: Option<&str>,
@@ -96,136 +429,379 @@ fn resolve_vault_name(
     if let Some(name) = requested {
         return Ok(name.to_string());
     }
-    let mut names = registry.list().map(|r| r.name.clone());
+    let mut names = registry.list().map(|record| record.name.clone());
     match (names.next(), names.next()) {
-        (None, _) => Err(CliExit::UserError(
-            "no vaults registered; run `hidlins vault create ...` first".to_string(),
-        )),
-        (Some(only), None) => Ok(only),
-        (Some(_), Some(_)) => Err(CliExit::UserError(
-            "multiple vaults registered; specify which to sync with --vault <name>".to_string(),
+        (Some(name), None) => Ok(name),
+        (None, _) => Err(CliExit::UserError("no vaults registered".into())),
+        _ => Err(CliExit::UserError(
+            "multiple vaults registered; use --vault".into(),
         )),
     }
 }
 
-/// The `From<SyncError>` conversion cannot know the vault name
-/// (`SyncError::Unresolvable` does not carry it), so a conflict arrives with
-/// an empty `SyncConflict.vault`. Fill it in here, at the command boundary
-/// where we do know it, so the exit-3 diagnostic names the vault.
-fn attach_vault_name(mut exit: CliExit, vault_name: &str) -> CliExit {
+fn candidates(
+    address: Option<&str>,
+    port: Option<u16>,
+    kind: ServiceKind,
+) -> Result<Vec<LocalEndpoint>, CliExit> {
+    if let (Some(address), Some(port)) = (address, port) {
+        return Ok(vec![manual_endpoint(address, port)?]);
+    }
+    let mut browser = discovery::desktop::DesktopBrowser::start().map_err(|_| {
+        CliExit::UserError(
+            "local discovery is unavailable; use the restricted --address/--port fallback".into(),
+        )
+    })?;
+    let mut cache = CandidateCache::new();
+    let deadline = Instant::now() + DISCOVERY_WAIT;
+    loop {
+        discovery::poll_into(&mut browser, &mut cache, Instant::now())
+            .map_err(|_| CliExit::UserError("local discovery failed".into()))?;
+        let found = cache.candidates(kind);
+        if !found.is_empty() {
+            return Ok(found);
+        }
+        if Instant::now() >= deadline {
+            return Err(CliExit::UserError(
+                "no local sync server was discovered".into(),
+            ));
+        }
+        std::thread::sleep(POLL);
+    }
+}
+
+fn manual_endpoint(address: &str, port: u16) -> Result<LocalEndpoint, CliExit> {
+    let literal = if address.contains(':') {
+        format!("[{address}]:{port}")
+    } else {
+        format!("{address}:{port}")
+    };
+    literal
+        .parse()
+        .map_err(|_| CliExit::UserError("address must be an allowed non-public IP literal".into()))
+}
+
+fn confirm_sas(sas: &str) -> Result<(), CliExit> {
+    write_sas_prompt(sas)?;
+    read_confirmation()
+}
+
+fn write_sas_prompt(sas: &str) -> Result<(), CliExit> {
+    let mut stderr = std::io::stderr().lock();
+    writeln!(stderr, "Pairing SAS: {sas}").map_err(output_error)?;
+    write!(stderr, "Confirm the same SAS on both devices? [y/N]: ").map_err(output_error)?;
+    stderr.flush().map_err(output_error)
+}
+
+fn read_confirmation() -> Result<(), CliExit> {
+    let mut answer = String::new();
+    std::io::stdin()
+        .lock()
+        .read_line(&mut answer)
+        .map_err(|error| CliExit::UserError(format!("failed to read confirmation: {error}")))?;
+    if matches!(answer.trim().to_ascii_lowercase().as_str(), "y" | "yes") {
+        Ok(())
+    } else {
+        Err(CliExit::UserError("pairing rejected".into()))
+    }
+}
+
+fn epoch_seconds() -> Result<u64, CliExit> {
+    SystemTime::now()
+        .duration_since(UNIX_EPOCH)
+        .map(|value| value.as_secs())
+        .map_err(|_| CliExit::Internal("system clock unavailable".into()))
+}
+
+fn active_peer_keys(config: &LocalSyncConfig) -> Vec<[u8; 32]> {
+    config
+        .trusted_peers()
+        .iter()
+        .filter(|peer| peer.status() == PeerStatus::Active)
+        .map(|peer| peer.public_key().into_bytes())
+        .collect()
+}
+
+fn role_name(role: SyncRole) -> &'static str {
+    match role {
+        SyncRole::Server => "server",
+        SyncRole::Client => "client",
+    }
+}
+#[allow(
+    clippy::needless_pass_by_value,
+    reason = "used directly as Result::map_err callback"
+)]
+fn output_error(error: std::io::Error) -> CliExit {
+    CliExit::Internal(format!("failed to write output: {error}"))
+}
+
+fn attach_vault_name(mut exit: CliExit, name: &str) -> CliExit {
     if let CliExit::SyncConflict { vault, .. } = &mut exit {
         if vault.is_empty() {
-            *vault = vault_name.to_string();
+            *vault = name.to_string();
         }
     }
     exit
 }
 
-#[cfg(test)]
-mod tests {
-    use super::*;
-    use hidlins_core::{
-        HidlinsPaths, KdfParams, MasterPassword, NoRecoveryConfirmed, RegisteredVault,
-    };
-    use tempfile::TempDir;
-
-    fn fast_kdf() -> KdfParams {
-        KdfParams {
-            memory_kib: 1024,
-            iterations: 1,
-            parallelism: 1,
-        }
+fn success<T: Serialize + HumanLine>(cli: &Cli, value: &T) -> Result<(), CliExit> {
+    if matches!(cli.format, OutputFormat::Json) {
+        write_json_success(value)
+    } else {
+        writeln!(std::io::stderr().lock(), "{}", value.human()).map_err(output_error)
     }
+}
 
-    /// A registry in a tempdir with `names` registered (each backed by a
-    /// throwaway KDBX so `get(...).path` is real).
-    fn registry_with(names: &[&str]) -> (TempDir, VaultRegistry) {
-        let tmp = TempDir::new().expect("tempdir");
-        let reg_path = tmp.path().join("vaults.toml");
-        let paths = HidlinsPaths::with_registry_file(reg_path);
-        let mut registry = VaultRegistry::load(paths).expect("load");
-        for name in names {
-            let path = tmp.path().join(format!("{name}.kdbx"));
-            drop(
-                Vault::create(
-                    &path,
-                    &MasterPassword::new("pw".to_string()),
-                    None,
-                    fast_kdf(),
-                    NoRecoveryConfirmed::yes(),
-                )
-                .expect("create"),
-            );
-            registry
-                .register(RegisteredVault {
-                    name: (*name).to_string(),
-                    path,
-                    created_at: "2026-01-01T00:00:00Z".to_string(),
-                    keyfile_path: None,
-                    extra: toml::Table::new(),
+trait HumanLine {
+    fn human(&self) -> String;
+}
+
+#[derive(Serialize)]
+struct PairView<'a> {
+    status: &'static str,
+    vault: &'a str,
+}
+impl HumanLine for PairView<'_> {
+    fn human(&self) -> String {
+        format!("paired vault '{}'", self.vault)
+    }
+}
+#[derive(Serialize)]
+struct ImportView<'a> {
+    status: &'static str,
+    vault: &'a str,
+    path: String,
+}
+impl HumanLine for ImportView<'_> {
+    fn human(&self) -> String {
+        format!("imported vault '{}' to {}", self.vault, self.path)
+    }
+}
+#[derive(Serialize)]
+struct ServeView {
+    status: &'static str,
+    endpoint: String,
+    pairing_window: bool,
+}
+impl HumanLine for ServeView {
+    fn human(&self) -> String {
+        format!(
+            "local sync server ready at {}{}",
+            self.endpoint,
+            if self.pairing_window {
+                " (pairing open)"
+            } else {
+                ""
+            }
+        )
+    }
+}
+#[derive(Serialize)]
+struct StatusView<'a> {
+    vault: &'a str,
+    role: &'static str,
+    paired: bool,
+    active_clients: usize,
+}
+impl HumanLine for StatusView<'_> {
+    fn human(&self) -> String {
+        format!(
+            "{}: role={}, paired={}, active_clients={}",
+            self.vault, self.role, self.paired, self.active_clients
+        )
+    }
+}
+#[derive(Serialize)]
+struct PeerView {
+    peer: String,
+    name: String,
+    revoked: bool,
+}
+#[derive(Serialize)]
+struct PeersView<'a> {
+    vault: &'a str,
+    peers: Vec<PeerView>,
+}
+impl HumanLine for PeersView<'_> {
+    fn human(&self) -> String {
+        if self.peers.is_empty() {
+            "no peers".into()
+        } else {
+            self.peers
+                .iter()
+                .map(|peer| {
+                    format!(
+                        "{}\t{}\t{}",
+                        peer.peer,
+                        peer.name,
+                        if peer.revoked { "revoked" } else { "active" }
+                    )
                 })
-                .expect("register");
+                .collect::<Vec<_>>()
+                .join("\n")
         }
-        (tmp, registry)
+    }
+}
+#[derive(Serialize)]
+struct PeerChangeView<'a> {
+    status: &'static str,
+    peer: &'a str,
+}
+impl HumanLine for PeerChangeView<'_> {
+    fn human(&self) -> String {
+        format!("{} {}", self.status, self.peer)
+    }
+}
+
+struct CliPairingAuthority {
+    paths: HidlinsPaths,
+    vault: String,
+    prompt: Mutex<()>,
+    stopped: AtomicBool,
+    cancellation: AtomicUsize,
+}
+impl CliPairingAuthority {
+    fn new(paths: HidlinsPaths, vault: String) -> Self {
+        Self {
+            paths,
+            vault,
+            prompt: Mutex::new(()),
+            stopped: AtomicBool::new(false),
+            cancellation: AtomicUsize::new(0),
+        }
+    }
+}
+impl PairingAuthority for CliPairingAuthority {
+    fn confirm(
+        &self,
+        _peer: PublicIdentity,
+        sas: hidlins_sync::pairing::SasCode,
+        timeout: Duration,
+    ) -> Result<String, PairingAuthorityError> {
+        let _guard = self
+            .prompt
+            .lock()
+            .map_err(|_| PairingAuthorityError::Canceled)?;
+        if self.stopped.load(Ordering::Acquire) {
+            return Err(PairingAuthorityError::Canceled);
+        }
+        let cancellation = self.cancellation.load(Ordering::Acquire);
+        write_sas_prompt(&sas.to_string()).map_err(|_| PairingAuthorityError::Canceled)?;
+        let (sender, receiver) = mpsc::sync_channel(1);
+        std::thread::Builder::new()
+            .name("hidlins-cli-pairing-confirmation".into())
+            .spawn(move || {
+                let _ = sender.try_send(read_confirmation().is_ok());
+            })
+            .map_err(|_| PairingAuthorityError::Canceled)?;
+        let deadline = Instant::now() + timeout;
+        loop {
+            if self.stopped.load(Ordering::Acquire)
+                || self.cancellation.load(Ordering::Acquire) != cancellation
+            {
+                return Err(PairingAuthorityError::Canceled);
+            }
+            match receiver.recv_timeout(Duration::from_millis(50)) {
+                Ok(true) => break,
+                Ok(false) | Err(mpsc::RecvTimeoutError::Disconnected) => {
+                    return Err(PairingAuthorityError::Canceled)
+                }
+                Err(mpsc::RecvTimeoutError::Timeout) => {}
+            }
+            if Instant::now() >= deadline {
+                return Err(PairingAuthorityError::Canceled);
+            }
+        }
+        Ok("client".into())
+    }
+    fn prepare(
+        &self,
+        transaction: &hidlins_sync::pairing::PairingTransaction,
+        confirmation: &hidlins_sync::pairing::ConfirmedPairing,
+        display_name: String,
+    ) -> Result<(), PairingAuthorityError> {
+        let mut registry = VaultRegistry::load(self.paths.clone())
+            .map_err(|_| PairingAuthorityError::Persistence)?;
+        let now = epoch_seconds().map_err(|_| PairingAuthorityError::Persistence)?;
+        LocalSyncConfig::transactional_update(&mut registry, &self.vault, |config| {
+            config.prepare_client(
+                transaction,
+                confirmation,
+                display_name,
+                now,
+                now.saturating_add(hidlins_sync::protocol::PAIRING_WINDOW.as_secs()),
+            )
+        })
+        .map_err(|_| PairingAuthorityError::Persistence)
+    }
+    fn activate(
+        &self,
+        transaction: &hidlins_sync::pairing::PairingTransaction,
+    ) -> Result<(), PairingAuthorityError> {
+        let mut registry = VaultRegistry::load(self.paths.clone())
+            .map_err(|_| PairingAuthorityError::Persistence)?;
+        let now = epoch_seconds().map_err(|_| PairingAuthorityError::Persistence)?;
+        LocalSyncConfig::transactional_update(&mut registry, &self.vault, |config| {
+            config.activate_client(transaction, now)
+        })
+        .map_err(|_| PairingAuthorityError::Persistence)
+    }
+    fn shutdown(&self) {
+        self.stopped.store(true, Ordering::Release);
     }
 
-    #[test]
-    fn resolve_vault_name_uses_explicit_flag() {
-        let (_tmp, reg) = registry_with(&["a", "b"]);
-        assert_eq!(resolve_vault_name(&reg, Some("b")).unwrap(), "b");
+    fn cancel_pending(&self) {
+        self.cancellation.fetch_add(1, Ordering::AcqRel);
     }
+}
 
-    #[test]
-    fn resolve_vault_name_defaults_to_sole_vault() {
-        let (_tmp, reg) = registry_with(&["only"]);
-        assert_eq!(resolve_vault_name(&reg, None).unwrap(), "only");
+#[cfg(unix)]
+#[allow(clippy::borrow_as_ptr, clippy::unused_self)]
+mod signals {
+    use crate::exit::CliExit;
+    use std::sync::atomic::{AtomicBool, Ordering};
+    static INTERRUPTED: AtomicBool = AtomicBool::new(false);
+    extern "C" fn handler(_: libc::c_int) {
+        INTERRUPTED.store(true, Ordering::Release);
     }
-
-    #[test]
-    fn resolve_vault_name_no_vaults_is_user_error() {
-        let (_tmp, reg) = registry_with(&[]);
-        let err = resolve_vault_name(&reg, None).expect_err("no vaults");
-        assert_eq!(err.code(), 1);
-        assert!(err.message().contains("no vaults"), "{}", err.message());
+    pub(super) struct SignalGuard {
+        old_int: libc::sigaction,
+        old_term: libc::sigaction,
     }
-
-    #[test]
-    fn resolve_vault_name_multiple_without_flag_is_user_error() {
-        let (_tmp, reg) = registry_with(&["a", "b"]);
-        let err = resolve_vault_name(&reg, None).expect_err("ambiguous");
-        assert_eq!(err.code(), 1);
-        assert!(err.message().contains("--vault"), "{}", err.message());
+    impl SignalGuard {
+        pub(super) fn install() -> Result<Self, CliExit> {
+            INTERRUPTED.store(false, Ordering::Release);
+            // SAFETY: sigaction is initialized before use; handler performs only an atomic store.
+            #[allow(unsafe_code)]
+            unsafe {
+                let mut action: libc::sigaction = std::mem::zeroed();
+                action.sa_sigaction = handler as *const () as usize;
+                libc::sigemptyset(&mut action.sa_mask);
+                let mut old_int = std::mem::zeroed();
+                let mut old_term = std::mem::zeroed();
+                if libc::sigaction(libc::SIGINT, &action, &mut old_int) != 0
+                    || libc::sigaction(libc::SIGTERM, &action, &mut old_term) != 0
+                {
+                    return Err(CliExit::Internal(
+                        "could not install foreground signal handler".into(),
+                    ));
+                }
+                Ok(Self { old_int, old_term })
+            }
+        }
+        pub(super) fn interrupted(&self) -> bool {
+            INTERRUPTED.load(Ordering::Acquire)
+        }
     }
-
-    #[test]
-    fn attach_vault_name_fills_empty_conflict_vault() {
-        let exit = attach_vault_name(
-            CliExit::SyncConflict {
-                vault: String::new(),
-                detail: "merge cannot proceed".to_string(),
-            },
-            "personal",
-        );
-        assert_eq!(exit.code(), 3);
-        assert!(exit.message().contains("personal"), "{}", exit.message());
-    }
-
-    #[test]
-    fn attach_vault_name_preserves_nonempty_conflict_vault() {
-        let exit = attach_vault_name(
-            CliExit::SyncConflict {
-                vault: "already-set".to_string(),
-                detail: "d".to_string(),
-            },
-            "personal",
-        );
-        assert!(exit.message().contains("already-set"), "{}", exit.message());
-        assert!(!exit.message().contains("personal"), "{}", exit.message());
-    }
-
-    #[test]
-    fn attach_vault_name_ignores_non_conflict_exits() {
-        let exit = attach_vault_name(CliExit::UserError("x".to_string()), "personal");
-        assert_eq!(exit.code(), 1);
+    impl Drop for SignalGuard {
+        fn drop(&mut self) {
+            // SAFETY: both actions were returned by successful sigaction calls.
+            #[allow(unsafe_code)]
+            unsafe {
+                libc::sigaction(libc::SIGINT, &self.old_int, std::ptr::null_mut());
+                libc::sigaction(libc::SIGTERM, &self.old_term, std::ptr::null_mut());
+            }
+        }
     }
 }

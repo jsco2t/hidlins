@@ -1,8 +1,6 @@
 use hidlins_core::VaultError;
 use hidlins_genpw::GenError;
 use hidlins_security::SecurityError;
-use hidlins_sync::auth::AuthError;
-use hidlins_sync::s3::S3Error;
 use hidlins_sync::SyncError;
 
 #[derive(Clone, Debug, Eq, PartialEq, thiserror::Error)]
@@ -43,6 +41,33 @@ pub enum HidlinsApiError {
     #[error("sync is not configured")]
     SyncNotConfigured,
 
+    #[error("local sync configuration is invalid")]
+    LocalSyncConfiguration,
+
+    #[error("local-network permission was denied or restricted")]
+    SyncPermissionDenied,
+
+    #[error("no local sync server was found")]
+    SyncNotFound,
+
+    #[error("the local sync peer identity did not match")]
+    SyncKeyMismatch,
+
+    #[error("the local sync peer is revoked")]
+    SyncRevoked,
+
+    #[error("local sync is busy")]
+    SyncBusy,
+
+    #[error("the authoritative vault advanced concurrently")]
+    SyncConflict,
+
+    #[error("local sync was canceled")]
+    SyncCanceled,
+
+    #[error("the local sync server is offline")]
+    SyncOffline,
+
     #[error("sync endpoint unreachable")]
     SyncRemoteUnreachable { endpoint: Option<String> },
 
@@ -51,9 +76,6 @@ pub enum HidlinsApiError {
 
     #[error("sync conflict cannot be auto-resolved; backup at {backup_path}")]
     SyncConflictUnresolvable { backup_path: String },
-
-    #[error("another vault already syncs to this target: {existing_vault}")]
-    SyncDuplicateTarget { existing_vault: String },
 
     #[error("invalid input: {field}: {reason}")]
     InvalidInput { field: String, reason: String },
@@ -157,59 +179,34 @@ impl From<VaultError> for HidlinsApiError {
 impl From<SyncError> for HidlinsApiError {
     fn from(err: SyncError) -> Self {
         match err {
+            SyncError::LocalNetwork(hidlins_sync::client::LanError::Unreachable) => {
+                Self::SyncOffline
+            }
+            SyncError::LocalNetwork(hidlins_sync::client::LanError::Authentication) => {
+                Self::SyncKeyMismatch
+            }
+            SyncError::LocalNetwork(hidlins_sync::client::LanError::StaleVersion) => {
+                Self::SyncConflict
+            }
+            SyncError::LocalNetwork(hidlins_sync::client::LanError::Busy) => Self::SyncBusy,
+            SyncError::LocalNetwork(hidlins_sync::client::LanError::Cancelled) => {
+                Self::SyncCanceled
+            }
+            SyncError::LocalNetwork(hidlins_sync::client::LanError::TimedOut) => Self::SyncOffline,
+            SyncError::LocalNetwork(
+                hidlins_sync::client::LanError::Protocol | hidlins_sync::client::LanError::Internal,
+            ) => Self::Internal {
+                context: "local sync protocol failed".to_string(),
+            },
+            SyncError::LocalConfig(_) => Self::LocalSyncConfiguration,
             SyncError::NotConfigured => Self::SyncNotConfigured,
             SyncError::RemoteUnreachable { endpoint, .. } => Self::SyncRemoteUnreachable {
                 endpoint: Some(endpoint),
             },
-            SyncError::Auth(AuthError::RstCred1Decryption) => Self::AuthenticationFailed,
-            SyncError::Auth(AuthError::RstCred1Malformed { .. }) => Self::InvalidInput {
-                field: "credential_source".to_string(),
-                reason: "encrypted credential container is malformed".to_string(),
+            SyncError::ConditionalCommitExhausted { .. } => Self::Internal {
+                context: "conditional commit exhausted; retry sync".to_string(),
             },
-            SyncError::Auth(
-                AuthError::AwsProfileNotFound { .. }
-                | AuthError::AwsProfileMissingKey { .. }
-                | AuthError::EmptyEnvPrefix
-                | AuthError::MissingEnvVar { .. }
-                | AuthError::NoIamRole,
-            ) => Self::InvalidInput {
-                field: "credential_source".to_string(),
-                reason: "configured credential source is unavailable or incomplete".to_string(),
-            },
-            SyncError::Auth(AuthError::AwsCredentialsFileNotFound { path }) => Self::FileNotFound {
-                path: path.display().to_string(),
-            },
-            SyncError::Auth(AuthError::AwsCredentialsFileReadFailed { path, .. }) => Self::Io {
-                context: format!("AWS credentials file could not be read: {}", path.display()),
-            },
-            SyncError::Auth(AuthError::HomeUnresolvable) => Self::Io {
-                context: "HOME is not set or not resolvable".to_string(),
-            },
-            SyncError::Auth(AuthError::ImdsUnreachable { endpoint, .. }) => {
-                Self::SyncRemoteUnreachable {
-                    endpoint: Some(endpoint),
-                }
-            }
-            SyncError::Auth(
-                AuthError::ImdsMalformedResponse { .. } | AuthError::ImdsUnexpectedStatus { .. },
-            ) => Self::Internal {
-                context: "IMDS credential response error".to_string(),
-            },
-            SyncError::AuthFailed { .. } | SyncError::S3(S3Error::AuthFailed) => {
-                Self::SyncAuthFailed
-            }
-            SyncError::ConditionalPutExhausted { .. } => Self::Internal {
-                context: "conditional PUT exhausted; retry sync".to_string(),
-            },
-            SyncError::DuplicateTarget { existing_vault, .. } => {
-                Self::SyncDuplicateTarget { existing_vault }
-            }
-            SyncError::UnsupportedBackend { feature } => Self::Internal {
-                context: format!("unsupported backend feature: {feature}"),
-            },
-            SyncError::MasterPasswordMismatch | SyncError::CredentialDecryption => {
-                Self::AuthenticationFailed
-            }
+            SyncError::MasterPasswordMismatch => Self::AuthenticationFailed,
             SyncError::Unresolvable { backup_path, .. } => Self::SyncConflictUnresolvable {
                 backup_path: backup_path.display().to_string(),
             },
@@ -219,13 +216,7 @@ impl From<SyncError> for HidlinsApiError {
             SyncError::Merge(_) => Self::Internal {
                 context: "merge engine error".to_string(),
             },
-            SyncError::S3(S3Error::RemoteUnreachable { .. } | S3Error::Http(_)) => {
-                Self::SyncRemoteUnreachable { endpoint: None }
-            }
-            SyncError::S3(_) => Self::Internal {
-                context: "S3 protocol error".to_string(),
-            },
-            SyncError::Vault(ve) => Self::from(ve),
+            SyncError::Vault(error) => Self::from(error),
             SyncError::VaultIo { path, .. } => Self::Io {
                 context: format!("vault I/O during sync: {}", path.display()),
             },
@@ -235,7 +226,6 @@ impl From<SyncError> for HidlinsApiError {
         }
     }
 }
-
 impl From<SecurityError> for HidlinsApiError {
     fn from(err: SecurityError) -> Self {
         match err {
@@ -307,7 +297,7 @@ impl From<GenError> for HidlinsApiError {
 mod tests {
     use super::*;
 
-    const MARKER_SECRET: &str = "MARKER-p@ss-S3CR3T";
+    const MARKER_SECRET: &str = "MARKER-p@ss-CR3D3NTIAL";
 
     fn assert_no_secret(err: &HidlinsApiError) {
         let display = format!("{err}");
@@ -496,43 +486,17 @@ mod tests {
             (SyncError::NotConfigured, HidlinsApiError::SyncNotConfigured),
             (
                 SyncError::RemoteUnreachable {
-                    endpoint: "https://s3.test".to_string(),
+                    endpoint: "local-authority".to_string(),
                     source: Box::new(std::io::Error::other("timeout")),
                 },
                 HidlinsApiError::SyncRemoteUnreachable {
-                    endpoint: Some("https://s3.test".to_string()),
+                    endpoint: Some("local-authority".to_string()),
                 },
             ),
             (
-                SyncError::AuthFailed {
-                    endpoint: "https://s3.test".to_string(),
-                    reason: "forbidden".to_string(),
-                },
-                HidlinsApiError::SyncAuthFailed,
-            ),
-            (
-                SyncError::ConditionalPutExhausted { attempts: 3 },
+                SyncError::ConditionalCommitExhausted { attempts: 3 },
                 HidlinsApiError::Internal {
-                    context: "conditional PUT exhausted; retry sync".to_string(),
-                },
-            ),
-            (
-                SyncError::DuplicateTarget {
-                    endpoint: Some("https://s3.test".to_string()),
-                    bucket: "b".to_string(),
-                    key: "k".to_string(),
-                    existing_vault: "other".to_string(),
-                },
-                HidlinsApiError::SyncDuplicateTarget {
-                    existing_vault: "other".to_string(),
-                },
-            ),
-            (
-                SyncError::UnsupportedBackend {
-                    feature: "conditional-put".to_string(),
-                },
-                HidlinsApiError::Internal {
-                    context: "unsupported backend feature: conditional-put".to_string(),
+                    context: "conditional commit exhausted; retry sync".to_string(),
                 },
             ),
             (
@@ -555,10 +519,6 @@ mod tests {
                 HidlinsApiError::Io {
                     context: "pre-merge backup creation failed".to_string(),
                 },
-            ),
-            (
-                SyncError::CredentialDecryption,
-                HidlinsApiError::AuthenticationFailed,
             ),
             (
                 SyncError::Merge(hidlins_sync::MergeError::Unresolvable {
@@ -586,108 +546,6 @@ mod tests {
         for (upstream, expected) in cases {
             let case = format!("{upstream:?}");
             assert_eq!(HidlinsApiError::from(upstream), expected, "case: {case}");
-        }
-    }
-
-    #[test]
-    fn every_current_auth_error_maps_to_the_exact_actionable_category() {
-        use std::path::PathBuf;
-
-        let unavailable_source = HidlinsApiError::InvalidInput {
-            field: "credential_source".to_string(),
-            reason: "configured credential source is unavailable or incomplete".to_string(),
-        };
-        let cases = vec![
-            (
-                AuthError::RstCred1Decryption,
-                HidlinsApiError::AuthenticationFailed,
-            ),
-            (
-                AuthError::RstCred1Malformed {
-                    reason: "bad magic".to_string(),
-                },
-                HidlinsApiError::InvalidInput {
-                    field: "credential_source".to_string(),
-                    reason: "encrypted credential container is malformed".to_string(),
-                },
-            ),
-            (
-                AuthError::AwsProfileNotFound {
-                    profile: "missing".to_string(),
-                    path: PathBuf::from("/credentials"),
-                },
-                unavailable_source.clone(),
-            ),
-            (
-                AuthError::AwsCredentialsFileNotFound {
-                    path: PathBuf::from("/credentials"),
-                },
-                HidlinsApiError::FileNotFound {
-                    path: "/credentials".to_string(),
-                },
-            ),
-            (
-                AuthError::AwsProfileMissingKey {
-                    profile: "profile".to_string(),
-                    key: "aws_secret_access_key".to_string(),
-                },
-                unavailable_source.clone(),
-            ),
-            (
-                AuthError::AwsCredentialsFileReadFailed {
-                    path: PathBuf::from("/credentials"),
-                    source: std::io::Error::new(std::io::ErrorKind::PermissionDenied, "denied"),
-                },
-                HidlinsApiError::Io {
-                    context: "AWS credentials file could not be read: /credentials".to_string(),
-                },
-            ),
-            (AuthError::EmptyEnvPrefix, unavailable_source.clone()),
-            (
-                AuthError::MissingEnvVar {
-                    name: "APP_ACCESS_KEY_ID".to_string(),
-                },
-                unavailable_source.clone(),
-            ),
-            (
-                AuthError::HomeUnresolvable,
-                HidlinsApiError::Io {
-                    context: "HOME is not set or not resolvable".to_string(),
-                },
-            ),
-            (
-                AuthError::ImdsUnreachable {
-                    endpoint: "http://169.254.169.254".to_string(),
-                    reason: "timeout".to_string(),
-                },
-                HidlinsApiError::SyncRemoteUnreachable {
-                    endpoint: Some("http://169.254.169.254".to_string()),
-                },
-            ),
-            (AuthError::NoIamRole, unavailable_source),
-            (
-                AuthError::ImdsMalformedResponse {
-                    reason: "bad JSON".to_string(),
-                },
-                HidlinsApiError::Internal {
-                    context: "IMDS credential response error".to_string(),
-                },
-            ),
-            (
-                AuthError::ImdsUnexpectedStatus { status: 500 },
-                HidlinsApiError::Internal {
-                    context: "IMDS credential response error".to_string(),
-                },
-            ),
-        ];
-
-        for (upstream, expected) in cases {
-            let case = format!("{upstream:?}");
-            assert_eq!(
-                HidlinsApiError::from(SyncError::Auth(upstream)),
-                expected,
-                "case: {case}"
-            );
         }
     }
 
@@ -841,66 +699,18 @@ mod tests {
         ] {
             assert_no_secret(&HidlinsApiError::from(marker_security_err));
         }
-
-        let marker_s3_err = SyncError::S3(S3Error::Unexpected {
-            status: 500,
-            reason: MARKER_SECRET.to_string(),
-        });
-        assert_no_secret(&HidlinsApiError::from(marker_s3_err));
-
-        let marker_auth_err = SyncError::Auth(AuthError::RstCred1Malformed {
-            reason: MARKER_SECRET.to_string(),
-        });
-        assert_no_secret(&HidlinsApiError::from(marker_auth_err));
-    }
-
-    #[test]
-    fn nested_s3_errors_keep_actionable_api_categories() {
-        assert!(matches!(
-            HidlinsApiError::from(SyncError::S3(S3Error::AuthFailed)),
-            HidlinsApiError::SyncAuthFailed
-        ));
-        assert!(matches!(
-            HidlinsApiError::from(SyncError::S3(S3Error::RemoteUnreachable {
-                reason: "server unavailable".to_string(),
-            })),
-            HidlinsApiError::SyncRemoteUnreachable { endpoint: None }
-        ));
-        assert!(matches!(
-            HidlinsApiError::from(SyncError::S3(S3Error::Http(
-                hidlins_sync::s3::HttpError::Io("timeout".to_string()),
-            ))),
-            HidlinsApiError::SyncRemoteUnreachable { endpoint: None }
-        ));
-
-        let protocol = HidlinsApiError::from(SyncError::S3(S3Error::Unexpected {
-            status: 418,
-            reason: "unexpected response".to_string(),
-        }));
-        assert_eq!(
-            protocol,
-            HidlinsApiError::Internal {
-                context: "S3 protocol error".to_string(),
-            }
-        );
     }
 
     #[test]
     fn authentication_failure_is_indistinct_between_password_and_keyfile() {
         let from_password = HidlinsApiError::from(VaultError::AuthenticationFailed);
         let from_sync_mismatch = HidlinsApiError::from(SyncError::MasterPasswordMismatch);
-        let from_cred_decrypt = HidlinsApiError::from(SyncError::CredentialDecryption);
-
         assert!(matches!(
             from_password,
             HidlinsApiError::AuthenticationFailed
         ));
         assert!(matches!(
             from_sync_mismatch,
-            HidlinsApiError::AuthenticationFailed
-        ));
-        assert!(matches!(
-            from_cred_decrypt,
             HidlinsApiError::AuthenticationFailed
         ));
     }

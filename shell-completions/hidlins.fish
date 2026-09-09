@@ -32,22 +32,21 @@ complete -c hidlins -n "__fish_hidlins_needs_command" -s V -l version -d 'Print 
 complete -c hidlins -n "__fish_hidlins_needs_command" -f -a "vault" -d 'Vault lifecycle and registration commands'
 complete -c hidlins -n "__fish_hidlins_needs_command" -f -a "entry" -d 'Secret-entry CRUD, search, and TOTP commands'
 complete -c hidlins -n "__fish_hidlins_needs_command" -f -a "gen" -d 'Password and passphrase generation'
-complete -c hidlins -n "__fish_hidlins_needs_command" -f -a "sync" -d 'Synchronise a vault with its configured S3 target'
+complete -c hidlins -n "__fish_hidlins_needs_command" -f -a "sync" -d 'Pair and synchronize vaults over the local network'
 complete -c hidlins -n "__fish_hidlins_needs_command" -f -a "ssh" -d 'SSH key entry management'
 complete -c hidlins -n "__fish_hidlins_needs_command" -f -a "completions" -d 'Generate shell completion scripts'
 complete -c hidlins -n "__fish_hidlins_needs_command" -f -a "keys" -d 'Print the TUI\'s effective keymap (command name, keys, description, group)'
 complete -c hidlins -n "__fish_hidlins_needs_command" -f -a "help" -d 'Print this message or the help of the given subcommand(s)'
-complete -c hidlins -n "__fish_hidlins_using_subcommand vault; and not __fish_seen_subcommand_from create register open list set-sync set-lock help" -l format -d 'Output format. `human` (default) is line-oriented for terminals; `json` is the stable machine-readable schema for scripts' -r -f -a "human\t'Line-oriented human-readable output (default)'
+complete -c hidlins -n "__fish_hidlins_using_subcommand vault; and not __fish_seen_subcommand_from create register open list set-lock help" -l format -d 'Output format. `human` (default) is line-oriented for terminals; `json` is the stable machine-readable schema for scripts' -r -f -a "human\t'Line-oriented human-readable output (default)'
 json\t'Stable JSON schema — see `views/` for per-subcommand shapes'"
-complete -c hidlins -n "__fish_hidlins_using_subcommand vault; and not __fish_seen_subcommand_from create register open list set-sync set-lock help" -l registry -d 'Path to the vault registry file. Defaults to `$HOME/.local/state/hidlins/vaults.toml` (per `hidlins_core::HidlinsPaths`)' -r -F
-complete -c hidlins -n "__fish_hidlins_using_subcommand vault; and not __fish_seen_subcommand_from create register open list set-sync set-lock help" -s h -l help -d 'Print help (see more with \'--help\')'
-complete -c hidlins -n "__fish_hidlins_using_subcommand vault; and not __fish_seen_subcommand_from create register open list set-sync set-lock help" -f -a "create" -d 'Create a new vault and register it'
-complete -c hidlins -n "__fish_hidlins_using_subcommand vault; and not __fish_seen_subcommand_from create register open list set-sync set-lock help" -f -a "register" -d 'Authenticate and register an existing KDBX vault'
-complete -c hidlins -n "__fish_hidlins_using_subcommand vault; and not __fish_seen_subcommand_from create register open list set-sync set-lock help" -f -a "open" -d 'Probe vault unlock with the given master password'
-complete -c hidlins -n "__fish_hidlins_using_subcommand vault; and not __fish_seen_subcommand_from create register open list set-sync set-lock help" -f -a "list" -d 'List registered vaults'
-complete -c hidlins -n "__fish_hidlins_using_subcommand vault; and not __fish_seen_subcommand_from create register open list set-sync set-lock help" -f -a "set-sync" -d 'Configure the S3 target for a vault'
-complete -c hidlins -n "__fish_hidlins_using_subcommand vault; and not __fish_seen_subcommand_from create register open list set-sync set-lock help" -f -a "set-lock" -d 'Configure the per-vault idle-lock timeout'
-complete -c hidlins -n "__fish_hidlins_using_subcommand vault; and not __fish_seen_subcommand_from create register open list set-sync set-lock help" -f -a "help" -d 'Print this message or the help of the given subcommand(s)'
+complete -c hidlins -n "__fish_hidlins_using_subcommand vault; and not __fish_seen_subcommand_from create register open list set-lock help" -l registry -d 'Path to the vault registry file. Defaults to `$HOME/.local/state/hidlins/vaults.toml` (per `hidlins_core::HidlinsPaths`)' -r -F
+complete -c hidlins -n "__fish_hidlins_using_subcommand vault; and not __fish_seen_subcommand_from create register open list set-lock help" -s h -l help -d 'Print help (see more with \'--help\')'
+complete -c hidlins -n "__fish_hidlins_using_subcommand vault; and not __fish_seen_subcommand_from create register open list set-lock help" -f -a "create" -d 'Create a new vault and register it'
+complete -c hidlins -n "__fish_hidlins_using_subcommand vault; and not __fish_seen_subcommand_from create register open list set-lock help" -f -a "register" -d 'Authenticate and register an existing KDBX vault'
+complete -c hidlins -n "__fish_hidlins_using_subcommand vault; and not __fish_seen_subcommand_from create register open list set-lock help" -f -a "open" -d 'Probe vault unlock with the given master password'
+complete -c hidlins -n "__fish_hidlins_using_subcommand vault; and not __fish_seen_subcommand_from create register open list set-lock help" -f -a "list" -d 'List registered vaults'
+complete -c hidlins -n "__fish_hidlins_using_subcommand vault; and not __fish_seen_subcommand_from create register open list set-lock help" -f -a "set-lock" -d 'Configure the per-vault idle-lock timeout'
+complete -c hidlins -n "__fish_hidlins_using_subcommand vault; and not __fish_seen_subcommand_from create register open list set-lock help" -f -a "help" -d 'Print this message or the help of the given subcommand(s)'
 complete -c hidlins -n "__fish_hidlins_using_subcommand vault; and __fish_seen_subcommand_from create" -l id -d 'Registry name for the new vault (unique)' -r
 complete -c hidlins -n "__fish_hidlins_using_subcommand vault; and __fish_seen_subcommand_from create" -l path -d 'Absolute or relative path where the `.kdbx` file will be created' -r -F
 complete -c hidlins -n "__fish_hidlins_using_subcommand vault; and __fish_seen_subcommand_from create" -l keyfile -d 'Optional keyfile required to unlock this vault' -r -F
@@ -72,17 +71,6 @@ complete -c hidlins -n "__fish_hidlins_using_subcommand vault; and __fish_seen_s
 json\t'Stable JSON schema — see `views/` for per-subcommand shapes'"
 complete -c hidlins -n "__fish_hidlins_using_subcommand vault; and __fish_seen_subcommand_from list" -l registry -d 'Path to the vault registry file. Defaults to `$HOME/.local/state/hidlins/vaults.toml` (per `hidlins_core::HidlinsPaths`)' -r -F
 complete -c hidlins -n "__fish_hidlins_using_subcommand vault; and __fish_seen_subcommand_from list" -s h -l help -d 'Print help (see more with \'--help\')'
-complete -c hidlins -n "__fish_hidlins_using_subcommand vault; and __fish_seen_subcommand_from set-sync" -l id -d 'Registry name of the vault to configure' -r
-complete -c hidlins -n "__fish_hidlins_using_subcommand vault; and __fish_seen_subcommand_from set-sync" -l s3-bucket -d 'S3 bucket name' -r
-complete -c hidlins -n "__fish_hidlins_using_subcommand vault; and __fish_seen_subcommand_from set-sync" -l s3-key -d 'S3 object key (the `.kdbx` filename on the remote)' -r
-complete -c hidlins -n "__fish_hidlins_using_subcommand vault; and __fish_seen_subcommand_from set-sync" -l s3-endpoint -d 'Optional custom S3 endpoint URL (e.g. `https://minio.internal`). Defaults to the AWS regional endpoint for `--s3-region`' -r
-complete -c hidlins -n "__fish_hidlins_using_subcommand vault; and __fish_seen_subcommand_from set-sync" -l s3-region -d 'S3 region (required for `SigV4` signing). Defaults to `us-east-1`' -r
-complete -c hidlins -n "__fish_hidlins_using_subcommand vault; and __fish_seen_subcommand_from set-sync" -l s3-credentials-source -d 'How to obtain S3 credentials. Grammar: `prompt` (default), `iam-role`, `profile:<name>`, `env:<prefix>` (see struct docs)' -r
-complete -c hidlins -n "__fish_hidlins_using_subcommand vault; and __fish_seen_subcommand_from set-sync" -l format -d 'Output format. `human` (default) is line-oriented for terminals; `json` is the stable machine-readable schema for scripts' -r -f -a "human\t'Line-oriented human-readable output (default)'
-json\t'Stable JSON schema — see `views/` for per-subcommand shapes'"
-complete -c hidlins -n "__fish_hidlins_using_subcommand vault; and __fish_seen_subcommand_from set-sync" -l registry -d 'Path to the vault registry file. Defaults to `$HOME/.local/state/hidlins/vaults.toml` (per `hidlins_core::HidlinsPaths`)' -r -F
-complete -c hidlins -n "__fish_hidlins_using_subcommand vault; and __fish_seen_subcommand_from set-sync" -l s3-path-style -d 'Use path-style addressing (`hostname/bucket`) instead of virtual-hosted-style (`bucket.hostname`). Defaults to false'
-complete -c hidlins -n "__fish_hidlins_using_subcommand vault; and __fish_seen_subcommand_from set-sync" -s h -l help -d 'Print help (see more with \'--help\')'
 complete -c hidlins -n "__fish_hidlins_using_subcommand vault; and __fish_seen_subcommand_from set-lock" -l id -d 'Registry name of the vault to configure' -r
 complete -c hidlins -n "__fish_hidlins_using_subcommand vault; and __fish_seen_subcommand_from set-lock" -l timeout -d 'Idle-timeout in seconds before the vault auto-locks. Must be at least 1' -r
 complete -c hidlins -n "__fish_hidlins_using_subcommand vault; and __fish_seen_subcommand_from set-lock" -l format -d 'Output format. `human` (default) is line-oriented for terminals; `json` is the stable machine-readable schema for scripts' -r -f -a "human\t'Line-oriented human-readable output (default)'
@@ -94,7 +82,6 @@ complete -c hidlins -n "__fish_hidlins_using_subcommand vault; and __fish_seen_s
 complete -c hidlins -n "__fish_hidlins_using_subcommand vault; and __fish_seen_subcommand_from help" -f -a "register" -d 'Authenticate and register an existing KDBX vault'
 complete -c hidlins -n "__fish_hidlins_using_subcommand vault; and __fish_seen_subcommand_from help" -f -a "open" -d 'Probe vault unlock with the given master password'
 complete -c hidlins -n "__fish_hidlins_using_subcommand vault; and __fish_seen_subcommand_from help" -f -a "list" -d 'List registered vaults'
-complete -c hidlins -n "__fish_hidlins_using_subcommand vault; and __fish_seen_subcommand_from help" -f -a "set-sync" -d 'Configure the S3 target for a vault'
 complete -c hidlins -n "__fish_hidlins_using_subcommand vault; and __fish_seen_subcommand_from help" -f -a "set-lock" -d 'Configure the per-vault idle-lock timeout'
 complete -c hidlins -n "__fish_hidlins_using_subcommand vault; and __fish_seen_subcommand_from help" -f -a "help" -d 'Print this message or the help of the given subcommand(s)'
 complete -c hidlins -n "__fish_hidlins_using_subcommand entry; and not __fish_seen_subcommand_from add get edit rm list search help" -l format -d 'Output format. `human` (default) is line-oriented for terminals; `json` is the stable machine-readable schema for scripts' -r -f -a "human\t'Line-oriented human-readable output (default)'
@@ -214,11 +201,70 @@ complete -c hidlins -n "__fish_hidlins_using_subcommand gen; and __fish_seen_sub
 complete -c hidlins -n "__fish_hidlins_using_subcommand gen; and __fish_seen_subcommand_from help" -f -a "password" -d 'Generate a random password with selectable character classes'
 complete -c hidlins -n "__fish_hidlins_using_subcommand gen; and __fish_seen_subcommand_from help" -f -a "passphrase" -d 'Generate an EFF-large-wordlist diceware passphrase'
 complete -c hidlins -n "__fish_hidlins_using_subcommand gen; and __fish_seen_subcommand_from help" -f -a "help" -d 'Print this message or the help of the given subcommand(s)'
-complete -c hidlins -n "__fish_hidlins_using_subcommand sync" -l vault -d 'Vault registry name to sync. Optional: if only one vault is registered, that one is used by default' -r
-complete -c hidlins -n "__fish_hidlins_using_subcommand sync" -l format -d 'Output format. `human` (default) is line-oriented for terminals; `json` is the stable machine-readable schema for scripts' -r -f -a "human\t'Line-oriented human-readable output (default)'
+complete -c hidlins -n "__fish_hidlins_using_subcommand sync; and not __fish_seen_subcommand_from now serve pair import status peers help" -l format -d 'Output format. `human` (default) is line-oriented for terminals; `json` is the stable machine-readable schema for scripts' -r -f -a "human\t'Line-oriented human-readable output (default)'
 json\t'Stable JSON schema — see `views/` for per-subcommand shapes'"
-complete -c hidlins -n "__fish_hidlins_using_subcommand sync" -l registry -d 'Path to the vault registry file. Defaults to `$HOME/.local/state/hidlins/vaults.toml` (per `hidlins_core::HidlinsPaths`)' -r -F
-complete -c hidlins -n "__fish_hidlins_using_subcommand sync" -s h -l help -d 'Print help (see more with \'--help\')'
+complete -c hidlins -n "__fish_hidlins_using_subcommand sync; and not __fish_seen_subcommand_from now serve pair import status peers help" -l registry -d 'Path to the vault registry file. Defaults to `$HOME/.local/state/hidlins/vaults.toml` (per `hidlins_core::HidlinsPaths`)' -r -F
+complete -c hidlins -n "__fish_hidlins_using_subcommand sync; and not __fish_seen_subcommand_from now serve pair import status peers help" -s h -l help -d 'Print help (see more with \'--help\')'
+complete -c hidlins -n "__fish_hidlins_using_subcommand sync; and not __fish_seen_subcommand_from now serve pair import status peers help" -f -a "now" -d 'Synchronize a paired client vault now'
+complete -c hidlins -n "__fish_hidlins_using_subcommand sync; and not __fish_seen_subcommand_from now serve pair import status peers help" -f -a "serve" -d 'Run an authoritative sync server in the foreground until Ctrl+C'
+complete -c hidlins -n "__fish_hidlins_using_subcommand sync; and not __fish_seen_subcommand_from now serve pair import status peers help" -f -a "pair" -d 'Pair an existing vault with an authoritative server'
+complete -c hidlins -n "__fish_hidlins_using_subcommand sync; and not __fish_seen_subcommand_from now serve pair import status peers help" -f -a "import" -d 'Pair and import a complete encrypted vault'
+complete -c hidlins -n "__fish_hidlins_using_subcommand sync; and not __fish_seen_subcommand_from now serve pair import status peers help" -f -a "status" -d 'Show local-sync role, pairing, and server status'
+complete -c hidlins -n "__fish_hidlins_using_subcommand sync; and not __fish_seen_subcommand_from now serve pair import status peers help" -f -a "peers" -d 'List, rename, or revoke paired peers'
+complete -c hidlins -n "__fish_hidlins_using_subcommand sync; and not __fish_seen_subcommand_from now serve pair import status peers help" -f -a "help" -d 'Print this message or the help of the given subcommand(s)'
+complete -c hidlins -n "__fish_hidlins_using_subcommand sync; and __fish_seen_subcommand_from now" -l vault -d 'Vault registry name. Defaults to the sole registered vault' -r
+complete -c hidlins -n "__fish_hidlins_using_subcommand sync; and __fish_seen_subcommand_from now" -l address -d 'Restricted IP-literal diagnostic fallback when discovery is unavailable' -r
+complete -c hidlins -n "__fish_hidlins_using_subcommand sync; and __fish_seen_subcommand_from now" -l port -d 'Port paired with `--address`' -r
+complete -c hidlins -n "__fish_hidlins_using_subcommand sync; and __fish_seen_subcommand_from now" -l format -d 'Output format. `human` (default) is line-oriented for terminals; `json` is the stable machine-readable schema for scripts' -r -f -a "human\t'Line-oriented human-readable output (default)'
+json\t'Stable JSON schema — see `views/` for per-subcommand shapes'"
+complete -c hidlins -n "__fish_hidlins_using_subcommand sync; and __fish_seen_subcommand_from now" -l registry -d 'Path to the vault registry file. Defaults to `$HOME/.local/state/hidlins/vaults.toml` (per `hidlins_core::HidlinsPaths`)' -r -F
+complete -c hidlins -n "__fish_hidlins_using_subcommand sync; and __fish_seen_subcommand_from now" -s h -l help -d 'Print help (see more with \'--help\')'
+complete -c hidlins -n "__fish_hidlins_using_subcommand sync; and __fish_seen_subcommand_from serve" -l vault -d 'Vault registry name. Defaults to the sole registered vault' -r
+complete -c hidlins -n "__fish_hidlins_using_subcommand sync; and __fish_seen_subcommand_from serve" -l address -d 'Restricted IP literal to bind; otherwise an allowed active interface is selected' -r
+complete -c hidlins -n "__fish_hidlins_using_subcommand sync; and __fish_seen_subcommand_from serve" -l port -d 'Listener port' -r
+complete -c hidlins -n "__fish_hidlins_using_subcommand sync; and __fish_seen_subcommand_from serve" -l format -d 'Output format. `human` (default) is line-oriented for terminals; `json` is the stable machine-readable schema for scripts' -r -f -a "human\t'Line-oriented human-readable output (default)'
+json\t'Stable JSON schema — see `views/` for per-subcommand shapes'"
+complete -c hidlins -n "__fish_hidlins_using_subcommand sync; and __fish_seen_subcommand_from serve" -l registry -d 'Path to the vault registry file. Defaults to `$HOME/.local/state/hidlins/vaults.toml` (per `hidlins_core::HidlinsPaths`)' -r -F
+complete -c hidlins -n "__fish_hidlins_using_subcommand sync; and __fish_seen_subcommand_from serve" -l pairing-window -d 'Open the bounded pairing window immediately after startup'
+complete -c hidlins -n "__fish_hidlins_using_subcommand sync; and __fish_seen_subcommand_from serve" -s h -l help -d 'Print help (see more with \'--help\')'
+complete -c hidlins -n "__fish_hidlins_using_subcommand sync; and __fish_seen_subcommand_from pair" -l vault -d 'Vault registry name. Defaults to the sole registered vault' -r
+complete -c hidlins -n "__fish_hidlins_using_subcommand sync; and __fish_seen_subcommand_from pair" -l address -d 'Restricted IP-literal diagnostic fallback' -r
+complete -c hidlins -n "__fish_hidlins_using_subcommand sync; and __fish_seen_subcommand_from pair" -l port -d 'Port paired with `--address`' -r
+complete -c hidlins -n "__fish_hidlins_using_subcommand sync; and __fish_seen_subcommand_from pair" -l name -d 'Local display name for the authority' -r
+complete -c hidlins -n "__fish_hidlins_using_subcommand sync; and __fish_seen_subcommand_from pair" -l format -d 'Output format. `human` (default) is line-oriented for terminals; `json` is the stable machine-readable schema for scripts' -r -f -a "human\t'Line-oriented human-readable output (default)'
+json\t'Stable JSON schema — see `views/` for per-subcommand shapes'"
+complete -c hidlins -n "__fish_hidlins_using_subcommand sync; and __fish_seen_subcommand_from pair" -l registry -d 'Path to the vault registry file. Defaults to `$HOME/.local/state/hidlins/vaults.toml` (per `hidlins_core::HidlinsPaths`)' -r -F
+complete -c hidlins -n "__fish_hidlins_using_subcommand sync; and __fish_seen_subcommand_from pair" -s h -l help -d 'Print help (see more with \'--help\')'
+complete -c hidlins -n "__fish_hidlins_using_subcommand sync; and __fish_seen_subcommand_from import" -l id -d 'New local registry name' -r
+complete -c hidlins -n "__fish_hidlins_using_subcommand sync; and __fish_seen_subcommand_from import" -l path -d 'Destination KDBX path. Defaults to the Hidlins state directory' -r -F
+complete -c hidlins -n "__fish_hidlins_using_subcommand sync; and __fish_seen_subcommand_from import" -l keyfile -d 'Optional keyfile required by the remote vault' -r -F
+complete -c hidlins -n "__fish_hidlins_using_subcommand sync; and __fish_seen_subcommand_from import" -l address -d 'Restricted IP-literal diagnostic fallback' -r
+complete -c hidlins -n "__fish_hidlins_using_subcommand sync; and __fish_seen_subcommand_from import" -l port -d 'Port paired with `--address`' -r
+complete -c hidlins -n "__fish_hidlins_using_subcommand sync; and __fish_seen_subcommand_from import" -l name -d 'Local display name for the authority' -r
+complete -c hidlins -n "__fish_hidlins_using_subcommand sync; and __fish_seen_subcommand_from import" -l format -d 'Output format. `human` (default) is line-oriented for terminals; `json` is the stable machine-readable schema for scripts' -r -f -a "human\t'Line-oriented human-readable output (default)'
+json\t'Stable JSON schema — see `views/` for per-subcommand shapes'"
+complete -c hidlins -n "__fish_hidlins_using_subcommand sync; and __fish_seen_subcommand_from import" -l registry -d 'Path to the vault registry file. Defaults to `$HOME/.local/state/hidlins/vaults.toml` (per `hidlins_core::HidlinsPaths`)' -r -F
+complete -c hidlins -n "__fish_hidlins_using_subcommand sync; and __fish_seen_subcommand_from import" -s h -l help -d 'Print help (see more with \'--help\')'
+complete -c hidlins -n "__fish_hidlins_using_subcommand sync; and __fish_seen_subcommand_from status" -l vault -d 'Vault registry name. Defaults to the sole registered vault' -r
+complete -c hidlins -n "__fish_hidlins_using_subcommand sync; and __fish_seen_subcommand_from status" -l format -d 'Output format. `human` (default) is line-oriented for terminals; `json` is the stable machine-readable schema for scripts' -r -f -a "human\t'Line-oriented human-readable output (default)'
+json\t'Stable JSON schema — see `views/` for per-subcommand shapes'"
+complete -c hidlins -n "__fish_hidlins_using_subcommand sync; and __fish_seen_subcommand_from status" -l registry -d 'Path to the vault registry file. Defaults to `$HOME/.local/state/hidlins/vaults.toml` (per `hidlins_core::HidlinsPaths`)' -r -F
+complete -c hidlins -n "__fish_hidlins_using_subcommand sync; and __fish_seen_subcommand_from status" -s h -l help -d 'Print help (see more with \'--help\')'
+complete -c hidlins -n "__fish_hidlins_using_subcommand sync; and __fish_seen_subcommand_from peers" -l format -d 'Output format. `human` (default) is line-oriented for terminals; `json` is the stable machine-readable schema for scripts' -r -f -a "human\t'Line-oriented human-readable output (default)'
+json\t'Stable JSON schema — see `views/` for per-subcommand shapes'"
+complete -c hidlins -n "__fish_hidlins_using_subcommand sync; and __fish_seen_subcommand_from peers" -l registry -d 'Path to the vault registry file. Defaults to `$HOME/.local/state/hidlins/vaults.toml` (per `hidlins_core::HidlinsPaths`)' -r -F
+complete -c hidlins -n "__fish_hidlins_using_subcommand sync; and __fish_seen_subcommand_from peers" -s h -l help -d 'Print help (see more with \'--help\')'
+complete -c hidlins -n "__fish_hidlins_using_subcommand sync; and __fish_seen_subcommand_from peers" -f -a "list" -d 'List configured peers'
+complete -c hidlins -n "__fish_hidlins_using_subcommand sync; and __fish_seen_subcommand_from peers" -f -a "rename" -d 'Rename a peer\'s local display label'
+complete -c hidlins -n "__fish_hidlins_using_subcommand sync; and __fish_seen_subcommand_from peers" -f -a "revoke" -d 'Revoke a peer immediately'
+complete -c hidlins -n "__fish_hidlins_using_subcommand sync; and __fish_seen_subcommand_from peers" -f -a "help" -d 'Print this message or the help of the given subcommand(s)'
+complete -c hidlins -n "__fish_hidlins_using_subcommand sync; and __fish_seen_subcommand_from help" -f -a "now" -d 'Synchronize a paired client vault now'
+complete -c hidlins -n "__fish_hidlins_using_subcommand sync; and __fish_seen_subcommand_from help" -f -a "serve" -d 'Run an authoritative sync server in the foreground until Ctrl+C'
+complete -c hidlins -n "__fish_hidlins_using_subcommand sync; and __fish_seen_subcommand_from help" -f -a "pair" -d 'Pair an existing vault with an authoritative server'
+complete -c hidlins -n "__fish_hidlins_using_subcommand sync; and __fish_seen_subcommand_from help" -f -a "import" -d 'Pair and import a complete encrypted vault'
+complete -c hidlins -n "__fish_hidlins_using_subcommand sync; and __fish_seen_subcommand_from help" -f -a "status" -d 'Show local-sync role, pairing, and server status'
+complete -c hidlins -n "__fish_hidlins_using_subcommand sync; and __fish_seen_subcommand_from help" -f -a "peers" -d 'List, rename, or revoke paired peers'
+complete -c hidlins -n "__fish_hidlins_using_subcommand sync; and __fish_seen_subcommand_from help" -f -a "help" -d 'Print this message or the help of the given subcommand(s)'
 complete -c hidlins -n "__fish_hidlins_using_subcommand ssh; and not __fish_seen_subcommand_from add load generate help" -l format -d 'Output format. `human` (default) is line-oriented for terminals; `json` is the stable machine-readable schema for scripts' -r -f -a "human\t'Line-oriented human-readable output (default)'
 json\t'Stable JSON schema — see `views/` for per-subcommand shapes'"
 complete -c hidlins -n "__fish_hidlins_using_subcommand ssh; and not __fish_seen_subcommand_from add load generate help" -l registry -d 'Path to the vault registry file. Defaults to `$HOME/.local/state/hidlins/vaults.toml` (per `hidlins_core::HidlinsPaths`)' -r -F
@@ -263,7 +309,7 @@ complete -c hidlins -n "__fish_hidlins_using_subcommand keys" -s h -l help -d 'P
 complete -c hidlins -n "__fish_hidlins_using_subcommand help; and not __fish_seen_subcommand_from vault entry gen sync ssh completions keys help" -f -a "vault" -d 'Vault lifecycle and registration commands'
 complete -c hidlins -n "__fish_hidlins_using_subcommand help; and not __fish_seen_subcommand_from vault entry gen sync ssh completions keys help" -f -a "entry" -d 'Secret-entry CRUD, search, and TOTP commands'
 complete -c hidlins -n "__fish_hidlins_using_subcommand help; and not __fish_seen_subcommand_from vault entry gen sync ssh completions keys help" -f -a "gen" -d 'Password and passphrase generation'
-complete -c hidlins -n "__fish_hidlins_using_subcommand help; and not __fish_seen_subcommand_from vault entry gen sync ssh completions keys help" -f -a "sync" -d 'Synchronise a vault with its configured S3 target'
+complete -c hidlins -n "__fish_hidlins_using_subcommand help; and not __fish_seen_subcommand_from vault entry gen sync ssh completions keys help" -f -a "sync" -d 'Pair and synchronize vaults over the local network'
 complete -c hidlins -n "__fish_hidlins_using_subcommand help; and not __fish_seen_subcommand_from vault entry gen sync ssh completions keys help" -f -a "ssh" -d 'SSH key entry management'
 complete -c hidlins -n "__fish_hidlins_using_subcommand help; and not __fish_seen_subcommand_from vault entry gen sync ssh completions keys help" -f -a "completions" -d 'Generate shell completion scripts'
 complete -c hidlins -n "__fish_hidlins_using_subcommand help; and not __fish_seen_subcommand_from vault entry gen sync ssh completions keys help" -f -a "keys" -d 'Print the TUI\'s effective keymap (command name, keys, description, group)'
@@ -272,7 +318,6 @@ complete -c hidlins -n "__fish_hidlins_using_subcommand help; and __fish_seen_su
 complete -c hidlins -n "__fish_hidlins_using_subcommand help; and __fish_seen_subcommand_from vault" -f -a "register" -d 'Authenticate and register an existing KDBX vault'
 complete -c hidlins -n "__fish_hidlins_using_subcommand help; and __fish_seen_subcommand_from vault" -f -a "open" -d 'Probe vault unlock with the given master password'
 complete -c hidlins -n "__fish_hidlins_using_subcommand help; and __fish_seen_subcommand_from vault" -f -a "list" -d 'List registered vaults'
-complete -c hidlins -n "__fish_hidlins_using_subcommand help; and __fish_seen_subcommand_from vault" -f -a "set-sync" -d 'Configure the S3 target for a vault'
 complete -c hidlins -n "__fish_hidlins_using_subcommand help; and __fish_seen_subcommand_from vault" -f -a "set-lock" -d 'Configure the per-vault idle-lock timeout'
 complete -c hidlins -n "__fish_hidlins_using_subcommand help; and __fish_seen_subcommand_from entry" -f -a "add" -d 'Add a new entry to a vault'
 complete -c hidlins -n "__fish_hidlins_using_subcommand help; and __fish_seen_subcommand_from entry" -f -a "get" -d 'Get an entry by UUID or title'
@@ -282,6 +327,12 @@ complete -c hidlins -n "__fish_hidlins_using_subcommand help; and __fish_seen_su
 complete -c hidlins -n "__fish_hidlins_using_subcommand help; and __fish_seen_subcommand_from entry" -f -a "search" -d 'Search entries'
 complete -c hidlins -n "__fish_hidlins_using_subcommand help; and __fish_seen_subcommand_from gen" -f -a "password" -d 'Generate a random password with selectable character classes'
 complete -c hidlins -n "__fish_hidlins_using_subcommand help; and __fish_seen_subcommand_from gen" -f -a "passphrase" -d 'Generate an EFF-large-wordlist diceware passphrase'
+complete -c hidlins -n "__fish_hidlins_using_subcommand help; and __fish_seen_subcommand_from sync" -f -a "now" -d 'Synchronize a paired client vault now'
+complete -c hidlins -n "__fish_hidlins_using_subcommand help; and __fish_seen_subcommand_from sync" -f -a "serve" -d 'Run an authoritative sync server in the foreground until Ctrl+C'
+complete -c hidlins -n "__fish_hidlins_using_subcommand help; and __fish_seen_subcommand_from sync" -f -a "pair" -d 'Pair an existing vault with an authoritative server'
+complete -c hidlins -n "__fish_hidlins_using_subcommand help; and __fish_seen_subcommand_from sync" -f -a "import" -d 'Pair and import a complete encrypted vault'
+complete -c hidlins -n "__fish_hidlins_using_subcommand help; and __fish_seen_subcommand_from sync" -f -a "status" -d 'Show local-sync role, pairing, and server status'
+complete -c hidlins -n "__fish_hidlins_using_subcommand help; and __fish_seen_subcommand_from sync" -f -a "peers" -d 'List, rename, or revoke paired peers'
 complete -c hidlins -n "__fish_hidlins_using_subcommand help; and __fish_seen_subcommand_from ssh" -f -a "add" -d 'Add an SSH-key entry to a vault. (Slot — see `features/ssh-keys/`.)'
 complete -c hidlins -n "__fish_hidlins_using_subcommand help; and __fish_seen_subcommand_from ssh" -f -a "load" -d 'Load an SSH key into ssh-agent with TTL. (Slot — see `features/ssh-keys/`.)'
 complete -c hidlins -n "__fish_hidlins_using_subcommand help; and __fish_seen_subcommand_from ssh" -f -a "generate" -d 'Generate a new SSH keypair and store the private key. (Slot — see `features/ssh-keys/`.)'

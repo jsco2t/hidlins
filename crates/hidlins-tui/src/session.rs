@@ -89,6 +89,18 @@ impl SessionResources {
         };
     }
 
+    pub(crate) fn replace_registry(&mut self, registry: VaultRegistry) {
+        match self {
+            Self::Locked { registry: current }
+            | Self::Ready {
+                registry: current, ..
+            } => {
+                *current = registry;
+            }
+            Self::Syncing => {}
+        }
+    }
+
     pub(crate) fn lock(&mut self) {
         let previous = std::mem::replace(self, Self::Syncing);
         *self = match previous {

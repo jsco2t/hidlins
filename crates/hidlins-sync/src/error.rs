@@ -1,105 +1,58 @@
-//! The crate's single public error type (design §2.5).
-//!
-//! Variants name the failure mode (auth, not-found, precondition, transport,
-//! etc.) so callers can branch on them programmatically. No variant ever
-//! carries plaintext passwords, decrypted vault contents, KDBX bytes, or any
-//! credential material — the same discipline `hidlins-core::VaultError`
-//! follows. The enum is `#[non_exhaustive]` so future releases can add variants
-//! without a SemVer break.
+//! Secret-free errors surfaced by local-network synchronization.
 
 use std::path::PathBuf;
 
-use crate::auth::AuthError;
+use crate::client::LanError;
+use crate::config::local::LocalConfigError;
 use crate::merge::MergeError;
-use crate::s3::S3Error;
 
 /// Errors surfaced by the sync layer.
 #[derive(Debug, thiserror::Error)]
 #[non_exhaustive]
 pub enum SyncError {
-    /// Sync is not configured for this vault. The vault has no
-    /// `[sync]` block, or the block exists but fails to deserialize into
-    /// a [`crate::SyncConfig`] (e.g. a hand-edited / pre-T5.1
-    /// git-shape carryover). The user should run
-    /// `hidlins vault set-sync ...`.
-    #[error("sync is not configured for this vault (run `hidlins vault set-sync ...`)")]
+    /// Local-network routing, authentication, framing, or protocol failed.
+    #[error("local-network sync failed: {0}")]
+    LocalNetwork(#[from] LanError),
+
+    /// Local-network registry/configuration update failed.
+    #[error("local sync configuration failed: {0}")]
+    LocalConfig(#[from] LocalConfigError),
+
+    /// The vault has no valid local-network sync configuration.
+    #[error("local-network sync is not configured for this vault")]
     NotConfigured,
 
-    /// The S3 endpoint could not be reached (network failure, DNS, TLS,
-    /// 5xx storm after retries).
-    #[error("S3 endpoint unreachable: {endpoint} ({source})")]
+    /// A transport fixture or adapter could not reach its authority.
+    #[error("sync authority unreachable: {endpoint} ({source})")]
     RemoteUnreachable {
-        /// The endpoint URL the request targeted.
+        /// A secret-free authority description.
         endpoint: String,
         /// The underlying transport error.
         #[source]
         source: Box<dyn std::error::Error + Send + Sync>,
     },
 
-    /// Authentication against the remote failed (403, signature rejected,
-    /// credentials missing or expired). `reason` is a non-secret
-    /// description suitable for logging.
-    #[error("authentication failed for {endpoint}: {reason}")]
-    AuthFailed {
-        /// The endpoint URL the auth attempt targeted.
-        endpoint: String,
-        /// A non-secret reason string.
-        reason: String,
-    },
-
-    /// The conditional-PUT retry loop exhausted its budget — remote
-    /// advanced concurrently more than `attempts` times. The caller
-    /// should re-run sync (the next attempt sees the new state).
-    #[error("conditional PUT exhausted after {attempts} retries; remote has advanced concurrently; retry `hidlins sync`")]
-    ConditionalPutExhausted {
+    /// The conditional-commit retry loop exhausted its budget.
+    #[error("conditional commit exhausted after {attempts} attempts; authority advanced concurrently; retry sync")]
+    ConditionalCommitExhausted {
         /// Number of attempts consumed before exhaustion.
         attempts: usize,
     },
 
-    /// Two vaults configured to the same canonicalized S3 target
-    /// (ADR-6). `Sync::configure_remote` refuses to write the colliding
-    /// config; the user must change one vault's bucket / key / endpoint.
-    #[error("two vaults configured to the same S3 target ({endpoint:?} bucket={bucket} key={key}); existing vault: `{existing_vault}`")]
-    DuplicateTarget {
-        /// The endpoint URL (`None` = AWS default for region).
-        endpoint: Option<String>,
-        /// The bucket name.
-        bucket: String,
-        /// The object key.
-        key: String,
-        /// The other vault already using this target.
-        existing_vault: String,
-    },
-
-    /// The configured backend does not support a feature the orchestrator
-    /// requires (and graceful degradation has been explicitly disabled).
-    /// In Phase 0 this is surfaced only when the sentinel-key probe (ADR-5)
-    /// classifies a backend as `Degraded` and the caller has opted out of
-    /// the degraded path.
-    #[error("S3 backend lacks required feature `{feature}`; either upgrade the backend or accept the documented degradation path")]
-    UnsupportedBackend {
-        /// Feature name (e.g. "conditional-put").
-        feature: String,
-    },
-
-    /// The master password or KDF parameters differ between the local
-    /// and remote vaults — almost always a master-password change on
-    /// another device that hasn't been re-synced. The orchestrator
-    /// refuses to merge; the user resolves manually.
-    #[error("master password or KDF parameters differ between local and remote vault")]
+    /// Local and authoritative KDF parameters differ.
+    #[error("master password or KDF parameters differ between local and authoritative vault")]
     MasterPasswordMismatch,
 
-    /// A merge could not be auto-resolved (same-second divergence with
-    /// differing content). The pre-merge `.kdbx.bak` is preserved.
+    /// A merge could not be auto-resolved.
     #[error("merge cannot proceed: {reason}; pre-merge state preserved at {backup_path}")]
     Unresolvable {
         /// Non-secret description of the conflict.
         reason: String,
-        /// Path to the preserved `.kdbx.bak` snapshot.
+        /// Path to the preserved recovery snapshot.
         backup_path: PathBuf,
     },
 
-    /// Writing the pre-merge `.kdbx.bak` snapshot failed.
+    /// Writing the pre-merge recovery snapshot failed.
     #[error("pre-merge backup creation failed: {source}")]
     BackupFailed {
         /// The underlying I/O error.
@@ -107,41 +60,18 @@ pub enum SyncError {
         source: std::io::Error,
     },
 
-    /// A stored credential could not be decrypted — typically because the
-    /// container is corrupt OR the master password is wrong. The two are
-    /// intentionally indistinguishable (an attacker mustn't learn which).
-    #[error("invalid credential container (corrupt or wrong master password)")]
-    CredentialDecryption,
-
-    /// The credential discovery layer ([`crate::auth::resolve`]) returned
-    /// an error. Wraps [`AuthError`] for context — the specific failure
-    /// mode (missing file, missing env var, IMDS unreachable, etc.) is
-    /// in the source chain.
-    #[error("credential discovery failed: {0}")]
-    Auth(#[from] AuthError),
-
-    /// The merge engine returned an error. Wraps [`MergeError`] for
-    /// context.
+    /// The merge engine returned an error.
     #[error("merge engine error: {0}")]
     Merge(#[from] MergeError),
 
-    /// An S3 protocol error occurred (anything wire-level — auth, not-found,
-    /// 5xx, malformed `ETag`, etc.). Wraps [`S3Error`] for context.
-    #[error("S3 protocol error: {0}")]
-    S3(#[from] S3Error),
-
-    /// A vault-layer (`hidlins-core`) error occurred.
+    /// A vault-layer error occurred.
     #[error("vault error: {0}")]
     Vault(#[from] hidlins_core::VaultError),
 
-    /// Reading or writing the on-disk vault `.kdbx` failed during sync —
-    /// distinct from the [`Self::Vault`] variant (which wraps logical
-    /// vault errors like `AuthenticationFailed` or
-    /// `DatabaseIdentityMismatch`). `path` names the file the syscall
-    /// failed against.
+    /// Reading or writing the encrypted vault failed during sync.
     #[error("vault I/O during sync: {path:?}: {source}")]
     VaultIo {
-        /// The file path the I/O failure was against.
+        /// The file path involved.
         path: PathBuf,
         /// The underlying I/O error.
         #[source]

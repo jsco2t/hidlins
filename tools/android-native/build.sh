@@ -43,6 +43,12 @@ export AR_aarch64_linux_android="$NDK_BIN/llvm-ar"
 export AR_x86_64_linux_android="$NDK_BIN/llvm-ar"
 
 readonly CARGO_ARGS=(-p hidlins-api --no-default-features --offline --locked)
+case "$(uname -m)" in
+  arm64|aarch64) readonly HOST_ANDROID_TARGET="aarch64-linux-android" ;;
+  x86_64) readonly HOST_ANDROID_TARGET="x86_64-linux-android" ;;
+  *) die "unsupported Android scenario host architecture" ;;
+esac
+readonly SCENARIO_CARGO_ARGS=(-p hidlins-cli --no-default-features --features android-scenario-authority --offline --locked)
 case "${1:-}" in
   check)
     cargo check "${CARGO_ARGS[@]}" --target aarch64-linux-android
@@ -52,14 +58,14 @@ case "${1:-}" in
     cargo build "${CARGO_ARGS[@]}" --release --target aarch64-linux-android
     cargo build "${CARGO_ARGS[@]}" --release --target x86_64-linux-android
     python3 "$ROOT/tools/android-native/artifacts.py" stage
-    count="$(cargo tree "${CARGO_ARGS[@]}" --target aarch64-linux-android -i rustls-platform-verifier 2>/dev/null | grep -c '^rustls-platform-verifier v')"
-    [[ "$count" == 1 ]] || die "expected one rustls-platform-verifier instance, found $count"
-    for target in aarch64-linux-android x86_64-linux-android; do
-      "$NDK_BIN/llvm-nm" -D --defined-only "$ROOT/target/$target/release/libhidlins_api.so" \
-        | awk '$NF == "Java_app_hidlins_HidlinsNative_initVerifier" { found=1 } END { exit !found }' \
-        || die "JNI verifier export missing from $target release library"
-    done
-    printf '  OK: release JNI export and single verifier instance pass for both Android ABIs\n'
+    printf '  OK: release native libraries pass for both Android ABIs\n'
     ;;
-  *) die "usage: $0 {check|build}" ;;
+  scenario-check)
+    cargo check "${SCENARIO_CARGO_ARGS[@]}" --target "$HOST_ANDROID_TARGET"
+    ;;
+  scenario-build)
+    cargo build "${SCENARIO_CARGO_ARGS[@]}" --release --target "$HOST_ANDROID_TARGET"
+    printf '%s\n' "$ROOT/target/$HOST_ANDROID_TARGET/release/hidlins"
+    ;;
+  *) die "usage: $0 {check|build|scenario-check|scenario-build}" ;;
 esac

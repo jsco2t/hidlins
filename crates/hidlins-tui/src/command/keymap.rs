@@ -217,6 +217,12 @@ impl Keymap {
             (Command::RemoveTag, ch('T')),
             // Sync / generation
             (Command::Sync, ch('s')),
+            (Command::LocalServer, ch('S')),
+            (Command::PairVault, ch('P')),
+            (Command::ImportVault, ch('I')),
+            (Command::ImportVault, code(KeyCode::F(3))),
+            (Command::PairingWindow, ch('W')),
+            (Command::ManagePeers, ch('R')),
             (Command::Generate, ctrl('g')),
         ];
 

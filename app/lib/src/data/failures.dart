@@ -76,11 +76,6 @@ class SyncConflict extends AppFailure {
   const SyncConflict(this.backupPath);
 }
 
-class SyncDuplicate extends AppFailure {
-  final String existingVault;
-  const SyncDuplicate(this.existingVault);
-}
-
 class IoFailure extends AppFailure {
   final String context;
   const IoFailure(this.context);
@@ -117,15 +112,23 @@ AppFailure mapApiError(HidlinsApiError error) {
       'registry malformed',
     ),
     HidlinsApiError_SyncNotConfigured() => const SyncNotReady(),
+    HidlinsApiError_LocalSyncConfiguration() => const InternalFailure(
+      'local sync configuration is invalid',
+    ),
+    HidlinsApiError_SyncPermissionDenied() => const SyncUnreachable(),
+    HidlinsApiError_SyncNotFound() => const SyncUnreachable(),
+    HidlinsApiError_SyncKeyMismatch() => const SyncAuthFailure(),
+    HidlinsApiError_SyncRevoked() => const SyncAuthFailure(),
+    HidlinsApiError_SyncBusy() => const VaultIsBusy(),
+    HidlinsApiError_SyncConflict() => const SyncConflict(''),
+    HidlinsApiError_SyncCanceled() => const SyncUnreachable(),
+    HidlinsApiError_SyncOffline() => const SyncUnreachable(),
     HidlinsApiError_SyncRemoteUnreachable(:final endpoint) => SyncUnreachable(
       endpoint: endpoint,
     ),
     HidlinsApiError_SyncAuthFailed() => const SyncAuthFailure(),
     HidlinsApiError_SyncConflictUnresolvable(:final backupPath) => SyncConflict(
       backupPath,
-    ),
-    HidlinsApiError_SyncDuplicateTarget(:final existingVault) => SyncDuplicate(
-      existingVault,
     ),
     HidlinsApiError_Io(:final context) => IoFailure(context),
     HidlinsApiError_Internal(:final context) => InternalFailure(context),

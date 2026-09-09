@@ -16,9 +16,9 @@ pub(crate) mod bulk;
 pub(crate) mod edit;
 pub(crate) mod generate;
 pub(crate) mod history;
+pub(crate) mod local_sync;
 pub(crate) mod palette;
 pub(crate) mod search;
-pub(crate) mod sync_config;
 
 use hidlins_core::Uuid;
 use ratatui::layout::{Constraint, Flex, Layout, Rect};
@@ -33,9 +33,9 @@ use crate::widgets::password_input::PasswordInput;
 pub(crate) use bulk::{GroupPickerState, TagAction, TagInputState};
 pub(crate) use edit::EditState;
 pub(crate) use history::HistoryState;
+pub(crate) use local_sync::{LocalSyncState, PeersState, SasState};
 pub(crate) use palette::PaletteState;
 pub(crate) use search::SearchState;
-pub(crate) use sync_config::SyncConfigState;
 
 /// A modal overlay layered over the active tab.
 pub(crate) enum Overlay {
@@ -69,9 +69,12 @@ pub(crate) enum Overlay {
         input: PasswordInput,
         pending: SyncTrigger,
     },
-    /// Configure the S3 sync target + credentials (T6.4). Boxed — the state
-    /// carries several input fields and two `PasswordInput`s.
-    SyncConfig(Box<SyncConfigState>),
+    /// Configure or join local-network synchronization.
+    LocalSync(Box<LocalSyncState>),
+    /// Non-bypassable bilateral short-authentication-string confirmation.
+    PairingSas(Box<SasState>),
+    /// Secret-free peer list and revocation surface.
+    Peers(PeersState),
     /// The filterable, executable command palette (T2.3) — `?` opens it in the
     /// workspace, unlock list, and lock screen. The password prompt is excluded
     /// so `?` remains valid master-password input. Replaces the read-only Help
@@ -96,7 +99,9 @@ impl Overlay {
             Overlay::GroupPicker(_) => "↑/↓: select   Enter: move   Esc: cancel",
             Overlay::TagInput(_) => "type a tag   Enter: apply   Esc: cancel",
             Overlay::SyncUnlock { .. } => "Enter: sync   Esc: cancel",
-            Overlay::SyncConfig(_) => sync_config::HINTS,
+            Overlay::LocalSync(_) => local_sync::HINTS,
+            Overlay::PairingSas(_) => "y: codes match and pair   n / Esc: reject",
+            Overlay::Peers(_) => "↑/↓: select   r: revoke   Esc: close",
             Overlay::Palette(_) => "type to filter   ↑/↓ select   Enter run   Esc close",
         }
     }
@@ -121,7 +126,9 @@ pub(crate) fn render(app: &App, frame: &mut Frame) {
         Overlay::SyncUnlock { input, pending } => {
             render_sync_unlock(input, *pending, frame, &app.theme);
         }
-        Overlay::SyncConfig(state) => sync_config::render(state, frame, &app.theme),
+        Overlay::LocalSync(state) => local_sync::render(state, frame, &app.theme),
+        Overlay::PairingSas(state) => local_sync::render_sas(state, frame, &app.theme),
+        Overlay::Peers(state) => local_sync::render_peers(state, frame, &app.theme),
         Overlay::Palette(state) => palette::render(app, state, frame),
     }
 }
@@ -140,9 +147,7 @@ fn render_sync_unlock(
 
     let subtitle = match pending {
         SyncTrigger::Manual => "Sync now — enter your master password.",
-        SyncTrigger::OnUnlock => "Sync — enter your master password.",
-        SyncTrigger::OnLock => "Sync before locking — enter your master password.",
-        SyncTrigger::OnQuit => "Sync before quitting — enter your master password.",
+        SyncTrigger::Startup => "Local sync — enter your master password.",
     };
 
     let area = centered(frame, 54, 7);

@@ -81,6 +81,11 @@ command_variants! {
 
     // --- Sync / generation ---
     Sync,     // s
+    LocalServer, // S in Settings
+    PairVault, // P in Settings
+    ImportVault, // I in Settings
+    PairingWindow, // W in Settings
+    ManagePeers, // R in Settings
     Generate // Ctrl+G (inside Edit)
 }
 
@@ -628,8 +633,55 @@ pub(crate) static COMMANDS: &[CommandSpec] = &[
         name: "sync",
         desc: "sync",
         group: Group::Sync,
-        contexts: TREE_DETAIL,
+        contexts: Contexts::WORKSPACE,
         order: 230,
+        quick_bar: false,
+    },
+    CommandSpec {
+        id: Command::LocalServer,
+        name: "local-server",
+        desc: "start / stop sync server",
+        group: Group::Sync,
+        contexts: Contexts::SETTINGS_TAB,
+        order: 232,
+        quick_bar: false,
+    },
+    CommandSpec {
+        id: Command::PairVault,
+        name: "pair-vault",
+        desc: "pair this vault",
+        group: Group::Sync,
+        contexts: Contexts::SETTINGS_TAB,
+        order: 234,
+        quick_bar: false,
+    },
+    CommandSpec {
+        id: Command::ImportVault,
+        name: "import-vault",
+        desc: "import paired vault",
+        group: Group::Sync,
+        contexts: Contexts::SETTINGS_TAB
+            .or(Contexts::UNLOCK_LIST)
+            .or(Contexts::VAULT_ONBOARDING),
+        order: 236,
+        quick_bar: false,
+    },
+    CommandSpec {
+        id: Command::PairingWindow,
+        name: "pairing-window",
+        desc: "allow pairing for 3 minutes",
+        group: Group::Sync,
+        contexts: Contexts::SETTINGS_TAB,
+        order: 238,
+        quick_bar: false,
+    },
+    CommandSpec {
+        id: Command::ManagePeers,
+        name: "manage-peers",
+        desc: "manage / revoke peers",
+        group: Group::Sync,
+        contexts: Contexts::SETTINGS_TAB,
+        order: 239,
         quick_bar: false,
     },
     CommandSpec {

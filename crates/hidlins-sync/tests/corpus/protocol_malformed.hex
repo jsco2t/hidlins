@@ -1,0 +1,14 @@
+# Empty/truncated application headers
+00
+0100000001
+0100000001000000
+# Unknown message type with an empty payload
+ff0000000100000000
+# Noncanonical boolean in HEAD_RESPONSE
+02000000010000000102
+# HEAD_REQUEST with unexpected payload
+01000000010000000100
+# Unknown generic error code
+0d0000000100000002ffff
+# PAIR_COMMIT with invalid requested_role (payload is 49 zero bytes then 02)
+2000000001000000310000000000000000000000000000000000000000000000000000000000000000000000000000000002

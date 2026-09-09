@@ -469,7 +469,7 @@ class AppLocalizationsEn extends AppLocalizations {
   String get vaultImportTitle => 'Import vault';
 
   @override
-  String get vaultConnectSyncTitle => 'Connect to sync';
+  String get vaultConnectSyncTitle => 'Import paired vault';
 
   @override
   String get vaultCreateNameLabel => 'Vault name';
@@ -523,7 +523,7 @@ class AppLocalizationsEn extends AppLocalizations {
 
   @override
   String get vaultChangePasswordReenterSync =>
-      'Password changed. Re-enter your S3 sync credentials.';
+      'Password changed. Your local sync identity was re-protected.';
 
   @override
   String get vaultPasswordMismatch => 'Passwords do not match';
@@ -535,7 +535,7 @@ class AppLocalizationsEn extends AppLocalizations {
   String get firstRunCreateVault => 'Create a new vault';
 
   @override
-  String get firstRunConnectSync => 'Connect to an existing vault via sync';
+  String get firstRunConnectSync => 'Import paired vault';
 
   @override
   String get firstRunImportVault => 'Import a .kdbx file';
@@ -559,50 +559,134 @@ class AppLocalizationsEn extends AppLocalizations {
   String get validatorRequired => 'Required';
 
   @override
-  String get syncS3BucketLabel => 'S3 Bucket';
-
-  @override
-  String get syncObjectKeyLabel => 'Object key';
-
-  @override
-  String get syncRegionLabel => 'Region';
-
-  @override
-  String get syncEndpointLabel => 'Endpoint (optional)';
-
-  @override
-  String get syncPathStyleLabel => 'Path-style addressing';
-
-  @override
-  String get syncAccessKeyIdLabel => 'Access key ID';
-
-  @override
-  String get syncSecretAccessKeyLabel => 'Secret access key';
-
-  @override
-  String syncErrorDuplicate(String existingVault) {
-    return 'Duplicate sync target: already used by \"$existingVault\"';
-  }
-
-  @override
   String syncErrorUnreachable(String endpoint) {
     return 'Cannot reach $endpoint';
   }
 
   @override
-  String get syncErrorAuthFailed => 'S3 authentication failed';
+  String get syncErrorAuthFailed =>
+      'The discovered server identity did not match this vault';
 
   @override
-  String get syncConfigureTitle => 'Configure sync';
-
-  @override
-  String get syncSaveConfiguration => 'Save sync configuration';
+  String get syncConfigureTitle => 'Local network sync';
 
   @override
   String get syncNow => 'Sync now';
 
   @override
   String get syncNotConfigured => 'Sync is not configured';
+
+  @override
+  String get syncLocalOnlyDescription =>
+      'Sync directly with a trusted Hidlins device on this local network. Public addresses are always rejected.';
+
+  @override
+  String get syncPairVault => 'Pair this vault';
+
+  @override
+  String get syncImportPairedVault => 'Import paired vault';
+
+  @override
+  String get syncCompareCode => 'Compare this code on both devices';
+
+  @override
+  String get syncCompareCodeHelp =>
+      'Accept only when every digit matches. Hidlins will not pair without confirmation on both devices.';
+
+  @override
+  String get syncPeerName => 'Device name';
+
+  @override
+  String get syncConfirmMatches => 'Codes match';
+
+  @override
+  String get syncRejectPairing => 'Reject';
+
+  @override
+  String get syncDiscovering =>
+      'Looking for Hidlins devices on your local network…';
+
+  @override
+  String get syncNoDevices =>
+      'No Hidlins devices were found. Keep the other app open, then retry.';
+
+  @override
+  String get syncPermissionTitle => 'Allow local network access';
+
+  @override
+  String get syncPermissionRationale =>
+      'Hidlins uses local network access only to find and connect directly to your trusted devices. It never uses this permission for internet sync.';
+
+  @override
+  String get syncPermissionDenied =>
+      'Local network access is denied. You can continue using your vault offline or enable access in system settings.';
+
+  @override
+  String get syncPermissionRestricted =>
+      'Local network access is restricted on this device.';
+
+  @override
+  String get syncPermissionUnsupported =>
+      'Local network discovery is unavailable on this device.';
+
+  @override
+  String get syncOpenSettings => 'Open system settings';
+
+  @override
+  String get syncRetryDiscovery => 'Retry discovery';
+
+  @override
+  String get syncManualEndpoint => 'Use an IP address manually';
+
+  @override
+  String get syncManualEndpointHint =>
+      'Private IP:port or [link-local IPv6%scope]:port';
+
+  @override
+  String get syncManualPolicy =>
+      'Only private and link-local IP literals are accepted.';
+
+  @override
+  String get syncConfigureServer => 'Configure as sync server';
+
+  @override
+  String get syncStartServer => 'Start sync server';
+
+  @override
+  String get syncStopServer => 'Stop sync server';
+
+  @override
+  String get syncServerRunning => 'Sync server running while Hidlins is open';
+
+  @override
+  String get syncAllowPairing => 'Allow pairing for 3 minutes';
+
+  @override
+  String syncPairingRemaining(int seconds) {
+    return 'Pairing open: ${seconds}s remaining';
+  }
+
+  @override
+  String get syncManagePeers => 'Manage peers';
+
+  @override
+  String get syncRenamePeer => 'Rename';
+
+  @override
+  String get syncRevokePeer => 'Revoke';
+
+  @override
+  String get syncRevokeConfirm =>
+      'Revoke this peer? It must pair again before it can sync.';
+
+  @override
+  String get syncRoleClient => 'Paired client';
+
+  @override
+  String get syncRoleServer => 'Authoritative server';
+
+  @override
+  String get syncCancelForeground => 'Cancel';
 
   @override
   String get syncWorkspaceAvailable =>

@@ -95,10 +95,6 @@ pub(crate) struct BehaviorCfg {
     #[serde(default = "default_sort")]
     pub default_sort: SortOrder,
     #[serde(default)]
-    pub sync_on_unlock: bool,
-    #[serde(default)]
-    pub sync_on_lock_quit: bool,
-    #[serde(default)]
     pub confirm_quit: bool,
 }
 
@@ -106,8 +102,6 @@ impl Default for BehaviorCfg {
     fn default() -> Self {
         Self {
             default_sort: default_sort(),
-            sync_on_unlock: false,
-            sync_on_lock_quit: false,
             confirm_quit: false,
         }
     }
@@ -223,16 +217,6 @@ impl UserConfig {
         self.behavior.default_sort
     }
 
-    /// Whether auto-sync-on-unlock is enabled.
-    pub(crate) fn sync_on_unlock(&self) -> bool {
-        self.behavior.sync_on_unlock
-    }
-
-    /// Whether auto-sync-on-lock/quit is enabled.
-    pub(crate) fn sync_on_lock_quit(&self) -> bool {
-        self.behavior.sync_on_lock_quit
-    }
-
     /// Whether quitting requires an explicit confirmation (T4.8).
     pub(crate) fn confirm_quit(&self) -> bool {
         self.behavior.confirm_quit
@@ -241,16 +225,6 @@ impl UserConfig {
     #[cfg(test)]
     pub(crate) fn set_confirm_quit_for_test(&mut self, on: bool) {
         self.behavior.confirm_quit = on;
-    }
-
-    /// Set the auto-sync-on-unlock toggle. The caller persists.
-    pub(crate) fn set_sync_on_unlock(&mut self, on: bool) {
-        self.behavior.sync_on_unlock = on;
-    }
-
-    /// Set the auto-sync-on-lock/quit toggle. The caller persists.
-    pub(crate) fn set_sync_on_lock_quit(&mut self, on: bool) {
-        self.behavior.sync_on_lock_quit = on;
     }
 
     /// Test seam: set the default sort directly (the load path sets it from
@@ -502,8 +476,6 @@ fn keymap_is_empty(k: &KeymapPatch) -> bool {
 #[serde(rename_all = "kebab-case")]
 struct OnDiskBehavior {
     default_sort: SortOrder,
-    sync_on_unlock: bool,
-    sync_on_lock_quit: bool,
     confirm_quit: bool,
 }
 
@@ -534,8 +506,6 @@ impl From<&UserConfig> for OnDisk {
             mouse: c.mouse,
             behavior: OnDiskBehavior {
                 default_sort: c.behavior.default_sort,
-                sync_on_unlock: c.behavior.sync_on_unlock,
-                sync_on_lock_quit: c.behavior.sync_on_lock_quit,
                 confirm_quit: c.behavior.confirm_quit,
             },
             theme: OnDiskTheme {
@@ -582,10 +552,6 @@ pub(crate) const DEFAULT_CONFIG_CATALOG: &str = r#"# Hidlins TUI configuration (
 # default-sort — initial Secrets-tree sort order.
 #   "recently-used" | "title" | "last-modified" | "group"
 #default-sort = "recently-used"
-# sync-on-unlock — automatically sync right after unlocking a vault.
-#sync-on-unlock = false
-# sync-on-lock-quit — automatically sync when leaving a vault (lock or quit).
-#sync-on-lock-quit = false
 # confirm-quit — ask for confirmation (y/n) before quitting.
 #confirm-quit = false
 
@@ -676,8 +642,6 @@ mod tests {
         for needle in [
             "#mouse = true",
             "#default-sort = \"recently-used\"",
-            "#sync-on-unlock = false",
-            "#sync-on-lock-quit = false",
             "#confirm-quit = false",
             "#dark = \"default-dark\"",
             "#light = \"default-light\"",
@@ -755,7 +719,7 @@ mod tests {
         // Everything else stays at its default.
         let d = UserConfig::default();
         assert_eq!(cfg.mouse, d.mouse);
-        assert_eq!(cfg.behavior.sync_on_unlock, d.behavior.sync_on_unlock);
+        assert_eq!(cfg.behavior.confirm_quit, d.behavior.confirm_quit);
         assert_eq!(cfg.theme, d.theme);
         assert_eq!(cfg.search, d.search);
         assert_eq!(cfg.layout, d.layout);
@@ -816,13 +780,13 @@ mod tests {
         let dir = tempfile::tempdir().unwrap();
         let paths = paths_in(dir.path());
         let mut cfg = UserConfig::default();
-        cfg.set_sync_on_unlock(true);
+        cfg.set_confirm_quit_for_test(true);
         cfg.behavior.default_sort = SortOrder::Title;
         cfg.save(&paths).expect("save");
 
         let (loaded, warnings) = UserConfig::load(&paths);
         assert!(warnings.is_empty(), "{warnings:?}");
-        assert!(loaded.sync_on_unlock());
+        assert!(loaded.confirm_quit());
         assert_eq!(loaded.default_sort(), SortOrder::Title);
     }
 
@@ -841,7 +805,7 @@ mod tests {
         assert_eq!(cfg.keymap.preset, Some(Preset::Plain));
 
         // Simulate a Settings change + save.
-        cfg.set_sync_on_unlock(true);
+        cfg.set_confirm_quit_for_test(true);
         cfg.save(&paths).expect("save");
 
         // The written file still carries the keymap section...
@@ -863,10 +827,7 @@ mod tests {
             loaded.keymap.bindings.get("copy-password"),
             Some(&BindValue::One("y".to_string()))
         );
-        assert!(
-            loaded.sync_on_unlock(),
-            "the toggled setting also persisted"
-        );
+        assert!(loaded.confirm_quit(), "the toggled setting also persisted");
     }
 
     #[test]
@@ -892,12 +853,12 @@ mod tests {
         assert!(path.exists());
         assert_eq!(cfg, UserConfig::default());
 
-        let updated = UserConfig::update_at(&path, |cfg| cfg.set_sync_on_unlock(true))
+        let updated = UserConfig::update_at(&path, |cfg| cfg.set_confirm_quit_for_test(true))
             .expect("update explicit path");
-        assert!(updated.sync_on_unlock());
+        assert!(updated.confirm_quit());
         let (reloaded, warnings) = UserConfig::load_from(&path);
         assert!(warnings.is_empty(), "{warnings:?}");
-        assert!(reloaded.sync_on_unlock());
+        assert!(reloaded.confirm_quit());
     }
 
     #[test]
@@ -907,12 +868,13 @@ mod tests {
         UserConfig::load_from(&path);
         let stale = UserConfig::load_from(&path).0;
 
-        UserConfig::update_at(&path, |cfg| cfg.set_sync_on_unlock(true)).expect("first writer");
+        UserConfig::update_at(&path, |cfg| cfg.set_confirm_quit_for_test(true))
+            .expect("first writer");
         let next_sort = stale.default_sort().next();
         let merged = UserConfig::update_at(&path, |cfg| cfg.behavior.default_sort = next_sort)
             .expect("second writer");
 
-        assert!(merged.sync_on_unlock(), "first writer's field survives");
+        assert!(merged.confirm_quit(), "first writer's field survives");
         assert_eq!(merged.default_sort(), next_sort);
     }
 
@@ -923,7 +885,7 @@ mod tests {
         UserConfig::load_from(&path);
         let before = std::fs::read(&path).unwrap();
         let _guard = acquire_exclusive(&path).unwrap();
-        let result = UserConfig::update_at(&path, |cfg| cfg.set_sync_on_unlock(true));
+        let result = UserConfig::update_at(&path, |cfg| cfg.set_confirm_quit_for_test(true));
         assert!(result.unwrap_err().contains("Could not lock"));
         assert_eq!(std::fs::read(&path).unwrap(), before);
     }
@@ -934,7 +896,7 @@ mod tests {
         let path = dir.path().join("config.toml");
         std::fs::write(&path, "[behavior\ninvalid = true\n").unwrap();
         let before = std::fs::read(&path).unwrap();
-        let result = UserConfig::update_at(&path, |cfg| cfg.set_sync_on_unlock(true));
+        let result = UserConfig::update_at(&path, |cfg| cfg.set_confirm_quit_for_test(true));
         assert!(result.is_err());
         assert_eq!(std::fs::read(&path).unwrap(), before);
     }
@@ -945,7 +907,7 @@ mod tests {
         let path = dir.path().join("config.toml");
         std::fs::write(&path, "[layout]\ntree-ratio = 99\n").unwrap();
         let before = std::fs::read(&path).unwrap();
-        let result = UserConfig::update_at(&path, |cfg| cfg.set_sync_on_unlock(true));
+        let result = UserConfig::update_at(&path, |cfg| cfg.set_confirm_quit_for_test(true));
         assert!(result.is_err());
         assert_eq!(std::fs::read(&path).unwrap(), before);
     }

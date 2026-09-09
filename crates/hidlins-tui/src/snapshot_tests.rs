@@ -318,7 +318,7 @@ fn tabbar_snapshot_with_pins() {
     let mut bar = TabBar::new();
     bar.set_pins_for_test(vec![Uuid::new_v4(), Uuid::new_v4()]);
     bar.jump_to(2); // ordinal 2 = the first pinned tab → active bracket on a pin
-    let titles = vec!["aws-prod".to_string(), "github".to_string()];
+    let titles = vec!["prod-admin".to_string(), "github".to_string()];
     let theme = Theme::auto(); // text-only snapshot: palette does not affect symbols
     let lines = render_lines(60, 1, |frame| {
         let area = Rect::new(0, 0, 60, 1);

@@ -157,6 +157,33 @@ _hidlins() {
             hidlins__subcmd__help__subcmd__ssh,load)
                 cmd="hidlins__subcmd__help__subcmd__ssh__subcmd__load"
                 ;;
+            hidlins__subcmd__help__subcmd__sync,import)
+                cmd="hidlins__subcmd__help__subcmd__sync__subcmd__import"
+                ;;
+            hidlins__subcmd__help__subcmd__sync,now)
+                cmd="hidlins__subcmd__help__subcmd__sync__subcmd__now"
+                ;;
+            hidlins__subcmd__help__subcmd__sync,pair)
+                cmd="hidlins__subcmd__help__subcmd__sync__subcmd__pair"
+                ;;
+            hidlins__subcmd__help__subcmd__sync,peers)
+                cmd="hidlins__subcmd__help__subcmd__sync__subcmd__peers"
+                ;;
+            hidlins__subcmd__help__subcmd__sync,serve)
+                cmd="hidlins__subcmd__help__subcmd__sync__subcmd__serve"
+                ;;
+            hidlins__subcmd__help__subcmd__sync,status)
+                cmd="hidlins__subcmd__help__subcmd__sync__subcmd__status"
+                ;;
+            hidlins__subcmd__help__subcmd__sync__subcmd__peers,list)
+                cmd="hidlins__subcmd__help__subcmd__sync__subcmd__peers__subcmd__list"
+                ;;
+            hidlins__subcmd__help__subcmd__sync__subcmd__peers,rename)
+                cmd="hidlins__subcmd__help__subcmd__sync__subcmd__peers__subcmd__rename"
+                ;;
+            hidlins__subcmd__help__subcmd__sync__subcmd__peers,revoke)
+                cmd="hidlins__subcmd__help__subcmd__sync__subcmd__peers__subcmd__revoke"
+                ;;
             hidlins__subcmd__help__subcmd__vault,create)
                 cmd="hidlins__subcmd__help__subcmd__vault__subcmd__create"
                 ;;
@@ -171,9 +198,6 @@ _hidlins() {
                 ;;
             hidlins__subcmd__help__subcmd__vault,set-lock)
                 cmd="hidlins__subcmd__help__subcmd__vault__subcmd__set__subcmd__lock"
-                ;;
-            hidlins__subcmd__help__subcmd__vault,set-sync)
-                cmd="hidlins__subcmd__help__subcmd__vault__subcmd__set__subcmd__sync"
                 ;;
             hidlins__subcmd__ssh,add)
                 cmd="hidlins__subcmd__ssh__subcmd__add"
@@ -199,6 +223,81 @@ _hidlins() {
             hidlins__subcmd__ssh__subcmd__help,load)
                 cmd="hidlins__subcmd__ssh__subcmd__help__subcmd__load"
                 ;;
+            hidlins__subcmd__sync,help)
+                cmd="hidlins__subcmd__sync__subcmd__help"
+                ;;
+            hidlins__subcmd__sync,import)
+                cmd="hidlins__subcmd__sync__subcmd__import"
+                ;;
+            hidlins__subcmd__sync,now)
+                cmd="hidlins__subcmd__sync__subcmd__now"
+                ;;
+            hidlins__subcmd__sync,pair)
+                cmd="hidlins__subcmd__sync__subcmd__pair"
+                ;;
+            hidlins__subcmd__sync,peers)
+                cmd="hidlins__subcmd__sync__subcmd__peers"
+                ;;
+            hidlins__subcmd__sync,serve)
+                cmd="hidlins__subcmd__sync__subcmd__serve"
+                ;;
+            hidlins__subcmd__sync,status)
+                cmd="hidlins__subcmd__sync__subcmd__status"
+                ;;
+            hidlins__subcmd__sync__subcmd__help,help)
+                cmd="hidlins__subcmd__sync__subcmd__help__subcmd__help"
+                ;;
+            hidlins__subcmd__sync__subcmd__help,import)
+                cmd="hidlins__subcmd__sync__subcmd__help__subcmd__import"
+                ;;
+            hidlins__subcmd__sync__subcmd__help,now)
+                cmd="hidlins__subcmd__sync__subcmd__help__subcmd__now"
+                ;;
+            hidlins__subcmd__sync__subcmd__help,pair)
+                cmd="hidlins__subcmd__sync__subcmd__help__subcmd__pair"
+                ;;
+            hidlins__subcmd__sync__subcmd__help,peers)
+                cmd="hidlins__subcmd__sync__subcmd__help__subcmd__peers"
+                ;;
+            hidlins__subcmd__sync__subcmd__help,serve)
+                cmd="hidlins__subcmd__sync__subcmd__help__subcmd__serve"
+                ;;
+            hidlins__subcmd__sync__subcmd__help,status)
+                cmd="hidlins__subcmd__sync__subcmd__help__subcmd__status"
+                ;;
+            hidlins__subcmd__sync__subcmd__help__subcmd__peers,list)
+                cmd="hidlins__subcmd__sync__subcmd__help__subcmd__peers__subcmd__list"
+                ;;
+            hidlins__subcmd__sync__subcmd__help__subcmd__peers,rename)
+                cmd="hidlins__subcmd__sync__subcmd__help__subcmd__peers__subcmd__rename"
+                ;;
+            hidlins__subcmd__sync__subcmd__help__subcmd__peers,revoke)
+                cmd="hidlins__subcmd__sync__subcmd__help__subcmd__peers__subcmd__revoke"
+                ;;
+            hidlins__subcmd__sync__subcmd__peers,help)
+                cmd="hidlins__subcmd__sync__subcmd__peers__subcmd__help"
+                ;;
+            hidlins__subcmd__sync__subcmd__peers,list)
+                cmd="hidlins__subcmd__sync__subcmd__peers__subcmd__list"
+                ;;
+            hidlins__subcmd__sync__subcmd__peers,rename)
+                cmd="hidlins__subcmd__sync__subcmd__peers__subcmd__rename"
+                ;;
+            hidlins__subcmd__sync__subcmd__peers,revoke)
+                cmd="hidlins__subcmd__sync__subcmd__peers__subcmd__revoke"
+                ;;
+            hidlins__subcmd__sync__subcmd__peers__subcmd__help,help)
+                cmd="hidlins__subcmd__sync__subcmd__peers__subcmd__help__subcmd__help"
+                ;;
+            hidlins__subcmd__sync__subcmd__peers__subcmd__help,list)
+                cmd="hidlins__subcmd__sync__subcmd__peers__subcmd__help__subcmd__list"
+                ;;
+            hidlins__subcmd__sync__subcmd__peers__subcmd__help,rename)
+                cmd="hidlins__subcmd__sync__subcmd__peers__subcmd__help__subcmd__rename"
+                ;;
+            hidlins__subcmd__sync__subcmd__peers__subcmd__help,revoke)
+                cmd="hidlins__subcmd__sync__subcmd__peers__subcmd__help__subcmd__revoke"
+                ;;
             hidlins__subcmd__vault,create)
                 cmd="hidlins__subcmd__vault__subcmd__create"
                 ;;
@@ -217,9 +316,6 @@ _hidlins() {
             hidlins__subcmd__vault,set-lock)
                 cmd="hidlins__subcmd__vault__subcmd__set__subcmd__lock"
                 ;;
-            hidlins__subcmd__vault,set-sync)
-                cmd="hidlins__subcmd__vault__subcmd__set__subcmd__sync"
-                ;;
             hidlins__subcmd__vault__subcmd__help,create)
                 cmd="hidlins__subcmd__vault__subcmd__help__subcmd__create"
                 ;;
@@ -237,9 +333,6 @@ _hidlins() {
                 ;;
             hidlins__subcmd__vault__subcmd__help,set-lock)
                 cmd="hidlins__subcmd__vault__subcmd__help__subcmd__set__subcmd__lock"
-                ;;
-            hidlins__subcmd__vault__subcmd__help,set-sync)
-                cmd="hidlins__subcmd__vault__subcmd__help__subcmd__set__subcmd__sync"
                 ;;
             *)
                 ;;
@@ -1056,7 +1149,7 @@ _hidlins() {
             return 0
             ;;
         hidlins__subcmd__help__subcmd__sync)
-            opts=""
+            opts="now serve pair import status peers"
             if [[ ${cur} == -* || ${COMP_CWORD} -eq 3 ]] ; then
                 COMPREPLY=( $(compgen -W "${opts}" -- "${cur}") )
                 return 0
@@ -1069,8 +1162,134 @@ _hidlins() {
             COMPREPLY=( $(compgen -W "${opts}" -- "${cur}") )
             return 0
             ;;
+        hidlins__subcmd__help__subcmd__sync__subcmd__import)
+            opts=""
+            if [[ ${cur} == -* || ${COMP_CWORD} -eq 4 ]] ; then
+                COMPREPLY=( $(compgen -W "${opts}" -- "${cur}") )
+                return 0
+            fi
+            case "${prev}" in
+                *)
+                    COMPREPLY=()
+                    ;;
+            esac
+            COMPREPLY=( $(compgen -W "${opts}" -- "${cur}") )
+            return 0
+            ;;
+        hidlins__subcmd__help__subcmd__sync__subcmd__now)
+            opts=""
+            if [[ ${cur} == -* || ${COMP_CWORD} -eq 4 ]] ; then
+                COMPREPLY=( $(compgen -W "${opts}" -- "${cur}") )
+                return 0
+            fi
+            case "${prev}" in
+                *)
+                    COMPREPLY=()
+                    ;;
+            esac
+            COMPREPLY=( $(compgen -W "${opts}" -- "${cur}") )
+            return 0
+            ;;
+        hidlins__subcmd__help__subcmd__sync__subcmd__pair)
+            opts=""
+            if [[ ${cur} == -* || ${COMP_CWORD} -eq 4 ]] ; then
+                COMPREPLY=( $(compgen -W "${opts}" -- "${cur}") )
+                return 0
+            fi
+            case "${prev}" in
+                *)
+                    COMPREPLY=()
+                    ;;
+            esac
+            COMPREPLY=( $(compgen -W "${opts}" -- "${cur}") )
+            return 0
+            ;;
+        hidlins__subcmd__help__subcmd__sync__subcmd__peers)
+            opts="list rename revoke"
+            if [[ ${cur} == -* || ${COMP_CWORD} -eq 4 ]] ; then
+                COMPREPLY=( $(compgen -W "${opts}" -- "${cur}") )
+                return 0
+            fi
+            case "${prev}" in
+                *)
+                    COMPREPLY=()
+                    ;;
+            esac
+            COMPREPLY=( $(compgen -W "${opts}" -- "${cur}") )
+            return 0
+            ;;
+        hidlins__subcmd__help__subcmd__sync__subcmd__peers__subcmd__list)
+            opts=""
+            if [[ ${cur} == -* || ${COMP_CWORD} -eq 5 ]] ; then
+                COMPREPLY=( $(compgen -W "${opts}" -- "${cur}") )
+                return 0
+            fi
+            case "${prev}" in
+                *)
+                    COMPREPLY=()
+                    ;;
+            esac
+            COMPREPLY=( $(compgen -W "${opts}" -- "${cur}") )
+            return 0
+            ;;
+        hidlins__subcmd__help__subcmd__sync__subcmd__peers__subcmd__rename)
+            opts=""
+            if [[ ${cur} == -* || ${COMP_CWORD} -eq 5 ]] ; then
+                COMPREPLY=( $(compgen -W "${opts}" -- "${cur}") )
+                return 0
+            fi
+            case "${prev}" in
+                *)
+                    COMPREPLY=()
+                    ;;
+            esac
+            COMPREPLY=( $(compgen -W "${opts}" -- "${cur}") )
+            return 0
+            ;;
+        hidlins__subcmd__help__subcmd__sync__subcmd__peers__subcmd__revoke)
+            opts=""
+            if [[ ${cur} == -* || ${COMP_CWORD} -eq 5 ]] ; then
+                COMPREPLY=( $(compgen -W "${opts}" -- "${cur}") )
+                return 0
+            fi
+            case "${prev}" in
+                *)
+                    COMPREPLY=()
+                    ;;
+            esac
+            COMPREPLY=( $(compgen -W "${opts}" -- "${cur}") )
+            return 0
+            ;;
+        hidlins__subcmd__help__subcmd__sync__subcmd__serve)
+            opts=""
+            if [[ ${cur} == -* || ${COMP_CWORD} -eq 4 ]] ; then
+                COMPREPLY=( $(compgen -W "${opts}" -- "${cur}") )
+                return 0
+            fi
+            case "${prev}" in
+                *)
+                    COMPREPLY=()
+                    ;;
+            esac
+            COMPREPLY=( $(compgen -W "${opts}" -- "${cur}") )
+            return 0
+            ;;
+        hidlins__subcmd__help__subcmd__sync__subcmd__status)
+            opts=""
+            if [[ ${cur} == -* || ${COMP_CWORD} -eq 4 ]] ; then
+                COMPREPLY=( $(compgen -W "${opts}" -- "${cur}") )
+                return 0
+            fi
+            case "${prev}" in
+                *)
+                    COMPREPLY=()
+                    ;;
+            esac
+            COMPREPLY=( $(compgen -W "${opts}" -- "${cur}") )
+            return 0
+            ;;
         hidlins__subcmd__help__subcmd__vault)
-            opts="create register open list set-sync set-lock"
+            opts="create register open list set-lock"
             if [[ ${cur} == -* || ${COMP_CWORD} -eq 3 ]] ; then
                 COMPREPLY=( $(compgen -W "${opts}" -- "${cur}") )
                 return 0
@@ -1140,20 +1359,6 @@ _hidlins() {
             return 0
             ;;
         hidlins__subcmd__help__subcmd__vault__subcmd__set__subcmd__lock)
-            opts=""
-            if [[ ${cur} == -* || ${COMP_CWORD} -eq 4 ]] ; then
-                COMPREPLY=( $(compgen -W "${opts}" -- "${cur}") )
-                return 0
-            fi
-            case "${prev}" in
-                *)
-                    COMPREPLY=()
-                    ;;
-            esac
-            COMPREPLY=( $(compgen -W "${opts}" -- "${cur}") )
-            return 0
-            ;;
-        hidlins__subcmd__help__subcmd__vault__subcmd__set__subcmd__sync)
             opts=""
             if [[ ${cur} == -* || ${COMP_CWORD} -eq 4 ]] ; then
                 COMPREPLY=( $(compgen -W "${opts}" -- "${cur}") )
@@ -1384,8 +1589,518 @@ _hidlins() {
             return 0
             ;;
         hidlins__subcmd__sync)
-            opts="-h --vault --format --registry --help"
+            opts="-h --format --registry --help now serve pair import status peers help"
             if [[ ${cur} == -* || ${COMP_CWORD} -eq 2 ]] ; then
+                COMPREPLY=( $(compgen -W "${opts}" -- "${cur}") )
+                return 0
+            fi
+            case "${prev}" in
+                --format)
+                    COMPREPLY=($(compgen -W "human json" -- "${cur}"))
+                    return 0
+                    ;;
+                --registry)
+                    COMPREPLY=($(compgen -f "${cur}"))
+                    return 0
+                    ;;
+                *)
+                    COMPREPLY=()
+                    ;;
+            esac
+            COMPREPLY=( $(compgen -W "${opts}" -- "${cur}") )
+            return 0
+            ;;
+        hidlins__subcmd__sync__subcmd__help)
+            opts="now serve pair import status peers help"
+            if [[ ${cur} == -* || ${COMP_CWORD} -eq 3 ]] ; then
+                COMPREPLY=( $(compgen -W "${opts}" -- "${cur}") )
+                return 0
+            fi
+            case "${prev}" in
+                *)
+                    COMPREPLY=()
+                    ;;
+            esac
+            COMPREPLY=( $(compgen -W "${opts}" -- "${cur}") )
+            return 0
+            ;;
+        hidlins__subcmd__sync__subcmd__help__subcmd__help)
+            opts=""
+            if [[ ${cur} == -* || ${COMP_CWORD} -eq 4 ]] ; then
+                COMPREPLY=( $(compgen -W "${opts}" -- "${cur}") )
+                return 0
+            fi
+            case "${prev}" in
+                *)
+                    COMPREPLY=()
+                    ;;
+            esac
+            COMPREPLY=( $(compgen -W "${opts}" -- "${cur}") )
+            return 0
+            ;;
+        hidlins__subcmd__sync__subcmd__help__subcmd__import)
+            opts=""
+            if [[ ${cur} == -* || ${COMP_CWORD} -eq 4 ]] ; then
+                COMPREPLY=( $(compgen -W "${opts}" -- "${cur}") )
+                return 0
+            fi
+            case "${prev}" in
+                *)
+                    COMPREPLY=()
+                    ;;
+            esac
+            COMPREPLY=( $(compgen -W "${opts}" -- "${cur}") )
+            return 0
+            ;;
+        hidlins__subcmd__sync__subcmd__help__subcmd__now)
+            opts=""
+            if [[ ${cur} == -* || ${COMP_CWORD} -eq 4 ]] ; then
+                COMPREPLY=( $(compgen -W "${opts}" -- "${cur}") )
+                return 0
+            fi
+            case "${prev}" in
+                *)
+                    COMPREPLY=()
+                    ;;
+            esac
+            COMPREPLY=( $(compgen -W "${opts}" -- "${cur}") )
+            return 0
+            ;;
+        hidlins__subcmd__sync__subcmd__help__subcmd__pair)
+            opts=""
+            if [[ ${cur} == -* || ${COMP_CWORD} -eq 4 ]] ; then
+                COMPREPLY=( $(compgen -W "${opts}" -- "${cur}") )
+                return 0
+            fi
+            case "${prev}" in
+                *)
+                    COMPREPLY=()
+                    ;;
+            esac
+            COMPREPLY=( $(compgen -W "${opts}" -- "${cur}") )
+            return 0
+            ;;
+        hidlins__subcmd__sync__subcmd__help__subcmd__peers)
+            opts="list rename revoke"
+            if [[ ${cur} == -* || ${COMP_CWORD} -eq 4 ]] ; then
+                COMPREPLY=( $(compgen -W "${opts}" -- "${cur}") )
+                return 0
+            fi
+            case "${prev}" in
+                *)
+                    COMPREPLY=()
+                    ;;
+            esac
+            COMPREPLY=( $(compgen -W "${opts}" -- "${cur}") )
+            return 0
+            ;;
+        hidlins__subcmd__sync__subcmd__help__subcmd__peers__subcmd__list)
+            opts=""
+            if [[ ${cur} == -* || ${COMP_CWORD} -eq 5 ]] ; then
+                COMPREPLY=( $(compgen -W "${opts}" -- "${cur}") )
+                return 0
+            fi
+            case "${prev}" in
+                *)
+                    COMPREPLY=()
+                    ;;
+            esac
+            COMPREPLY=( $(compgen -W "${opts}" -- "${cur}") )
+            return 0
+            ;;
+        hidlins__subcmd__sync__subcmd__help__subcmd__peers__subcmd__rename)
+            opts=""
+            if [[ ${cur} == -* || ${COMP_CWORD} -eq 5 ]] ; then
+                COMPREPLY=( $(compgen -W "${opts}" -- "${cur}") )
+                return 0
+            fi
+            case "${prev}" in
+                *)
+                    COMPREPLY=()
+                    ;;
+            esac
+            COMPREPLY=( $(compgen -W "${opts}" -- "${cur}") )
+            return 0
+            ;;
+        hidlins__subcmd__sync__subcmd__help__subcmd__peers__subcmd__revoke)
+            opts=""
+            if [[ ${cur} == -* || ${COMP_CWORD} -eq 5 ]] ; then
+                COMPREPLY=( $(compgen -W "${opts}" -- "${cur}") )
+                return 0
+            fi
+            case "${prev}" in
+                *)
+                    COMPREPLY=()
+                    ;;
+            esac
+            COMPREPLY=( $(compgen -W "${opts}" -- "${cur}") )
+            return 0
+            ;;
+        hidlins__subcmd__sync__subcmd__help__subcmd__serve)
+            opts=""
+            if [[ ${cur} == -* || ${COMP_CWORD} -eq 4 ]] ; then
+                COMPREPLY=( $(compgen -W "${opts}" -- "${cur}") )
+                return 0
+            fi
+            case "${prev}" in
+                *)
+                    COMPREPLY=()
+                    ;;
+            esac
+            COMPREPLY=( $(compgen -W "${opts}" -- "${cur}") )
+            return 0
+            ;;
+        hidlins__subcmd__sync__subcmd__help__subcmd__status)
+            opts=""
+            if [[ ${cur} == -* || ${COMP_CWORD} -eq 4 ]] ; then
+                COMPREPLY=( $(compgen -W "${opts}" -- "${cur}") )
+                return 0
+            fi
+            case "${prev}" in
+                *)
+                    COMPREPLY=()
+                    ;;
+            esac
+            COMPREPLY=( $(compgen -W "${opts}" -- "${cur}") )
+            return 0
+            ;;
+        hidlins__subcmd__sync__subcmd__import)
+            opts="-h --id --path --keyfile --address --port --name --format --registry --help"
+            if [[ ${cur} == -* || ${COMP_CWORD} -eq 3 ]] ; then
+                COMPREPLY=( $(compgen -W "${opts}" -- "${cur}") )
+                return 0
+            fi
+            case "${prev}" in
+                --id)
+                    COMPREPLY=($(compgen -f "${cur}"))
+                    return 0
+                    ;;
+                --path)
+                    COMPREPLY=($(compgen -f "${cur}"))
+                    return 0
+                    ;;
+                --keyfile)
+                    COMPREPLY=($(compgen -f "${cur}"))
+                    return 0
+                    ;;
+                --address)
+                    COMPREPLY=($(compgen -f "${cur}"))
+                    return 0
+                    ;;
+                --port)
+                    COMPREPLY=($(compgen -f "${cur}"))
+                    return 0
+                    ;;
+                --name)
+                    COMPREPLY=($(compgen -f "${cur}"))
+                    return 0
+                    ;;
+                --format)
+                    COMPREPLY=($(compgen -W "human json" -- "${cur}"))
+                    return 0
+                    ;;
+                --registry)
+                    COMPREPLY=($(compgen -f "${cur}"))
+                    return 0
+                    ;;
+                *)
+                    COMPREPLY=()
+                    ;;
+            esac
+            COMPREPLY=( $(compgen -W "${opts}" -- "${cur}") )
+            return 0
+            ;;
+        hidlins__subcmd__sync__subcmd__now)
+            opts="-h --vault --address --port --format --registry --help"
+            if [[ ${cur} == -* || ${COMP_CWORD} -eq 3 ]] ; then
+                COMPREPLY=( $(compgen -W "${opts}" -- "${cur}") )
+                return 0
+            fi
+            case "${prev}" in
+                --vault)
+                    COMPREPLY=($(compgen -f "${cur}"))
+                    return 0
+                    ;;
+                --address)
+                    COMPREPLY=($(compgen -f "${cur}"))
+                    return 0
+                    ;;
+                --port)
+                    COMPREPLY=($(compgen -f "${cur}"))
+                    return 0
+                    ;;
+                --format)
+                    COMPREPLY=($(compgen -W "human json" -- "${cur}"))
+                    return 0
+                    ;;
+                --registry)
+                    COMPREPLY=($(compgen -f "${cur}"))
+                    return 0
+                    ;;
+                *)
+                    COMPREPLY=()
+                    ;;
+            esac
+            COMPREPLY=( $(compgen -W "${opts}" -- "${cur}") )
+            return 0
+            ;;
+        hidlins__subcmd__sync__subcmd__pair)
+            opts="-h --vault --address --port --name --format --registry --help"
+            if [[ ${cur} == -* || ${COMP_CWORD} -eq 3 ]] ; then
+                COMPREPLY=( $(compgen -W "${opts}" -- "${cur}") )
+                return 0
+            fi
+            case "${prev}" in
+                --vault)
+                    COMPREPLY=($(compgen -f "${cur}"))
+                    return 0
+                    ;;
+                --address)
+                    COMPREPLY=($(compgen -f "${cur}"))
+                    return 0
+                    ;;
+                --port)
+                    COMPREPLY=($(compgen -f "${cur}"))
+                    return 0
+                    ;;
+                --name)
+                    COMPREPLY=($(compgen -f "${cur}"))
+                    return 0
+                    ;;
+                --format)
+                    COMPREPLY=($(compgen -W "human json" -- "${cur}"))
+                    return 0
+                    ;;
+                --registry)
+                    COMPREPLY=($(compgen -f "${cur}"))
+                    return 0
+                    ;;
+                *)
+                    COMPREPLY=()
+                    ;;
+            esac
+            COMPREPLY=( $(compgen -W "${opts}" -- "${cur}") )
+            return 0
+            ;;
+        hidlins__subcmd__sync__subcmd__peers)
+            opts="-h --format --registry --help list rename revoke help"
+            if [[ ${cur} == -* || ${COMP_CWORD} -eq 3 ]] ; then
+                COMPREPLY=( $(compgen -W "${opts}" -- "${cur}") )
+                return 0
+            fi
+            case "${prev}" in
+                --format)
+                    COMPREPLY=($(compgen -W "human json" -- "${cur}"))
+                    return 0
+                    ;;
+                --registry)
+                    COMPREPLY=($(compgen -f "${cur}"))
+                    return 0
+                    ;;
+                *)
+                    COMPREPLY=()
+                    ;;
+            esac
+            COMPREPLY=( $(compgen -W "${opts}" -- "${cur}") )
+            return 0
+            ;;
+        hidlins__subcmd__sync__subcmd__peers__subcmd__help)
+            opts="list rename revoke help"
+            if [[ ${cur} == -* || ${COMP_CWORD} -eq 4 ]] ; then
+                COMPREPLY=( $(compgen -W "${opts}" -- "${cur}") )
+                return 0
+            fi
+            case "${prev}" in
+                *)
+                    COMPREPLY=()
+                    ;;
+            esac
+            COMPREPLY=( $(compgen -W "${opts}" -- "${cur}") )
+            return 0
+            ;;
+        hidlins__subcmd__sync__subcmd__peers__subcmd__help__subcmd__help)
+            opts=""
+            if [[ ${cur} == -* || ${COMP_CWORD} -eq 5 ]] ; then
+                COMPREPLY=( $(compgen -W "${opts}" -- "${cur}") )
+                return 0
+            fi
+            case "${prev}" in
+                *)
+                    COMPREPLY=()
+                    ;;
+            esac
+            COMPREPLY=( $(compgen -W "${opts}" -- "${cur}") )
+            return 0
+            ;;
+        hidlins__subcmd__sync__subcmd__peers__subcmd__help__subcmd__list)
+            opts=""
+            if [[ ${cur} == -* || ${COMP_CWORD} -eq 5 ]] ; then
+                COMPREPLY=( $(compgen -W "${opts}" -- "${cur}") )
+                return 0
+            fi
+            case "${prev}" in
+                *)
+                    COMPREPLY=()
+                    ;;
+            esac
+            COMPREPLY=( $(compgen -W "${opts}" -- "${cur}") )
+            return 0
+            ;;
+        hidlins__subcmd__sync__subcmd__peers__subcmd__help__subcmd__rename)
+            opts=""
+            if [[ ${cur} == -* || ${COMP_CWORD} -eq 5 ]] ; then
+                COMPREPLY=( $(compgen -W "${opts}" -- "${cur}") )
+                return 0
+            fi
+            case "${prev}" in
+                *)
+                    COMPREPLY=()
+                    ;;
+            esac
+            COMPREPLY=( $(compgen -W "${opts}" -- "${cur}") )
+            return 0
+            ;;
+        hidlins__subcmd__sync__subcmd__peers__subcmd__help__subcmd__revoke)
+            opts=""
+            if [[ ${cur} == -* || ${COMP_CWORD} -eq 5 ]] ; then
+                COMPREPLY=( $(compgen -W "${opts}" -- "${cur}") )
+                return 0
+            fi
+            case "${prev}" in
+                *)
+                    COMPREPLY=()
+                    ;;
+            esac
+            COMPREPLY=( $(compgen -W "${opts}" -- "${cur}") )
+            return 0
+            ;;
+        hidlins__subcmd__sync__subcmd__peers__subcmd__list)
+            opts="-h --vault --format --registry --help"
+            if [[ ${cur} == -* || ${COMP_CWORD} -eq 4 ]] ; then
+                COMPREPLY=( $(compgen -W "${opts}" -- "${cur}") )
+                return 0
+            fi
+            case "${prev}" in
+                --vault)
+                    COMPREPLY=($(compgen -f "${cur}"))
+                    return 0
+                    ;;
+                --format)
+                    COMPREPLY=($(compgen -W "human json" -- "${cur}"))
+                    return 0
+                    ;;
+                --registry)
+                    COMPREPLY=($(compgen -f "${cur}"))
+                    return 0
+                    ;;
+                *)
+                    COMPREPLY=()
+                    ;;
+            esac
+            COMPREPLY=( $(compgen -W "${opts}" -- "${cur}") )
+            return 0
+            ;;
+        hidlins__subcmd__sync__subcmd__peers__subcmd__rename)
+            opts="-h --vault --peer --name --format --registry --help"
+            if [[ ${cur} == -* || ${COMP_CWORD} -eq 4 ]] ; then
+                COMPREPLY=( $(compgen -W "${opts}" -- "${cur}") )
+                return 0
+            fi
+            case "${prev}" in
+                --vault)
+                    COMPREPLY=($(compgen -f "${cur}"))
+                    return 0
+                    ;;
+                --peer)
+                    COMPREPLY=($(compgen -f "${cur}"))
+                    return 0
+                    ;;
+                --name)
+                    COMPREPLY=($(compgen -f "${cur}"))
+                    return 0
+                    ;;
+                --format)
+                    COMPREPLY=($(compgen -W "human json" -- "${cur}"))
+                    return 0
+                    ;;
+                --registry)
+                    COMPREPLY=($(compgen -f "${cur}"))
+                    return 0
+                    ;;
+                *)
+                    COMPREPLY=()
+                    ;;
+            esac
+            COMPREPLY=( $(compgen -W "${opts}" -- "${cur}") )
+            return 0
+            ;;
+        hidlins__subcmd__sync__subcmd__peers__subcmd__revoke)
+            opts="-h --vault --peer --format --registry --help"
+            if [[ ${cur} == -* || ${COMP_CWORD} -eq 4 ]] ; then
+                COMPREPLY=( $(compgen -W "${opts}" -- "${cur}") )
+                return 0
+            fi
+            case "${prev}" in
+                --vault)
+                    COMPREPLY=($(compgen -f "${cur}"))
+                    return 0
+                    ;;
+                --peer)
+                    COMPREPLY=($(compgen -f "${cur}"))
+                    return 0
+                    ;;
+                --format)
+                    COMPREPLY=($(compgen -W "human json" -- "${cur}"))
+                    return 0
+                    ;;
+                --registry)
+                    COMPREPLY=($(compgen -f "${cur}"))
+                    return 0
+                    ;;
+                *)
+                    COMPREPLY=()
+                    ;;
+            esac
+            COMPREPLY=( $(compgen -W "${opts}" -- "${cur}") )
+            return 0
+            ;;
+        hidlins__subcmd__sync__subcmd__serve)
+            opts="-h --vault --address --port --pairing-window --format --registry --help"
+            if [[ ${cur} == -* || ${COMP_CWORD} -eq 3 ]] ; then
+                COMPREPLY=( $(compgen -W "${opts}" -- "${cur}") )
+                return 0
+            fi
+            case "${prev}" in
+                --vault)
+                    COMPREPLY=($(compgen -f "${cur}"))
+                    return 0
+                    ;;
+                --address)
+                    COMPREPLY=($(compgen -f "${cur}"))
+                    return 0
+                    ;;
+                --port)
+                    COMPREPLY=($(compgen -f "${cur}"))
+                    return 0
+                    ;;
+                --format)
+                    COMPREPLY=($(compgen -W "human json" -- "${cur}"))
+                    return 0
+                    ;;
+                --registry)
+                    COMPREPLY=($(compgen -f "${cur}"))
+                    return 0
+                    ;;
+                *)
+                    COMPREPLY=()
+                    ;;
+            esac
+            COMPREPLY=( $(compgen -W "${opts}" -- "${cur}") )
+            return 0
+            ;;
+        hidlins__subcmd__sync__subcmd__status)
+            opts="-h --vault --format --registry --help"
+            if [[ ${cur} == -* || ${COMP_CWORD} -eq 3 ]] ; then
                 COMPREPLY=( $(compgen -W "${opts}" -- "${cur}") )
                 return 0
             fi
@@ -1410,7 +2125,7 @@ _hidlins() {
             return 0
             ;;
         hidlins__subcmd__vault)
-            opts="-h --format --registry --help create register open list set-sync set-lock help"
+            opts="-h --format --registry --help create register open list set-lock help"
             if [[ ${cur} == -* || ${COMP_CWORD} -eq 2 ]] ; then
                 COMPREPLY=( $(compgen -W "${opts}" -- "${cur}") )
                 return 0
@@ -1466,7 +2181,7 @@ _hidlins() {
             return 0
             ;;
         hidlins__subcmd__vault__subcmd__help)
-            opts="create register open list set-sync set-lock help"
+            opts="create register open list set-lock help"
             if [[ ${cur} == -* || ${COMP_CWORD} -eq 3 ]] ; then
                 COMPREPLY=( $(compgen -W "${opts}" -- "${cur}") )
                 return 0
@@ -1550,20 +2265,6 @@ _hidlins() {
             return 0
             ;;
         hidlins__subcmd__vault__subcmd__help__subcmd__set__subcmd__lock)
-            opts=""
-            if [[ ${cur} == -* || ${COMP_CWORD} -eq 4 ]] ; then
-                COMPREPLY=( $(compgen -W "${opts}" -- "${cur}") )
-                return 0
-            fi
-            case "${prev}" in
-                *)
-                    COMPREPLY=()
-                    ;;
-            esac
-            COMPREPLY=( $(compgen -W "${opts}" -- "${cur}") )
-            return 0
-            ;;
-        hidlins__subcmd__vault__subcmd__help__subcmd__set__subcmd__sync)
             opts=""
             if [[ ${cur} == -* || ${COMP_CWORD} -eq 4 ]] ; then
                 COMPREPLY=( $(compgen -W "${opts}" -- "${cur}") )
@@ -1671,52 +2372,6 @@ _hidlins() {
                     return 0
                     ;;
                 --timeout)
-                    COMPREPLY=($(compgen -f "${cur}"))
-                    return 0
-                    ;;
-                --format)
-                    COMPREPLY=($(compgen -W "human json" -- "${cur}"))
-                    return 0
-                    ;;
-                --registry)
-                    COMPREPLY=($(compgen -f "${cur}"))
-                    return 0
-                    ;;
-                *)
-                    COMPREPLY=()
-                    ;;
-            esac
-            COMPREPLY=( $(compgen -W "${opts}" -- "${cur}") )
-            return 0
-            ;;
-        hidlins__subcmd__vault__subcmd__set__subcmd__sync)
-            opts="-h --id --s3-bucket --s3-key --s3-endpoint --s3-region --s3-path-style --s3-credentials-source --format --registry --help"
-            if [[ ${cur} == -* || ${COMP_CWORD} -eq 3 ]] ; then
-                COMPREPLY=( $(compgen -W "${opts}" -- "${cur}") )
-                return 0
-            fi
-            case "${prev}" in
-                --id)
-                    COMPREPLY=($(compgen -f "${cur}"))
-                    return 0
-                    ;;
-                --s3-bucket)
-                    COMPREPLY=($(compgen -f "${cur}"))
-                    return 0
-                    ;;
-                --s3-key)
-                    COMPREPLY=($(compgen -f "${cur}"))
-                    return 0
-                    ;;
-                --s3-endpoint)
-                    COMPREPLY=($(compgen -f "${cur}"))
-                    return 0
-                    ;;
-                --s3-region)
-                    COMPREPLY=($(compgen -f "${cur}"))
-                    return 0
-                    ;;
-                --s3-credentials-source)
                     COMPREPLY=($(compgen -f "${cur}"))
                     return 0
                     ;;

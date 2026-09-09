@@ -71,7 +71,7 @@ class RustLib extends BaseEntrypoint<RustLibApi, RustLibApiImpl, RustLibWire> {
   String get codegenVersion => '2.12.0';
 
   @override
-  int get rustContentHash => 1315655542;
+  int get rustContentHash => 1734893548;
 
   static const kDefaultExternalLibraryLoaderConfig =
       ExternalLibraryLoaderConfig(
@@ -89,13 +89,19 @@ abstract class RustLibApi extends BaseApi {
     required String sourcePath,
   });
 
-  Future<VaultSummary> crateApiSessionAppSessionBootstrapVaultFromRemote({
+  Future<PairingPromptDto> crateApiSessionAppSessionBeginPairImport({
     required AppSession that,
     required String name,
-    required S3ConfigDto cfg,
     required String masterPassword,
     KeyfileRef? keyfile,
+    required List<LocalEndpointDto> candidates,
   });
+
+  Future<PairingPromptDto> crateApiSessionAppSessionBeginPairing({
+    required AppSession that,
+  });
+
+  Future<void> crateApiSessionAppSessionCancelSync({required AppSession that});
 
   Future<void> crateApiSessionAppSessionChangeMasterPassword({
     required AppSession that,
@@ -113,9 +119,20 @@ abstract class RustLibApi extends BaseApi {
     required String name,
   });
 
-  Future<void> crateApiSessionAppSessionConfigureSync({
+  Future<void> crateApiSessionAppSessionClosePairingWindow({
     required AppSession that,
-    required S3ConfigDto cfg,
+  });
+
+  Future<void> crateApiSessionAppSessionConfigureLocalSync({
+    required AppSession that,
+    required LocalSyncRoleDto role,
+  });
+
+  Future<VaultSummary?> crateApiSessionAppSessionConfirmPairing({
+    required AppSession that,
+    required String transactionHandle,
+    required bool accepted,
+    required String peerDisplayName,
   });
 
   Future<void> crateApiSessionAppSessionCopyEntryField({
@@ -191,11 +208,27 @@ abstract class RustLibApi extends BaseApi {
     required String uuid,
   });
 
+  Future<List<SyncPeerDto>> crateApiSessionAppSessionListSyncPeers({
+    required AppSession that,
+  });
+
   Future<List<String>> crateApiSessionAppSessionListTags({
     required AppSession that,
   });
 
   Future<List<VaultSummary>> crateApiSessionAppSessionListVaults({
+    required AppSession that,
+  });
+
+  Future<DiscoveryStatusDto> crateApiSessionAppSessionLocalDiscoveryStatus({
+    required AppSession that,
+  });
+
+  Future<List<LocalEndpointDto>> crateApiSessionAppSessionLocalServerEndpoints({
+    required AppSession that,
+  });
+
+  Future<SyncStatusDto> crateApiSessionAppSessionLocalSyncStatus({
     required AppSession that,
   });
 
@@ -215,6 +248,14 @@ abstract class RustLibApi extends BaseApi {
     required AppSession that,
     required String uuid,
     required String parent,
+  });
+
+  Future<void> crateApiSessionAppSessionOpenPairingWindow({
+    required AppSession that,
+  });
+
+  Future<DiscoveryStatusDto> crateApiSessionAppSessionPollLocalDiscovery({
+    required AppSession that,
   });
 
   Future<ClipboardTransferTicket>
@@ -248,6 +289,12 @@ abstract class RustLibApi extends BaseApi {
     required String name,
   });
 
+  Future<void> crateApiSessionAppSessionRenameSyncPeer({
+    required AppSession that,
+    required String peerId,
+    required String displayName,
+  });
+
   void crateApiSessionAppSessionReportActivity({required AppSession that});
 
   LockEvent crateApiSessionAppSessionReportLifecycleState({
@@ -261,6 +308,11 @@ abstract class RustLibApi extends BaseApi {
     required RevealField field,
   });
 
+  Future<void> crateApiSessionAppSessionRevokeSyncPeer({
+    required AppSession that,
+    required String peerId,
+  });
+
   Future<void> crateApiSessionAppSessionSaveAttachmentTo({
     required AppSession that,
     required String uuid,
@@ -271,6 +323,12 @@ abstract class RustLibApi extends BaseApi {
   Future<List<SearchHit>> crateApiSessionAppSessionSearch({
     required AppSession that,
     required SearchOptionsDto opts,
+  });
+
+  Future<void> crateApiSessionAppSessionSetDiscoveryCandidates({
+    required AppSession that,
+    required DiscoveryPermissionDto permission,
+    required List<LocalEndpointDto> candidates,
   });
 
   Future<void> crateApiSessionAppSessionSetExpiration({
@@ -286,7 +344,20 @@ abstract class RustLibApi extends BaseApi {
 
   Future<void> crateApiSessionAppSessionShutdown({required AppSession that});
 
+  Future<void> crateApiSessionAppSessionStartStartupSync({
+    required AppSession that,
+  });
+
+  Future<LocalEndpointDto> crateApiSessionAppSessionStartSyncServer({
+    required AppSession that,
+    required LocalEndpointDto endpoint,
+  });
+
   Future<List<String>> crateApiSessionAppSessionStartupWarnings({
+    required AppSession that,
+  });
+
+  Future<void> crateApiSessionAppSessionStopSyncServer({
     required AppSession that,
   });
 
@@ -386,12 +457,12 @@ class RustLibApiImpl extends RustLibApiImplPlatform implements RustLibApi {
       );
 
   @override
-  Future<VaultSummary> crateApiSessionAppSessionBootstrapVaultFromRemote({
+  Future<PairingPromptDto> crateApiSessionAppSessionBeginPairImport({
     required AppSession that,
     required String name,
-    required S3ConfigDto cfg,
     required String masterPassword,
     KeyfileRef? keyfile,
+    required List<LocalEndpointDto> candidates,
   }) {
     return handler.executeNormal(
       NormalTask(
@@ -402,9 +473,9 @@ class RustLibApiImpl extends RustLibApiImplPlatform implements RustLibApi {
             serializer,
           );
           sse_encode_String(name, serializer);
-          sse_encode_box_autoadd_s_3_config_dto(cfg, serializer);
           sse_encode_String(masterPassword, serializer);
           sse_encode_opt_box_autoadd_keyfile_ref(keyfile, serializer);
+          sse_encode_list_local_endpoint_dto(candidates, serializer);
           pdeCallFfi(
             generalizedFrbRustBinding,
             serializer,
@@ -413,21 +484,90 @@ class RustLibApiImpl extends RustLibApiImplPlatform implements RustLibApi {
           );
         },
         codec: SseCodec(
-          decodeSuccessData: sse_decode_vault_summary,
+          decodeSuccessData: sse_decode_pairing_prompt_dto,
           decodeErrorData: sse_decode_hidlins_api_error,
         ),
-        constMeta: kCrateApiSessionAppSessionBootstrapVaultFromRemoteConstMeta,
-        argValues: [that, name, cfg, masterPassword, keyfile],
+        constMeta: kCrateApiSessionAppSessionBeginPairImportConstMeta,
+        argValues: [that, name, masterPassword, keyfile, candidates],
         apiImpl: this,
       ),
     );
   }
 
-  TaskConstMeta
-  get kCrateApiSessionAppSessionBootstrapVaultFromRemoteConstMeta =>
+  TaskConstMeta get kCrateApiSessionAppSessionBeginPairImportConstMeta =>
       const TaskConstMeta(
-        debugName: "AppSession_bootstrap_vault_from_remote",
-        argNames: ["that", "name", "cfg", "masterPassword", "keyfile"],
+        debugName: "AppSession_begin_pair_import",
+        argNames: ["that", "name", "masterPassword", "keyfile", "candidates"],
+      );
+
+  @override
+  Future<PairingPromptDto> crateApiSessionAppSessionBeginPairing({
+    required AppSession that,
+  }) {
+    return handler.executeNormal(
+      NormalTask(
+        callFfi: (port_) {
+          final serializer = SseSerializer(generalizedFrbRustBinding);
+          sse_encode_Auto_Ref_RustOpaque_flutter_rust_bridgefor_generatedRustAutoOpaqueInnerAppSession(
+            that,
+            serializer,
+          );
+          pdeCallFfi(
+            generalizedFrbRustBinding,
+            serializer,
+            funcId: 3,
+            port: port_,
+          );
+        },
+        codec: SseCodec(
+          decodeSuccessData: sse_decode_pairing_prompt_dto,
+          decodeErrorData: sse_decode_hidlins_api_error,
+        ),
+        constMeta: kCrateApiSessionAppSessionBeginPairingConstMeta,
+        argValues: [that],
+        apiImpl: this,
+      ),
+    );
+  }
+
+  TaskConstMeta get kCrateApiSessionAppSessionBeginPairingConstMeta =>
+      const TaskConstMeta(
+        debugName: "AppSession_begin_pairing",
+        argNames: ["that"],
+      );
+
+  @override
+  Future<void> crateApiSessionAppSessionCancelSync({required AppSession that}) {
+    return handler.executeNormal(
+      NormalTask(
+        callFfi: (port_) {
+          final serializer = SseSerializer(generalizedFrbRustBinding);
+          sse_encode_Auto_Ref_RustOpaque_flutter_rust_bridgefor_generatedRustAutoOpaqueInnerAppSession(
+            that,
+            serializer,
+          );
+          pdeCallFfi(
+            generalizedFrbRustBinding,
+            serializer,
+            funcId: 4,
+            port: port_,
+          );
+        },
+        codec: SseCodec(
+          decodeSuccessData: sse_decode_unit,
+          decodeErrorData: null,
+        ),
+        constMeta: kCrateApiSessionAppSessionCancelSyncConstMeta,
+        argValues: [that],
+        apiImpl: this,
+      ),
+    );
+  }
+
+  TaskConstMeta get kCrateApiSessionAppSessionCancelSyncConstMeta =>
+      const TaskConstMeta(
+        debugName: "AppSession_cancel_sync",
+        argNames: ["that"],
       );
 
   @override
@@ -449,7 +589,7 @@ class RustLibApiImpl extends RustLibApiImplPlatform implements RustLibApi {
           pdeCallFfi(
             generalizedFrbRustBinding,
             serializer,
-            funcId: 3,
+            funcId: 5,
             port: port_,
           );
         },
@@ -487,7 +627,7 @@ class RustLibApiImpl extends RustLibApiImplPlatform implements RustLibApi {
           pdeCallFfi(
             generalizedFrbRustBinding,
             serializer,
-            funcId: 4,
+            funcId: 6,
             port: port_,
           );
         },
@@ -525,7 +665,7 @@ class RustLibApiImpl extends RustLibApiImplPlatform implements RustLibApi {
           pdeCallFfi(
             generalizedFrbRustBinding,
             serializer,
-            funcId: 5,
+            funcId: 7,
             port: port_,
           );
         },
@@ -547,9 +687,8 @@ class RustLibApiImpl extends RustLibApiImplPlatform implements RustLibApi {
       );
 
   @override
-  Future<void> crateApiSessionAppSessionConfigureSync({
+  Future<void> crateApiSessionAppSessionClosePairingWindow({
     required AppSession that,
-    required S3ConfigDto cfg,
   }) {
     return handler.executeNormal(
       NormalTask(
@@ -559,11 +698,48 @@ class RustLibApiImpl extends RustLibApiImplPlatform implements RustLibApi {
             that,
             serializer,
           );
-          sse_encode_box_autoadd_s_3_config_dto(cfg, serializer);
           pdeCallFfi(
             generalizedFrbRustBinding,
             serializer,
-            funcId: 6,
+            funcId: 8,
+            port: port_,
+          );
+        },
+        codec: SseCodec(
+          decodeSuccessData: sse_decode_unit,
+          decodeErrorData: null,
+        ),
+        constMeta: kCrateApiSessionAppSessionClosePairingWindowConstMeta,
+        argValues: [that],
+        apiImpl: this,
+      ),
+    );
+  }
+
+  TaskConstMeta get kCrateApiSessionAppSessionClosePairingWindowConstMeta =>
+      const TaskConstMeta(
+        debugName: "AppSession_close_pairing_window",
+        argNames: ["that"],
+      );
+
+  @override
+  Future<void> crateApiSessionAppSessionConfigureLocalSync({
+    required AppSession that,
+    required LocalSyncRoleDto role,
+  }) {
+    return handler.executeNormal(
+      NormalTask(
+        callFfi: (port_) {
+          final serializer = SseSerializer(generalizedFrbRustBinding);
+          sse_encode_Auto_Ref_RustOpaque_flutter_rust_bridgefor_generatedRustAutoOpaqueInnerAppSession(
+            that,
+            serializer,
+          );
+          sse_encode_local_sync_role_dto(role, serializer);
+          pdeCallFfi(
+            generalizedFrbRustBinding,
+            serializer,
+            funcId: 9,
             port: port_,
           );
         },
@@ -571,17 +747,59 @@ class RustLibApiImpl extends RustLibApiImplPlatform implements RustLibApi {
           decodeSuccessData: sse_decode_unit,
           decodeErrorData: sse_decode_hidlins_api_error,
         ),
-        constMeta: kCrateApiSessionAppSessionConfigureSyncConstMeta,
-        argValues: [that, cfg],
+        constMeta: kCrateApiSessionAppSessionConfigureLocalSyncConstMeta,
+        argValues: [that, role],
         apiImpl: this,
       ),
     );
   }
 
-  TaskConstMeta get kCrateApiSessionAppSessionConfigureSyncConstMeta =>
+  TaskConstMeta get kCrateApiSessionAppSessionConfigureLocalSyncConstMeta =>
       const TaskConstMeta(
-        debugName: "AppSession_configure_sync",
-        argNames: ["that", "cfg"],
+        debugName: "AppSession_configure_local_sync",
+        argNames: ["that", "role"],
+      );
+
+  @override
+  Future<VaultSummary?> crateApiSessionAppSessionConfirmPairing({
+    required AppSession that,
+    required String transactionHandle,
+    required bool accepted,
+    required String peerDisplayName,
+  }) {
+    return handler.executeNormal(
+      NormalTask(
+        callFfi: (port_) {
+          final serializer = SseSerializer(generalizedFrbRustBinding);
+          sse_encode_Auto_Ref_RustOpaque_flutter_rust_bridgefor_generatedRustAutoOpaqueInnerAppSession(
+            that,
+            serializer,
+          );
+          sse_encode_String(transactionHandle, serializer);
+          sse_encode_bool(accepted, serializer);
+          sse_encode_String(peerDisplayName, serializer);
+          pdeCallFfi(
+            generalizedFrbRustBinding,
+            serializer,
+            funcId: 10,
+            port: port_,
+          );
+        },
+        codec: SseCodec(
+          decodeSuccessData: sse_decode_opt_box_autoadd_vault_summary,
+          decodeErrorData: sse_decode_hidlins_api_error,
+        ),
+        constMeta: kCrateApiSessionAppSessionConfirmPairingConstMeta,
+        argValues: [that, transactionHandle, accepted, peerDisplayName],
+        apiImpl: this,
+      ),
+    );
+  }
+
+  TaskConstMeta get kCrateApiSessionAppSessionConfirmPairingConstMeta =>
+      const TaskConstMeta(
+        debugName: "AppSession_confirm_pairing",
+        argNames: ["that", "transactionHandle", "accepted", "peerDisplayName"],
       );
 
   @override
@@ -603,7 +821,7 @@ class RustLibApiImpl extends RustLibApiImplPlatform implements RustLibApi {
           pdeCallFfi(
             generalizedFrbRustBinding,
             serializer,
-            funcId: 7,
+            funcId: 11,
             port: port_,
           );
         },
@@ -643,7 +861,7 @@ class RustLibApiImpl extends RustLibApiImplPlatform implements RustLibApi {
           pdeCallFfi(
             generalizedFrbRustBinding,
             serializer,
-            funcId: 8,
+            funcId: 12,
             port: port_,
           );
         },
@@ -683,7 +901,7 @@ class RustLibApiImpl extends RustLibApiImplPlatform implements RustLibApi {
           pdeCallFfi(
             generalizedFrbRustBinding,
             serializer,
-            funcId: 9,
+            funcId: 13,
             port: port_,
           );
         },
@@ -729,7 +947,7 @@ class RustLibApiImpl extends RustLibApiImplPlatform implements RustLibApi {
           pdeCallFfi(
             generalizedFrbRustBinding,
             serializer,
-            funcId: 10,
+            funcId: 14,
             port: port_,
           );
         },
@@ -781,7 +999,7 @@ class RustLibApiImpl extends RustLibApiImplPlatform implements RustLibApi {
           pdeCallFfi(
             generalizedFrbRustBinding,
             serializer,
-            funcId: 11,
+            funcId: 15,
             port: port_,
           );
         },
@@ -821,7 +1039,7 @@ class RustLibApiImpl extends RustLibApiImplPlatform implements RustLibApi {
           pdeCallFfi(
             generalizedFrbRustBinding,
             serializer,
-            funcId: 12,
+            funcId: 16,
             port: port_,
           );
         },
@@ -861,7 +1079,7 @@ class RustLibApiImpl extends RustLibApiImplPlatform implements RustLibApi {
           pdeCallFfi(
             generalizedFrbRustBinding,
             serializer,
-            funcId: 13,
+            funcId: 17,
             port: port_,
           );
         },
@@ -894,7 +1112,7 @@ class RustLibApiImpl extends RustLibApiImplPlatform implements RustLibApi {
             that,
             serializer,
           );
-          return pdeCallFfi(generalizedFrbRustBinding, serializer, funcId: 14)!;
+          return pdeCallFfi(generalizedFrbRustBinding, serializer, funcId: 18)!;
         },
         codec: SseCodec(
           decodeSuccessData: sse_decode_u_64,
@@ -930,7 +1148,7 @@ class RustLibApiImpl extends RustLibApiImplPlatform implements RustLibApi {
           pdeCallFfi(
             generalizedFrbRustBinding,
             serializer,
-            funcId: 15,
+            funcId: 19,
             port: port_,
           );
         },
@@ -968,7 +1186,7 @@ class RustLibApiImpl extends RustLibApiImplPlatform implements RustLibApi {
           pdeCallFfi(
             generalizedFrbRustBinding,
             serializer,
-            funcId: 16,
+            funcId: 20,
             port: port_,
           );
         },
@@ -1006,7 +1224,7 @@ class RustLibApiImpl extends RustLibApiImplPlatform implements RustLibApi {
           pdeCallFfi(
             generalizedFrbRustBinding,
             serializer,
-            funcId: 17,
+            funcId: 21,
             port: port_,
           );
         },
@@ -1044,7 +1262,7 @@ class RustLibApiImpl extends RustLibApiImplPlatform implements RustLibApi {
           pdeCallFfi(
             generalizedFrbRustBinding,
             serializer,
-            funcId: 18,
+            funcId: 22,
             port: port_,
           );
         },
@@ -1080,7 +1298,7 @@ class RustLibApiImpl extends RustLibApiImplPlatform implements RustLibApi {
           pdeCallFfi(
             generalizedFrbRustBinding,
             serializer,
-            funcId: 19,
+            funcId: 23,
             port: port_,
           );
         },
@@ -1118,7 +1336,7 @@ class RustLibApiImpl extends RustLibApiImplPlatform implements RustLibApi {
           pdeCallFfi(
             generalizedFrbRustBinding,
             serializer,
-            funcId: 20,
+            funcId: 24,
             port: port_,
           );
         },
@@ -1140,6 +1358,42 @@ class RustLibApiImpl extends RustLibApiImplPlatform implements RustLibApi {
       );
 
   @override
+  Future<List<SyncPeerDto>> crateApiSessionAppSessionListSyncPeers({
+    required AppSession that,
+  }) {
+    return handler.executeNormal(
+      NormalTask(
+        callFfi: (port_) {
+          final serializer = SseSerializer(generalizedFrbRustBinding);
+          sse_encode_Auto_Ref_RustOpaque_flutter_rust_bridgefor_generatedRustAutoOpaqueInnerAppSession(
+            that,
+            serializer,
+          );
+          pdeCallFfi(
+            generalizedFrbRustBinding,
+            serializer,
+            funcId: 25,
+            port: port_,
+          );
+        },
+        codec: SseCodec(
+          decodeSuccessData: sse_decode_list_sync_peer_dto,
+          decodeErrorData: sse_decode_hidlins_api_error,
+        ),
+        constMeta: kCrateApiSessionAppSessionListSyncPeersConstMeta,
+        argValues: [that],
+        apiImpl: this,
+      ),
+    );
+  }
+
+  TaskConstMeta get kCrateApiSessionAppSessionListSyncPeersConstMeta =>
+      const TaskConstMeta(
+        debugName: "AppSession_list_sync_peers",
+        argNames: ["that"],
+      );
+
+  @override
   Future<List<String>> crateApiSessionAppSessionListTags({
     required AppSession that,
   }) {
@@ -1154,7 +1408,7 @@ class RustLibApiImpl extends RustLibApiImplPlatform implements RustLibApi {
           pdeCallFfi(
             generalizedFrbRustBinding,
             serializer,
-            funcId: 21,
+            funcId: 26,
             port: port_,
           );
         },
@@ -1190,7 +1444,7 @@ class RustLibApiImpl extends RustLibApiImplPlatform implements RustLibApi {
           pdeCallFfi(
             generalizedFrbRustBinding,
             serializer,
-            funcId: 22,
+            funcId: 27,
             port: port_,
           );
         },
@@ -1212,6 +1466,114 @@ class RustLibApiImpl extends RustLibApiImplPlatform implements RustLibApi {
       );
 
   @override
+  Future<DiscoveryStatusDto> crateApiSessionAppSessionLocalDiscoveryStatus({
+    required AppSession that,
+  }) {
+    return handler.executeNormal(
+      NormalTask(
+        callFfi: (port_) {
+          final serializer = SseSerializer(generalizedFrbRustBinding);
+          sse_encode_Auto_Ref_RustOpaque_flutter_rust_bridgefor_generatedRustAutoOpaqueInnerAppSession(
+            that,
+            serializer,
+          );
+          pdeCallFfi(
+            generalizedFrbRustBinding,
+            serializer,
+            funcId: 28,
+            port: port_,
+          );
+        },
+        codec: SseCodec(
+          decodeSuccessData: sse_decode_discovery_status_dto,
+          decodeErrorData: null,
+        ),
+        constMeta: kCrateApiSessionAppSessionLocalDiscoveryStatusConstMeta,
+        argValues: [that],
+        apiImpl: this,
+      ),
+    );
+  }
+
+  TaskConstMeta get kCrateApiSessionAppSessionLocalDiscoveryStatusConstMeta =>
+      const TaskConstMeta(
+        debugName: "AppSession_local_discovery_status",
+        argNames: ["that"],
+      );
+
+  @override
+  Future<List<LocalEndpointDto>> crateApiSessionAppSessionLocalServerEndpoints({
+    required AppSession that,
+  }) {
+    return handler.executeNormal(
+      NormalTask(
+        callFfi: (port_) {
+          final serializer = SseSerializer(generalizedFrbRustBinding);
+          sse_encode_Auto_Ref_RustOpaque_flutter_rust_bridgefor_generatedRustAutoOpaqueInnerAppSession(
+            that,
+            serializer,
+          );
+          pdeCallFfi(
+            generalizedFrbRustBinding,
+            serializer,
+            funcId: 29,
+            port: port_,
+          );
+        },
+        codec: SseCodec(
+          decodeSuccessData: sse_decode_list_local_endpoint_dto,
+          decodeErrorData: sse_decode_hidlins_api_error,
+        ),
+        constMeta: kCrateApiSessionAppSessionLocalServerEndpointsConstMeta,
+        argValues: [that],
+        apiImpl: this,
+      ),
+    );
+  }
+
+  TaskConstMeta get kCrateApiSessionAppSessionLocalServerEndpointsConstMeta =>
+      const TaskConstMeta(
+        debugName: "AppSession_local_server_endpoints",
+        argNames: ["that"],
+      );
+
+  @override
+  Future<SyncStatusDto> crateApiSessionAppSessionLocalSyncStatus({
+    required AppSession that,
+  }) {
+    return handler.executeNormal(
+      NormalTask(
+        callFfi: (port_) {
+          final serializer = SseSerializer(generalizedFrbRustBinding);
+          sse_encode_Auto_Ref_RustOpaque_flutter_rust_bridgefor_generatedRustAutoOpaqueInnerAppSession(
+            that,
+            serializer,
+          );
+          pdeCallFfi(
+            generalizedFrbRustBinding,
+            serializer,
+            funcId: 30,
+            port: port_,
+          );
+        },
+        codec: SseCodec(
+          decodeSuccessData: sse_decode_sync_status_dto,
+          decodeErrorData: sse_decode_hidlins_api_error,
+        ),
+        constMeta: kCrateApiSessionAppSessionLocalSyncStatusConstMeta,
+        argValues: [that],
+        apiImpl: this,
+      ),
+    );
+  }
+
+  TaskConstMeta get kCrateApiSessionAppSessionLocalSyncStatusConstMeta =>
+      const TaskConstMeta(
+        debugName: "AppSession_local_sync_status",
+        argNames: ["that"],
+      );
+
+  @override
   Stream<LockEvent> crateApiSessionAppSessionLockEvents({
     required AppSession that,
   }) {
@@ -1229,7 +1591,7 @@ class RustLibApiImpl extends RustLibApiImplPlatform implements RustLibApi {
             pdeCallFfi(
               generalizedFrbRustBinding,
               serializer,
-              funcId: 23,
+              funcId: 31,
               port: port_,
             );
           },
@@ -1265,7 +1627,7 @@ class RustLibApiImpl extends RustLibApiImplPlatform implements RustLibApi {
           pdeCallFfi(
             generalizedFrbRustBinding,
             serializer,
-            funcId: 24,
+            funcId: 32,
             port: port_,
           );
         },
@@ -1302,7 +1664,7 @@ class RustLibApiImpl extends RustLibApiImplPlatform implements RustLibApi {
           pdeCallFfi(
             generalizedFrbRustBinding,
             serializer,
-            funcId: 25,
+            funcId: 33,
             port: port_,
           );
         },
@@ -1342,7 +1704,7 @@ class RustLibApiImpl extends RustLibApiImplPlatform implements RustLibApi {
           pdeCallFfi(
             generalizedFrbRustBinding,
             serializer,
-            funcId: 26,
+            funcId: 34,
             port: port_,
           );
         },
@@ -1361,6 +1723,78 @@ class RustLibApiImpl extends RustLibApiImplPlatform implements RustLibApi {
       const TaskConstMeta(
         debugName: "AppSession_move_group",
         argNames: ["that", "uuid", "parent"],
+      );
+
+  @override
+  Future<void> crateApiSessionAppSessionOpenPairingWindow({
+    required AppSession that,
+  }) {
+    return handler.executeNormal(
+      NormalTask(
+        callFfi: (port_) {
+          final serializer = SseSerializer(generalizedFrbRustBinding);
+          sse_encode_Auto_Ref_RustOpaque_flutter_rust_bridgefor_generatedRustAutoOpaqueInnerAppSession(
+            that,
+            serializer,
+          );
+          pdeCallFfi(
+            generalizedFrbRustBinding,
+            serializer,
+            funcId: 35,
+            port: port_,
+          );
+        },
+        codec: SseCodec(
+          decodeSuccessData: sse_decode_unit,
+          decodeErrorData: sse_decode_hidlins_api_error,
+        ),
+        constMeta: kCrateApiSessionAppSessionOpenPairingWindowConstMeta,
+        argValues: [that],
+        apiImpl: this,
+      ),
+    );
+  }
+
+  TaskConstMeta get kCrateApiSessionAppSessionOpenPairingWindowConstMeta =>
+      const TaskConstMeta(
+        debugName: "AppSession_open_pairing_window",
+        argNames: ["that"],
+      );
+
+  @override
+  Future<DiscoveryStatusDto> crateApiSessionAppSessionPollLocalDiscovery({
+    required AppSession that,
+  }) {
+    return handler.executeNormal(
+      NormalTask(
+        callFfi: (port_) {
+          final serializer = SseSerializer(generalizedFrbRustBinding);
+          sse_encode_Auto_Ref_RustOpaque_flutter_rust_bridgefor_generatedRustAutoOpaqueInnerAppSession(
+            that,
+            serializer,
+          );
+          pdeCallFfi(
+            generalizedFrbRustBinding,
+            serializer,
+            funcId: 36,
+            port: port_,
+          );
+        },
+        codec: SseCodec(
+          decodeSuccessData: sse_decode_discovery_status_dto,
+          decodeErrorData: sse_decode_hidlins_api_error,
+        ),
+        constMeta: kCrateApiSessionAppSessionPollLocalDiscoveryConstMeta,
+        argValues: [that],
+        apiImpl: this,
+      ),
+    );
+  }
+
+  TaskConstMeta get kCrateApiSessionAppSessionPollLocalDiscoveryConstMeta =>
+      const TaskConstMeta(
+        debugName: "AppSession_poll_local_discovery",
+        argNames: ["that"],
       );
 
   @override
@@ -1383,7 +1817,7 @@ class RustLibApiImpl extends RustLibApiImplPlatform implements RustLibApi {
           pdeCallFfi(
             generalizedFrbRustBinding,
             serializer,
-            funcId: 27,
+            funcId: 37,
             port: port_,
           );
         },
@@ -1422,7 +1856,7 @@ class RustLibApiImpl extends RustLibApiImplPlatform implements RustLibApi {
           pdeCallFfi(
             generalizedFrbRustBinding,
             serializer,
-            funcId: 28,
+            funcId: 38,
             port: port_,
           );
         },
@@ -1464,7 +1898,7 @@ class RustLibApiImpl extends RustLibApiImplPlatform implements RustLibApi {
           pdeCallFfi(
             generalizedFrbRustBinding,
             serializer,
-            funcId: 29,
+            funcId: 39,
             port: port_,
           );
         },
@@ -1504,7 +1938,7 @@ class RustLibApiImpl extends RustLibApiImplPlatform implements RustLibApi {
           pdeCallFfi(
             generalizedFrbRustBinding,
             serializer,
-            funcId: 30,
+            funcId: 40,
             port: port_,
           );
         },
@@ -1544,7 +1978,7 @@ class RustLibApiImpl extends RustLibApiImplPlatform implements RustLibApi {
           pdeCallFfi(
             generalizedFrbRustBinding,
             serializer,
-            funcId: 31,
+            funcId: 41,
             port: port_,
           );
         },
@@ -1566,6 +2000,46 @@ class RustLibApiImpl extends RustLibApiImplPlatform implements RustLibApi {
       );
 
   @override
+  Future<void> crateApiSessionAppSessionRenameSyncPeer({
+    required AppSession that,
+    required String peerId,
+    required String displayName,
+  }) {
+    return handler.executeNormal(
+      NormalTask(
+        callFfi: (port_) {
+          final serializer = SseSerializer(generalizedFrbRustBinding);
+          sse_encode_Auto_Ref_RustOpaque_flutter_rust_bridgefor_generatedRustAutoOpaqueInnerAppSession(
+            that,
+            serializer,
+          );
+          sse_encode_String(peerId, serializer);
+          sse_encode_String(displayName, serializer);
+          pdeCallFfi(
+            generalizedFrbRustBinding,
+            serializer,
+            funcId: 42,
+            port: port_,
+          );
+        },
+        codec: SseCodec(
+          decodeSuccessData: sse_decode_unit,
+          decodeErrorData: sse_decode_hidlins_api_error,
+        ),
+        constMeta: kCrateApiSessionAppSessionRenameSyncPeerConstMeta,
+        argValues: [that, peerId, displayName],
+        apiImpl: this,
+      ),
+    );
+  }
+
+  TaskConstMeta get kCrateApiSessionAppSessionRenameSyncPeerConstMeta =>
+      const TaskConstMeta(
+        debugName: "AppSession_rename_sync_peer",
+        argNames: ["that", "peerId", "displayName"],
+      );
+
+  @override
   void crateApiSessionAppSessionReportActivity({required AppSession that}) {
     return handler.executeSync(
       SyncTask(
@@ -1575,7 +2049,7 @@ class RustLibApiImpl extends RustLibApiImplPlatform implements RustLibApi {
             that,
             serializer,
           );
-          return pdeCallFfi(generalizedFrbRustBinding, serializer, funcId: 32)!;
+          return pdeCallFfi(generalizedFrbRustBinding, serializer, funcId: 43)!;
         },
         codec: SseCodec(
           decodeSuccessData: sse_decode_unit,
@@ -1608,7 +2082,7 @@ class RustLibApiImpl extends RustLibApiImplPlatform implements RustLibApi {
             serializer,
           );
           sse_encode_lifecycle_state_dto(state, serializer);
-          return pdeCallFfi(generalizedFrbRustBinding, serializer, funcId: 33)!;
+          return pdeCallFfi(generalizedFrbRustBinding, serializer, funcId: 44)!;
         },
         codec: SseCodec(
           decodeSuccessData: sse_decode_lock_event,
@@ -1646,7 +2120,7 @@ class RustLibApiImpl extends RustLibApiImplPlatform implements RustLibApi {
           pdeCallFfi(
             generalizedFrbRustBinding,
             serializer,
-            funcId: 34,
+            funcId: 45,
             port: port_,
           );
         },
@@ -1665,6 +2139,44 @@ class RustLibApiImpl extends RustLibApiImplPlatform implements RustLibApi {
       const TaskConstMeta(
         debugName: "AppSession_reveal_field",
         argNames: ["that", "uuid", "field"],
+      );
+
+  @override
+  Future<void> crateApiSessionAppSessionRevokeSyncPeer({
+    required AppSession that,
+    required String peerId,
+  }) {
+    return handler.executeNormal(
+      NormalTask(
+        callFfi: (port_) {
+          final serializer = SseSerializer(generalizedFrbRustBinding);
+          sse_encode_Auto_Ref_RustOpaque_flutter_rust_bridgefor_generatedRustAutoOpaqueInnerAppSession(
+            that,
+            serializer,
+          );
+          sse_encode_String(peerId, serializer);
+          pdeCallFfi(
+            generalizedFrbRustBinding,
+            serializer,
+            funcId: 46,
+            port: port_,
+          );
+        },
+        codec: SseCodec(
+          decodeSuccessData: sse_decode_unit,
+          decodeErrorData: sse_decode_hidlins_api_error,
+        ),
+        constMeta: kCrateApiSessionAppSessionRevokeSyncPeerConstMeta,
+        argValues: [that, peerId],
+        apiImpl: this,
+      ),
+    );
+  }
+
+  TaskConstMeta get kCrateApiSessionAppSessionRevokeSyncPeerConstMeta =>
+      const TaskConstMeta(
+        debugName: "AppSession_revoke_sync_peer",
+        argNames: ["that", "peerId"],
       );
 
   @override
@@ -1688,7 +2200,7 @@ class RustLibApiImpl extends RustLibApiImplPlatform implements RustLibApi {
           pdeCallFfi(
             generalizedFrbRustBinding,
             serializer,
-            funcId: 35,
+            funcId: 47,
             port: port_,
           );
         },
@@ -1726,7 +2238,7 @@ class RustLibApiImpl extends RustLibApiImplPlatform implements RustLibApi {
           pdeCallFfi(
             generalizedFrbRustBinding,
             serializer,
-            funcId: 36,
+            funcId: 48,
             port: port_,
           );
         },
@@ -1748,6 +2260,46 @@ class RustLibApiImpl extends RustLibApiImplPlatform implements RustLibApi {
       );
 
   @override
+  Future<void> crateApiSessionAppSessionSetDiscoveryCandidates({
+    required AppSession that,
+    required DiscoveryPermissionDto permission,
+    required List<LocalEndpointDto> candidates,
+  }) {
+    return handler.executeNormal(
+      NormalTask(
+        callFfi: (port_) {
+          final serializer = SseSerializer(generalizedFrbRustBinding);
+          sse_encode_Auto_Ref_RustOpaque_flutter_rust_bridgefor_generatedRustAutoOpaqueInnerAppSession(
+            that,
+            serializer,
+          );
+          sse_encode_discovery_permission_dto(permission, serializer);
+          sse_encode_list_local_endpoint_dto(candidates, serializer);
+          pdeCallFfi(
+            generalizedFrbRustBinding,
+            serializer,
+            funcId: 49,
+            port: port_,
+          );
+        },
+        codec: SseCodec(
+          decodeSuccessData: sse_decode_unit,
+          decodeErrorData: sse_decode_hidlins_api_error,
+        ),
+        constMeta: kCrateApiSessionAppSessionSetDiscoveryCandidatesConstMeta,
+        argValues: [that, permission, candidates],
+        apiImpl: this,
+      ),
+    );
+  }
+
+  TaskConstMeta get kCrateApiSessionAppSessionSetDiscoveryCandidatesConstMeta =>
+      const TaskConstMeta(
+        debugName: "AppSession_set_discovery_candidates",
+        argNames: ["that", "permission", "candidates"],
+      );
+
+  @override
   Future<void> crateApiSessionAppSessionSetExpiration({
     required AppSession that,
     required String uuid,
@@ -1766,7 +2318,7 @@ class RustLibApiImpl extends RustLibApiImplPlatform implements RustLibApi {
           pdeCallFfi(
             generalizedFrbRustBinding,
             serializer,
-            funcId: 37,
+            funcId: 50,
             port: port_,
           );
         },
@@ -1804,7 +2356,7 @@ class RustLibApiImpl extends RustLibApiImplPlatform implements RustLibApi {
           pdeCallFfi(
             generalizedFrbRustBinding,
             serializer,
-            funcId: 38,
+            funcId: 51,
             port: port_,
           );
         },
@@ -1838,7 +2390,7 @@ class RustLibApiImpl extends RustLibApiImplPlatform implements RustLibApi {
           pdeCallFfi(
             generalizedFrbRustBinding,
             serializer,
-            funcId: 39,
+            funcId: 52,
             port: port_,
           );
         },
@@ -1857,6 +2409,80 @@ class RustLibApiImpl extends RustLibApiImplPlatform implements RustLibApi {
       const TaskConstMeta(debugName: "AppSession_shutdown", argNames: ["that"]);
 
   @override
+  Future<void> crateApiSessionAppSessionStartStartupSync({
+    required AppSession that,
+  }) {
+    return handler.executeNormal(
+      NormalTask(
+        callFfi: (port_) {
+          final serializer = SseSerializer(generalizedFrbRustBinding);
+          sse_encode_Auto_Ref_RustOpaque_flutter_rust_bridgefor_generatedRustAutoOpaqueInnerAppSession(
+            that,
+            serializer,
+          );
+          pdeCallFfi(
+            generalizedFrbRustBinding,
+            serializer,
+            funcId: 53,
+            port: port_,
+          );
+        },
+        codec: SseCodec(
+          decodeSuccessData: sse_decode_unit,
+          decodeErrorData: sse_decode_hidlins_api_error,
+        ),
+        constMeta: kCrateApiSessionAppSessionStartStartupSyncConstMeta,
+        argValues: [that],
+        apiImpl: this,
+      ),
+    );
+  }
+
+  TaskConstMeta get kCrateApiSessionAppSessionStartStartupSyncConstMeta =>
+      const TaskConstMeta(
+        debugName: "AppSession_start_startup_sync",
+        argNames: ["that"],
+      );
+
+  @override
+  Future<LocalEndpointDto> crateApiSessionAppSessionStartSyncServer({
+    required AppSession that,
+    required LocalEndpointDto endpoint,
+  }) {
+    return handler.executeNormal(
+      NormalTask(
+        callFfi: (port_) {
+          final serializer = SseSerializer(generalizedFrbRustBinding);
+          sse_encode_Auto_Ref_RustOpaque_flutter_rust_bridgefor_generatedRustAutoOpaqueInnerAppSession(
+            that,
+            serializer,
+          );
+          sse_encode_box_autoadd_local_endpoint_dto(endpoint, serializer);
+          pdeCallFfi(
+            generalizedFrbRustBinding,
+            serializer,
+            funcId: 54,
+            port: port_,
+          );
+        },
+        codec: SseCodec(
+          decodeSuccessData: sse_decode_local_endpoint_dto,
+          decodeErrorData: sse_decode_hidlins_api_error,
+        ),
+        constMeta: kCrateApiSessionAppSessionStartSyncServerConstMeta,
+        argValues: [that, endpoint],
+        apiImpl: this,
+      ),
+    );
+  }
+
+  TaskConstMeta get kCrateApiSessionAppSessionStartSyncServerConstMeta =>
+      const TaskConstMeta(
+        debugName: "AppSession_start_sync_server",
+        argNames: ["that", "endpoint"],
+      );
+
+  @override
   Future<List<String>> crateApiSessionAppSessionStartupWarnings({
     required AppSession that,
   }) {
@@ -1871,7 +2497,7 @@ class RustLibApiImpl extends RustLibApiImplPlatform implements RustLibApi {
           pdeCallFfi(
             generalizedFrbRustBinding,
             serializer,
-            funcId: 40,
+            funcId: 55,
             port: port_,
           );
         },
@@ -1893,6 +2519,42 @@ class RustLibApiImpl extends RustLibApiImplPlatform implements RustLibApi {
       );
 
   @override
+  Future<void> crateApiSessionAppSessionStopSyncServer({
+    required AppSession that,
+  }) {
+    return handler.executeNormal(
+      NormalTask(
+        callFfi: (port_) {
+          final serializer = SseSerializer(generalizedFrbRustBinding);
+          sse_encode_Auto_Ref_RustOpaque_flutter_rust_bridgefor_generatedRustAutoOpaqueInnerAppSession(
+            that,
+            serializer,
+          );
+          pdeCallFfi(
+            generalizedFrbRustBinding,
+            serializer,
+            funcId: 56,
+            port: port_,
+          );
+        },
+        codec: SseCodec(
+          decodeSuccessData: sse_decode_unit,
+          decodeErrorData: null,
+        ),
+        constMeta: kCrateApiSessionAppSessionStopSyncServerConstMeta,
+        argValues: [that],
+        apiImpl: this,
+      ),
+    );
+  }
+
+  TaskConstMeta get kCrateApiSessionAppSessionStopSyncServerConstMeta =>
+      const TaskConstMeta(
+        debugName: "AppSession_stop_sync_server",
+        argNames: ["that"],
+      );
+
+  @override
   Stream<SyncEvent> crateApiSessionAppSessionSyncEvents({
     required AppSession that,
   }) {
@@ -1910,7 +2572,7 @@ class RustLibApiImpl extends RustLibApiImplPlatform implements RustLibApi {
             pdeCallFfi(
               generalizedFrbRustBinding,
               serializer,
-              funcId: 41,
+              funcId: 57,
               port: port_,
             );
           },
@@ -1948,7 +2610,7 @@ class RustLibApiImpl extends RustLibApiImplPlatform implements RustLibApi {
           pdeCallFfi(
             generalizedFrbRustBinding,
             serializer,
-            funcId: 42,
+            funcId: 58,
             port: port_,
           );
         },
@@ -1981,7 +2643,7 @@ class RustLibApiImpl extends RustLibApiImplPlatform implements RustLibApi {
           pdeCallFfi(
             generalizedFrbRustBinding,
             serializer,
-            funcId: 43,
+            funcId: 59,
             port: port_,
           );
         },
@@ -2016,7 +2678,7 @@ class RustLibApiImpl extends RustLibApiImplPlatform implements RustLibApi {
             serializer,
           );
           sse_encode_String(uuid, serializer);
-          return pdeCallFfi(generalizedFrbRustBinding, serializer, funcId: 44)!;
+          return pdeCallFfi(generalizedFrbRustBinding, serializer, funcId: 60)!;
         },
         codec: SseCodec(
           decodeSuccessData: sse_decode_totp_code,
@@ -2056,7 +2718,7 @@ class RustLibApiImpl extends RustLibApiImplPlatform implements RustLibApi {
           pdeCallFfi(
             generalizedFrbRustBinding,
             serializer,
-            funcId: 45,
+            funcId: 61,
             port: port_,
           );
         },
@@ -2096,7 +2758,7 @@ class RustLibApiImpl extends RustLibApiImplPlatform implements RustLibApi {
           pdeCallFfi(
             generalizedFrbRustBinding,
             serializer,
-            funcId: 46,
+            funcId: 62,
             port: port_,
           );
         },
@@ -2132,7 +2794,7 @@ class RustLibApiImpl extends RustLibApiImplPlatform implements RustLibApi {
           pdeCallFfi(
             generalizedFrbRustBinding,
             serializer,
-            funcId: 47,
+            funcId: 63,
             port: port_,
           );
         },
@@ -2162,7 +2824,7 @@ class RustLibApiImpl extends RustLibApiImplPlatform implements RustLibApi {
           pdeCallFfi(
             generalizedFrbRustBinding,
             serializer,
-            funcId: 48,
+            funcId: 64,
             port: port_,
           );
         },
@@ -2190,7 +2852,7 @@ class RustLibApiImpl extends RustLibApiImplPlatform implements RustLibApi {
           pdeCallFfi(
             generalizedFrbRustBinding,
             serializer,
-            funcId: 49,
+            funcId: 65,
             port: port_,
           );
         },
@@ -2353,6 +3015,24 @@ class RustLibApiImpl extends RustLibApiImplPlatform implements RustLibApi {
   }
 
   @protected
+  LocalEndpointDto dco_decode_box_autoadd_local_endpoint_dto(dynamic raw) {
+    // Codec=Dco (DartCObject based), see doc to use other codecs
+    return dco_decode_local_endpoint_dto(raw);
+  }
+
+  @protected
+  LocalSyncRoleDto dco_decode_box_autoadd_local_sync_role_dto(dynamic raw) {
+    // Codec=Dco (DartCObject based), see doc to use other codecs
+    return dco_decode_local_sync_role_dto(raw);
+  }
+
+  @protected
+  PairingPromptDto dco_decode_box_autoadd_pairing_prompt_dto(dynamic raw) {
+    // Codec=Dco (DartCObject based), see doc to use other codecs
+    return dco_decode_pairing_prompt_dto(raw);
+  }
+
+  @protected
   PassphraseOptionsDto dco_decode_box_autoadd_passphrase_options_dto(
     dynamic raw,
   ) {
@@ -2370,12 +3050,6 @@ class RustLibApiImpl extends RustLibApiImplPlatform implements RustLibApi {
   RevealField dco_decode_box_autoadd_reveal_field(dynamic raw) {
     // Codec=Dco (DartCObject based), see doc to use other codecs
     return dco_decode_reveal_field(raw);
-  }
-
-  @protected
-  S3ConfigDto dco_decode_box_autoadd_s_3_config_dto(dynamic raw) {
-    // Codec=Dco (DartCObject based), see doc to use other codecs
-    return dco_decode_s_3_config_dto(raw);
   }
 
   @protected
@@ -2400,6 +3074,12 @@ class RustLibApiImpl extends RustLibApiImplPlatform implements RustLibApi {
   UiPrefs dco_decode_box_autoadd_ui_prefs(dynamic raw) {
     // Codec=Dco (DartCObject based), see doc to use other codecs
     return dco_decode_ui_prefs(raw);
+  }
+
+  @protected
+  VaultSummary dco_decode_box_autoadd_vault_summary(dynamic raw) {
+    // Codec=Dco (DartCObject based), see doc to use other codecs
+    return dco_decode_vault_summary(raw);
   }
 
   @protected
@@ -2453,6 +3133,24 @@ class RustLibApiImpl extends RustLibApiImplPlatform implements RustLibApi {
       name: dco_decode_String(arr[0]),
       value: dco_decode_String(arr[1]),
       protected: dco_decode_bool(arr[2]),
+    );
+  }
+
+  @protected
+  DiscoveryPermissionDto dco_decode_discovery_permission_dto(dynamic raw) {
+    // Codec=Dco (DartCObject based), see doc to use other codecs
+    return DiscoveryPermissionDto.values[raw as int];
+  }
+
+  @protected
+  DiscoveryStatusDto dco_decode_discovery_status_dto(dynamic raw) {
+    // Codec=Dco (DartCObject based), see doc to use other codecs
+    final arr = raw as List<dynamic>;
+    if (arr.length != 2)
+      throw Exception('unexpected arr length: expect 2 but see ${arr.length}');
+    return DiscoveryStatusDto(
+      permission: dco_decode_discovery_permission_dto(arr[0]),
+      candidates: dco_decode_list_local_endpoint_dto(arr[1]),
     );
   }
 
@@ -2613,27 +3311,41 @@ class RustLibApiImpl extends RustLibApiImplPlatform implements RustLibApi {
       case 11:
         return HidlinsApiError_SyncNotConfigured();
       case 12:
+        return HidlinsApiError_LocalSyncConfiguration();
+      case 13:
+        return HidlinsApiError_SyncPermissionDenied();
+      case 14:
+        return HidlinsApiError_SyncNotFound();
+      case 15:
+        return HidlinsApiError_SyncKeyMismatch();
+      case 16:
+        return HidlinsApiError_SyncRevoked();
+      case 17:
+        return HidlinsApiError_SyncBusy();
+      case 18:
+        return HidlinsApiError_SyncConflict();
+      case 19:
+        return HidlinsApiError_SyncCanceled();
+      case 20:
+        return HidlinsApiError_SyncOffline();
+      case 21:
         return HidlinsApiError_SyncRemoteUnreachable(
           endpoint: dco_decode_opt_String(raw[1]),
         );
-      case 13:
+      case 22:
         return HidlinsApiError_SyncAuthFailed();
-      case 14:
+      case 23:
         return HidlinsApiError_SyncConflictUnresolvable(
           backupPath: dco_decode_String(raw[1]),
         );
-      case 15:
-        return HidlinsApiError_SyncDuplicateTarget(
-          existingVault: dco_decode_String(raw[1]),
-        );
-      case 16:
+      case 24:
         return HidlinsApiError_InvalidInput(
           field: dco_decode_String(raw[1]),
           reason: dco_decode_String(raw[2]),
         );
-      case 17:
+      case 25:
         return HidlinsApiError_Io(context: dco_decode_String(raw[1]));
-      case 18:
+      case 26:
         return HidlinsApiError_Internal(context: dco_decode_String(raw[1]));
       default:
         throw Exception("unreachable");
@@ -2731,6 +3443,12 @@ class RustLibApiImpl extends RustLibApiImplPlatform implements RustLibApi {
   }
 
   @protected
+  List<LocalEndpointDto> dco_decode_list_local_endpoint_dto(dynamic raw) {
+    // Codec=Dco (DartCObject based), see doc to use other codecs
+    return (raw as List<dynamic>).map(dco_decode_local_endpoint_dto).toList();
+  }
+
+  @protected
   Uint8List dco_decode_list_prim_u_8_strict(dynamic raw) {
     // Codec=Dco (DartCObject based), see doc to use other codecs
     return raw as Uint8List;
@@ -2759,9 +3477,34 @@ class RustLibApiImpl extends RustLibApiImplPlatform implements RustLibApi {
   }
 
   @protected
+  List<SyncPeerDto> dco_decode_list_sync_peer_dto(dynamic raw) {
+    // Codec=Dco (DartCObject based), see doc to use other codecs
+    return (raw as List<dynamic>).map(dco_decode_sync_peer_dto).toList();
+  }
+
+  @protected
   List<VaultSummary> dco_decode_list_vault_summary(dynamic raw) {
     // Codec=Dco (DartCObject based), see doc to use other codecs
     return (raw as List<dynamic>).map(dco_decode_vault_summary).toList();
+  }
+
+  @protected
+  LocalEndpointDto dco_decode_local_endpoint_dto(dynamic raw) {
+    // Codec=Dco (DartCObject based), see doc to use other codecs
+    final arr = raw as List<dynamic>;
+    if (arr.length != 3)
+      throw Exception('unexpected arr length: expect 3 but see ${arr.length}');
+    return LocalEndpointDto(
+      address: dco_decode_String(arr[0]),
+      port: dco_decode_u_16(arr[1]),
+      scopeId: dco_decode_u_32(arr[2]),
+    );
+  }
+
+  @protected
+  LocalSyncRoleDto dco_decode_local_sync_role_dto(dynamic raw) {
+    // Codec=Dco (DartCObject based), see doc to use other codecs
+    return LocalSyncRoleDto.values[raw as int];
   }
 
   @protected
@@ -2807,6 +3550,14 @@ class RustLibApiImpl extends RustLibApiImplPlatform implements RustLibApi {
   }
 
   @protected
+  LocalSyncRoleDto? dco_decode_opt_box_autoadd_local_sync_role_dto(
+    dynamic raw,
+  ) {
+    // Codec=Dco (DartCObject based), see doc to use other codecs
+    return raw == null ? null : dco_decode_box_autoadd_local_sync_role_dto(raw);
+  }
+
+  @protected
   SyncOutcomeDto? dco_decode_opt_box_autoadd_sync_outcome_dto(dynamic raw) {
     // Codec=Dco (DartCObject based), see doc to use other codecs
     return raw == null ? null : dco_decode_box_autoadd_sync_outcome_dto(raw);
@@ -2816,6 +3567,12 @@ class RustLibApiImpl extends RustLibApiImplPlatform implements RustLibApi {
   int? dco_decode_opt_box_autoadd_u_32(dynamic raw) {
     // Codec=Dco (DartCObject based), see doc to use other codecs
     return raw == null ? null : dco_decode_box_autoadd_u_32(raw);
+  }
+
+  @protected
+  VaultSummary? dco_decode_opt_box_autoadd_vault_summary(dynamic raw) {
+    // Codec=Dco (DartCObject based), see doc to use other codecs
+    return raw == null ? null : dco_decode_box_autoadd_vault_summary(raw);
   }
 
   @protected
@@ -2830,6 +3587,18 @@ class RustLibApiImpl extends RustLibApiImplPlatform implements RustLibApi {
   ) {
     // Codec=Dco (DartCObject based), see doc to use other codecs
     return raw == null ? null : dco_decode_list_custom_field_input_dto(raw);
+  }
+
+  @protected
+  PairingPromptDto dco_decode_pairing_prompt_dto(dynamic raw) {
+    // Codec=Dco (DartCObject based), see doc to use other codecs
+    final arr = raw as List<dynamic>;
+    if (arr.length != 2)
+      throw Exception('unexpected arr length: expect 2 but see ${arr.length}');
+    return PairingPromptDto(
+      transactionHandle: dco_decode_String(arr[0]),
+      sas: dco_decode_String(arr[1]),
+    );
   }
 
   @protected
@@ -2883,23 +3652,6 @@ class RustLibApiImpl extends RustLibApiImplPlatform implements RustLibApi {
       default:
         throw Exception("unreachable");
     }
-  }
-
-  @protected
-  S3ConfigDto dco_decode_s_3_config_dto(dynamic raw) {
-    // Codec=Dco (DartCObject based), see doc to use other codecs
-    final arr = raw as List<dynamic>;
-    if (arr.length != 7)
-      throw Exception('unexpected arr length: expect 7 but see ${arr.length}');
-    return S3ConfigDto(
-      bucket: dco_decode_String(arr[0]),
-      key: dco_decode_String(arr[1]),
-      region: dco_decode_String(arr[2]),
-      endpoint: dco_decode_opt_String(arr[3]),
-      pathStyle: dco_decode_bool(arr[4]),
-      accessKeyId: dco_decode_String(arr[5]),
-      secretAccessKey: dco_decode_String(arr[6]),
-    );
   }
 
   @protected
@@ -2966,7 +3718,7 @@ class RustLibApiImpl extends RustLibApiImplPlatform implements RustLibApi {
     // Codec=Dco (DartCObject based), see doc to use other codecs
     switch (raw[0]) {
       case 0:
-        return SyncEvent_Started();
+        return SyncEvent_Started(automatic: dco_decode_bool(raw[1]));
       case 1:
         return SyncEvent_Activity();
       case 2:
@@ -2975,6 +3727,16 @@ class RustLibApiImpl extends RustLibApiImplPlatform implements RustLibApi {
         return SyncEvent_Failed(
           dco_decode_box_autoadd_hidlins_api_error(raw[1]),
         );
+      case 4:
+        return SyncEvent_PairingRequested(
+          dco_decode_box_autoadd_pairing_prompt_dto(raw[1]),
+        );
+      case 5:
+        return SyncEvent_ServerStarted(
+          dco_decode_box_autoadd_local_endpoint_dto(raw[1]),
+        );
+      case 6:
+        return SyncEvent_ServerStopped();
       default:
         throw Exception("unreachable");
     }
@@ -3004,15 +3766,34 @@ class RustLibApiImpl extends RustLibApiImplPlatform implements RustLibApi {
   }
 
   @protected
-  SyncStatusDto dco_decode_sync_status_dto(dynamic raw) {
+  SyncPeerDto dco_decode_sync_peer_dto(dynamic raw) {
     // Codec=Dco (DartCObject based), see doc to use other codecs
     final arr = raw as List<dynamic>;
     if (arr.length != 3)
       throw Exception('unexpected arr length: expect 3 but see ${arr.length}');
+    return SyncPeerDto(
+      peerId: dco_decode_String(arr[0]),
+      displayName: dco_decode_String(arr[1]),
+      revoked: dco_decode_bool(arr[2]),
+    );
+  }
+
+  @protected
+  SyncStatusDto dco_decode_sync_status_dto(dynamic raw) {
+    // Codec=Dco (DartCObject based), see doc to use other codecs
+    final arr = raw as List<dynamic>;
+    if (arr.length != 9)
+      throw Exception('unexpected arr length: expect 9 but see ${arr.length}');
     return SyncStatusDto(
       configured: dco_decode_bool(arr[0]),
       inFlight: dco_decode_bool(arr[1]),
       lastOutcome: dco_decode_opt_box_autoadd_sync_outcome_dto(arr[2]),
+      role: dco_decode_opt_box_autoadd_local_sync_role_dto(arr[3]),
+      paired: dco_decode_bool(arr[4]),
+      activePeerCount: dco_decode_usize(arr[5]),
+      serverEnabled: dco_decode_bool(arr[6]),
+      serverRunning: dco_decode_bool(arr[7]),
+      pairingOpen: dco_decode_bool(arr[8]),
     );
   }
 
@@ -3027,6 +3808,12 @@ class RustLibApiImpl extends RustLibApiImplPlatform implements RustLibApi {
       remainingSecs: dco_decode_u_64(arr[1]),
       period: dco_decode_u_64(arr[2]),
     );
+  }
+
+  @protected
+  int dco_decode_u_16(dynamic raw) {
+    // Codec=Dco (DartCObject based), see doc to use other codecs
+    return raw as int;
   }
 
   @protected
@@ -3253,6 +4040,30 @@ class RustLibApiImpl extends RustLibApiImplPlatform implements RustLibApi {
   }
 
   @protected
+  LocalEndpointDto sse_decode_box_autoadd_local_endpoint_dto(
+    SseDeserializer deserializer,
+  ) {
+    // Codec=Sse (Serialization based), see doc to use other codecs
+    return (sse_decode_local_endpoint_dto(deserializer));
+  }
+
+  @protected
+  LocalSyncRoleDto sse_decode_box_autoadd_local_sync_role_dto(
+    SseDeserializer deserializer,
+  ) {
+    // Codec=Sse (Serialization based), see doc to use other codecs
+    return (sse_decode_local_sync_role_dto(deserializer));
+  }
+
+  @protected
+  PairingPromptDto sse_decode_box_autoadd_pairing_prompt_dto(
+    SseDeserializer deserializer,
+  ) {
+    // Codec=Sse (Serialization based), see doc to use other codecs
+    return (sse_decode_pairing_prompt_dto(deserializer));
+  }
+
+  @protected
   PassphraseOptionsDto sse_decode_box_autoadd_passphrase_options_dto(
     SseDeserializer deserializer,
   ) {
@@ -3274,14 +4085,6 @@ class RustLibApiImpl extends RustLibApiImplPlatform implements RustLibApi {
   ) {
     // Codec=Sse (Serialization based), see doc to use other codecs
     return (sse_decode_reveal_field(deserializer));
-  }
-
-  @protected
-  S3ConfigDto sse_decode_box_autoadd_s_3_config_dto(
-    SseDeserializer deserializer,
-  ) {
-    // Codec=Sse (Serialization based), see doc to use other codecs
-    return (sse_decode_s_3_config_dto(deserializer));
   }
 
   @protected
@@ -3310,6 +4113,14 @@ class RustLibApiImpl extends RustLibApiImplPlatform implements RustLibApi {
   UiPrefs sse_decode_box_autoadd_ui_prefs(SseDeserializer deserializer) {
     // Codec=Sse (Serialization based), see doc to use other codecs
     return (sse_decode_ui_prefs(deserializer));
+  }
+
+  @protected
+  VaultSummary sse_decode_box_autoadd_vault_summary(
+    SseDeserializer deserializer,
+  ) {
+    // Codec=Sse (Serialization based), see doc to use other codecs
+    return (sse_decode_vault_summary(deserializer));
   }
 
   @protected
@@ -3365,6 +4176,28 @@ class RustLibApiImpl extends RustLibApiImplPlatform implements RustLibApi {
       name: var_name,
       value: var_value,
       protected: var_protected,
+    );
+  }
+
+  @protected
+  DiscoveryPermissionDto sse_decode_discovery_permission_dto(
+    SseDeserializer deserializer,
+  ) {
+    // Codec=Sse (Serialization based), see doc to use other codecs
+    var inner = sse_decode_i_32(deserializer);
+    return DiscoveryPermissionDto.values[inner];
+  }
+
+  @protected
+  DiscoveryStatusDto sse_decode_discovery_status_dto(
+    SseDeserializer deserializer,
+  ) {
+    // Codec=Sse (Serialization based), see doc to use other codecs
+    var var_permission = sse_decode_discovery_permission_dto(deserializer);
+    var var_candidates = sse_decode_list_local_endpoint_dto(deserializer);
+    return DiscoveryStatusDto(
+      permission: var_permission,
+      candidates: var_candidates,
     );
   }
 
@@ -3560,31 +4393,44 @@ class RustLibApiImpl extends RustLibApiImplPlatform implements RustLibApi {
       case 11:
         return HidlinsApiError_SyncNotConfigured();
       case 12:
+        return HidlinsApiError_LocalSyncConfiguration();
+      case 13:
+        return HidlinsApiError_SyncPermissionDenied();
+      case 14:
+        return HidlinsApiError_SyncNotFound();
+      case 15:
+        return HidlinsApiError_SyncKeyMismatch();
+      case 16:
+        return HidlinsApiError_SyncRevoked();
+      case 17:
+        return HidlinsApiError_SyncBusy();
+      case 18:
+        return HidlinsApiError_SyncConflict();
+      case 19:
+        return HidlinsApiError_SyncCanceled();
+      case 20:
+        return HidlinsApiError_SyncOffline();
+      case 21:
         var var_endpoint = sse_decode_opt_String(deserializer);
         return HidlinsApiError_SyncRemoteUnreachable(endpoint: var_endpoint);
-      case 13:
+      case 22:
         return HidlinsApiError_SyncAuthFailed();
-      case 14:
+      case 23:
         var var_backupPath = sse_decode_String(deserializer);
         return HidlinsApiError_SyncConflictUnresolvable(
           backupPath: var_backupPath,
         );
-      case 15:
-        var var_existingVault = sse_decode_String(deserializer);
-        return HidlinsApiError_SyncDuplicateTarget(
-          existingVault: var_existingVault,
-        );
-      case 16:
+      case 24:
         var var_field = sse_decode_String(deserializer);
         var var_reason = sse_decode_String(deserializer);
         return HidlinsApiError_InvalidInput(
           field: var_field,
           reason: var_reason,
         );
-      case 17:
+      case 25:
         var var_context = sse_decode_String(deserializer);
         return HidlinsApiError_Io(context: var_context);
-      case 18:
+      case 26:
         var var_context = sse_decode_String(deserializer);
         return HidlinsApiError_Internal(context: var_context);
       default:
@@ -3740,6 +4586,20 @@ class RustLibApiImpl extends RustLibApiImplPlatform implements RustLibApi {
   }
 
   @protected
+  List<LocalEndpointDto> sse_decode_list_local_endpoint_dto(
+    SseDeserializer deserializer,
+  ) {
+    // Codec=Sse (Serialization based), see doc to use other codecs
+
+    var len_ = sse_decode_i_32(deserializer);
+    var ans_ = <LocalEndpointDto>[];
+    for (var idx_ = 0; idx_ < len_; ++idx_) {
+      ans_.add(sse_decode_local_endpoint_dto(deserializer));
+    }
+    return ans_;
+  }
+
+  @protected
   Uint8List sse_decode_list_prim_u_8_strict(SseDeserializer deserializer) {
     // Codec=Sse (Serialization based), see doc to use other codecs
     var len_ = sse_decode_i_32(deserializer);
@@ -3787,6 +4647,20 @@ class RustLibApiImpl extends RustLibApiImplPlatform implements RustLibApi {
   }
 
   @protected
+  List<SyncPeerDto> sse_decode_list_sync_peer_dto(
+    SseDeserializer deserializer,
+  ) {
+    // Codec=Sse (Serialization based), see doc to use other codecs
+
+    var len_ = sse_decode_i_32(deserializer);
+    var ans_ = <SyncPeerDto>[];
+    for (var idx_ = 0; idx_ < len_; ++idx_) {
+      ans_.add(sse_decode_sync_peer_dto(deserializer));
+    }
+    return ans_;
+  }
+
+  @protected
   List<VaultSummary> sse_decode_list_vault_summary(
     SseDeserializer deserializer,
   ) {
@@ -3798,6 +4672,28 @@ class RustLibApiImpl extends RustLibApiImplPlatform implements RustLibApi {
       ans_.add(sse_decode_vault_summary(deserializer));
     }
     return ans_;
+  }
+
+  @protected
+  LocalEndpointDto sse_decode_local_endpoint_dto(SseDeserializer deserializer) {
+    // Codec=Sse (Serialization based), see doc to use other codecs
+    var var_address = sse_decode_String(deserializer);
+    var var_port = sse_decode_u_16(deserializer);
+    var var_scopeId = sse_decode_u_32(deserializer);
+    return LocalEndpointDto(
+      address: var_address,
+      port: var_port,
+      scopeId: var_scopeId,
+    );
+  }
+
+  @protected
+  LocalSyncRoleDto sse_decode_local_sync_role_dto(
+    SseDeserializer deserializer,
+  ) {
+    // Codec=Sse (Serialization based), see doc to use other codecs
+    var inner = sse_decode_i_32(deserializer);
+    return LocalSyncRoleDto.values[inner];
   }
 
   @protected
@@ -3872,6 +4768,19 @@ class RustLibApiImpl extends RustLibApiImplPlatform implements RustLibApi {
   }
 
   @protected
+  LocalSyncRoleDto? sse_decode_opt_box_autoadd_local_sync_role_dto(
+    SseDeserializer deserializer,
+  ) {
+    // Codec=Sse (Serialization based), see doc to use other codecs
+
+    if (sse_decode_bool(deserializer)) {
+      return (sse_decode_box_autoadd_local_sync_role_dto(deserializer));
+    } else {
+      return null;
+    }
+  }
+
+  @protected
   SyncOutcomeDto? sse_decode_opt_box_autoadd_sync_outcome_dto(
     SseDeserializer deserializer,
   ) {
@@ -3890,6 +4799,19 @@ class RustLibApiImpl extends RustLibApiImplPlatform implements RustLibApi {
 
     if (sse_decode_bool(deserializer)) {
       return (sse_decode_box_autoadd_u_32(deserializer));
+    } else {
+      return null;
+    }
+  }
+
+  @protected
+  VaultSummary? sse_decode_opt_box_autoadd_vault_summary(
+    SseDeserializer deserializer,
+  ) {
+    // Codec=Sse (Serialization based), see doc to use other codecs
+
+    if (sse_decode_bool(deserializer)) {
+      return (sse_decode_box_autoadd_vault_summary(deserializer));
     } else {
       return null;
     }
@@ -3917,6 +4839,17 @@ class RustLibApiImpl extends RustLibApiImplPlatform implements RustLibApi {
     } else {
       return null;
     }
+  }
+
+  @protected
+  PairingPromptDto sse_decode_pairing_prompt_dto(SseDeserializer deserializer) {
+    // Codec=Sse (Serialization based), see doc to use other codecs
+    var var_transactionHandle = sse_decode_String(deserializer);
+    var var_sas = sse_decode_String(deserializer);
+    return PairingPromptDto(
+      transactionHandle: var_transactionHandle,
+      sas: var_sas,
+    );
   }
 
   @protected
@@ -3974,27 +4907,6 @@ class RustLibApiImpl extends RustLibApiImplPlatform implements RustLibApi {
       default:
         throw UnimplementedError('');
     }
-  }
-
-  @protected
-  S3ConfigDto sse_decode_s_3_config_dto(SseDeserializer deserializer) {
-    // Codec=Sse (Serialization based), see doc to use other codecs
-    var var_bucket = sse_decode_String(deserializer);
-    var var_key = sse_decode_String(deserializer);
-    var var_region = sse_decode_String(deserializer);
-    var var_endpoint = sse_decode_opt_String(deserializer);
-    var var_pathStyle = sse_decode_bool(deserializer);
-    var var_accessKeyId = sse_decode_String(deserializer);
-    var var_secretAccessKey = sse_decode_String(deserializer);
-    return S3ConfigDto(
-      bucket: var_bucket,
-      key: var_key,
-      region: var_region,
-      endpoint: var_endpoint,
-      pathStyle: var_pathStyle,
-      accessKeyId: var_accessKeyId,
-      secretAccessKey: var_secretAccessKey,
-    );
   }
 
   @protected
@@ -4063,7 +4975,8 @@ class RustLibApiImpl extends RustLibApiImplPlatform implements RustLibApi {
     var tag_ = sse_decode_i_32(deserializer);
     switch (tag_) {
       case 0:
-        return SyncEvent_Started();
+        var var_automatic = sse_decode_bool(deserializer);
+        return SyncEvent_Started(automatic: var_automatic);
       case 1:
         return SyncEvent_Activity();
       case 2:
@@ -4072,6 +4985,18 @@ class RustLibApiImpl extends RustLibApiImplPlatform implements RustLibApi {
       case 3:
         var var_field0 = sse_decode_box_autoadd_hidlins_api_error(deserializer);
         return SyncEvent_Failed(var_field0);
+      case 4:
+        var var_field0 = sse_decode_box_autoadd_pairing_prompt_dto(
+          deserializer,
+        );
+        return SyncEvent_PairingRequested(var_field0);
+      case 5:
+        var var_field0 = sse_decode_box_autoadd_local_endpoint_dto(
+          deserializer,
+        );
+        return SyncEvent_ServerStarted(var_field0);
+      case 6:
+        return SyncEvent_ServerStopped();
       default:
         throw UnimplementedError('');
     }
@@ -4107,6 +5032,19 @@ class RustLibApiImpl extends RustLibApiImplPlatform implements RustLibApi {
   }
 
   @protected
+  SyncPeerDto sse_decode_sync_peer_dto(SseDeserializer deserializer) {
+    // Codec=Sse (Serialization based), see doc to use other codecs
+    var var_peerId = sse_decode_String(deserializer);
+    var var_displayName = sse_decode_String(deserializer);
+    var var_revoked = sse_decode_bool(deserializer);
+    return SyncPeerDto(
+      peerId: var_peerId,
+      displayName: var_displayName,
+      revoked: var_revoked,
+    );
+  }
+
+  @protected
   SyncStatusDto sse_decode_sync_status_dto(SseDeserializer deserializer) {
     // Codec=Sse (Serialization based), see doc to use other codecs
     var var_configured = sse_decode_bool(deserializer);
@@ -4114,10 +5052,22 @@ class RustLibApiImpl extends RustLibApiImplPlatform implements RustLibApi {
     var var_lastOutcome = sse_decode_opt_box_autoadd_sync_outcome_dto(
       deserializer,
     );
+    var var_role = sse_decode_opt_box_autoadd_local_sync_role_dto(deserializer);
+    var var_paired = sse_decode_bool(deserializer);
+    var var_activePeerCount = sse_decode_usize(deserializer);
+    var var_serverEnabled = sse_decode_bool(deserializer);
+    var var_serverRunning = sse_decode_bool(deserializer);
+    var var_pairingOpen = sse_decode_bool(deserializer);
     return SyncStatusDto(
       configured: var_configured,
       inFlight: var_inFlight,
       lastOutcome: var_lastOutcome,
+      role: var_role,
+      paired: var_paired,
+      activePeerCount: var_activePeerCount,
+      serverEnabled: var_serverEnabled,
+      serverRunning: var_serverRunning,
+      pairingOpen: var_pairingOpen,
     );
   }
 
@@ -4132,6 +5082,12 @@ class RustLibApiImpl extends RustLibApiImplPlatform implements RustLibApi {
       remainingSecs: var_remainingSecs,
       period: var_period,
     );
+  }
+
+  @protected
+  int sse_decode_u_16(SseDeserializer deserializer) {
+    // Codec=Sse (Serialization based), see doc to use other codecs
+    return deserializer.buffer.getUint16();
   }
 
   @protected
@@ -4397,6 +5353,33 @@ class RustLibApiImpl extends RustLibApiImplPlatform implements RustLibApi {
   }
 
   @protected
+  void sse_encode_box_autoadd_local_endpoint_dto(
+    LocalEndpointDto self,
+    SseSerializer serializer,
+  ) {
+    // Codec=Sse (Serialization based), see doc to use other codecs
+    sse_encode_local_endpoint_dto(self, serializer);
+  }
+
+  @protected
+  void sse_encode_box_autoadd_local_sync_role_dto(
+    LocalSyncRoleDto self,
+    SseSerializer serializer,
+  ) {
+    // Codec=Sse (Serialization based), see doc to use other codecs
+    sse_encode_local_sync_role_dto(self, serializer);
+  }
+
+  @protected
+  void sse_encode_box_autoadd_pairing_prompt_dto(
+    PairingPromptDto self,
+    SseSerializer serializer,
+  ) {
+    // Codec=Sse (Serialization based), see doc to use other codecs
+    sse_encode_pairing_prompt_dto(self, serializer);
+  }
+
+  @protected
   void sse_encode_box_autoadd_passphrase_options_dto(
     PassphraseOptionsDto self,
     SseSerializer serializer,
@@ -4421,15 +5404,6 @@ class RustLibApiImpl extends RustLibApiImplPlatform implements RustLibApi {
   ) {
     // Codec=Sse (Serialization based), see doc to use other codecs
     sse_encode_reveal_field(self, serializer);
-  }
-
-  @protected
-  void sse_encode_box_autoadd_s_3_config_dto(
-    S3ConfigDto self,
-    SseSerializer serializer,
-  ) {
-    // Codec=Sse (Serialization based), see doc to use other codecs
-    sse_encode_s_3_config_dto(self, serializer);
   }
 
   @protected
@@ -4460,6 +5434,15 @@ class RustLibApiImpl extends RustLibApiImplPlatform implements RustLibApi {
   void sse_encode_box_autoadd_ui_prefs(UiPrefs self, SseSerializer serializer) {
     // Codec=Sse (Serialization based), see doc to use other codecs
     sse_encode_ui_prefs(self, serializer);
+  }
+
+  @protected
+  void sse_encode_box_autoadd_vault_summary(
+    VaultSummary self,
+    SseSerializer serializer,
+  ) {
+    // Codec=Sse (Serialization based), see doc to use other codecs
+    sse_encode_vault_summary(self, serializer);
   }
 
   @protected
@@ -4507,6 +5490,25 @@ class RustLibApiImpl extends RustLibApiImplPlatform implements RustLibApi {
     sse_encode_String(self.name, serializer);
     sse_encode_String(self.value, serializer);
     sse_encode_bool(self.protected, serializer);
+  }
+
+  @protected
+  void sse_encode_discovery_permission_dto(
+    DiscoveryPermissionDto self,
+    SseSerializer serializer,
+  ) {
+    // Codec=Sse (Serialization based), see doc to use other codecs
+    sse_encode_i_32(self.index, serializer);
+  }
+
+  @protected
+  void sse_encode_discovery_status_dto(
+    DiscoveryStatusDto self,
+    SseSerializer serializer,
+  ) {
+    // Codec=Sse (Serialization based), see doc to use other codecs
+    sse_encode_discovery_permission_dto(self.permission, serializer);
+    sse_encode_list_local_endpoint_dto(self.candidates, serializer);
   }
 
   @protected
@@ -4647,33 +5649,46 @@ class RustLibApiImpl extends RustLibApiImplPlatform implements RustLibApi {
         sse_encode_i_32(10, serializer);
       case HidlinsApiError_SyncNotConfigured():
         sse_encode_i_32(11, serializer);
-      case HidlinsApiError_SyncRemoteUnreachable(endpoint: final endpoint):
+      case HidlinsApiError_LocalSyncConfiguration():
         sse_encode_i_32(12, serializer);
+      case HidlinsApiError_SyncPermissionDenied():
+        sse_encode_i_32(13, serializer);
+      case HidlinsApiError_SyncNotFound():
+        sse_encode_i_32(14, serializer);
+      case HidlinsApiError_SyncKeyMismatch():
+        sse_encode_i_32(15, serializer);
+      case HidlinsApiError_SyncRevoked():
+        sse_encode_i_32(16, serializer);
+      case HidlinsApiError_SyncBusy():
+        sse_encode_i_32(17, serializer);
+      case HidlinsApiError_SyncConflict():
+        sse_encode_i_32(18, serializer);
+      case HidlinsApiError_SyncCanceled():
+        sse_encode_i_32(19, serializer);
+      case HidlinsApiError_SyncOffline():
+        sse_encode_i_32(20, serializer);
+      case HidlinsApiError_SyncRemoteUnreachable(endpoint: final endpoint):
+        sse_encode_i_32(21, serializer);
         sse_encode_opt_String(endpoint, serializer);
       case HidlinsApiError_SyncAuthFailed():
-        sse_encode_i_32(13, serializer);
+        sse_encode_i_32(22, serializer);
       case HidlinsApiError_SyncConflictUnresolvable(
         backupPath: final backupPath,
       ):
-        sse_encode_i_32(14, serializer);
+        sse_encode_i_32(23, serializer);
         sse_encode_String(backupPath, serializer);
-      case HidlinsApiError_SyncDuplicateTarget(
-        existingVault: final existingVault,
-      ):
-        sse_encode_i_32(15, serializer);
-        sse_encode_String(existingVault, serializer);
       case HidlinsApiError_InvalidInput(
         field: final field,
         reason: final reason,
       ):
-        sse_encode_i_32(16, serializer);
+        sse_encode_i_32(24, serializer);
         sse_encode_String(field, serializer);
         sse_encode_String(reason, serializer);
       case HidlinsApiError_Io(context: final context):
-        sse_encode_i_32(17, serializer);
+        sse_encode_i_32(25, serializer);
         sse_encode_String(context, serializer);
       case HidlinsApiError_Internal(context: final context):
-        sse_encode_i_32(18, serializer);
+        sse_encode_i_32(26, serializer);
         sse_encode_String(context, serializer);
     }
   }
@@ -4805,6 +5820,18 @@ class RustLibApiImpl extends RustLibApiImplPlatform implements RustLibApi {
   }
 
   @protected
+  void sse_encode_list_local_endpoint_dto(
+    List<LocalEndpointDto> self,
+    SseSerializer serializer,
+  ) {
+    // Codec=Sse (Serialization based), see doc to use other codecs
+    sse_encode_i_32(self.length, serializer);
+    for (final item in self) {
+      sse_encode_local_endpoint_dto(item, serializer);
+    }
+  }
+
+  @protected
   void sse_encode_list_prim_u_8_strict(
     Uint8List self,
     SseSerializer serializer,
@@ -4851,6 +5878,18 @@ class RustLibApiImpl extends RustLibApiImplPlatform implements RustLibApi {
   }
 
   @protected
+  void sse_encode_list_sync_peer_dto(
+    List<SyncPeerDto> self,
+    SseSerializer serializer,
+  ) {
+    // Codec=Sse (Serialization based), see doc to use other codecs
+    sse_encode_i_32(self.length, serializer);
+    for (final item in self) {
+      sse_encode_sync_peer_dto(item, serializer);
+    }
+  }
+
+  @protected
   void sse_encode_list_vault_summary(
     List<VaultSummary> self,
     SseSerializer serializer,
@@ -4860,6 +5899,26 @@ class RustLibApiImpl extends RustLibApiImplPlatform implements RustLibApi {
     for (final item in self) {
       sse_encode_vault_summary(item, serializer);
     }
+  }
+
+  @protected
+  void sse_encode_local_endpoint_dto(
+    LocalEndpointDto self,
+    SseSerializer serializer,
+  ) {
+    // Codec=Sse (Serialization based), see doc to use other codecs
+    sse_encode_String(self.address, serializer);
+    sse_encode_u_16(self.port, serializer);
+    sse_encode_u_32(self.scopeId, serializer);
+  }
+
+  @protected
+  void sse_encode_local_sync_role_dto(
+    LocalSyncRoleDto self,
+    SseSerializer serializer,
+  ) {
+    // Codec=Sse (Serialization based), see doc to use other codecs
+    sse_encode_i_32(self.index, serializer);
   }
 
   @protected
@@ -4934,6 +5993,19 @@ class RustLibApiImpl extends RustLibApiImplPlatform implements RustLibApi {
   }
 
   @protected
+  void sse_encode_opt_box_autoadd_local_sync_role_dto(
+    LocalSyncRoleDto? self,
+    SseSerializer serializer,
+  ) {
+    // Codec=Sse (Serialization based), see doc to use other codecs
+
+    sse_encode_bool(self != null, serializer);
+    if (self != null) {
+      sse_encode_box_autoadd_local_sync_role_dto(self, serializer);
+    }
+  }
+
+  @protected
   void sse_encode_opt_box_autoadd_sync_outcome_dto(
     SyncOutcomeDto? self,
     SseSerializer serializer,
@@ -4953,6 +6025,19 @@ class RustLibApiImpl extends RustLibApiImplPlatform implements RustLibApi {
     sse_encode_bool(self != null, serializer);
     if (self != null) {
       sse_encode_box_autoadd_u_32(self, serializer);
+    }
+  }
+
+  @protected
+  void sse_encode_opt_box_autoadd_vault_summary(
+    VaultSummary? self,
+    SseSerializer serializer,
+  ) {
+    // Codec=Sse (Serialization based), see doc to use other codecs
+
+    sse_encode_bool(self != null, serializer);
+    if (self != null) {
+      sse_encode_box_autoadd_vault_summary(self, serializer);
     }
   }
 
@@ -4980,6 +6065,16 @@ class RustLibApiImpl extends RustLibApiImplPlatform implements RustLibApi {
     if (self != null) {
       sse_encode_list_custom_field_input_dto(self, serializer);
     }
+  }
+
+  @protected
+  void sse_encode_pairing_prompt_dto(
+    PairingPromptDto self,
+    SseSerializer serializer,
+  ) {
+    // Codec=Sse (Serialization based), see doc to use other codecs
+    sse_encode_String(self.transactionHandle, serializer);
+    sse_encode_String(self.sas, serializer);
   }
 
   @protected
@@ -5025,18 +6120,6 @@ class RustLibApiImpl extends RustLibApiImplPlatform implements RustLibApi {
       case RevealField_TotpUri():
         sse_encode_i_32(2, serializer);
     }
-  }
-
-  @protected
-  void sse_encode_s_3_config_dto(S3ConfigDto self, SseSerializer serializer) {
-    // Codec=Sse (Serialization based), see doc to use other codecs
-    sse_encode_String(self.bucket, serializer);
-    sse_encode_String(self.key, serializer);
-    sse_encode_String(self.region, serializer);
-    sse_encode_opt_String(self.endpoint, serializer);
-    sse_encode_bool(self.pathStyle, serializer);
-    sse_encode_String(self.accessKeyId, serializer);
-    sse_encode_String(self.secretAccessKey, serializer);
   }
 
   @protected
@@ -5099,8 +6182,9 @@ class RustLibApiImpl extends RustLibApiImplPlatform implements RustLibApi {
   void sse_encode_sync_event(SyncEvent self, SseSerializer serializer) {
     // Codec=Sse (Serialization based), see doc to use other codecs
     switch (self) {
-      case SyncEvent_Started():
+      case SyncEvent_Started(automatic: final automatic):
         sse_encode_i_32(0, serializer);
+        sse_encode_bool(automatic, serializer);
       case SyncEvent_Activity():
         sse_encode_i_32(1, serializer);
       case SyncEvent_Done(field0: final field0):
@@ -5109,6 +6193,14 @@ class RustLibApiImpl extends RustLibApiImplPlatform implements RustLibApi {
       case SyncEvent_Failed(field0: final field0):
         sse_encode_i_32(3, serializer);
         sse_encode_box_autoadd_hidlins_api_error(field0, serializer);
+      case SyncEvent_PairingRequested(field0: final field0):
+        sse_encode_i_32(4, serializer);
+        sse_encode_box_autoadd_pairing_prompt_dto(field0, serializer);
+      case SyncEvent_ServerStarted(field0: final field0):
+        sse_encode_i_32(5, serializer);
+        sse_encode_box_autoadd_local_endpoint_dto(field0, serializer);
+      case SyncEvent_ServerStopped():
+        sse_encode_i_32(6, serializer);
     }
   }
 
@@ -5141,6 +6233,14 @@ class RustLibApiImpl extends RustLibApiImplPlatform implements RustLibApi {
   }
 
   @protected
+  void sse_encode_sync_peer_dto(SyncPeerDto self, SseSerializer serializer) {
+    // Codec=Sse (Serialization based), see doc to use other codecs
+    sse_encode_String(self.peerId, serializer);
+    sse_encode_String(self.displayName, serializer);
+    sse_encode_bool(self.revoked, serializer);
+  }
+
+  @protected
   void sse_encode_sync_status_dto(
     SyncStatusDto self,
     SseSerializer serializer,
@@ -5149,6 +6249,12 @@ class RustLibApiImpl extends RustLibApiImplPlatform implements RustLibApi {
     sse_encode_bool(self.configured, serializer);
     sse_encode_bool(self.inFlight, serializer);
     sse_encode_opt_box_autoadd_sync_outcome_dto(self.lastOutcome, serializer);
+    sse_encode_opt_box_autoadd_local_sync_role_dto(self.role, serializer);
+    sse_encode_bool(self.paired, serializer);
+    sse_encode_usize(self.activePeerCount, serializer);
+    sse_encode_bool(self.serverEnabled, serializer);
+    sse_encode_bool(self.serverRunning, serializer);
+    sse_encode_bool(self.pairingOpen, serializer);
   }
 
   @protected
@@ -5157,6 +6263,12 @@ class RustLibApiImpl extends RustLibApiImplPlatform implements RustLibApi {
     sse_encode_String(self.code, serializer);
     sse_encode_u_64(self.remainingSecs, serializer);
     sse_encode_u_64(self.period, serializer);
+  }
+
+  @protected
+  void sse_encode_u_16(int self, SseSerializer serializer) {
+    // Codec=Sse (Serialization based), see doc to use other codecs
+    serializer.buffer.putUint16(self);
   }
 
   @protected
@@ -5245,45 +6357,29 @@ class AppSessionImpl extends RustOpaque implements AppSession {
     sourcePath: sourcePath,
   );
 
-  /// Bootstrap a vault from a remote S3 target (design A3).
-  ///
-  /// State machine:
-  /// 1. Guards (duplicate target, name/path exists)
-  /// 2. Build transport from config, fetch remote object
-  /// 3. Validate password/keyfile via `Vault::open_from_bytes` —
-  ///    wrong password fails BEFORE any install
-  /// 4. `write_atomic` install into the state dir
-  /// 5. Register vault + persist pre-sealed sync config
-  /// 6. One standard `sync_now` establishes synced-base pointers
-  /// 7. Rollback on any failure after step 4
-  Future<VaultSummary> bootstrapVaultFromRemote({
+  /// Begin pair-and-import without creating a local vault or registration.
+  Future<PairingPromptDto> beginPairImport({
     required String name,
-    required S3ConfigDto cfg,
     required String masterPassword,
     KeyfileRef? keyfile,
-  }) => RustLib.instance.api.crateApiSessionAppSessionBootstrapVaultFromRemote(
+    required List<LocalEndpointDto> candidates,
+  }) => RustLib.instance.api.crateApiSessionAppSessionBeginPairImport(
     that: this,
     name: name,
-    cfg: cfg,
     masterPassword: masterPassword,
     keyfile: keyfile,
+    candidates: candidates,
   );
 
-  /// Change the master password (design A5, FR-004).
-  ///
-  /// Sequence: verify current → change vault password → REPLACE
-  /// `SessionCredentials` immediately (before the registry write) →
-  /// if RST-CRED-1 sync credentials exist, decrypt with old master,
-  /// re-encrypt with new master, persist → registry save → vault save.
-  ///
-  /// On registry-write failure the vault change AND the credential
-  /// replacement both stand; the error instructs re-entering S3
-  /// credentials (no silent auth breakage).
-  ///
-  /// # Panics
-  ///
-  /// Panics if the vault is present but not registered (impossible via
-  /// the session API).
+  /// Begin XX pairing for the currently unlocked client vault.
+  Future<PairingPromptDto> beginPairing() =>
+      RustLib.instance.api.crateApiSessionAppSessionBeginPairing(that: this);
+
+  /// Cancel foreground client transfer/pairing work without changing trust.
+  Future<void> cancelSync() =>
+      RustLib.instance.api.crateApiSessionAppSessionCancelSync(that: this);
+
+  /// Change the vault password and rewrap (never replace) its local Noise identity.
   Future<void> changeMasterPassword({
     required String current,
     required String newPassword,
@@ -5299,8 +6395,26 @@ class AppSessionImpl extends RustOpaque implements AppSession {
   Future<void> clearSyncConfig({required String name}) => RustLib.instance.api
       .crateApiSessionAppSessionClearSyncConfig(that: this, name: name);
 
-  Future<void> configureSync({required S3ConfigDto cfg}) => RustLib.instance.api
-      .crateApiSessionAppSessionConfigureSync(that: this, cfg: cfg);
+  Future<void> closePairingWindow() => RustLib.instance.api
+      .crateApiSessionAppSessionClosePairingWindow(that: this);
+
+  Future<void> configureLocalSync({required LocalSyncRoleDto role}) => RustLib
+      .instance
+      .api
+      .crateApiSessionAppSessionConfigureLocalSync(that: this, role: role);
+
+  /// Confirm either a local client prompt or an inbound server prompt.
+  /// Key material and transcript hashes never cross this boundary.
+  Future<VaultSummary?> confirmPairing({
+    required String transactionHandle,
+    required bool accepted,
+    required String peerDisplayName,
+  }) => RustLib.instance.api.crateApiSessionAppSessionConfirmPairing(
+    that: this,
+    transactionHandle: transactionHandle,
+    accepted: accepted,
+    peerDisplayName: peerDisplayName,
+  );
 
   Future<void> copyEntryField({
     required String uuid,
@@ -5410,11 +6524,25 @@ class AppSessionImpl extends RustOpaque implements AppSession {
         uuid: uuid,
       );
 
+  Future<List<SyncPeerDto>> listSyncPeers() =>
+      RustLib.instance.api.crateApiSessionAppSessionListSyncPeers(that: this);
+
   Future<List<String>> listTags() =>
       RustLib.instance.api.crateApiSessionAppSessionListTags(that: this);
 
   Future<List<VaultSummary>> listVaults() =>
       RustLib.instance.api.crateApiSessionAppSessionListVaults(that: this);
+
+  Future<DiscoveryStatusDto> localDiscoveryStatus() => RustLib.instance.api
+      .crateApiSessionAppSessionLocalDiscoveryStatus(that: this);
+
+  /// Return policy-approved local bind candidates for a desktop server.
+  /// Mobile targets reject this before interface enumeration.
+  Future<List<LocalEndpointDto>> localServerEndpoints() => RustLib.instance.api
+      .crateApiSessionAppSessionLocalServerEndpoints(that: this);
+
+  Future<SyncStatusDto> localSyncStatus() =>
+      RustLib.instance.api.crateApiSessionAppSessionLocalSyncStatus(that: this);
 
   /// Subscribe to lock-state events.
   ///
@@ -5448,6 +6576,13 @@ class AppSessionImpl extends RustOpaque implements AppSession {
         uuid: uuid,
         parent: parent,
       );
+
+  Future<void> openPairingWindow() => RustLib.instance.api
+      .crateApiSessionAppSessionOpenPairingWindow(that: this);
+
+  /// Poll the platform discovery adapter and apply only Rust-validated routes.
+  Future<DiscoveryStatusDto> pollLocalDiscovery() => RustLib.instance.api
+      .crateApiSessionAppSessionPollLocalDiscovery(that: this);
 
   /// Prepare a non-secret, single-use native clipboard handoff.
   ///
@@ -5492,6 +6627,15 @@ class AppSessionImpl extends RustOpaque implements AppSession {
         name: name,
       );
 
+  Future<void> renameSyncPeer({
+    required String peerId,
+    required String displayName,
+  }) => RustLib.instance.api.crateApiSessionAppSessionRenameSyncPeer(
+    that: this,
+    peerId: peerId,
+    displayName: displayName,
+  );
+
   void reportActivity() =>
       RustLib.instance.api.crateApiSessionAppSessionReportActivity(that: this);
 
@@ -5509,6 +6653,9 @@ class AppSessionImpl extends RustOpaque implements AppSession {
     field: field,
   );
 
+  Future<void> revokeSyncPeer({required String peerId}) => RustLib.instance.api
+      .crateApiSessionAppSessionRevokeSyncPeer(that: this, peerId: peerId);
+
   Future<void> saveAttachmentTo({
     required String uuid,
     required String key,
@@ -5524,6 +6671,15 @@ class AppSessionImpl extends RustOpaque implements AppSession {
       .instance
       .api
       .crateApiSessionAppSessionSearch(that: this, opts: opts);
+
+  Future<void> setDiscoveryCandidates({
+    required DiscoveryPermissionDto permission,
+    required List<LocalEndpointDto> candidates,
+  }) => RustLib.instance.api.crateApiSessionAppSessionSetDiscoveryCandidates(
+    that: this,
+    permission: permission,
+    candidates: candidates,
+  );
 
   Future<void> setExpiration({
     required String uuid,
@@ -5541,29 +6697,31 @@ class AppSessionImpl extends RustOpaque implements AppSession {
   Future<void> shutdown() =>
       RustLib.instance.api.crateApiSessionAppSessionShutdown(that: this);
 
+  /// Consume the once-per-process startup attempt after the application has
+  /// completed its platform discovery pass.
+  ///
+  /// The work remains nonblocking and best effort: the already-open local
+  /// vault stays available, and any network failure is reported through the
+  /// sync event stream.
+  Future<void> startStartupSync() => RustLib.instance.api
+      .crateApiSessionAppSessionStartStartupSync(that: this);
+
+  Future<LocalEndpointDto> startSyncServer({
+    required LocalEndpointDto endpoint,
+  }) => RustLib.instance.api.crateApiSessionAppSessionStartSyncServer(
+    that: this,
+    endpoint: endpoint,
+  );
+
   Future<List<String>> startupWarnings() =>
       RustLib.instance.api.crateApiSessionAppSessionStartupWarnings(that: this);
+
+  Future<void> stopSyncServer() =>
+      RustLib.instance.api.crateApiSessionAppSessionStopSyncServer(that: this);
 
   Stream<SyncEvent> syncEvents() =>
       RustLib.instance.api.crateApiSessionAppSessionSyncEvents(that: this);
 
-  /// Run a sync cycle using the three-phase protocol.
-  ///
-  /// Phase 1 (short guard): validate, resolve vault name, clone
-  ///   credentials, move vault + registry out, set `syncing = true`.
-  /// Phase 2 (no guard): run `Sync::sync_now` wrapped in
-  ///   `catch_unwind`. The session mutex is NOT held across the
-  ///   network round-trips.
-  /// Phase 3 (short guard): if `lock_pending` was set during phase 2,
-  ///   discard the returned vault + registry and credentials, lock
-  ///   the session. On panic, also lock (vault may be corrupted).
-  ///   On success, restore vault + registry and clear the TOTP cache
-  ///   (sync may have merged changed OTP fields).
-  ///
-  /// # Panics
-  ///
-  /// Internal `expect` for state that was validated in the same
-  /// critical section — unreachable in normal operation.
   Future<SyncOutcomeDto> syncNow() =>
       RustLib.instance.api.crateApiSessionAppSessionSyncNow(that: this);
 

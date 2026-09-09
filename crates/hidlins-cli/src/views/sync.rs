@@ -25,7 +25,7 @@ pub struct SyncView {
     /// Present only for `merged`: how the local database changed (counts).
     #[serde(skip_serializing_if = "Option::is_none")]
     pub delta: Option<DeltaView>,
-    /// Present only for `merged`: conditional-PUT attempts consumed (≥1).
+    /// Present only for `merged`: conditional-commit attempts consumed (≥1).
     #[serde(skip_serializing_if = "Option::is_none")]
     pub attempts: Option<usize>,
 }

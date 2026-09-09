@@ -11,13 +11,14 @@
 //! mirror back to `tui.toml`. Action overlays and the Settings/Sync surfaces
 //! operate over the same unlocked session.
 //!
-//! Master-password lifetime (ADR-T4): the App holds **no** `MasterPassword`
-//! field. The typed password lives only in the `UnlockPrompt`'s
-//! [`PasswordInput`] until submit, is moved into `MasterPassword::new` for the
-//! `Vault::open` call, and is dropped (zeroized) immediately after.
+//! Master-password lifetime: client operations receive a one-shot value which
+//! zeroizes on worker completion. An explicitly enabled authoritative server
+//! retains its value only inside `ServerRuntime`; lock, quit, and server-off
+//! synchronously stop the listener and drop that value.
 
 use std::fmt;
 use std::path::{Path, PathBuf};
+use std::sync::mpsc::{self, Receiver, TryRecvError};
 use std::time::{Duration, Instant};
 
 use chrono::Utc;
@@ -33,7 +34,10 @@ use hidlins_security::{AutoLockConfig, AutoLockController, LockState};
 use ratatui::layout::Rect;
 use ratatui::Frame;
 
-use hidlins_sync::{S3Config, Sync, SyncConfig, SyncError, SyncOutcome};
+use hidlins_sync::{
+    client::StartupSyncTracker, config::local::LocalSyncConfig, identity::SyncRole, SyncError,
+    SyncOutcome,
+};
 
 use crate::args::Args;
 use crate::clipboard::{self, ClipboardSink};
@@ -49,12 +53,14 @@ use crate::overlay::edit::EditValues;
 use crate::overlay::edit::{Col, EditField, EditState};
 use crate::overlay::generate::{Class, GenState};
 use crate::overlay::history::HistoryState;
+use crate::overlay::local_sync::{LocalSyncAction, LocalSyncState};
 use crate::overlay::search::{self, SearchState};
-use crate::overlay::sync_config::{SyncConfigState, SyncField};
-use crate::overlay::{self, Overlay, TagAction};
+use crate::overlay::{self, Overlay, PeersState, TagAction};
+use crate::pairing_runtime::{PairingEvent, PairingRuntime};
 use crate::persistence;
 use crate::recents::Recents;
 use crate::screens;
+use crate::server_runtime::{AuthorityRequest, ServerRuntime};
 use crate::session::SessionResources;
 use crate::sync_runtime::{SyncMsg, SyncResult, SyncRuntime, SyncTrigger};
 use crate::tabs::{PinChange, Tab, TabBar, MAX_PINS};
@@ -149,6 +155,11 @@ pub(crate) const RO_MUTATING_COMMANDS: &[Command] = &[
     Command::AddTag,
     Command::RemoveTag,
     Command::Sync,
+    Command::LocalServer,
+    Command::PairVault,
+    Command::ImportVault,
+    Command::PairingWindow,
+    Command::ManagePeers,
 ];
 
 /// A user-facing message for a sync failure (secret-free — `SyncError`'s
@@ -284,6 +295,13 @@ pub(crate) enum MouseTarget {
     PaletteRow(usize),
 }
 
+struct ServerWorkResult {
+    vault: Vault,
+    registry: VaultRegistry,
+    master: MasterPassword,
+    outcome: Result<(), String>,
+}
+
 // Several independent UI flags (reveal, pending-g, lock-pending, should-quit)
 // legitimately live as separate booleans on this central state struct; grouping
 // them into a sub-struct would obscure more than it clarifies.
@@ -391,6 +409,21 @@ pub(crate) struct App {
     /// The last sync result/error summary for the Settings sync-status sub-view
     /// (secret-free; T6.2/T6.4).
     sync_status: Option<String>,
+    pairing: PairingRuntime,
+    /// Once-per-process tracker for the fixed startup client-sync policy.
+    startup_sync: StartupSyncTracker,
+    /// Explicit process-local server request. Never serialized.
+    server_requested: bool,
+    /// Actual listener/host runtime. Its retained `MasterPassword` is
+    /// zeroized when this value is dropped on lock, quit, or server-off.
+    server: Option<ServerRuntime>,
+    /// Awaiting the user's non-bypassable decision for an inbound SAS prompt.
+    pending_server_pairing: Option<mpsc::SyncSender<Option<String>>>,
+    /// One incoming authoritative operation running with exclusive vault
+    /// ownership away from the render/input thread.
+    server_work: Option<Receiver<ServerWorkResult>>,
+    /// Visible deadline for the bounded pairing-admission window.
+    pairing_deadline: Option<Instant>,
     pub(crate) should_quit: bool,
     /// Count of vault saves routed through [`App::persist_vault`] (the single
     /// vault-write choke point). Test-only seam consumed by the bulk-op (T4.5)
@@ -403,7 +436,7 @@ pub(crate) struct App {
 /// Number of editable rows in the Settings tab (T6.3; grew with the Theme row
 /// in T3.4 and the Auto-lock row in T3.5). Kept in sync with
 /// [`settings::ROW_LABELS`] by the test below.
-const SETTINGS_ROW_COUNT: usize = 6;
+const SETTINGS_ROW_COUNT: usize = 9;
 
 /// Selectable idle auto-lock timeouts, in seconds (1/5/10/15/30 min). The
 /// Settings row cycles these (T3.5). "Off" is intentionally absent —
@@ -700,6 +733,7 @@ impl App {
         };
         let (ui_config, config_warning) = TuiConfig::load(&config::config_path(&paths));
         let user_config_path = paths.config_toml();
+        let pairing = PairingRuntime::new(paths.clone());
         Ok(Self {
             phase,
             session: SessionResources::locked(registry),
@@ -742,6 +776,13 @@ impl App {
             lock_pending: false,
             settings_index: 0,
             sync_status: None,
+            pairing,
+            startup_sync: StartupSyncTracker::default(),
+            server_requested: false,
+            server: None,
+            pending_server_pairing: None,
+            server_work: None,
+            pairing_deadline: None,
             should_quit: false,
             #[cfg(test)]
             save_count: 0,
@@ -802,6 +843,8 @@ impl App {
         for msg in self.sync.drain() {
             self.on_sync_message(msg, now);
         }
+
+        self.tick_server(now);
 
         if self.vault().is_some() {
             if self.controller.tick(now) == LockState::Locked {
@@ -878,10 +921,15 @@ impl App {
                     return;
                 }
                 match trigger {
-                    SyncTrigger::OnLock => self.lock_app(),
-                    SyncTrigger::OnQuit => self.should_quit = true,
-                    SyncTrigger::Manual | SyncTrigger::OnUnlock => {}
+                    SyncTrigger::Manual | SyncTrigger::Startup => {}
                 }
+            }
+            Err(e) if trigger == SyncTrigger::Startup => {
+                self.session.finish_sync(vault, registry);
+                self.lock_pending = false;
+                let message = sync_error_message(&e);
+                self.sync_status = Some(message.clone());
+                self.status_bar.set_warning(message, now);
             }
             Err(e) => {
                 // Drop the moved-back vault (zeroize) and lock. Any SyncError →
@@ -944,6 +992,11 @@ impl App {
     /// Replacing `self.phase` drops any `Zeroizing` buffer held by the current
     /// phase (a partially-typed `UnlockPrompt` password).
     pub(crate) fn lock_app(&mut self) {
+        self.stop_server_runtime();
+        self.pairing.cancel();
+        if let Some(reply) = self.pending_server_pairing.take() {
+            let _ = reply.try_send(None);
+        }
         self.session.lock();
         self.status = None;
         // Drop any open overlay so its secret-bearing buffers (edit password,
@@ -968,8 +1021,8 @@ impl App {
             return;
         }
 
-        // Global: quit works everywhere; lock-now only while unlocked. Both may
-        // first flush a sync-on-lock/quit (T6.2) — see `request_quit`/`request_lock`.
+        // Global: quit works everywhere; lock-now only while unlocked. Neither
+        // is a network trigger; both stop an active local listener.
         if self.keys.matches(Command::Quit, key) {
             self.execute_command(Command::Quit, None);
             return;
@@ -1405,7 +1458,9 @@ impl App {
                 | Overlay::GroupPicker(_)
                 | Overlay::TagInput(_) => Contexts::CONFIRM,
                 Overlay::SyncUnlock { .. } => Contexts::SYNC_UNLOCK,
-                Overlay::SyncConfig(_) => Contexts::SYNC_CONFIG,
+                Overlay::LocalSync(_) | Overlay::PairingSas(_) | Overlay::Peers(_) => {
+                    Contexts::SYNC_CONFIG
+                }
                 Overlay::Palette(_) => Contexts::PALETTE,
             };
         }
@@ -1464,6 +1519,13 @@ impl App {
                 Self::enabled_if(self.context_entry_present())
             }
             Command::Sync => Self::enabled_if(self.sync_configured()),
+            Command::PairVault => {
+                Self::enabled_if(self.selected_local_config().is_none_or(|config| {
+                    config.role() == SyncRole::Client && !config.is_active_client()
+                }))
+            }
+            Command::PairingWindow => Self::enabled_if(self.server.is_some()),
+            Command::ManagePeers => Self::enabled_if(self.selected_local_config().is_some()),
             _ => CmdState::Enabled,
         }
     }
@@ -1565,6 +1627,17 @@ impl App {
             Command::PinToggle => self.toggle_pin_selected(),
             Command::SortCycle => self.cycle_sort(),
             Command::Sync => self.request_sync(),
+            Command::LocalServer => {
+                if self.server.is_some() {
+                    self.stop_server_by_user();
+                } else {
+                    self.open_local_sync(LocalSyncAction::StartServer);
+                }
+            }
+            Command::PairVault => self.open_local_sync(LocalSyncAction::PairExisting),
+            Command::ImportVault => self.open_local_sync(LocalSyncAction::Import),
+            Command::PairingWindow => self.allow_pairing(),
+            Command::ManagePeers => self.open_peers(),
             Command::Next
             | Command::Prev
             | Command::Parent
@@ -2127,7 +2200,9 @@ impl App {
             Overlay::GroupPicker(state) => self.on_group_picker_key(state, key),
             Overlay::TagInput(state) => self.on_tag_input_key(state, ev, key),
             Overlay::SyncUnlock { input, pending } => self.on_sync_unlock_key(input, *pending, key),
-            Overlay::SyncConfig(state) => self.on_sync_config_key(state, ev, key),
+            Overlay::LocalSync(state) => self.on_local_sync_key(state, ev, key),
+            Overlay::PairingSas(_) => self.on_pairing_sas_key(key),
+            Overlay::Peers(state) => self.on_peers_key(state, key),
             Overlay::Palette(state) => self.on_palette_key(state, ev, key),
         };
         if keep {
@@ -3064,6 +3139,10 @@ impl App {
     }
 
     fn on_vault_onboarding_key(&mut self, key: &KeyEvent) {
+        if key.code == KeyCode::F(3) {
+            self.execute_command(Command::ImportVault, None);
+            return;
+        }
         match key.code {
             KeyCode::Enter => self.submit_vault_path(),
             KeyCode::Esc => {
@@ -3134,6 +3213,10 @@ impl App {
     }
 
     fn on_unlock_list_key(&mut self, key: &KeyEvent) {
+        if self.keys.matches(Command::ImportVault, key) {
+            self.execute_command(Command::ImportVault, None);
+            return;
+        }
         if self.keys.matches(Command::AddVault, key) {
             self.execute_command(Command::AddVault, None);
             return;
@@ -3352,55 +3435,14 @@ impl App {
             }
         };
 
-        // The typed buffer (`Zeroizing`) lives until this scope ends; it is used
-        // to build the open password and, if auto-sync-on-unlock is enabled, a
-        // second `MasterPassword` handed to the worker (dropped when it finishes).
+        // The typed buffer (`Zeroizing`) lives until this scope ends; it builds
+        // the open password and, for local sync, a short-lived worker password.
         // TODO(DI-2): pass `registered.keyfile_path` as a `Keyfile` once the
         // keyfile-unlock follow-up lands (impl-plan §5.4 #7). MVP passes None.
         let typed = input.take();
         let password = MasterPassword::new(typed.to_string());
         match Vault::open(&registered.path, &password, None) {
-            Ok(vault) => {
-                if let UnlockOrigin::Onboarding {
-                    registration: pending,
-                    origin: onboarding_origin,
-                } = &origin
-                {
-                    let result = self
-                        .registry_mut()
-                        .expect("locked onboarding owns the registry")
-                        .register_and_save(pending.clone());
-                    if let Err(error) = result {
-                        drop(vault);
-                        self.recover_after_registration_failure(
-                            pending,
-                            *onboarding_origin,
-                            &error,
-                        );
-                        return;
-                    }
-                }
-                assert!(
-                    self.session.unlock(vault),
-                    "unlock transition starts from a locked session"
-                );
-                self.selected_vault = Some(origin.vault_name().to_string());
-                // Arm the idle-lock controller from THIS vault's configured
-                // timeout (T3.5) — so an edited auto-lock survives restart —
-                // rather than reusing the process default.
-                self.arm_auto_lock_for_current_vault(Instant::now());
-                self.hydrate_workspace();
-                self.reset_tab_motion();
-                self.reset_secrets_view();
-                self.phase = Phase::Workspace;
-                // Auto-sync on unlock (D-5/ADR-T4): hand the just-collected password
-                // to the worker; it drops when the sync finishes. Only when the
-                // toggle is on AND a target is configured (TR-9).
-                if self.user_config.sync_on_unlock() && self.sync_configured() {
-                    let mp = MasterPassword::new(typed.to_string());
-                    self.start_sync(SyncTrigger::OnUnlock, mp);
-                }
-            }
+            Ok(vault) => self.complete_unlock(vault, &origin, typed.as_str()),
             // Only a genuine authentication failure consumes an attempt and
             // re-prompts — telling the user their password was wrong.
             Err(VaultError::AuthenticationFailed) => {
@@ -3426,6 +3468,52 @@ impl App {
                 self.status = Some(format!("Could not open vault: {other}"));
                 self.restore_unlock_origin(origin, attempts);
             }
+        }
+    }
+
+    fn complete_unlock(&mut self, vault: Vault, origin: &UnlockOrigin, typed: &str) {
+        if let UnlockOrigin::Onboarding {
+            registration: pending,
+            origin: onboarding_origin,
+        } = origin
+        {
+            let result = self
+                .registry_mut()
+                .expect("locked onboarding owns the registry")
+                .register_and_save(pending.clone());
+            if let Err(error) = result {
+                drop(vault);
+                self.recover_after_registration_failure(pending, *onboarding_origin, &error);
+                return;
+            }
+        }
+        assert!(
+            self.session.unlock(vault),
+            "unlock transition starts from a locked session"
+        );
+        self.selected_vault = Some(origin.vault_name().to_string());
+        self.arm_auto_lock_for_current_vault(Instant::now());
+        self.hydrate_workspace();
+        self.reset_tab_motion();
+        self.reset_secrets_view();
+        self.phase = Phase::Workspace;
+        let startup = self.startup_sync.should_attempt(
+            origin.vault_name(),
+            self.sync_configured(),
+            hidlins_sync::client::SyncTrigger::StartupUnlock,
+        );
+        if self.server_requested
+            && self
+                .selected_local_config()
+                .is_some_and(|config| config.role() == SyncRole::Server)
+        {
+            let mp = MasterPassword::new(typed.to_string());
+            if let Err(error) = self.start_server(mp) {
+                self.status_bar.set_warning(error.clone(), Instant::now());
+                self.sync_status = Some(error);
+            }
+        } else if startup {
+            self.start_sync(SyncTrigger::Startup, MasterPassword::new(typed.to_string()));
         }
     }
 
@@ -3459,46 +3547,60 @@ impl App {
 
     // ---- Phase 6: sync triggers + Settings ----
 
-    /// Whether the selected vault has a sync target configured in `vaults.toml`.
+    /// Whether the selected vault is an activated local-network client.
     fn sync_configured(&self) -> bool {
-        self.selected_sync_config().is_some()
+        self.selected_local_config()
+            .is_some_and(|config| config.role() == SyncRole::Client)
     }
 
-    /// The selected vault's [`SyncConfig`], if any.
-    fn selected_sync_config(&self) -> Option<SyncConfig> {
+    fn selected_local_config(&self) -> Option<LocalSyncConfig> {
         let name = self.selected_vault.as_deref()?;
         let entry = self.session.registry()?.get(name)?;
-        SyncConfig::from_vault_entry(entry)
+        LocalSyncConfig::from_vault_entry(entry)
     }
 
-    /// A secret-free one-line summary of the configured target (Settings status
-    /// sub-view). `None` when no S3 target is configured.
+    /// A secret-free local role/trust summary.
     pub(crate) fn sync_target_summary(&self) -> Option<String> {
-        let s3 = self.selected_sync_config()?.s3?;
-        let endpoint = s3.endpoint().unwrap_or("AWS default");
-        Some(format!(
-            "{} / {} (region {}, {})",
-            s3.bucket(),
-            s3.key(),
-            s3.region(),
-            endpoint
-        ))
+        let status = self.selected_local_config()?.status();
+        Some(match status.role {
+            SyncRole::Server => format!(
+                "authoritative server · {} active peer(s)",
+                status.active_clients
+            ),
+            SyncRole::Client if status.paired => "paired local client".to_string(),
+            SyncRole::Client => "local client · pairing required".to_string(),
+        })
+    }
+
+    pub(crate) fn sync_server_running(&self) -> bool {
+        self.server.is_some()
+    }
+
+    pub(crate) fn pairing_countdown(&self) -> String {
+        self.pairing_deadline.map_or_else(
+            || "closed".to_string(),
+            |deadline| {
+                let remaining = deadline.saturating_duration_since(Instant::now()).as_secs();
+                if remaining == 0 {
+                    "closed".to_string()
+                } else {
+                    format!("{remaining}s remaining")
+                }
+            },
+        )
+    }
+
+    pub(crate) fn sync_peer_count(&self) -> usize {
+        self.selected_local_config()
+            .map_or(0, |config| match config.role() {
+                SyncRole::Server => config.trusted_peers().len(),
+                SyncRole::Client => usize::from(config.pinned_server().is_some()),
+            })
     }
 
     /// The last sync outcome/error summary (secret-free), for the Settings tab.
     pub(crate) fn sync_status_line(&self) -> Option<&str> {
         self.sync_status.as_deref()
-    }
-
-    /// Whether leaving the vault (lock/quit) should first flush a sync: the
-    /// toggle is on, a target is configured, and a vault is currently open.
-    fn should_sync_on_leave(&self) -> bool {
-        // A read-only session never syncs on lock/quit (T4.7), so it also never
-        // prompts for the master password to do so.
-        !self.read_only
-            && self.user_config.sync_on_lock_quit()
-            && self.vault().is_some()
-            && self.sync_configured()
     }
 
     /// Manual sync (`s`). Re-prompts the master password (the App holds none),
@@ -3511,7 +3613,7 @@ impl App {
         }
         if !self.sync_configured() {
             self.status_bar.set_warning(
-                "No sync target configured (Settings → configure).",
+                "This vault is not paired with a local sync server.",
                 Instant::now(),
             );
             return;
@@ -3522,8 +3624,7 @@ impl App {
         });
     }
 
-    /// `Ctrl+L`. Defers if a sync is in flight; otherwise either flushes first
-    /// (sync-on-lock) or locks immediately.
+    /// `Ctrl+L`. Defers if exclusive background vault work is in flight.
     fn request_lock(&mut self) {
         if self.is_syncing() {
             self.lock_pending = true;
@@ -3531,18 +3632,10 @@ impl App {
                 .set_info("Will lock when the sync finishes.", Instant::now());
             return;
         }
-        if self.should_sync_on_leave() {
-            self.overlay = Some(Overlay::SyncUnlock {
-                input: PasswordInput::new(),
-                pending: SyncTrigger::OnLock,
-            });
-            return;
-        }
         self.lock_app();
     }
 
-    /// `Ctrl+Q`. While unlocked with sync-on-lock/quit enabled + configured (and
-    /// not already syncing), flush first; otherwise quit immediately.
+    /// `Ctrl+Q` quits without starting network work.
     fn request_quit(&mut self) {
         // Quit confirmation gate (T4.8). When enabled, the first quit opens the
         // confirmation; a second quit while it is open is ignored (never
@@ -3557,20 +3650,10 @@ impl App {
         self.do_quit();
     }
 
-    /// Execute the quit: flush a sync-on-quit first (re-prompting for the master
-    /// password) if configured, else set `should_quit`. Shared by the immediate
-    /// path and the confirmed path (T4.8) so both preserve `sync-on-lock-quit`.
+    /// Execute the quit and synchronously stop the process-local listener.
     fn do_quit(&mut self) {
-        if matches!(self.phase, Phase::Workspace)
-            && !self.is_syncing()
-            && self.should_sync_on_leave()
-        {
-            self.overlay = Some(Overlay::SyncUnlock {
-                input: PasswordInput::new(),
-                pending: SyncTrigger::OnQuit,
-            });
-            return;
-        }
+        self.server_requested = false;
+        self.stop_server_runtime();
         self.should_quit = true;
     }
 
@@ -3593,11 +3676,8 @@ impl App {
 
     /// Move the vault + registry to the worker and start a background sync.
     fn start_sync(&mut self, trigger: SyncTrigger, master_password: MasterPassword) {
-        // Read-only guard at the sync choke point (T4.7): all four triggers
-        // (manual, on-unlock, on-lock, on-quit) funnel through here, and sync
-        // writes the local vault + pushes to the remote via `engine.sync_now`
-        // — bypassing the `persist_vault` guard entirely. A read-only session
-        // must never sync. (`master_password` drops here, zeroizing.)
+        // Sync can replace or merge the local vault, so read-only sessions
+        // refuse it at this shared choke point.
         if self.read_only {
             self.status_bar
                 .set_warning("Read-only session — sync disabled.", Instant::now());
@@ -3628,7 +3708,7 @@ impl App {
         match input.on_key(key) {
             InputAction::Continue => true,
             InputAction::Cancel => {
-                self.cancel_pending_sync(pending);
+                Self::cancel_pending_sync(pending);
                 false
             }
             InputAction::Submit => {
@@ -3640,17 +3720,29 @@ impl App {
     }
 
     /// A cancelled `SyncUnlock` still completes an on-lock/quit departure.
-    fn cancel_pending_sync(&mut self, pending: SyncTrigger) {
+    fn cancel_pending_sync(pending: SyncTrigger) {
         match pending {
-            SyncTrigger::OnLock => self.lock_app(),
-            SyncTrigger::OnQuit => self.should_quit = true,
-            SyncTrigger::Manual | SyncTrigger::OnUnlock => {}
+            SyncTrigger::Manual | SyncTrigger::Startup => {}
         }
     }
 
-    /// Settings-tab key handling (T6.3): `j`/`k` move the row, `Enter` toggles
-    /// or cycles the focused setting (or launches the credential overlay).
+    /// Settings-tab key handling: every local-sync action is keyboard reachable.
     fn on_settings_key(&mut self, key: &KeyEvent) {
+        for command in [
+            Command::Sync,
+            Command::LocalServer,
+            Command::PairVault,
+            Command::ImportVault,
+            Command::PairingWindow,
+            Command::ManagePeers,
+        ] {
+            if self.keys.matches(command, key) {
+                if self.command_state(command) == CmdState::Enabled {
+                    self.execute_command(command, None);
+                }
+                return;
+            }
+        }
         if let Some(cmd) = self.nav_command_for(key) {
             self.execute_command(cmd, None);
         }
@@ -3681,172 +3773,445 @@ impl App {
                 }
             }
             1 => self.cycle_theme(),
-            // Auto-lock writes the vault registry (vaults.toml), so it is a
-            // vault-affecting edit — refused in a read-only session (T4.7). Theme
-            // and the sync-on-* toggles are config.toml prefs and stay allowed.
+            // Auto-lock and all sync configuration write the vault registry.
             2 if self.read_only => {
                 self.status_bar
                     .set_warning("Read-only session — auto-lock unchanged.", Instant::now());
             }
             2 => self.cycle_auto_lock(),
-            3 => {
-                let on = !self.user_config.sync_on_unlock();
-                if self.update_user_config(|cfg| cfg.set_sync_on_unlock(on)) {
-                    self.status_bar.set(
-                        format!("Auto-sync on unlock: {}", if on { "on" } else { "off" }),
-                        Instant::now(),
-                    );
-                }
-            }
-            4 => {
-                let on = !self.user_config.sync_on_lock_quit();
-                if self.update_user_config(|cfg| cfg.set_sync_on_lock_quit(on)) {
-                    self.status_bar.set(
-                        format!("Auto-sync on lock/quit: {}", if on { "on" } else { "off" }),
-                        Instant::now(),
-                    );
-                }
-            }
-            5 if self.read_only => {
+            3 if self.read_only => {
                 self.status_bar
                     .set_warning("Read-only session — sync is disabled.", Instant::now());
             }
-            5 => self.open_sync_config(),
+            3 | 6 if self.server.is_none() => {
+                self.open_local_sync(LocalSyncAction::StartServer);
+            }
+            4 => self.open_local_sync(LocalSyncAction::PairExisting),
+            5 => self.open_local_sync(LocalSyncAction::Import),
+            6 => self.stop_server_by_user(),
+            7 => self.allow_pairing(),
+            8 => self.open_peers(),
             _ => {}
         }
     }
 
-    /// Open the secure S3-credential overlay (T6.4). Reachable only while
-    /// unlocked (the credential is encrypted with the master password, and only
-    /// an unlocked session is in a position to re-collect it).
-    fn open_sync_config(&mut self) {
-        if self.vault().is_none() {
+    fn open_local_sync(&mut self, action: LocalSyncAction) {
+        if action != LocalSyncAction::Import && self.vault().is_none() {
             self.status_bar
                 .set_warning("Unlock a vault to configure sync.", Instant::now());
             return;
         }
-        self.overlay = Some(Overlay::SyncConfig(Box::new(SyncConfigState::new())));
+        self.overlay = Some(Overlay::LocalSync(Box::new(LocalSyncState::new(action))));
     }
 
-    /// `Overlay::SyncConfig` keys: `Esc` cancels, `Ctrl+S` saves, `Tab`/
-    /// `Shift+Tab` move focus, `Space` toggles path-style, everything else edits
-    /// the focused field.
-    fn on_sync_config_key(
+    fn on_local_sync_key(
         &mut self,
-        state: &mut SyncConfigState,
+        state: &mut LocalSyncState,
         ev: &Event,
         key: &KeyEvent,
     ) -> bool {
         if matches!(key.code, KeyCode::Esc) {
-            return false; // drop → both `PasswordInput`s zeroize
-        }
-        if key.modifiers.contains(KeyModifiers::CONTROL) && matches!(key.code, KeyCode::Char('s')) {
-            // `perform_configure_sync` returns true on success → close.
-            return !self.perform_configure_sync(state);
+            return false;
         }
         match key.code {
             KeyCode::Tab => {
-                state.focus_next();
+                state.next();
                 return true;
             }
             KeyCode::BackTab => {
-                state.focus_prev();
+                state.previous();
                 return true;
             }
+            KeyCode::Enter => return !self.perform_local_sync_action(state),
             _ => {}
         }
-        match state.focused() {
-            SyncField::Endpoint => feed_input(&mut state.endpoint, ev),
-            SyncField::Region => feed_input(&mut state.region, ev),
-            SyncField::Bucket => feed_input(&mut state.bucket, ev),
-            SyncField::Key => feed_input(&mut state.key, ev),
-            SyncField::PathStyle => {
-                if matches!(key.code, KeyCode::Char(' ')) {
-                    state.path_style = !state.path_style;
-                }
-            }
-            SyncField::AccessKeyId => feed_input(&mut state.access_key_id, ev),
-            SyncField::Secret => {
-                let _ = state.secret.on_key(key);
-            }
-            SyncField::Master => {
-                let _ = state.master.on_key(key);
-            }
+        let master_index = state.field_count() - 1;
+        if state.focused == master_index {
+            let _ = state.master.on_key(key);
+        } else if state.action == LocalSyncAction::Import && state.focused == 0 {
+            feed_input(&mut state.name, ev);
+        } else {
+            feed_input(&mut state.peer_name, ev);
         }
         true
     }
 
-    /// Persist the S3 credential via the **two-call flow** (ADR-T2): encrypt the
-    /// secret access key in TUI memory (`encrypt_credential`, keyed off the
-    /// master password), then write only the ciphertext container to
-    /// `vaults.toml` (`configure_remote`). Returns `true` on success (close the
-    /// overlay → secrets zeroize); on failure sets `state.error` and returns
-    /// `false` (overlay stays open).
-    fn perform_configure_sync(&mut self, state: &mut SyncConfigState) -> bool {
-        let bucket = state.bucket.value().trim().to_string();
-        let key = state.key.value().trim().to_string();
-        let region = state.region.value().trim().to_string();
-        let access_key_id = state.access_key_id.value().trim().to_string();
-        if bucket.is_empty() || key.is_empty() || region.is_empty() || access_key_id.is_empty() {
-            state.error =
-                Some("Bucket, object key, region, and access key ID are required.".to_string());
-            return false;
-        }
-        if state.secret.len_chars() == 0 {
-            state.error = Some("Enter the S3 secret access key.".to_string());
-            return false;
-        }
+    fn perform_local_sync_action(&mut self, state: &mut LocalSyncState) -> bool {
         if state.master.len_chars() == 0 {
-            state.error = Some("Enter the master password to encrypt the credential.".to_string());
+            state.error = Some("Enter the vault master password.".to_string());
             return false;
         }
-        let Some(name) = self.selected_vault.clone() else {
-            state.error = Some("No vault selected.".to_string());
-            return false;
-        };
-
-        // The master password is rebuilt here (the App holds none) and dropped
-        // at scope end. `encrypt_credential` runs Argon2id + ChaCha20-Poly1305
-        // in memory; only the resulting ciphertext container reaches disk.
         let mp = MasterPassword::new(state.master.as_str().to_string());
-        let container = match hidlins_sync::encrypt_credential(state.secret.as_str(), &mp) {
-            Ok(c) => c,
-            Err(e) => {
-                state.error = Some(format!("Could not encrypt credential: {e}"));
-                return false;
+        let result = match state.action {
+            LocalSyncAction::StartServer => self.start_server(mp),
+            LocalSyncAction::PairExisting => {
+                self.begin_pair_existing(&mp, state.peer_name.value().trim().to_string())
             }
+            LocalSyncAction::Import => self.pairing.begin_import(
+                state.name.value().trim().to_string(),
+                mp,
+                state.peer_name.value().trim().to_string(),
+            ),
         };
-        let credentials = hidlins_sync::CredentialSource::RstCred1 {
-            access_key_id,
-            secret_access_key_encrypted: container,
-        };
-        let mut s3 = S3Config::new(bucket, key, region, credentials);
-        let endpoint = state.endpoint.value().trim().to_string();
-        if !endpoint.is_empty() {
-            s3.set_endpoint(Some(endpoint));
-        }
-        if state.path_style {
-            s3.set_path_style(true);
-        }
-
-        let Some(registry) = self.registry_mut() else {
-            state.error = Some("Registry unavailable during sync.".to_string());
-            return false;
-        };
-        // `configure_remote` does NOT encrypt (its `master_password` arg is
-        // unused/forward-compat) — it does the duplicate-target check and writes
-        // the already-encrypted config to `vaults.toml`.
-        match Sync::configure_remote(registry, &name, s3, &mp) {
-            Ok(()) => {
-                self.status_bar
-                    .set("Sync target configured.", Instant::now());
-                self.sync_status = Some("Sync target configured.".to_string());
-                true
-            }
-            Err(e) => {
-                state.error = Some(format!("Could not configure sync: {e}"));
+        match result {
+            Ok(()) => true,
+            Err(error) => {
+                state.error = Some(error);
                 false
             }
+        }
+    }
+
+    fn authenticate_sync_password(&self, master: &MasterPassword) -> Result<(), String> {
+        let name = self
+            .selected_vault
+            .as_deref()
+            .ok_or_else(|| "No vault is selected.".to_string())?;
+        let registered = self
+            .session
+            .registry()
+            .and_then(|registry| registry.get(name))
+            .ok_or_else(|| "The selected vault is no longer registered.".to_string())?;
+        Vault::open(&registered.path, master, None)
+            .map(drop)
+            .map_err(|_| "Master password authentication failed.".to_string())
+    }
+
+    fn start_server(&mut self, master: MasterPassword) -> Result<(), String> {
+        self.authenticate_sync_password(&master)?;
+        let name = self
+            .selected_vault
+            .clone()
+            .ok_or_else(|| "No vault is selected.".to_string())?;
+        let config = match self.selected_local_config() {
+            Some(config) if config.role() == SyncRole::Server => config,
+            Some(_) => return Err("This vault is configured as a sync client.".to_string()),
+            None => LocalSyncConfig::configure(
+                self.registry_mut()
+                    .ok_or_else(|| "The vault registry is busy.".to_string())?,
+                &name,
+                SyncRole::Server,
+                &master,
+            )
+            .map_err(|_| "Could not configure the authoritative server identity.".to_string())?,
+        };
+        let runtime = ServerRuntime::start(&config, &name, master, self.paths.clone())?;
+        let endpoint = runtime.endpoint();
+        self.server = Some(runtime);
+        self.server_requested = true;
+        let message = format!("Sync server running on {endpoint}.");
+        self.sync_status = Some(message.clone());
+        self.status_bar.set(message, Instant::now());
+        Ok(())
+    }
+
+    fn stop_server_runtime(&mut self) {
+        if let Some(reply) = self.pending_server_pairing.take() {
+            let _ = reply.try_send(None);
+        }
+        if let Some(mut runtime) = self.server.take() {
+            runtime.stop();
+        }
+        self.pairing_deadline = None;
+    }
+
+    fn stop_server_by_user(&mut self) {
+        self.server_requested = false;
+        self.stop_server_runtime();
+        self.sync_status = Some("Sync server stopped.".to_string());
+        self.status_bar.set("Sync server stopped.", Instant::now());
+    }
+
+    fn allow_pairing(&mut self) {
+        let Some(server) = self.server.as_ref() else {
+            self.status_bar
+                .set_warning("Start sync server before allowing pairing.", Instant::now());
+            return;
+        };
+        match server.open_pairing() {
+            Ok(()) => {
+                self.pairing_deadline =
+                    Some(Instant::now() + hidlins_sync::protocol::PAIRING_WINDOW);
+                self.status_bar.set(
+                    "Pairing open for 3 minutes. Compare the SAS on both devices.",
+                    Instant::now(),
+                );
+            }
+            Err(error) => self.status_bar.set_error(error, Instant::now()),
+        }
+    }
+
+    fn begin_pair_existing(
+        &mut self,
+        master: &MasterPassword,
+        peer_name: String,
+    ) -> Result<(), String> {
+        self.authenticate_sync_password(master)?;
+        let name = self
+            .selected_vault
+            .clone()
+            .ok_or_else(|| "No vault is selected.".to_string())?;
+        let config = match self.selected_local_config() {
+            Some(config) if config.role() == SyncRole::Client && !config.is_active_client() => {
+                config
+            }
+            Some(config) if config.is_active_client() => {
+                return Err("This vault is already paired.".to_string());
+            }
+            Some(_) => return Err("An authoritative vault cannot become a client.".to_string()),
+            None => LocalSyncConfig::configure(
+                self.registry_mut()
+                    .ok_or_else(|| "The vault registry is busy.".to_string())?,
+                &name,
+                SyncRole::Client,
+                master,
+            )
+            .map_err(|_| "Could not configure the client identity.".to_string())?,
+        };
+        self.pairing
+            .begin_existing(name, config, master, peer_name)?;
+        self.status_bar
+            .set_info("Discovering pairable local servers…", Instant::now());
+        Ok(())
+    }
+
+    fn open_peers(&mut self) {
+        let names = self
+            .selected_local_config()
+            .map_or_else(Vec::new, |config| match config.role() {
+                SyncRole::Server => config
+                    .trusted_peers()
+                    .iter()
+                    .map(|peer| peer.display_name().to_string())
+                    .collect(),
+                SyncRole::Client => config
+                    .pinned_server()
+                    .into_iter()
+                    .map(|peer| peer.display_name().to_string())
+                    .collect(),
+            });
+        self.overlay = Some(Overlay::Peers(PeersState { names, selected: 0 }));
+    }
+
+    fn on_peers_key(&mut self, state: &mut PeersState, key: &KeyEvent) -> bool {
+        match key.code {
+            KeyCode::Esc => false,
+            KeyCode::Up | KeyCode::Char('k') => {
+                state.selected = state.selected.saturating_sub(1);
+                true
+            }
+            KeyCode::Down | KeyCode::Char('j') => {
+                state.selected = (state.selected + 1).min(state.names.len().saturating_sub(1));
+                true
+            }
+            KeyCode::Char('r') if !state.names.is_empty() => {
+                self.revoke_peer(state.selected);
+                false
+            }
+            _ => true,
+        }
+    }
+
+    fn revoke_peer(&mut self, index: usize) {
+        let Some(name) = self.selected_vault.clone() else {
+            return;
+        };
+        let Some(config) = self.selected_local_config() else {
+            return;
+        };
+        let key = match config.role() {
+            SyncRole::Server => config
+                .trusted_peers()
+                .get(index)
+                .map(hidlins_sync::trust::PeerRecord::public_key),
+            SyncRole::Client if index == 0 => config
+                .pinned_server()
+                .map(hidlins_sync::trust::PeerRecord::public_key),
+            SyncRole::Client => None,
+        };
+        let Some(key) = key else { return };
+        let result = LocalSyncConfig::transactional_update(
+            self.registry_mut().expect("ready session owns registry"),
+            &name,
+            |config| config.revoke_peer(key),
+        );
+        match result {
+            Ok(()) => {
+                if let (Some(server), Some(config)) =
+                    (self.server.as_ref(), self.selected_local_config())
+                {
+                    server.replace_trusted(&config);
+                }
+                self.status_bar.set("Peer revoked.", Instant::now());
+            }
+            Err(_) => self
+                .status_bar
+                .set_error("Could not revoke peer.", Instant::now()),
+        }
+    }
+
+    fn on_pairing_sas_key(&mut self, key: &KeyEvent) -> bool {
+        match key.code {
+            KeyCode::Char('y' | 'Y') => {
+                if let Some(reply) = self.pending_server_pairing.take() {
+                    let _ = reply.try_send(Some("Nearby Hidlins".to_string()));
+                } else if let Err(error) = self.pairing.confirm(true) {
+                    self.status_bar.set_error(error, Instant::now());
+                }
+                false
+            }
+            KeyCode::Char('n' | 'N') | KeyCode::Esc => {
+                if let Some(reply) = self.pending_server_pairing.take() {
+                    let _ = reply.try_send(None);
+                }
+                let _ = self.pairing.confirm(false);
+                false
+            }
+            _ => true,
+        }
+    }
+
+    fn tick_server(&mut self, now: Instant) {
+        self.finish_server_work(now);
+        if self
+            .pairing_deadline
+            .is_some_and(|deadline| now >= deadline)
+        {
+            if let Some(server) = self.server.as_ref() {
+                server.close_pairing();
+            }
+            self.pairing_deadline = None;
+            self.status_bar.set_info("Pairing window expired.", now);
+        }
+
+        if let Some(event) = self.pairing.poll() {
+            match event {
+                PairingEvent::Prompt { sas } => {
+                    self.overlay = Some(Overlay::PairingSas(Box::new(crate::overlay::SasState {
+                        code: sas,
+                        peer_name: "Nearby Hidlins".to_string(),
+                        error: None,
+                    })));
+                }
+                PairingEvent::Complete { imported } => {
+                    if let Ok(registry) = VaultRegistry::load(self.paths.clone()) {
+                        self.session.replace_registry(registry);
+                    }
+                    let message = imported.map_or_else(
+                        || "Pairing complete.".to_string(),
+                        |name| format!("Imported paired vault {name}."),
+                    );
+                    self.sync_status = Some(message.clone());
+                    self.status_bar.set(message, now);
+                    if matches!(
+                        self.phase,
+                        Phase::VaultOnboarding { .. } | Phase::UnlockList
+                    ) {
+                        self.list_index = self.registry().list().count().saturating_sub(1);
+                        self.status = self.sync_status.clone();
+                        self.phase = Phase::UnlockList;
+                    }
+                }
+                PairingEvent::Failed(error) => {
+                    self.sync_status = Some(error.clone());
+                    self.status_bar.set_error(error, now);
+                }
+            }
+        }
+
+        let requests = self
+            .server
+            .as_ref()
+            .map_or_else(Vec::new, ServerRuntime::drain_authority);
+        for request in requests {
+            match request {
+                AuthorityRequest::Confirm { sas, reply } => {
+                    self.pending_server_pairing = Some(reply);
+                    self.overlay = Some(Overlay::PairingSas(Box::new(crate::overlay::SasState {
+                        code: sas.to_string(),
+                        peer_name: "Nearby Hidlins".to_string(),
+                        error: None,
+                    })));
+                }
+                AuthorityRequest::ReloadTrust => {
+                    if let Ok(registry) = VaultRegistry::load(self.paths.clone()) {
+                        self.session.replace_registry(registry);
+                    }
+                    if let (Some(server), Some(config)) =
+                        (self.server.as_ref(), self.selected_local_config())
+                    {
+                        server.replace_trusted(&config);
+                    }
+                }
+            }
+        }
+
+        self.start_server_work(now);
+    }
+
+    fn start_server_work(&mut self, now: Instant) {
+        if self.server_work.is_some() || self.is_syncing() {
+            return;
+        }
+        let work = match self.server.as_mut().map(ServerRuntime::take_work) {
+            None | Some(Ok(None)) => return,
+            Some(Err(error)) => {
+                self.sync_status = Some(error.clone());
+                self.status_bar.set_error(error, now);
+                return;
+            }
+            Some(Ok(Some(work))) => work,
+        };
+        let Some((vault, registry)) = self.session.begin_sync() else {
+            if let Some(server) = self.server.as_mut() {
+                server.restore_master(work.1);
+            }
+            return;
+        };
+        let (operation, master) = work;
+        let (sender, receiver) = mpsc::channel();
+        std::thread::spawn(move || {
+            let mut vault = vault;
+            let mut host = hidlins_sync::server::AuthoritativeVault::new(&mut vault, &master, None);
+            let outcome = operation
+                .execute(&mut host)
+                .map_err(|_| "An incoming sync request failed safely.".to_string());
+            let _ = sender.send(ServerWorkResult {
+                vault,
+                registry,
+                master,
+                outcome,
+            });
+        });
+        self.server_work = Some(receiver);
+        self.sync_status = Some("Processing an incoming local sync…".to_string());
+    }
+
+    fn finish_server_work(&mut self, now: Instant) {
+        let result = match self.server_work.as_ref().map(Receiver::try_recv) {
+            None | Some(Err(TryRecvError::Empty)) => return,
+            Some(Err(TryRecvError::Disconnected)) => {
+                self.server_work = None;
+                self.recover_from_lost_worker();
+                return;
+            }
+            Some(Ok(result)) => result,
+        };
+        self.server_work = None;
+        self.session.finish_sync(result.vault, result.registry);
+        if let Some(server) = self.server.as_mut() {
+            server.restore_master(result.master);
+        }
+        if let Err(error) = result.outcome {
+            self.sync_status = Some(error.clone());
+            self.status_bar.set_error(error, now);
+        } else {
+            self.sync_status = Some("Incoming local sync complete.".to_string());
+            self.status_bar.set("Incoming local sync complete.", now);
+        }
+        if self.lock_pending {
+            self.lock_pending = false;
+            self.lock_app();
         }
     }
 
@@ -5218,20 +5583,15 @@ mod tests {
             "read-only refuses the manual sync command"
         );
         assert!(!app.is_syncing());
-        // The choke point is guarded even if reached directly (auto-sync
-        // triggers on unlock / lock-quit bypass `execute_command`).
+        // The choke point is guarded even if reached directly by startup policy.
         app.start_sync(
-            crate::sync_runtime::SyncTrigger::OnUnlock,
+            crate::sync_runtime::SyncTrigger::Startup,
             MasterPassword::new(PASSWORD.to_string()),
         );
         assert!(!app.is_syncing(), "read-only start_sync is a no-op");
         assert!(
             app.vault().is_some(),
             "read-only start_sync does not consume the vault"
-        );
-        assert!(
-            !app.should_sync_on_leave(),
-            "read-only never syncs on lock/quit"
         );
     }
 
@@ -7147,7 +7507,7 @@ mod tests {
 
     use crate::screens::settings;
     use crate::sync_runtime::SyncEngine;
-    use hidlins_sync::{CredentialSource, EntryDelta, S3Config, Sync, SyncError, SyncOutcome};
+    use hidlins_sync::{EntryDelta, SyncError, SyncOutcome};
     use std::sync::Arc;
 
     /// A fake engine returning a fixed `AlreadyInSync` (enough to exercise the
@@ -7167,21 +7527,17 @@ mod tests {
         }
     }
 
-    /// Configure an S3 sync target on the app's registry using `EnvVars`
-    /// credentials (no encryption needed — keeps the helper simple). The target
-    /// is persisted to `vaults.toml`, so `sync_configured()` becomes true.
+    /// Configure a local client identity. Trust activation is covered by the
+    /// integration suite; these tests exercise App ownership and UI.
     fn configure_target(app: &mut App, vault_name: &str) {
-        let s3 = S3Config::new(
-            "bkt".to_string(),
-            "v.kdbx".to_string(),
-            "us-east-1".to_string(),
-            CredentialSource::EnvVars {
-                prefix: "TEST_".to_string(),
-            },
-        );
         let mp = MasterPassword::new(PASSWORD.to_string());
-        Sync::configure_remote(app.registry_mut().unwrap(), vault_name, s3, &mp)
-            .expect("configure target");
+        LocalSyncConfig::configure(
+            app.registry_mut().unwrap(),
+            vault_name,
+            SyncRole::Client,
+            &mp,
+        )
+        .expect("configure target");
     }
 
     /// Take the app's vault + registry out and feed them back through
@@ -7234,25 +7590,26 @@ mod tests {
     }
 
     #[test]
-    fn settings_toggle_sync_on_unlock_persists() {
+    fn settings_local_server_action_is_process_local() {
         let (_dir, mut app) = populated_app();
         unlock(&mut app, PASSWORD);
         app.handle_event(&key_alt('2')); // → Settings tab
         assert!(matches!(app.tabs.active_tab(), Tab::Settings));
-        // Rows: 0 Default sort, 1 Theme, 2 Auto-lock, 3 Auto-sync on unlock.
+        // Rows: 0 Default sort, 1 Theme, 2 Auto-lock, 3 configure/start server.
         for _ in 0..3 {
             app.handle_event(&key('j'));
         }
         assert_eq!(app.settings_index, 3);
-        assert!(!app.user_config.sync_on_unlock());
-        app.handle_event(&key_code(KeyCode::Enter)); // toggle on
         assert!(
-            app.user_config.sync_on_unlock(),
-            "Enter toggles the setting"
+            !app.server_requested,
+            "server defaults off on every process start"
         );
-        // Prefs now persist to config.toml (T3.1), not tui.toml.
-        let on_disk = std::fs::read_to_string(app.paths.config_toml()).unwrap();
-        assert!(on_disk.contains("sync-on-unlock = true"), "{on_disk}");
+        app.handle_event(&key_code(KeyCode::Enter));
+        assert!(matches!(app.overlay, Some(Overlay::LocalSync(_))));
+        assert!(
+            !app.paths.config_toml().exists(),
+            "server choice is not persisted"
+        );
     }
 
     #[test]
@@ -7576,34 +7933,90 @@ mod tests {
     }
 
     #[test]
-    fn auto_sync_on_unlock_when_enabled_and_configured() {
+    fn startup_sync_runs_once_per_process_for_configured_client() {
         let (_dir, mut app) = populated_app();
-        // Configure the target on the registry before unlocking.
         unlock(&mut app, PASSWORD);
         configure_target(&mut app, "personal");
-        app.user_config.set_sync_on_unlock(true);
         app.set_sync_engine(Arc::new(AlreadyInSyncEngine));
-        // Lock and re-unlock: the auto-trigger fires.
         app.handle_event(&key_ctrl('l'));
         app.handle_event(&key(' '));
         unlock(&mut app, PASSWORD);
         assert!(
             app.is_syncing(),
-            "auto-sync-on-unlock kicked a background sync"
+            "first configured unlock starts client sync"
+        );
+
+        // Finish the first attempt, then lock/re-unlock again in the same
+        // process. The fixed policy must not schedule a second attempt.
+        for _ in 0..100_000 {
+            app.tick(Instant::now());
+            if !app.is_syncing() {
+                break;
+            }
+        }
+        app.handle_event(&key_ctrl('l'));
+        app.handle_event(&key(' '));
+        unlock(&mut app, PASSWORD);
+        assert!(
+            !app.is_syncing(),
+            "later unlocks do not repeat startup sync"
         );
     }
 
     #[test]
-    fn no_auto_sync_on_unlock_when_toggle_off() {
+    fn unconfigured_unlock_does_not_start_network_work() {
+        let (_dir, mut app) = populated_app();
+        app.set_sync_engine(Arc::new(AlreadyInSyncEngine));
+        unlock(&mut app, PASSWORD);
+        assert!(!app.is_syncing(), "unconfigured vault stays offline");
+    }
+
+    #[test]
+    fn pairing_window_expiry_is_visible_and_closes() {
         let (_dir, mut app) = populated_app();
         unlock(&mut app, PASSWORD);
-        configure_target(&mut app, "personal");
-        // Toggle stays off (default).
-        app.set_sync_engine(Arc::new(AlreadyInSyncEngine));
-        app.handle_event(&key_ctrl('l'));
-        app.handle_event(&key(' '));
+        app.pairing_deadline = Some(Instant::now());
+        app.tick(Instant::now() + Duration::from_secs(1));
+        assert!(app.pairing_deadline.is_none());
+        assert!(app
+            .status_bar
+            .current()
+            .is_some_and(|message| message.contains("expired")));
+    }
+
+    #[test]
+    fn sas_confirmation_overlay_cannot_be_bypassed_by_unrelated_keys() {
+        let (_dir, mut app) = populated_app();
         unlock(&mut app, PASSWORD);
-        assert!(!app.is_syncing(), "no auto-sync with the toggle off");
+        app.overlay = Some(Overlay::PairingSas(Box::new(crate::overlay::SasState {
+            code: "123 456".to_string(),
+            peer_name: "test peer".to_string(),
+            error: None,
+        })));
+        app.handle_event(&key('x'));
+        assert!(matches!(app.overlay, Some(Overlay::PairingSas(_))));
+        app.handle_event(&key('n'));
+        assert!(app.overlay.is_none());
+    }
+
+    #[test]
+    fn local_sync_commands_are_registry_backed_and_keyboard_reachable() {
+        use crate::command::registry::spec_for;
+
+        let keymap = Keymap::preset(Preset::Vim);
+        for command in [
+            Command::LocalServer,
+            Command::PairVault,
+            Command::ImportVault,
+            Command::PairingWindow,
+            Command::ManagePeers,
+        ] {
+            let spec = spec_for(command).expect("local sync command is registered");
+            assert!(spec.contexts.contains(Contexts::SETTINGS_TAB));
+            assert!(keymap
+                .rendered_keys(command)
+                .is_some_and(|keys| !keys.is_empty()));
+        }
     }
 
     #[test]
@@ -7726,109 +8139,60 @@ mod tests {
     }
 
     #[test]
-    fn on_lock_trigger_locks_after_sync() {
+    fn startup_failure_preserves_ready_workspace() {
         let (_dir, mut app) = populated_app();
         unlock(&mut app, PASSWORD);
         integrate(
             &mut app,
-            Ok(SyncOutcome::AlreadyInSync),
-            SyncTrigger::OnLock,
+            Err(SyncError::NotConfigured),
+            SyncTrigger::Startup,
         );
         assert!(
-            matches!(app.phase, Phase::LockScreen),
-            "on-lock flush then lock"
+            matches!(app.phase, Phase::Workspace),
+            "offline startup failure preserves the workspace"
         );
+        assert!(app.vault().is_some());
     }
 
     #[test]
-    fn on_quit_trigger_quits_after_sync() {
+    fn quit_does_not_trigger_sync() {
         let (_dir, mut app) = populated_app();
         unlock(&mut app, PASSWORD);
-        integrate(
-            &mut app,
-            Ok(SyncOutcome::AlreadyInSync),
-            SyncTrigger::OnQuit,
-        );
-        assert!(app.should_quit, "on-quit flush then quit");
+        app.do_quit();
+        assert!(app.should_quit);
+        assert!(!app.is_syncing());
     }
 
-    // T-SEC-CRED-1 (the security gate for the whole credential surface): the
-    // two-call flow (`encrypt_credential` → `configure_remote`, RST-CRED-1)
-    // persists ONLY the ciphertext container. The plaintext S3 secret and the
-    // master password never reach EITHER on-disk file (`vaults.toml` or
-    // `tui.toml`); only the non-secret access-key id is stored in the clear.
-    // The test is constructed so it would FAIL if plaintext ever leaked.
     #[test]
-    fn t_sec_cred_1_persists_only_ciphertext() {
-        const SECRET: &str = "super-secret-key";
+    fn local_identity_is_sealed_and_password_never_persisted() {
         let (_dir, mut app) = populated_app();
         unlock(&mut app, PASSWORD);
-        app.paths.ensure_exists().unwrap();
-
-        let mut state = SyncConfigState::new();
-        state.region = tui_input::Input::new("us-east-1".to_string());
-        state.bucket = tui_input::Input::new("bkt".to_string());
-        state.key = tui_input::Input::new("v.kdbx".to_string());
-        state.access_key_id = tui_input::Input::new("AKIAEXAMPLE".to_string());
-        // The S3 secret is collected ONLY through the echo-suppressed
-        // `PasswordInput` (its buffer is `Zeroizing`), never a plain `Input`.
-        state.secret = PasswordInput::with_value(SECRET);
-        state.master = PasswordInput::with_value(PASSWORD);
-
-        assert!(
-            app.perform_configure_sync(&mut state),
-            "two-call flow succeeds"
-        );
-        assert!(app.sync_configured(), "target configured after save");
-
+        configure_target(&mut app, "personal");
         let vaults_toml =
             std::fs::read_to_string(app.paths.state_dir().join("vaults.toml")).unwrap();
-        assert!(
-            !vaults_toml.contains(SECRET),
-            "plaintext S3 secret must never reach vaults.toml: {vaults_toml}"
-        );
         assert!(
             !vaults_toml.contains(PASSWORD),
             "the master password must never reach vaults.toml"
         );
         assert!(
-            vaults_toml.contains("AKIAEXAMPLE"),
-            "the non-secret access key id is stored in the clear"
-        );
-        // RST-CRED-1 container marker proves the secret was encrypted, not stored.
-        assert!(
-            vaults_toml.contains("RC01") || vaults_toml.contains("secret_access_key_encrypted"),
-            "only the encrypted container is persisted: {vaults_toml}"
-        );
-
-        // The TUI's own non-secret store must never see either secret. The file
-        // may not exist (nothing here writes it) — that trivially contains no
-        // secret, hence `unwrap_or_default`.
-        let tui_toml = std::fs::read_to_string(config::config_path(&app.paths)).unwrap_or_default();
-        assert!(
-            !tui_toml.contains(SECRET) && !tui_toml.contains(PASSWORD),
-            "no secret may reach tui.toml (non-secret store, ADR-T3): {tui_toml}"
+            vaults_toml.contains("sealed_private_key"),
+            "the sync identity is stored only as a sealed container: {vaults_toml}"
         );
     }
 
-    // T-SEC-CRED-1 (zeroize half): cancelling the credential overlay, and a lock
-    // while it is open, both drop it — so its two `Zeroizing` `PasswordInput`
-    // buffers (S3 secret + master password) are wiped, never left resident.
     #[test]
-    fn t_sec_cred_1_cancel_and_lock_drop_the_credential_overlay() {
+    fn cancel_and_lock_drop_the_local_sync_password_overlay() {
         let (_dir, mut app) = populated_app();
         unlock(&mut app, PASSWORD);
-        // Esc cancels → overlay dropped (buffers zeroize on drop).
-        app.open_sync_config();
-        assert!(matches!(app.overlay, Some(Overlay::SyncConfig(_))));
+        app.open_local_sync(LocalSyncAction::PairExisting);
+        assert!(matches!(app.overlay, Some(Overlay::LocalSync(_))));
         app.handle_event(&key_code(KeyCode::Esc));
-        assert!(app.overlay.is_none(), "Esc drops the credential overlay");
-        // Lock while it is open → `lock_app` clears the overlay too.
-        app.open_sync_config();
+        assert!(app.overlay.is_none(), "Esc drops the password overlay");
+        app.open_local_sync(LocalSyncAction::PairExisting);
         assert!(app.overlay.is_some());
         app.handle_event(&key_ctrl('l'));
         assert!(matches!(app.phase, Phase::LockScreen));
-        assert!(app.overlay.is_none(), "lock drops the credential overlay");
+        assert!(app.overlay.is_none(), "lock drops the password overlay");
     }
 
     // T-SYNC (surfacing matrix, ADR-T4a): each benign/quiet `SyncOutcome` gets
@@ -7860,31 +8224,29 @@ mod tests {
     }
 
     #[test]
-    fn credential_overlay_rejects_missing_required_fields() {
+    fn local_sync_overlay_rejects_missing_password() {
         let (_dir, mut app) = populated_app();
         unlock(&mut app, PASSWORD);
-        let mut state = SyncConfigState::new(); // all blank
+        let mut state = LocalSyncState::new(LocalSyncAction::PairExisting);
         assert!(
-            !app.perform_configure_sync(&mut state),
-            "blanks are rejected"
+            !app.perform_local_sync_action(&mut state),
+            "a blank master password is rejected"
         );
         assert!(state.error.is_some());
         assert!(!app.sync_configured());
     }
 
     #[test]
-    fn settings_configure_row_opens_credential_overlay() {
+    fn settings_import_row_opens_local_sync_overlay() {
         let (_dir, mut app) = populated_app();
         unlock(&mut app, PASSWORD);
         app.handle_event(&key_alt('2')); // → Settings
-                                         // "Configure sync target…" is the last row (index 5
-                                         // after Theme (T3.4) and Auto-lock (T3.5) landed).
         for _ in 0..5 {
             app.handle_event(&key('j'));
         }
         assert_eq!(app.settings_index, 5);
         app.handle_event(&key_code(KeyCode::Enter));
-        assert!(matches!(app.overlay, Some(Overlay::SyncConfig(_))));
+        assert!(matches!(app.overlay, Some(Overlay::LocalSync(_))));
     }
 
     // ---- Journey tests: edit overlay save-and-verify round-trip ----

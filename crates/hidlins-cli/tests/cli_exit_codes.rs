@@ -79,7 +79,7 @@ fn gen_with_no_verb_exits_user_error() {
 // stub tests (`sync_slot_exits_eleven`, `sync_slot_with_vault_flag_exits_eleven`)
 // were removed when the real body landed (features/cli-sync-wiring/ Phase 3).
 // End-to-end behaviour now lives in `cli_sync.rs` (error paths) +
-// `cli_sync_minio.rs` (gated happy path).
+// spawned-process local sync tests (gated happy path).
 
 #[test]
 fn ssh_slot_exits_eleven() {
@@ -143,10 +143,6 @@ fn ssh_generate_slot_exits_eleven_with_feature_pointer() {
         "stub message should name the verb + feature:\n{stderr}"
     );
 }
-
-// `vault set-sync` was a NotImplemented slot in Phase 1; its exit-11
-// stub test was removed when the real body landed (features/cli-sync-
-// wiring/ Phase 2). End-to-end behaviour now lives in `cli_set_sync.rs`.
 
 #[test]
 fn json_format_flag_parses_globally() {

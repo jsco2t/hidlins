@@ -10,6 +10,7 @@ import 'package:app/src/data/models.dart';
 import 'package:app/src/providers/activity_provider.dart';
 import 'package:app/src/providers/providers.dart';
 import 'package:app/src/platform/platform_result.dart';
+import 'package:app/src/platform/local_discovery.dart';
 import 'package:app/src/platform/secure_clipboard.dart';
 
 void main() {
@@ -117,6 +118,23 @@ void main() {
       expect(session.activityCalls, 1);
     });
 
+    test(
+      'startup sync sends native discovery through Rust before scheduling',
+      () async {
+        final order = <String>[];
+        final session = _FakeBridgeSession()..startupOrder = order;
+        final repo = BridgeSyncRepository(
+          session,
+          useNativeDiscovery: true,
+          nativeDiscovery: _FakeLocalDiscovery(order),
+        );
+
+        await repo.startStartupSync();
+
+        expect(order, ['discover', 'validate', 'sync']);
+      },
+    );
+
     test('preferences preserve geometry and list pane width', () async {
       final session = _FakeBridgeSession()
         ..prefs = const bridge.UiPrefs(
@@ -151,6 +169,20 @@ final class _FakeBridgeSession implements bridge_api.AppSession {
   int copyCalls = 0;
   HidlinsApiError? revealError;
   bridge.UiPrefs prefs = const bridge.UiPrefs();
+  List<String>? startupOrder;
+
+  @override
+  Future<void> setDiscoveryCandidates({
+    required bridge.DiscoveryPermissionDto permission,
+    required List<bridge.LocalEndpointDto> candidates,
+  }) async {
+    startupOrder?.add('validate');
+  }
+
+  @override
+  Future<void> startStartupSync() async {
+    startupOrder?.add('sync');
+  }
 
   @override
   Future<String> revealField({
@@ -197,6 +229,39 @@ final class _FakeBridgeSession implements bridge_api.AppSession {
 
   @override
   dynamic noSuchMethod(Invocation invocation) => super.noSuchMethod(invocation);
+}
+
+final class _FakeLocalDiscovery implements LocalDiscoveryCapability {
+  _FakeLocalDiscovery(this.order);
+
+  final List<String> order;
+
+  @override
+  Future<PlatformResult<LocalDiscoveryStatus>> discover(
+    DiscoveryKind kind,
+  ) async {
+    order.add('discover');
+    return const PlatformSuccess(
+      LocalDiscoveryStatus(
+        permission: LocalDiscoveryPermission.granted,
+        candidates: [LocalEndpoint(address: '192.168.1.8', port: 42873)],
+      ),
+    );
+  }
+
+  @override
+  Future<PlatformResult<PlatformUnit>> openSettings() async =>
+      const PlatformSuccess(platformUnit);
+
+  @override
+  Future<PlatformResult<LocalDiscoveryStatus>> permissionStatus() async =>
+      const PlatformSuccess(
+        LocalDiscoveryStatus(permission: LocalDiscoveryPermission.granted),
+      );
+
+  @override
+  Future<PlatformResult<PlatformUnit>> stop() async =>
+      const PlatformSuccess(platformUnit);
 }
 
 final class _FakeSecureClipboard implements SecureClipboardCapability {

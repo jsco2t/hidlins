@@ -34,7 +34,7 @@ fn same_entry_collision_newer_wins_loser_in_history() {
     {
         let b_bytes = std::fs::read(dev_b.vault_path()).unwrap();
         transport
-            .put_conditional(&b_bytes, None)
+            .commit_conditional(&b_bytes, None)
             .expect("device B push");
     }
 
@@ -46,7 +46,7 @@ fn same_entry_collision_newer_wins_loser_in_history() {
         &dev_a.master(),
         None,
         &mut transport,
-        Some("stale-etag".to_string()),
+        Some("stale-version".to_string()),
         Some(&base_sha),
         SyncOptions::default(),
     )
@@ -99,7 +99,7 @@ fn same_second_collision_surfaces_unresolvable_with_backup() {
     {
         let b_bytes = std::fs::read(dev_b.vault_path()).unwrap();
         transport
-            .put_conditional(&b_bytes, None)
+            .commit_conditional(&b_bytes, None)
             .expect("device B push");
     }
 
@@ -112,7 +112,7 @@ fn same_second_collision_surfaces_unresolvable_with_backup() {
         &dev_a.master(),
         None,
         &mut transport,
-        Some("stale-etag".to_string()),
+        Some("stale-version".to_string()),
         Some(&base_sha),
         SyncOptions::default(),
     );

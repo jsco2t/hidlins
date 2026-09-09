@@ -292,44 +292,34 @@ impl From<SecurityError> for CliExit {
 }
 
 // ---------------------------------------------------------------------------
-// Exhaustive From<SyncError> for CliExit.
-//
-// `hidlins-sync` ships the sync-transport surface consumed by
-// `hidlins sync` and `hidlins vault set-sync` (features/cli-sync-wiring/).
-// The CLI maps every `SyncError` variant onto the frozen exit-code
-// contract (FR-063):
-//
-//   3 — `SyncConflict`  : `Unresolvable` (same-second divergence)
-//   2 — `VaultLocked`   : `MasterPasswordMismatch`
-//   1 — `UserError`     : `NotConfigured`, `DuplicateTarget`, `Auth`,
-//                          `AuthFailed`, `S3(AuthFailed)` (remote 403 — see
-//                          "Option B" below)
-//   10+ — `Internal`    : `RemoteUnreachable`, `S3` (non-auth), `BackupFailed`,
-//                          `ConditionalPutExhausted`, `VaultIo`, `Vault`,
-//                          `Merge`, `CredentialDecryption`, `UnsupportedBackend`
-//
-// Option B (2026-07-19): a REMOTE authentication/authorization failure —
-// the top-level `AuthFailed` and an S3 403 (`S3(S3Error::AuthFailed)`) — is
-// a user error (exit 1), not internal. Its dominant causes (bad/expired
-// credentials, bucket-policy denial) are user-fixable; the rarer
-// signature-rejection sub-case is guarded by the SigV4 test-vector suite,
-// not by reserving exit 10. Local vault auth (`MasterPasswordMismatch`)
-// stays at exit 2.
-//
-// `SyncError` is `#[non_exhaustive]`, so the trailing arm catches
-// future variants as `Internal` (with the upstream Display text).
-//
-// Exit 3 (`SyncConflict`) gets its mapping here: `SyncError::Unresolvable`
-// converts to `CliExit::SyncConflict`. The `hidlins sync` command invokes
-// this mapping at runtime and attaches the selected vault name before
-// rendering the exit-3 diagnostic.
-// ---------------------------------------------------------------------------
-
+// Local-network synchronization preserves the stable CLI exit-code contract:
+// user-correctable configuration/cancellation is 1, vault authentication is 2,
+// an unresolvable merge is 3, and operational failures are internal.
 impl From<SyncError> for CliExit {
-    fn from(e: SyncError) -> Self {
+    fn from(error: SyncError) -> Self {
         use SyncError as E;
-        match e {
-            // 3 — conflict requiring the user (same-second unresolvable merge)
+        match error {
+            E::LocalNetwork(hidlins_sync::client::LanError::Authentication) => {
+                Self::VaultLocked("local sync peer authentication failed".to_string())
+            }
+            E::LocalNetwork(hidlins_sync::client::LanError::StaleVersion) => Self::SyncConflict {
+                vault: String::new(),
+                detail: "authority advanced concurrently; retry manual sync".to_string(),
+            },
+            E::LocalNetwork(
+                hidlins_sync::client::LanError::Unreachable
+                | hidlins_sync::client::LanError::TimedOut,
+            ) => Self::Internal("local sync authority is offline or unreachable".to_string()),
+            E::LocalNetwork(hidlins_sync::client::LanError::Busy) => {
+                Self::Internal("local sync resource limit reached; retry later".to_string())
+            }
+            E::LocalNetwork(hidlins_sync::client::LanError::Cancelled) => {
+                Self::UserError("local sync operation was cancelled".to_string())
+            }
+            E::LocalNetwork(
+                hidlins_sync::client::LanError::Protocol | hidlins_sync::client::LanError::Internal,
+            ) => Self::Internal("local sync protocol failed".to_string()),
+            E::LocalConfig(_) => Self::UserError("local sync configuration is invalid".to_string()),
             E::Unresolvable {
                 reason,
                 backup_path,
@@ -341,87 +331,33 @@ impl From<SyncError> for CliExit {
                     backup_path.display()
                 ),
             },
-
-            // 2 — auth failure (master-password / KDF mismatch between
-            // local and remote vaults)
             E::MasterPasswordMismatch => Self::VaultLocked(
-                "master password or KDF parameters differ between local and remote vault"
+                "master password or KDF parameters differ between local and authoritative vault"
                     .to_string(),
             ),
-
-            // 1 — user-config error (not configured, duplicate target, bad creds)
             E::NotConfigured => Self::UserError(
-                "sync is not configured for this vault (run `hidlins vault set-sync ...`)"
+                "local sync is not configured for this vault; pair it or run `hidlins sync serve`"
                     .to_string(),
             ),
-            E::DuplicateTarget {
-                endpoint,
-                bucket,
-                key,
-                existing_vault,
-            } => Self::UserError(format!(
-                "two vaults configured to the same S3 target \
-                     (endpoint={endpoint:?} bucket={bucket} key={key}); \
-                     existing vault: `{existing_vault}`"
-            )),
-            // Forward the specific discovery failure (missing file / profile /
-            // env-var / IMDS) — `AuthError` names the offending source but
-            // never the credential value, so this is safe to surface.
-            E::Auth(inner) => Self::UserError(format!("credential discovery failed: {inner}")),
-
-            // Remote authentication/authorization failure → user error, NOT
-            // internal (feature decision "Option B", 2026-07-19). An S3 403
-            // (or a top-level auth failure) is dominated by user-fixable
-            // causes — wrong/expired credentials or a bucket-policy denial —
-            // so exit 1 (`user.error`) is the honest signal: fix it and
-            // re-run. The rarer "server rejected our signature" sub-case is
-            // guarded by the SigV4 test-vector suite rather than by reserving
-            // exit 10 for it. Both `endpoint` and `reason` are documented
-            // non-secret; a 403 carries no credential value. This arm precedes
-            // the general `E::S3(_)` arm below so `AuthFailed` is not swept
-            // into `Internal`.
-            E::AuthFailed { endpoint, reason } => Self::UserError(format!(
-                "S3 authentication failed for {endpoint}: {reason} \
-                 (check your credentials and bucket policy)"
-            )),
-            E::S3(hidlins_sync::s3::S3Error::AuthFailed) => Self::UserError(
-                "S3 authentication or authorization failed (HTTP 403) — \
-                 check your credentials and bucket policy"
-                    .to_string(),
-            ),
-
-            // 10+ — transport / internal / unexpected failures
             E::RemoteUnreachable { endpoint, source } => {
-                Self::Internal(format!("S3 endpoint unreachable: {endpoint} ({source})"))
+                Self::Internal(format!("sync authority unreachable: {endpoint} ({source})"))
             }
-            E::ConditionalPutExhausted { attempts } => Self::Internal(format!(
-                "conditional PUT exhausted after {attempts} retries; \
-                 remote has advanced concurrently; retry `hidlins sync`"
+            E::ConditionalCommitExhausted { attempts } => Self::Internal(format!(
+                "conditional commit exhausted after {attempts} attempts; retry `hidlins sync`"
             )),
-            E::UnsupportedBackend { feature } => {
-                Self::Internal(format!("S3 backend lacks required feature `{feature}`"))
-            }
             E::BackupFailed { source } => {
                 Self::Internal(format!("pre-merge backup creation failed: {source}"))
             }
-            E::CredentialDecryption => Self::Internal(
-                "invalid credential container (corrupt or wrong master password)".to_string(),
-            ),
-            E::S3(source) => Self::Internal(format!("S3 protocol error: {source}")),
             E::Merge(source) => Self::Internal(format!("merge engine error: {source}")),
             E::VaultIo { path, source } => Self::Internal(format!(
                 "vault I/O during sync: {}: {source}",
                 path.display()
             )),
-            E::Vault(v) => CliExit::from(v),
-
-            // `SyncError` is `#[non_exhaustive]`. A future variant
-            // falls through here and is reported as `Internal`.
+            E::Vault(source) => CliExit::from(source),
             other => Self::Internal(format!("unexpected sync error: {other}")),
         }
     }
 }
-
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -678,40 +614,6 @@ mod tests {
     }
 
     #[test]
-    fn sync_error_duplicate_target_maps_to_exit_1_with_detail() {
-        let exit: CliExit = SyncError::DuplicateTarget {
-            endpoint: None,
-            bucket: "shared-bucket".into(),
-            key: "vault.kdbx".into(),
-            existing_vault: "work".into(),
-        }
-        .into();
-        assert_eq!(exit.code(), 1);
-        assert!(exit.message().contains("work"), "{}", exit.message());
-        assert!(
-            exit.message().contains("shared-bucket"),
-            "{}",
-            exit.message()
-        );
-    }
-
-    #[test]
-    fn sync_error_auth_maps_to_exit_1_and_names_the_source() {
-        // A credential-*discovery* failure is a user/config error, and the
-        // mapping must forward which source failed (never the value).
-        let exit: CliExit = SyncError::Auth(hidlins_sync::AuthError::MissingEnvVar {
-            name: "PERSONAL_AWS_ACCESS_KEY_ID".into(),
-        })
-        .into();
-        assert_eq!(exit.code(), 1);
-        assert!(
-            exit.message().contains("PERSONAL_AWS_ACCESS_KEY_ID"),
-            "auth mapping should name the failing source: {}",
-            exit.message()
-        );
-    }
-
-    #[test]
     fn sync_error_vault_delegates_to_vault_error_mapping() {
         // `Vault(v)` must produce the identical code to `From<VaultError>`
         // so the two impls never drift.
@@ -735,19 +637,18 @@ mod tests {
     fn sync_error_transport_variants_map_to_internal() {
         let cases: Vec<CliExit> = vec![
             SyncError::RemoteUnreachable {
-                endpoint: "https://s3.example".into(),
+                endpoint: "local-authority".into(),
                 source: Box::new(std::io::Error::new(
                     std::io::ErrorKind::TimedOut,
                     "timed out",
                 )),
             }
             .into(),
-            SyncError::ConditionalPutExhausted { attempts: 5 }.into(),
+            SyncError::ConditionalCommitExhausted { attempts: 5 }.into(),
             SyncError::BackupFailed {
                 source: std::io::Error::new(std::io::ErrorKind::PermissionDenied, "denied"),
             }
             .into(),
-            SyncError::S3(hidlins_sync::s3::S3Error::NotFound).into(),
         ];
         for exit in cases {
             assert!(
@@ -757,40 +658,6 @@ mod tests {
             );
             assert_eq!(exit.kind(), "internal");
         }
-    }
-
-    #[test]
-    fn sync_error_remote_auth_maps_to_exit_1() {
-        // Feature decision "Option B": a remote S3 authentication/authorization
-        // failure (HTTP 403, or a top-level auth failure) is a USER error —
-        // the dominant cause is wrong/expired credentials or a bucket-policy
-        // denial, all user-fixable — NOT an internal (exit 10) failure.
-        let s3_403: CliExit = SyncError::S3(hidlins_sync::s3::S3Error::AuthFailed).into();
-        assert_eq!(
-            s3_403.code(),
-            1,
-            "S3 403 must be a user error: {}",
-            s3_403.message()
-        );
-        assert_eq!(s3_403.kind(), "user.error");
-
-        let top_level: CliExit = SyncError::AuthFailed {
-            endpoint: "https://s3.example".into(),
-            reason: "signature mismatch".into(),
-        }
-        .into();
-        assert_eq!(top_level.code(), 1, "{}", top_level.message());
-        assert_eq!(top_level.kind(), "user.error");
-        assert!(
-            top_level.message().contains("https://s3.example"),
-            "should name the endpoint: {}",
-            top_level.message()
-        );
-
-        // Other S3 errors (e.g. NotFound) remain internal — only the auth
-        // family moved.
-        let not_found: CliExit = SyncError::S3(hidlins_sync::s3::S3Error::NotFound).into();
-        assert_eq!(not_found.code(), 10, "non-auth S3 errors stay internal");
     }
 
     #[test]
@@ -804,29 +671,15 @@ mod tests {
         // None of the non-secret fields constructed below contain these
         // markers, so any hit means a mapping interpolated something it
         // must not.
-        const SECRET_MARKERS: [&str; 3] =
-            ["-----begin", "secret_access_key", "aws_secret_access_key"];
+        const SECRET_MARKERS: [&str; 2] = ["-----begin", "master-password-value"];
 
         let all: Vec<SyncError> = vec![
             SyncError::NotConfigured,
             SyncError::RemoteUnreachable {
-                endpoint: "https://s3.example".into(),
+                endpoint: "local-authority".into(),
                 source: Box::new(std::io::Error::other("boom")),
             },
-            SyncError::AuthFailed {
-                endpoint: "https://s3.example".into(),
-                reason: "signature mismatch".into(),
-            },
-            SyncError::ConditionalPutExhausted { attempts: 3 },
-            SyncError::DuplicateTarget {
-                endpoint: Some("https://s3.example".into()),
-                bucket: "b".into(),
-                key: "k".into(),
-                existing_vault: "other".into(),
-            },
-            SyncError::UnsupportedBackend {
-                feature: "conditional-put".into(),
-            },
+            SyncError::ConditionalCommitExhausted { attempts: 3 },
             SyncError::MasterPasswordMismatch,
             SyncError::Unresolvable {
                 reason: "same-second divergence".into(),
@@ -835,12 +688,9 @@ mod tests {
             SyncError::BackupFailed {
                 source: std::io::Error::other("io"),
             },
-            SyncError::CredentialDecryption,
-            SyncError::Auth(hidlins_sync::AuthError::HomeUnresolvable),
             SyncError::Merge(hidlins_sync::MergeError::Unresolvable {
                 reason: "conflict".into(),
             }),
-            SyncError::S3(hidlins_sync::s3::S3Error::NotFound),
             SyncError::Vault(VaultError::AuthenticationFailed),
             SyncError::VaultIo {
                 path: "/tmp/v.kdbx".into(),

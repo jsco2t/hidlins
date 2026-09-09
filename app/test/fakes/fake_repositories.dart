@@ -37,9 +37,6 @@ class FakeSessionRepository implements SessionRepository {
   bool changePasswordCalled = false;
   AppFailure? changePasswordError;
 
-  bool bootstrapCalled = false;
-  AppFailure? bootstrapError;
-
   @override
   Future<VaultTree> unlock(
     String name,
@@ -158,25 +155,6 @@ class FakeSessionRepository implements SessionRepository {
   Future<void> changeMasterPassword(String current, String newPassword) async {
     changePasswordCalled = true;
     if (changePasswordError != null) throw changePasswordError!;
-  }
-
-  @override
-  Future<VaultSummary> bootstrapFromRemote({
-    required String name,
-    required S3ConfigDto config,
-    required String masterPassword,
-    KeyfileRef? keyfile,
-  }) async {
-    bootstrapCalled = true;
-    if (bootstrapError != null) throw bootstrapError!;
-    final vault = VaultSummary(
-      name: name,
-      path: '/vaults/$name.kdbx',
-      hasKeyfile: keyfile != null,
-      hasSync: true,
-    );
-    vaults.add(vault);
-    return vault;
   }
 
   void dispose() {
@@ -438,10 +416,35 @@ class FakeSyncRepository implements SyncRepository {
     inFlight: false,
   );
   bool syncNowCalled = false;
+  bool startupSyncCalled = false;
+  bool discoverCalled = false;
+  final List<String> startupOrder = [];
   bool configureCalled = false;
-  S3ConfigDto? lastConfig;
+  bool startServerCalled = false;
+  bool stopServerCalled = false;
+  bool openPairingWindowCalled = false;
+  bool stopDiscoveryCalled = false;
+  bool cancelSyncCalled = false;
+  bool openDiscoverySettingsCalled = false;
+  LocalSyncRole? configuredRole;
+  LocalEndpoint? manualEndpoint;
   AppFailure? configureError;
+  AppFailure? discoverError;
   AppFailure? syncNowError;
+  Completer<void>? syncNowCompleter;
+  LocalDiscoveryStatus discovery = const LocalDiscoveryStatus(
+    permission: LocalDiscoveryPermission.granted,
+    candidates: [LocalEndpoint(address: '192.168.1.10', port: 42873)],
+  );
+  PairingPrompt pairingPrompt = const PairingPrompt(
+    transactionHandle: 'pairing-handle',
+    sas: '123 456',
+  );
+  List<SyncPeer> peers = [];
+  bool beginPairImportCalled = false;
+  String? lastPairImportPassword;
+  AppFailure? beginPairImportError;
+  VaultSummary? pairImportResult;
 
   final StreamController<SyncEvent> syncController =
       StreamController<SyncEvent>.broadcast();
@@ -450,17 +453,167 @@ class FakeSyncRepository implements SyncRepository {
   Future<SyncStatusDto> syncStatus() async => status;
 
   @override
-  Future<void> configureSync(S3ConfigDto config) async {
+  Future<void> configureLocalSync(LocalSyncRole role) async {
     configureCalled = true;
-    lastConfig = config;
+    configuredRole = role;
     if (configureError != null) throw configureError!;
-    status = const SyncStatusDto(configured: true, inFlight: false);
+    status = SyncStatusDto(configured: true, inFlight: false, role: role);
+  }
+
+  @override
+  Future<LocalDiscoveryStatus> discover(DiscoveryKind kind) async {
+    discoverCalled = true;
+    startupOrder.add('discover');
+    if (discoverError != null) throw discoverError!;
+    return discovery;
+  }
+
+  @override
+  Future<void> openDiscoverySettings() async {
+    openDiscoverySettingsCalled = true;
+  }
+
+  @override
+  Future<void> stopDiscovery() async {
+    stopDiscoveryCalled = true;
+  }
+
+  @override
+  Future<void> setManualEndpoint(LocalEndpoint endpoint) async {
+    manualEndpoint = endpoint;
+    discovery = LocalDiscoveryStatus(
+      permission: LocalDiscoveryPermission.granted,
+      candidates: [endpoint],
+    );
+  }
+
+  @override
+  Future<PairingPrompt> beginPairing() async => pairingPrompt;
+
+  @override
+  Future<PairingPrompt> beginPairImport({
+    required String name,
+    required String masterPassword,
+    KeyfileRef? keyfile,
+  }) async {
+    beginPairImportCalled = true;
+    lastPairImportPassword = masterPassword;
+    if (beginPairImportError != null) throw beginPairImportError!;
+    pairImportResult ??= VaultSummary(
+      name: name,
+      path: '/vaults/$name.kdbx',
+      hasKeyfile: keyfile != null,
+      hasSync: true,
+    );
+    return pairingPrompt;
+  }
+
+  @override
+  Future<VaultSummary?> confirmPairing({
+    required String transactionHandle,
+    required bool accepted,
+    required String peerDisplayName,
+  }) async {
+    if (!accepted) return null;
+    status = SyncStatusDto(
+      configured: true,
+      inFlight: false,
+      role: configuredRole ?? LocalSyncRole.client,
+      paired: true,
+      activePeerCount: 1,
+    );
+    return pairImportResult;
+  }
+
+  @override
+  Future<List<SyncPeer>> listPeers() async => List.of(peers);
+
+  @override
+  Future<void> renamePeer(String peerId, String displayName) async {
+    peers = [
+      for (final peer in peers)
+        if (peer.peerId == peerId)
+          SyncPeer(
+            peerId: peer.peerId,
+            displayName: displayName,
+            revoked: peer.revoked,
+          )
+        else
+          peer,
+    ];
+  }
+
+  @override
+  Future<void> revokePeer(String peerId) async {
+    peers = [
+      for (final peer in peers)
+        if (peer.peerId == peerId)
+          SyncPeer(
+            peerId: peer.peerId,
+            displayName: peer.displayName,
+            revoked: true,
+          )
+        else
+          peer,
+    ];
+  }
+
+  @override
+  Future<List<LocalEndpoint>> serverEndpoints() async => const [
+    LocalEndpoint(address: '192.168.1.10', port: 42873),
+  ];
+
+  @override
+  Future<LocalEndpoint> startServer(LocalEndpoint endpoint) async {
+    startServerCalled = true;
+    status = const SyncStatusDto(
+      configured: true,
+      inFlight: false,
+      role: LocalSyncRole.server,
+      serverEnabled: true,
+      serverRunning: true,
+    );
+    return const LocalEndpoint(address: '192.168.1.10', port: 42873);
+  }
+
+  @override
+  Future<void> stopServer() async {
+    stopServerCalled = true;
+    status = const SyncStatusDto(
+      configured: true,
+      inFlight: false,
+      role: LocalSyncRole.server,
+    );
+  }
+
+  @override
+  Future<void> openPairingWindow() async {
+    openPairingWindowCalled = true;
+  }
+
+  @override
+  Future<void> closePairingWindow() async {}
+
+  @override
+  Future<void> cancelSync() async {
+    cancelSyncCalled = true;
+  }
+
+  @override
+  Future<void> startStartupSync() async {
+    try {
+      await discover(DiscoveryKind.trusted);
+    } finally {
+      startupSyncCalled = true;
+      startupOrder.add('sync');
+    }
   }
 
   @override
   Future<void> syncNow() async {
     syncNowCalled = true;
     if (syncNowError != null) throw syncNowError!;
+    await syncNowCompleter?.future;
   }
 
   @override

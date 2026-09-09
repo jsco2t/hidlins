@@ -187,12 +187,12 @@ fn build_work(db: &mut Database) {
         );
     });
     infra.add_entry().edit(|e| {
-        e.set_unprotected(fields::TITLE, "AWS Root");
+        e.set_unprotected(fields::TITLE, "VPN Admin");
         e.set_unprotected(fields::USERNAME, "root@hidlins.example");
-        e.set_unprotected(fields::URL, "https://console.aws.amazon.com");
+        e.set_unprotected(fields::URL, "https://vpn.example.test");
         e.set_protected(
             fields::OTP,
-            "otpauth://totp/AWS:root?secret=NB2W45DFOIZA&issuer=AWS",
+            "otpauth://totp/VPN:admin?secret=NB2W45DFOIZA&issuer=VPN",
         );
         e.set_unprotected(fields::NOTES, "Break-glass only. MFA required.");
         e.tags.extend(["work", "totp", "prod"].map(String::from));

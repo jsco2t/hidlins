@@ -43,14 +43,14 @@ UNAME_S        := $(shell uname -s)
 # Devs who know what they want type `make build`, `make test`, `make check`.
 .DEFAULT_GOAL := help
 
-.PHONY: help toolchain build release demo-vault build-policy-check _build-policy-check acceptance-evidence-check check-android build-android android-artifacts-check android-verifier-build android-verifier-test android-harness-check android-emulator-provision app-android-config-check app-build-android app-test-android-integration app-test-android-emulator app-test-android-emulator-minio app-test-android-emulator-s3 check-ios ios-harness-check app-test-ios-simulator app-test-ios-integration app-test-ios-simulator-minio app-test-ios-simulator-s3 app-test-ios-device app-build-ios app-prepare-ios-observation test test-ignored test-all test-tui-contracts test-update-snapshots test-clipboard test-os-events \
-        test-sigv4 minio-up minio-down minio-bucket test-s3-integration test-minio-managed interop-sync \
+.PHONY: help toolchain fuzz-toolchain build release demo-vault build-policy-check _build-policy-check acceptance-evidence-check check-android build-android android-artifacts-check android-harness-check android-emulator-provision android-scenario-boundary-check app-android-config-check app-build-android app-test-android-integration app-test-android-emulator check-ios ios-harness-check app-test-ios-simulator app-test-ios-integration app-test-ios-device app-build-ios app-prepare-ios-observation test test-ignored test-all test-tui-contracts test-update-snapshots test-clipboard test-os-events \
+        test-local-sync-security test-local-sync-discovery test-local-sync-integration test-local-sync-mobile-harness test-local-sync-android-lan-discovery test-local-sync-mobile-scenarios-ios test-local-sync-mobile-scenarios-android test-local-sync-mobile-scenarios fuzz-local-sync-corpus fuzz-local-sync-ci ncsa-boundary-precheck ncsa-boundary-check interop-sync s3-removal-check \
         fmt fmt-check lint lint-fix check-feature-gates \
         check verify interop interop-app interop-entry bench bench-search bench-search-gate bench-search-gate-ci \
         vendor vendor-patches deny audit doc clean completions completions-check run-tui \
         snapshots-check \
         api-gen api-gen-check app-build-linux app-build-macos app-brand-generate app-brand-check app-analyze app-fmt app-fmt-check \
-        app-test app-test-performance app-test-integration app-test-integration-minio app-test-integration-performance app-goldens-update app-test-bridge app-deps app-run boundary-check pub-vendor pub-vendor-check pub-production-check \
+        app-test app-test-performance app-test-integration app-test-integration-performance app-goldens-update app-test-bridge app-deps app-run boundary-check pub-vendor pub-vendor-check pub-production-check \
         flutter-version-check telemetry-check app-check check-macos test-merge-properties
 
 help:  ## Show this help.
@@ -68,6 +68,9 @@ toolchain:  ## Install all dev tooling (Rust toolchain, keepassxc-cli, cargo-den
 	# the script uses `set -o pipefail`, which POSIX `sh`/dash lacks.
 	tools/dev/install-toolchain.sh
 
+fuzz-toolchain:  ## Install exact cargo-fuzz and pinned nightly (development/testing only).
+	tools/dev/install-fuzz-toolchain.sh
+
 # ---------------------------------------------------------------------------
 # Core developer loop — these match CI exactly.
 # ---------------------------------------------------------------------------
@@ -75,8 +78,9 @@ toolchain:  ## Install all dev tooling (Rust toolchain, keepassxc-cli, cargo-den
 build:  ## Build the workspace (offline, vendored).
 	$(CARGO) build $(CARGO_FLAGS)
 
-release:  ## Build optimized CLI, TUI, and agent artifacts in target/release/ (host platform).
+release: ncsa-boundary-precheck  ## Build optimized CLI, TUI, and agent artifacts in target/release/ (host platform).
 	$(CARGO) build $(CARGO_FLAGS) --release
+	python3 tools/dev/ncsa-boundary-check.py artifacts target/release/hidlins target/release/hidlins-tui target/release/hidlins-agent
 
 demo-vault:  ## Create a disposable kitchen-sink KDBX vault at DEMO_VAULT (absolute path; refuses overwrite).
 	@output="$(DEMO_VAULT)"; \
@@ -133,6 +137,7 @@ api-gen:  ## Re-generate flutter_rust_bridge bindings (codegen tool required).
 	# disagree on line wrapping, making api-gen-check and app-fmt-check
 	# mutually exclusive.
 	dart format $(FRB_DART_OUT)
+	python3 tools/dev/normalize-generated-dart.py $(FRB_DART_OUT)
 
 api-gen-check:  ## Re-generate frb bindings and fail if output drifted (CI gate). NOTE: rewrites the generated files.
 	@# Content-hash the generated tree, regenerate, compare. Deliberately NOT
@@ -158,11 +163,13 @@ api-gen-check:  ## Re-generate frb bindings and fail if output drifted (CI gate)
 # tool would happily fetch a missing package from pub.dev straight into the
 # vendored cache. `--no-pub` suppresses the implicit resolve entirely; the
 # only resolve path is `app-deps`, which is `--offline --enforce-lockfile`.
-app-build-linux: app-deps app-analyze  ## Build the Flutter desktop app for Linux.
+app-build-linux: ncsa-boundary-precheck app-deps app-analyze  ## Build the Flutter desktop app for Linux.
 	cd app && flutter build linux --no-pub
+	python3 tools/dev/ncsa-boundary-check.py artifacts app/build/linux
 
-app-build-macos: app-deps app-analyze  ## Build the Flutter desktop app for macOS (requires macOS host).
+app-build-macos: ncsa-boundary-precheck app-deps app-analyze  ## Build the Flutter desktop app for macOS (requires macOS host).
 	cd app && flutter build macos --no-pub
+	python3 tools/dev/ncsa-boundary-check.py artifacts app/build/macos
 
 check-ios: app-deps app-analyze app-brand-check  ## Cross-check iOS Rust targets and run native simulator security/storage tests.
 	tools/ios-native/run.sh check
@@ -170,26 +177,18 @@ check-ios: app-deps app-analyze app-brand-check  ## Cross-check iOS Rust targets
 app-test-ios-simulator: app-deps  ## Run bounded native iOS tests on the configured simulator.
 	tools/ios-native/run.sh simulator
 
-ios-harness-check:  ## Test iOS simulator selection and protected S3 configuration tooling.
+ios-harness-check:  ## Test deterministic iPhone/iPad simulator selection.
 	python3 tools/ios-native/harness_test.py
 
 app-test-ios-integration: app-deps app-analyze ios-harness-check  ## Run UI and real-bridge journeys on an available iPhone and iPad simulator.
 	tools/ios-native/integration.sh
 
-app-test-ios-simulator-minio: app-deps ios-harness-check  ## Run two-session real-bridge sync against managed MinIO on an iOS simulator.
-	$(MAKE) --no-print-directory minio-down
-	$(MAKE) --no-print-directory minio-up
-	@set -e; trap '$(MAKE) --no-print-directory -C $(CURDIR) minio-down' EXIT; \
-	tools/ios-native/s3_integration.sh minio
-
-app-test-ios-simulator-s3: app-deps ios-harness-check  ## Run two-session sync against configured real S3 (requires protected HIDLINS_IOS_S3_CONFIG path).
-	tools/ios-native/s3_integration.sh real
-
 app-test-ios-device: app-deps  ## Run native iOS tests on a connected, trusted physical iPhone (requires IOS_DEVELOPMENT_TEAM).
 	tools/ios-native/run.sh device
 
-app-build-ios: app-deps app-analyze  ## Build simulator debug and no-codesign device release iOS artifacts.
+app-build-ios: ncsa-boundary-precheck app-deps app-analyze  ## Build simulator debug and no-codesign device release iOS artifacts.
 	tools/ios-native/run.sh build
+	python3 tools/dev/ncsa-boundary-check.py artifacts app/build/ios
 
 app-prepare-ios-observation: app-build-ios ios-harness-check  ## Install and launch the inspected build for optional non-gating iOS observations.
 	tools/ios-native/prepare_observation.sh
@@ -198,19 +197,13 @@ check-android:  ## Cross-check hidlins-api for both supported Android ABIs with 
 	python3 tools/android-native/artifacts.py self-test
 	tools/android-native/build.sh check
 
-build-android:  ## Build/stage release Rust libraries for arm64-v8a + x86_64 and verify the artifact contract.
+build-android: ncsa-boundary-precheck  ## Build/stage release Rust libraries for arm64-v8a + x86_64 and verify the artifact contract.
 	python3 tools/android-native/artifacts.py self-test
 	tools/android-native/build.sh build
+	python3 tools/dev/ncsa-boundary-check.py artifacts app/android/native-artifacts/jniLibs
 
 android-artifacts-check:  ## Reject stale, wrong-profile, wrong-ABI, misaligned, or modified staged Android libraries.
 	python3 tools/android-native/artifacts.py check
-
-android-verifier-build: build-android  ## Build and inspect the R8-minified verifier APK against staged Rust artifacts.
-	tools/android-verifier/gradle.sh assembleRelease
-	python3 tools/android-verifier/verify_apk.py
-
-android-verifier-test: android-verifier-build  ## Install/run the release verifier on a managed emulator and assert JNI initialization.
-	tools/android-verifier/run.sh
 
 app-android-config-check: app-deps  ## Verify Flutter 3.47.2 built-in Kotlin/old-DSL pins and reject legacy KGP application.
 	python3 tools/android-native/config_check.py self-test
@@ -218,30 +211,26 @@ app-android-config-check: app-deps  ## Verify Flutter 3.47.2 built-in Kotlin/old
 	python3 tools/android-native/plugin_registrant.py self-test
 	python3 tools/android-native/plugin_registrant.py check
 
-app-build-android: build-android app-deps app-analyze app-brand-check app-android-config-check  ## Build and inspect Android debug and unsigned release APKs.
+app-build-android: ncsa-boundary-precheck build-android app-deps app-analyze app-brand-check app-android-config-check  ## Build and inspect Android debug and unsigned release APKs.
 	tools/android-native/build_app.sh
+	python3 tools/dev/ncsa-boundary-check.py artifacts app/build/app/outputs/flutter-apk
 
 app-test-android-integration: app-build-android  ## Build Android device tests and run them on the selected emulator.
 	tools/android-native/run_app_tests.sh
 
-android-harness-check: ios-harness-check  ## Validate Android API/ABI/form-factor selection, redaction, and protected S3 tooling.
+android-harness-check: ios-harness-check  ## Validate Android API/ABI/form-factor selection and secret-safe result tooling.
 	python3 tools/android-native/emulator_matrix.py check
 	python3 tools/android-native/harness_test.py
 
 android-emulator-provision: android-harness-check  ## Install the host-native API 29/current Android CI/local AVD pair.
 	tools/android-native/provision_emulators.sh
 
+android-scenario-boundary-check: app-build-android  ## Prove emulator-only authority/NSD registration is confined to test artifacts.
+	tools/android-native/gradle.sh -Ptarget-platform=android-arm64,android-x64 :app:assembleDebugAndroidTest
+	python3 tools/android-native/scenario_boundary.py
+
 app-test-android-emulator: app-build-android android-harness-check  ## Run native, UI, bridge, lifecycle, and recreation checks on the host Android matrix.
 	tools/android-native/run_emulator_suite.sh core
-
-app-test-android-emulator-minio: app-build-android android-harness-check  ## Run two-session Android sync/recovery against managed MinIO on the host matrix.
-	$(MAKE) --no-print-directory minio-down
-	$(MAKE) --no-print-directory minio-up
-	@set -e; trap '$(MAKE) --no-print-directory -C $(CURDIR) minio-down' EXIT; \
-	tools/android-native/run_emulator_suite.sh minio
-
-app-test-android-emulator-s3: app-build-android android-harness-check  ## Run optional Android sync against protected HIDLINS_ANDROID_S3_CONFIG.
-	tools/android-native/run_emulator_suite.sh real
 
 app-brand-generate:  ## Regenerate committed iOS/Android brand rasters (requires macOS CoreGraphics).
 	@if [ "$(UNAME_S)" != "Darwin" ]; then \
@@ -300,18 +289,6 @@ app-test-integration: app-deps  ## Run real native-bridge desktop lifecycle and 
 	cd app && HIDLINS_API_LIB=$(HIDLINS_API_LIB) flutter test --no-pub test_bridge/real_bridge_integration_test.dart
 	cd app && HIDLINS_API_LIB=$(HIDLINS_API_LIB) HIDLINS_CLI_BIN=$(CURDIR)/target/debug/hidlins flutter test --no-pub test_bridge/real_bridge_process_coexistence_integration_test.dart
 	HIDLINS_CLI_BIN=$(CURDIR)/target/debug/hidlins $(CARGO) test -p hidlins-tui --features process-interop-tests --lib app::tests::tui_session_and_cli_process_share_the_advisory_lock -- --exact
-
-app-test-integration-minio: app-deps  ## Run two-session real-bridge sync integration against managed MinIO.
-	$(CARGO) build -p hidlins-api --offline --locked
-	$(MAKE) --no-print-directory minio-down
-	$(MAKE) --no-print-directory minio-up
-	@set -e; trap '$(MAKE) --no-print-directory -C $(CURDIR) minio-down' EXIT; \
-	. tools/sync-tests/fixtures/.minio-env; \
-	bucket="hidlins-app-$${BASHPID}"; \
-	tools/sync-tests/fixtures/make_bucket.sh "$$bucket"; \
-	export HIDLINS_APP_MINIO_BUCKET="$$bucket"; \
-	cd app; \
-	HIDLINS_API_LIB=$(HIDLINS_API_LIB) flutter test --no-pub test_bridge/real_bridge_minio_integration_test.dart
 
 app-test-integration-performance: app-deps  ## Measure 5,000-entry list/search through the compiled native bridge.
 	$(CARGO) build -p hidlins-api --bin api-test-driver --features test-fixtures --offline --locked
@@ -425,6 +402,13 @@ check-feature-gates:  ## Type-check feature-gated test suites the runtime CI swe
 	$(CARGO) check -p hidlins-cli --offline --locked --features clipboard-tests --tests
 	$(CARGO) check -p hidlins-security --offline --locked --no-default-features
 	$(CARGO) check -p hidlins-api --offline --locked --features test-fixtures --tests
+	# The desktop mDNS adapter must compile on a desktop host, while the
+	# target-specific dependency must remain absent from both mobile graphs.
+	$(CARGO) check -p hidlins-sync --offline --locked --features desktop-discovery
+	@android_mdns="$$( $(CARGO) tree -p hidlins-sync --offline --locked --features desktop-discovery --target aarch64-linux-android -i mdns-sd 2>/dev/null )"; \
+		test -z "$$android_mdns" || { echo "error: mdns-sd entered Android graph" >&2; exit 1; }
+	@ios_mdns="$$( $(CARGO) tree -p hidlins-sync --offline --locked --features desktop-discovery --target aarch64-apple-ios -i mdns-sd 2>/dev/null )"; \
+		test -z "$$ios_mdns" || { echo "error: mdns-sd entered iOS graph" >&2; exit 1; }
 ifeq ($(UNAME_S),Darwin)
 	# iokit compiles natively here; logind's zbus tree is Linux-only.
 	$(CARGO) check -p hidlins-security --offline --locked --features test-binaries,iokit --tests
@@ -439,10 +423,8 @@ test-ignored:  ## Run #[ignore]d tests serially (env-mutating + signal-handler t
 	# `--features test-binaries` enables hidlins-security's `sigstop_helper`
 	# test binary, needed by `tests/us_052_sigstop_lock.rs`. Other workspace
 	# members don't define the feature; cargo silently no-ops on them.
-	# NOT enabled here: `minio-tests` (live-wire S3 cases needing `make
-	# minio-up`) and `clipboard-tests` (real-display cases) — both stay
-	# `cfg`/feature-gated out of this blanket sweep and run only via their
-	# dedicated targets (`test-s3-integration`, `test-clipboard`).
+	# Display-dependent clipboard cases remain feature-gated and run only
+	# through their dedicated target.
 	# Build vault_holder (hidlins-core test binary) — needed by
 	# hidlins-api's contended_vault_surfaces_holder_pid test.
 	$(CARGO) build -p hidlins-core $(CARGO_FLAGS) --bin vault_holder
@@ -478,16 +460,50 @@ test-clipboard:  ## Run clipboard tests across hidlins-security + hidlins-cli (r
 	$(CARGO) test -p hidlins-security --offline --locked --features clipboard-tests --test us_053_clipboard_autoclear -- --ignored --test-threads=1
 	$(CARGO) test -p hidlins-cli --offline --locked --features clipboard-tests --test cli_clipboard_handoff -- --ignored --test-threads=1
 
-test-sigv4:  ## Run the AWS SigV4 published test-vector corpus runner (s3-sync T2.2; fast CI gate).
-	# Runs ONLY `tests/sigv4_aws_test_vectors.rs`, the corpus runner that
-	# asserts our hand-rolled SigV4 signer (crates/hidlins-sync/src/s3/signer.rs)
-	# matches the AWS-published expected outputs across ~15 applicable
-	# test vectors. Fast (<1s); independent of the broader unit-test
-	# suite so a SigV4 encoding bug produces a well-isolated failure
-	# signal. The corpus is vendored at
-	# crates/hidlins-sync/tests/data/aws_sigv4_vectors/ — see the
-	# AWS_SIGV4_VECTORS_SOURCE.md doc there for the upstream provenance.
-	$(CARGO) test -p hidlins-sync --offline --locked --test sigv4_aws_test_vectors
+test-local-sync-security: vendor-patches  ## Run fast local-sync protocol and cryptographic security tests.
+	$(CARGO) test -p hidlins-sync --offline --locked --test noise_security
+	$(CARGO) test -p hidlins-sync --offline --locked --lib noise::tests
+	$(CARGO) test -p hidlins-sync --offline --locked --test local_protocol
+	$(CARGO) test -p hidlins-sync --offline --locked --test identity_pairing_trust
+	$(CARGO) test -p hidlins-sync --offline --locked --test fault_injection
+	$(CARGO) test -p hidlins-cli --offline --locked --test cli_sync
+
+test-local-sync-discovery: vendor-patches  ## Run deterministic discovery policy/simulation tests plus the desktop adapter gate.
+	$(CARGO) test -p hidlins-sync --offline --locked --features desktop-discovery --test secure_discovery
+	$(CARGO) test -p hidlins-sync --offline --locked --features desktop-discovery --lib discovery
+
+test-local-sync-integration: vendor-patches  ## Run real-loopback authoritative local-sync server integration tests.
+	$(CARGO) test -p hidlins-sync --offline --locked --test server_integration
+	$(CARGO) test -p hidlins-sync --offline --locked --test client_policy
+	$(CARGO) test -p hidlins-cli --offline --locked --test cli_local_sync_process -- --test-threads=1
+	$(CARGO) test -p hidlins-api --offline --locked --test us_094_sync_api -- --test-threads=1
+	tools/local-sync-tests/isolated-network.sh
+
+test-local-sync-mobile-harness:  ## Test the fail-closed mobile scenario orchestrator without starting devices.
+	python3 tools/local-sync-tests/mobile_scenario_test.py
+
+test-local-sync-android-lan-discovery: android-emulator-provision android-scenario-boundary-check test-local-sync-mobile-harness  ## Prove shipping Android NSD against a real CLI on shared emulator Wi-Fi.
+	HIDLINS_ANDROID_STRICT=$(HIDLINS_ANDROID_STRICT) python3 tools/android-native/lan_discovery.py
+
+test-local-sync-mobile-scenarios-ios: release test-local-sync-mobile-harness  ## Run expensive iPhone/iPad client scenarios against a CLI authority.
+	HIDLINS_MOBILE_SYNC_SCENARIOS=1 $(MAKE) --no-print-directory app-test-ios-integration
+
+test-local-sync-mobile-scenarios-android: release android-emulator-provision android-scenario-boundary-check test-local-sync-mobile-harness  ## Run expensive Android client scenarios against a CLI authority.
+	HIDLINS_MOBILE_SYNC_SCENARIOS=1 $(MAKE) --no-print-directory app-test-android-emulator
+
+test-local-sync-mobile-scenarios: test-local-sync-mobile-harness  ## Run the isolated expensive iOS+Android simulator client scenario gate (macOS host).
+	@if [[ "$(UNAME_S)" != Darwin ]]; then \
+		echo "error: the aggregate iOS+Android scenario target requires a macOS host" >&2; exit 1; \
+	fi
+	$(MAKE) --no-print-directory test-local-sync-mobile-scenarios-ios
+	$(MAKE) --no-print-directory test-local-sync-mobile-scenarios-android
+
+fuzz-local-sync-corpus: vendor-patches  ## Replay committed local-sync fuzz corpora using stable Rust offline.
+	$(CARGO) test --manifest-path fuzz/Cargo.toml --offline --locked --no-default-features
+
+FUZZ_RUNS ?= 512
+fuzz-local-sync-ci: vendor-patches  ## Run bounded local-sync libFuzzer campaigns (requires make fuzz-toolchain).
+	FUZZ_RUNS=$(FUZZ_RUNS) python3 tools/local-sync-tests/run-fuzz.py
 
 # Heavier merge-engine property sweep. The properties run at 256 cases under
 # the blanket `make test`; this target raises the count for a deeper sweep
@@ -498,53 +514,6 @@ test-merge-properties:  ## Run the merge-engine property tests with a heavier ca
 	PROPTEST_CASES=$(PROPTEST_CASES) $(CARGO) test -p hidlins-sync --offline --locked --test merge_property_tests
 
 # ---------------------------------------------------------------------------
-# S3 sync live-wire integration (s3-sync T6.1/T6.2) — needs Docker + mc.
-# The MINIO-* tests are #[ignore]-gated so the default `make test` skips
-# them; this is the only path that runs them. See
-# tools/sync-tests/README.md for the local + CI workflow.
-# ---------------------------------------------------------------------------
-
-minio-up:  ## Start the pinned MinIO container for s3-sync integration tests (requires Docker/Podman).
-	tools/sync-tests/fixtures/start_minio.sh
-
-minio-down:  ## Stop + remove the MinIO container started by `make minio-up`.
-	tools/sync-tests/fixtures/stop_minio.sh
-
-minio-bucket:  ## Bootstrap MINIO_BUCKET in the managed MinIO using the independent mc client.
-	@test -n "$(MINIO_BUCKET)" || { echo "error: set MINIO_BUCKET=<name>" >&2; exit 2; }
-	tools/sync-tests/fixtures/make_bucket.sh "$(MINIO_BUCKET)"
-
-test-s3-integration:  ## Run the #[ignore]-gated MinIO live-wire tests (run `make minio-up` first).
-	# Sources the endpoint + test credentials start_minio.sh wrote, then
-	# runs ONLY the minio_integration test binary's #[ignore]-gated cases.
-	# `--features minio-tests` compiles that binary in the first place: it is
-	# `#![cfg(feature = "minio-tests")]`-gated so the blanket `make test-ignored`
-	# sweep (non-MinIO `vault-core` CI job) never builds or runs these live-wire
-	# cases. This target — the MinIO-provisioned `integration-s3` job — is the
-	# only path that turns them on.
-	# Serial (`--test-threads=1`): the cases share one container, and
-	# `make_bucket.sh` reuses a single `mc` alias, so concurrent bucket
-	# setup could race. Each case still uses a uniquely-suffixed bucket.
-	@if [ ! -f tools/sync-tests/fixtures/.minio-env ]; then \
-		echo "error: MinIO not running — run \`make minio-up\` first." >&2; \
-		exit 1; \
-	fi
-	. tools/sync-tests/fixtures/.minio-env && \
-		$(CARGO) test -p hidlins-sync --offline --locked --features minio-tests --test minio_integration -- --ignored --test-threads=1
-	# The CLI's own live-wire happy-path (spawns the built binary against the
-	# same MinIO): `cli-sync-wiring` T3.2's `#![cfg(feature = "minio-tests")]`
-	# + `#[ignore]` case. Kept under this one target so all live-wire S3 cases
-	# run via a single command (per plan §7.4).
-	. tools/sync-tests/fixtures/.minio-env && \
-		$(CARGO) test -p hidlins-cli --offline --locked --features minio-tests --test cli_sync_minio -- --ignored --test-threads=1
-
-test-minio-managed:  ## Start clean managed MinIO, run Rust + app live-wire suites, and tear it down.
-	$(MAKE) --no-print-directory minio-down
-	$(MAKE) --no-print-directory minio-up
-	@set -e; trap '$(MAKE) --no-print-directory -C $(CURDIR) minio-down' EXIT; \
-	$(MAKE) --no-print-directory test-s3-integration; \
-	$(MAKE) --no-print-directory app-test-integration-minio
-
 test-os-events:  ## Run hidlins-security OS-event integration tests (logind on Linux, IOKit on macOS).
 	# Picks the host-appropriate source test. Both files are
 	# `#[ignore]`d so the default `make test` skips them.
@@ -605,7 +574,7 @@ check: build-policy-check fmt-check lint build test check-macos check-feature-ga
 # fail the integrity gate without ever having run.
 app-check: flutter-version-check telemetry-check app-deps pub-vendor-check pub-production-check app-analyze app-fmt-check app-brand-check app-test app-test-bridge api-gen-check  ## Flutter-side gates (requires the Flutter SDK + Rust toolchain).
 
-verify: check app-check acceptance-evidence-check test-ignored doc deny audit interop interop-entry interop-sync boundary-check  ## Full verification gate (Rust + Flutter + interop + acceptance evidence).
+verify: check app-check acceptance-evidence-check test-ignored doc deny audit interop interop-entry interop-sync test-local-sync-security test-local-sync-discovery test-local-sync-integration fuzz-local-sync-corpus ncsa-boundary-check s3-removal-check boundary-check  ## Full verification gate (Rust + Flutter + interop + acceptance evidence).
 
 interop:  ## Run vault-core KeePassXC interop shell tests (requires keepassxc-cli).
 	$(CARGO) build -p hidlins-core --bin hidlins-test-driver --offline --locked
@@ -619,7 +588,7 @@ interop-app: app-deps  ## Run compiled Flutter-bridge KeePassXC round-trip and m
 	cd app && HIDLINS_API_LIB=$(HIDLINS_API_LIB) flutter test --no-pub test_bridge/real_bridge_keepassxc_integration_test.dart
 	$(MAKE) --no-print-directory interop-sync
 
-interop-sync:  ## Run the s3-sync KeePassXC merge-interop test (US-044; requires keepassxc-cli).
+interop-sync:  ## Run the transport-neutral KeePassXC merge-interop test (US-044; requires keepassxc-cli).
 	# Builds the test-only merge driver (gated behind `test-helpers` via
 	# required-features, so `make build` never compiles it), then runs the
 	# shell harness that opens the merged vault in keepassxc-cli and asserts
@@ -698,6 +667,17 @@ vendor:  ## Re-vendor dependencies into vendor/. REQUIRES NETWORK ACCESS.
 
 vendor-patches:  ## Reapply and verify audited patches to vendored crates (offline).
 	python3 tools/dev/vendor.py --patch-only
+	python3 tools/dev/test_vendor_patches.py
+
+ncsa-boundary-precheck:
+	python3 tools/dev/ncsa-boundary-check.py check
+
+ncsa-boundary-check: ncsa-boundary-precheck  ## Prove NCSA/libFuzzer remains development/test-only and outside every application artifact.
+	python3 tools/dev/ncsa-boundary-check.py self-test
+	$(CARGO) deny --manifest-path fuzz/Cargo.toml --all-features --offline --locked check licenses --config fuzz/deny.toml
+
+s3-removal-check:  ## Reject reintroduction of the retired cloud-object sync surface.
+	python3 tools/dev/s3-removal-check.py
 
 # ---------------------------------------------------------------------------
 # Housekeeping.

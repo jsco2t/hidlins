@@ -128,7 +128,6 @@ impl AppSession {
 
         zeroize::Zeroize::zeroize(&mut draft);
         drop(state);
-        self.maybe_sync_after_save();
 
         Ok(new_uuid.hyphenated().to_string())
     }
@@ -219,7 +218,6 @@ impl AppSession {
         zeroize::Zeroize::zeroize(&mut edit);
         drop(state);
         self.invalidate_totp(&id);
-        self.maybe_sync_after_save();
         Ok(())
     }
 
@@ -231,7 +229,6 @@ impl AppSession {
         vault.save()?;
         drop(state);
         self.invalidate_totp(&id);
-        self.maybe_sync_after_save();
         Ok(())
     }
 
@@ -243,7 +240,6 @@ impl AppSession {
         vault.save()?;
         drop(state);
         self.invalidate_totp(&id);
-        self.maybe_sync_after_save();
         Ok(())
     }
 
@@ -255,7 +251,6 @@ impl AppSession {
         vault.move_entry(id, group_uuid)?;
         vault.save()?;
         drop(state);
-        self.maybe_sync_after_save();
         Ok(())
     }
 
@@ -274,7 +269,6 @@ impl AppSession {
         let new_uuid = vault.create_group(parent_uuid, &name)?;
         vault.save()?;
         drop(state);
-        self.maybe_sync_after_save();
         Ok(new_uuid.hyphenated().to_string())
     }
 
@@ -285,7 +279,6 @@ impl AppSession {
         vault.rename_group(id, &name)?;
         vault.save()?;
         drop(state);
-        self.maybe_sync_after_save();
         Ok(())
     }
 
@@ -297,7 +290,6 @@ impl AppSession {
         vault.move_group(id, parent_uuid)?;
         vault.save()?;
         drop(state);
-        self.maybe_sync_after_save();
         Ok(())
     }
 
@@ -312,7 +304,6 @@ impl AppSession {
         vault.delete_group(id, delete_behavior(behavior))?;
         vault.save()?;
         drop(state);
-        self.maybe_sync_after_save();
         Ok(())
     }
 
@@ -340,7 +331,6 @@ impl AppSession {
         vault.set_expiration(id, when)?;
         vault.save()?;
         drop(state);
-        self.maybe_sync_after_save();
         Ok(())
     }
 
@@ -351,7 +341,6 @@ impl AppSession {
         vault.clear_expiration(id)?;
         vault.save()?;
         drop(state);
-        self.maybe_sync_after_save();
         Ok(())
     }
 
@@ -404,7 +393,6 @@ impl AppSession {
         vault.save()?;
         drop(bytes);
         drop(state);
-        self.maybe_sync_after_save();
         Ok(())
     }
 
@@ -416,7 +404,6 @@ impl AppSession {
         vault.remove_attachment(id, &key)?;
         vault.save()?;
         drop(state);
-        self.maybe_sync_after_save();
         Ok(())
     }
 

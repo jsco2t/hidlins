@@ -45,25 +45,28 @@ link contract before this exception can be removed.
 
 `make acceptance-evidence-check` validates the machine-readable companion
 matrix. It rejects an automatable requirement without a real Make target and
-evidence path, a manual status, a skip without a passing automated precursor,
-an incomplete artifact/warning inventory, CI/Make drift, Android build-model
-drift, or any unclassified one of the 45 July tasks.
+evidence path, an incomplete artifact/warning inventory, CI/Make drift, Android
+build-model drift, or any unclassified one of the 45 July tasks.
 
 Platform-specific suites are documented in
 `app/ios/VERIFICATION.md` and `app/android/VERIFICATION.md`. CI runs desktop
 builds on their native hosts, iOS on macOS, and the Android API 29/current
-phone/tablet matrix on host-native ARM64 and x86_64 runners. Managed MinIO is the
-gating network service; live credentialed S3 remains optional and non-gating.
+phone/tablet matrix on host-native ARM64 and x86_64 runners. Local-network
+security, discovery, and loopback integration suites gate synchronization.
+The isolated `make test-local-sync-mobile-scenarios HIDLINS_ANDROID_STRICT=1`
+gate supplements them with real iPhone, iPad, Android phone, and Android tablet
+applications talking to a separate CLI authority.
 
-## Explicitly skipped residuals
+## Optional observation boundary
 
-Manual desktop screen-reader observation, VoiceOver, TalkBack, launcher and
-app-switcher OS-shell observation, and physical-device execution are
-`SKIPPED — user decision` (physical hardware is also unavailable). Live S3 is
-`SKIPPED — user decision / credentials not supplied`. These are not passes.
-Their deterministic semantics, focus, scaling, touch-target, concealment,
-resource, lifecycle-cover, simulator/emulator, artifact, and managed-MinIO
-precursors remain mandatory and are named in the companion JSON.
+The launcher/app-switcher shell rendering, physical iOS/Android permission
+wording, human SAS perception, representative-router firmware behavior, and
+VoiceOver/TalkBack/desktop/TUI speech observations are explicit optional,
+non-blocking confidence checks. The copy-pasteable automated simulator
+procedure and optional-observation registry are in
+[`local-network-sync-manual-verification.md`](local-network-sync-manual-verification.md).
+Deterministic semantics, lifecycle, real simulator/emulator scenarios, artifact,
+and local-network tests are the acceptance authority.
 
 ## Brand provenance
 

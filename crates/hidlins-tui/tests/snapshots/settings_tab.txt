@@ -2,15 +2,15 @@
 │> Default sort: Recently used                   │
 │  Theme: default-dark                           │
 │  Auto-lock: 10 min                             │
-│  Auto-sync on unlock: [ ] off                  │
-│  Auto-sync on lock/quit: [ ] off               │
-│  Configure sync target…                        │
+│  Configure as sync server                      │
+│  Pair this vault                               │
+│  Import paired vault                           │
 └────────────────────────────────────────────────┘
-┌Status──────────────────────────────────────────┐
+┌Local sync Status───────────────────────────────┐
 │Keymap preset: vim  (config.toml [keymap])      │
 │Config file:                                    │
 │/home/user/.config/hidlins/config.toml          │
 │                                                │
-│Target: (no sync target configured)             │
+│Target: (local sync not configured)             │
 │Last sync: —                                    │
 └────────────────────────────────────────────────┘

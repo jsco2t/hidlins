@@ -54,7 +54,7 @@ void main() {
 
     expect(find.text('Create a new vault'), findsOneWidget);
     expect(find.text('Import a .kdbx file'), findsOneWidget);
-    expect(find.text('Connect to an existing vault via sync'), findsOneWidget);
+    expect(find.text('Import paired vault'), findsOneWidget);
     expect(tester.takeException(), isNull);
   });
 }

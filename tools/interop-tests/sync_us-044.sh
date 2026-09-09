@@ -1,9 +1,9 @@
 #!/usr/bin/env sh
 # sync_us-044.sh — KeePassXC interop for the US-044 collision merge
-# (s3-sync T6.3 / impl plan §8.4.4).
+# (sync interoperability plan §8.4.4).
 #
 # The Rust suite proves the merge engine + orchestrator produce the right
-# in-memory result (us_044_collision_merge.rs, MINIO-010). This script closes
+# in-memory result (`us_044_collision_merge.rs`). This script closes
 # the NFR-009 loop: a *merged* Hidlins vault must round-trip through a
 # standards-compliant KeePassXC, with the collision loser preserved as a
 # history entry that KeePassXC can read.

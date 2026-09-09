@@ -268,6 +268,32 @@ impl Vault {
         self.database = new_db;
         Ok(())
     }
+
+    /// Replace and atomically save a same-identity database, restoring the
+    /// prior live database if serialization or the atomic write fails.
+    ///
+    /// This is the host-owned commit primitive for local-network sync. The
+    /// caller already holds this vault's exclusive lock; a network worker must
+    /// never call it directly.
+    #[doc(hidden)]
+    pub fn replace_database_and_save(&mut self, new_db: Database) -> Result<(), VaultError> {
+        let expected = self.database.root().id().uuid();
+        let found = new_db.root().id().uuid();
+        if expected != found {
+            return Err(VaultError::DatabaseIdentityMismatch { expected, found });
+        }
+
+        let previous = std::mem::replace(&mut self.database, new_db);
+        if let Err(error) = save_database(&self.path, &mut self.database, self.key.clone()) {
+            // A failure before rename leaves the previous file; a directory
+            // fsync failure can occur after rename. Reopen whichever complete
+            // encrypted KDBX is actually canonical so live and disk state do
+            // not diverge across that ambiguous durability boundary.
+            self.database = open_database(&self.path, self.key.clone()).unwrap_or(previous);
+            return Err(error);
+        }
+        Ok(())
+    }
 }
 
 impl VaultReadOnly {

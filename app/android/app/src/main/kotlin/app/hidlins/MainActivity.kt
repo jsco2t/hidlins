@@ -65,6 +65,15 @@ class MainActivity : FlutterActivity() {
         }
     }
 
+    override fun onRequestPermissionsResult(
+        requestCode: Int,
+        permissions: Array<out String>,
+        grantResults: IntArray,
+    ) {
+        platformServices?.onRequestPermissionsResult(requestCode, grantResults)
+        super.onRequestPermissionsResult(requestCode, permissions, grantResults)
+    }
+
     fun showSecurityCoverForTest() = securityCover.show(this)
 
     fun isSecurityCoverVisibleForTest(): Boolean = securityCover.isVisible

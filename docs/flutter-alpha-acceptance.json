@@ -28,25 +28,37 @@
     {"id": "AUTO-WARNINGS", "status": "PASS", "requirements": ["warnings-as-errors"], "make_targets": ["build-policy-check", "check", "app-check"], "evidence": ["tools/dev/build-policy-check.sh", "app/analysis_options.yaml"]},
     {"id": "AUTO-BRAND", "status": "PASS", "requirements": ["approved-logo", "launcher-assets", "asset-license"], "make_targets": ["app-brand-check"], "evidence": ["app/assets/branding/PROVENANCE.md", "app/assets/branding/manifest.json", "app/test/ui/widgets/brand_mark_test.dart"]},
     {"id": "AUTO-DESKTOP", "status": "PASS", "requirements": ["FR-001..FR-045", "NFR-002", "desktop-alpha"], "make_targets": ["app-test", "app-test-integration", "interop-app", "app-test-integration-performance"], "evidence": ["app/test/desktop_accessibility_test.dart", "app/test_bridge/real_bridge_integration_test.dart", "app/test_bridge/real_bridge_keepassxc_integration_test.dart"]},
-    {"id": "AUTO-IOS", "status": "PASS", "requirements": ["iOS-16-alpha", "security-storage", "foreground-sync"], "make_targets": ["app-test-ios-simulator", "app-test-ios-integration", "app-test-ios-simulator-minio", "app-build-ios"], "evidence": ["app/ios/VERIFICATION.md", "app/test/ios_accessibility_test.dart", "app/integration_test/ios_real_bridge_test.dart"]},
-    {"id": "AUTO-ANDROID", "status": "PASS", "requirements": ["Android-API-29-alpha", "security-storage", "foreground-sync"], "make_targets": ["app-test-android-emulator", "app-test-android-emulator-minio", "app-build-android"], "evidence": ["app/android/VERIFICATION.md", "app/test/android_accessibility_test.dart", "app/integration_test/android_real_bridge_test.dart"]},
-    {"id": "AUTO-SYNC", "status": "PASS", "requirements": ["FR-040", "FR-041", "FR-042", "no-data-loss"], "make_targets": ["test-minio-managed", "app-test-integration-minio", "app-test-ios-simulator-minio", "app-test-android-emulator-minio"], "evidence": ["crates/hidlins-sync/tests/merge_property_tests.rs", "app/integration_test/android_real_bridge_s3_test.dart", "app/integration_test/ios_real_bridge_s3_test.dart"]},
+    {"id": "AUTO-IOS", "status": "PASS", "requirements": ["iOS-16-alpha", "security-storage", "foreground-sync"], "make_targets": ["app-test-ios-simulator", "app-test-ios-integration", "test-local-sync-mobile-scenarios-ios", "app-build-ios"], "evidence": ["app/ios/VERIFICATION.md", "app/test/ios_accessibility_test.dart", "app/integration_test/ios_real_bridge_test.dart", "app/integration_test/mobile_local_sync_scenario_test.dart"]},
+    {"id": "AUTO-ANDROID", "status": "PASS", "requirements": ["Android-API-29-alpha", "Android-API-36-tablet", "security-storage", "foreground-sync", "platform-NSD-discovery"], "make_targets": ["app-test-android-emulator", "test-local-sync-android-lan-discovery", "test-local-sync-mobile-scenarios-android", "app-build-android"], "evidence": ["app/android/VERIFICATION.md", "app/test/android_accessibility_test.dart", "app/integration_test/android_real_bridge_test.dart", "app/integration_test/mobile_local_sync_scenario_test.dart", "tools/android-native/android_mobile_scenario.py", "tools/android-native/scenario_boundary.py"]},
+    {"id": "AUTO-LOCAL-SYNC", "status": "PASS", "requirements": ["FR-040..FR-048", "no-data-loss", "real-mobile-client-scenarios", "discovery-only-Android-sync", "authority-address-churn"], "make_targets": ["test-local-sync-security", "test-local-sync-discovery", "test-local-sync-integration", "test-local-sync-mobile-scenarios-ios", "test-local-sync-mobile-scenarios-android"], "evidence": ["crates/hidlins-sync/tests/merge_property_tests.rs", "crates/hidlins-sync/tests/server_integration.rs", "crates/hidlins-sync/tests/client_policy.rs", "tools/local-sync-tests/mobile_scenario.py", "tools/android-native/android_mobile_scenario.py", "app/integration_test/mobile_local_sync_scenario_test.dart"]},
     {"id": "AUTO-RELEASE", "status": "PASS", "requirements": ["release-artifacts", "two-ABI-Android"], "make_targets": ["release", "app-build-linux", "app-build-macos", "app-build-ios", "app-build-android"], "evidence": ["CONTRIBUTING.md", "docs/flutter-alpha-release.md"]},
     {"id": "AUTO-SUPPLY", "status": "PASS", "requirements": ["NFR-013", "supply-chain"], "make_targets": ["deny", "audit", "pub-vendor-check", "pub-production-check"], "evidence": ["deny.toml", "app/allowed-packages.txt", "app/assets/branding/PROVENANCE.md"]},
-    {"id": "SKIP-DESKTOP-SCREENREADER", "status": "SKIPPED", "reason": "user decision; deterministic semantics and keyboard coverage are gating", "precursors": ["AUTO-DESKTOP"]},
-    {"id": "SKIP-VOICEOVER", "status": "SKIPPED", "reason": "user decision; simulator semantics, focus, scaling, concealment, and touch targets are gating", "precursors": ["AUTO-IOS"]},
-    {"id": "SKIP-TALKBACK", "status": "SKIPPED", "reason": "user decision; emulator semantics, focus, scaling, concealment, and touch targets are gating", "precursors": ["AUTO-ANDROID"]},
-    {"id": "SKIP-OS-SHELL", "status": "SKIPPED", "reason": "user decision; launcher resources, opacity/safe-zone, lifecycle cover, and artifact metadata are gating", "precursors": ["AUTO-BRAND", "AUTO-IOS", "AUTO-ANDROID"]},
-    {"id": "SKIP-PHYSICAL-HARDWARE", "status": "SKIPPED", "reason": "hardware unavailable and explicitly not required; simulator/emulator matrices are gating", "precursors": ["AUTO-IOS", "AUTO-ANDROID"]},
-    {"id": "SKIP-LIVE-S3", "status": "SKIPPED", "reason": "user decision and credentials not supplied; secure optional targets remain and managed MinIO is gating", "precursors": ["AUTO-SYNC"]}
+    {"id": "SKIP-OS-SHELL", "status": "SKIPPED", "reason": "launcher and app-switcher visual polish is outside local-sync acceptance; resource and lifecycle-cover inspection are gating", "precursors": ["AUTO-BRAND", "AUTO-IOS", "AUTO-ANDROID"]}
   ],
+  "local_sync_acceptance": {
+    "status": "PASS",
+    "as_of": "2026-09-08",
+    "make_targets": ["test-local-sync-mobile-scenarios-ios", "test-local-sync-mobile-scenarios-android"],
+    "evidence": ["tools/local-sync-tests/mobile_scenario.py", "tools/android-native/android_mobile_scenario.py", "tools/android-native/scenario_boundary.py", "app/integration_test/mobile_local_sync_scenario_test.dart", "docs/local-network-sync-manual-verification.md"],
+    "generated_evidence_directory": "build/verification/mobile-local-sync/",
+    "coverage_layers": {
+      "android_emulator": "shipping Android NsdManager discovery plus direct real-CLI Noise and sync data plane on private emulator Wi-Fi",
+      "desktop": "real Rust mdns-sd publisher/browser interoperability",
+      "physical_lan": "optional non-gating desktop-Rust-to-Android observation across representative router firmware"
+    }
+  },
+  "local_sync_optional_observations": {
+    "status": "OPTIONAL_NON_BLOCKING",
+    "reason": "human perception, OS-owned physical wording, consumer-router firmware, and assistive-technology speech cannot be established faithfully by automation",
+    "procedure": "docs/local-network-sync-manual-verification.md"
+  },
   "july_task_audit": [
     {"id":"T1.1","disposition":"revalidated","evidence":"hidlins-api error/DTO suites and Tasks 001/008"},
     {"id":"T1.2","disposition":"revalidated","evidence":"US-091 lifecycle plus mobile real-bridge suites"},
     {"id":"T1.3","disposition":"revalidated","evidence":"make check-macos and feature gates"},
     {"id":"T1.4","disposition":"revalidated","evidence":"US-092 and desktop/mobile CRUD journeys"},
     {"id":"T1.5","disposition":"revalidated","evidence":"US-093 secret egress and clipboard adapters"},
-    {"id":"T1.6","disposition":"revalidated","evidence":"US-094 and managed-MinIO suites"},
+    {"id":"T1.6","disposition":"revalidated","evidence":"US-094 and local-network suites"},
     {"id":"T1.7","disposition":"revalidated","evidence":"real-bridge performance corpus"},
     {"id":"T1.8","disposition":"revalidated","evidence":"desktop source compile and startup warning tests"},
     {"id":"T1.9","disposition":"revalidated","evidence":"US-095 and remote-bootstrap journeys"},
@@ -72,21 +84,21 @@
     {"id":"T5.1","disposition":"completed-in-package","evidence":"foreground sync UI and all outcome tests"},
     {"id":"T5.2","disposition":"completed-in-package","evidence":"shortcut, context, keyboard, reduced-motion and accessibility closure"},
     {"id":"T5.3","disposition":"completed-in-package","evidence":"goldens, semantics and 5,000-entry budgets"},
-    {"id":"T5.4","disposition":"completed-in-package","evidence":"real bridge, process coexistence, MinIO and KeePassXC interop"},
+    {"id":"T5.4","disposition":"completed-in-package","evidence":"real bridge, process coexistence, local-network and KeePassXC interop"},
     {"id":"T5.5","disposition":"completed-in-package","evidence":"CONTRIBUTING and platform verification guides"},
     {"id":"T6.1","disposition":"completed-in-package","evidence":"two-ABI NDK build, hash/profile and 16 KiB checks"},
-    {"id":"T6.2","disposition":"superseded-with-rationale","evidence":"spike retained as production JNI/R8 verifier without legacy Cargokit Gradle path"},
+    {"id":"T6.2","disposition":"superseded-with-rationale","evidence":"production JNI/R8 checks run through the application APK without a separate harness"},
     {"id":"T7.1","disposition":"completed-in-package","evidence":"iOS simulator/device-no-sign build and CI targets"},
     {"id":"T7.2","disposition":"completed-in-package","evidence":"snapshot, lifecycle and pasteboard native suites"},
     {"id":"T7.3","disposition":"completed-in-package","evidence":"app-support storage, import and security-scoped keyfiles"},
     {"id":"T7.4","disposition":"completed-in-package","evidence":"iPhone/iPad automated UX, privacy manifest and semantics"},
-    {"id":"T7.5","disposition":"completed-in-package","evidence":"simulator managed-MinIO sync; physical/manual residual explicitly skipped"},
+    {"id":"T7.5","disposition":"completed-in-package","evidence":"real iPhone/iPad local-sync scenarios; physical wording and speech observations optional"},
     {"id":"T8.1","disposition":"completed-in-package","evidence":"Flutter 3.47.2 built-in Kotlin production APK path"},
-    {"id":"T8.2","disposition":"completed-in-package","evidence":"FLAG_SECURE, lifecycle cover, clipboard and TLS verifier"},
+    {"id":"T8.2","disposition":"completed-in-package","evidence":"FLAG_SECURE, lifecycle cover and clipboard hardening"},
     {"id":"T8.3","disposition":"completed-in-package","evidence":"app-private atomic import, SAF references and backup exclusion"},
     {"id":"T8.4","disposition":"completed-in-package","evidence":"phone/tablet automated UX and TalkBack precursor suite"},
-    {"id":"T8.5","disposition":"completed-in-package","evidence":"API 29/current host-native emulator and managed-MinIO matrices"}
+    {"id":"T8.5","disposition":"completed-in-package","evidence":"API 29/current host-native emulator and local-sync matrices"}
   ],
   "required_documents": ["CONTRIBUTING.md", "docs/flutter-alpha-release.md", "app/assets/branding/PROVENANCE.md", "app/ios/VERIFICATION.md", "app/android/VERIFICATION.md"],
-  "required_ci_targets": ["release", "app-check", "app-build-linux", "app-build-macos", "app-build-ios", "app-build-android", "app-test-ios-integration", "app-test-android-emulator", "app-test-android-emulator-minio", "acceptance-evidence-check"]
+  "required_ci_targets": ["release", "app-check", "app-build-linux", "app-build-macos", "app-build-ios", "app-build-android", "test-local-sync-mobile-scenarios-ios", "test-local-sync-mobile-scenarios-android", "acceptance-evidence-check"]
 }

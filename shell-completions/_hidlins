@@ -92,22 +92,6 @@ json\:"Stable JSON schema — see \`views/\` for per-subcommand shapes"))' \
 '--help[Print help (see more with '\''--help'\'')]' \
 && ret=0
 ;;
-(set-sync)
-_arguments "${_arguments_options[@]}" : \
-'--id=[Registry name of the vault to configure]:ID:_default' \
-'--s3-bucket=[S3 bucket name]:S3_BUCKET:_default' \
-'--s3-key=[S3 object key (the \`.kdbx\` filename on the remote)]:S3_KEY:_default' \
-'--s3-endpoint=[Optional custom S3 endpoint URL (e.g. \`https\://minio.internal\`). Defaults to the AWS regional endpoint for \`--s3-region\`]:S3_ENDPOINT:_default' \
-'--s3-region=[S3 region (required for \`SigV4\` signing). Defaults to \`us-east-1\`]:S3_REGION:_default' \
-'--s3-credentials-source=[How to obtain S3 credentials. Grammar\: \`prompt\` (default), \`iam-role\`, \`profile\:<name>\`, \`env\:<prefix>\` (see struct docs)]:S3_CREDENTIALS_SOURCE:_default' \
-'--format=[Output format. \`human\` (default) is line-oriented for terminals; \`json\` is the stable machine-readable schema for scripts]:FORMAT:((human\:"Line-oriented human-readable output (default)"
-json\:"Stable JSON schema — see \`views/\` for per-subcommand shapes"))' \
-'--registry=[Path to the vault registry file. Defaults to \`\$HOME/.local/state/hidlins/vaults.toml\` (per \`hidlins_core\:\:HidlinsPaths\`)]:REGISTRY:_files' \
-'--s3-path-style[Use path-style addressing (\`hostname/bucket\`) instead of virtual-hosted-style (\`bucket.hostname\`). Defaults to false]' \
-'-h[Print help (see more with '\''--help'\'')]' \
-'--help[Print help (see more with '\''--help'\'')]' \
-&& ret=0
-;;
 (set-lock)
 _arguments "${_arguments_options[@]}" : \
 '--id=[Registry name of the vault to configure]:ID:_default' \
@@ -145,10 +129,6 @@ _arguments "${_arguments_options[@]}" : \
 && ret=0
 ;;
 (list)
-_arguments "${_arguments_options[@]}" : \
-&& ret=0
-;;
-(set-sync)
 _arguments "${_arguments_options[@]}" : \
 && ret=0
 ;;
@@ -414,13 +394,241 @@ esac
 ;;
 (sync)
 _arguments "${_arguments_options[@]}" : \
-'--vault=[Vault registry name to sync. Optional\: if only one vault is registered, that one is used by default]:VAULT:_default' \
+'--format=[Output format. \`human\` (default) is line-oriented for terminals; \`json\` is the stable machine-readable schema for scripts]:FORMAT:((human\:"Line-oriented human-readable output (default)"
+json\:"Stable JSON schema — see \`views/\` for per-subcommand shapes"))' \
+'--registry=[Path to the vault registry file. Defaults to \`\$HOME/.local/state/hidlins/vaults.toml\` (per \`hidlins_core\:\:HidlinsPaths\`)]:REGISTRY:_files' \
+'-h[Print help (see more with '\''--help'\'')]' \
+'--help[Print help (see more with '\''--help'\'')]' \
+":: :_hidlins__subcmd__sync_commands" \
+"*::: :->sync" \
+&& ret=0
+
+    case $state in
+    (sync)
+        words=($line[1] "${words[@]}")
+        (( CURRENT += 1 ))
+        curcontext="${curcontext%:*:*}:hidlins-sync-command-$line[1]:"
+        case $line[1] in
+            (now)
+_arguments "${_arguments_options[@]}" : \
+'--vault=[Vault registry name. Defaults to the sole registered vault]:VAULT:_default' \
+'--address=[Restricted IP-literal diagnostic fallback when discovery is unavailable]:ADDRESS:_default' \
+'--port=[Port paired with \`--address\`]:PORT:_default' \
 '--format=[Output format. \`human\` (default) is line-oriented for terminals; \`json\` is the stable machine-readable schema for scripts]:FORMAT:((human\:"Line-oriented human-readable output (default)"
 json\:"Stable JSON schema — see \`views/\` for per-subcommand shapes"))' \
 '--registry=[Path to the vault registry file. Defaults to \`\$HOME/.local/state/hidlins/vaults.toml\` (per \`hidlins_core\:\:HidlinsPaths\`)]:REGISTRY:_files' \
 '-h[Print help (see more with '\''--help'\'')]' \
 '--help[Print help (see more with '\''--help'\'')]' \
 && ret=0
+;;
+(serve)
+_arguments "${_arguments_options[@]}" : \
+'--vault=[Vault registry name. Defaults to the sole registered vault]:VAULT:_default' \
+'--address=[Restricted IP literal to bind; otherwise an allowed active interface is selected]:ADDRESS:_default' \
+'--port=[Listener port]:PORT:_default' \
+'--format=[Output format. \`human\` (default) is line-oriented for terminals; \`json\` is the stable machine-readable schema for scripts]:FORMAT:((human\:"Line-oriented human-readable output (default)"
+json\:"Stable JSON schema — see \`views/\` for per-subcommand shapes"))' \
+'--registry=[Path to the vault registry file. Defaults to \`\$HOME/.local/state/hidlins/vaults.toml\` (per \`hidlins_core\:\:HidlinsPaths\`)]:REGISTRY:_files' \
+'--pairing-window[Open the bounded pairing window immediately after startup]' \
+'-h[Print help (see more with '\''--help'\'')]' \
+'--help[Print help (see more with '\''--help'\'')]' \
+&& ret=0
+;;
+(pair)
+_arguments "${_arguments_options[@]}" : \
+'--vault=[Vault registry name. Defaults to the sole registered vault]:VAULT:_default' \
+'--address=[Restricted IP-literal diagnostic fallback]:ADDRESS:_default' \
+'--port=[Port paired with \`--address\`]:PORT:_default' \
+'--name=[Local display name for the authority]:NAME:_default' \
+'--format=[Output format. \`human\` (default) is line-oriented for terminals; \`json\` is the stable machine-readable schema for scripts]:FORMAT:((human\:"Line-oriented human-readable output (default)"
+json\:"Stable JSON schema — see \`views/\` for per-subcommand shapes"))' \
+'--registry=[Path to the vault registry file. Defaults to \`\$HOME/.local/state/hidlins/vaults.toml\` (per \`hidlins_core\:\:HidlinsPaths\`)]:REGISTRY:_files' \
+'-h[Print help (see more with '\''--help'\'')]' \
+'--help[Print help (see more with '\''--help'\'')]' \
+&& ret=0
+;;
+(import)
+_arguments "${_arguments_options[@]}" : \
+'--id=[New local registry name]:ID:_default' \
+'--path=[Destination KDBX path. Defaults to the Hidlins state directory]:PATH:_files' \
+'--keyfile=[Optional keyfile required by the remote vault]:KEYFILE:_files' \
+'--address=[Restricted IP-literal diagnostic fallback]:ADDRESS:_default' \
+'--port=[Port paired with \`--address\`]:PORT:_default' \
+'--name=[Local display name for the authority]:NAME:_default' \
+'--format=[Output format. \`human\` (default) is line-oriented for terminals; \`json\` is the stable machine-readable schema for scripts]:FORMAT:((human\:"Line-oriented human-readable output (default)"
+json\:"Stable JSON schema — see \`views/\` for per-subcommand shapes"))' \
+'--registry=[Path to the vault registry file. Defaults to \`\$HOME/.local/state/hidlins/vaults.toml\` (per \`hidlins_core\:\:HidlinsPaths\`)]:REGISTRY:_files' \
+'-h[Print help (see more with '\''--help'\'')]' \
+'--help[Print help (see more with '\''--help'\'')]' \
+&& ret=0
+;;
+(status)
+_arguments "${_arguments_options[@]}" : \
+'--vault=[Vault registry name. Defaults to the sole registered vault]:VAULT:_default' \
+'--format=[Output format. \`human\` (default) is line-oriented for terminals; \`json\` is the stable machine-readable schema for scripts]:FORMAT:((human\:"Line-oriented human-readable output (default)"
+json\:"Stable JSON schema — see \`views/\` for per-subcommand shapes"))' \
+'--registry=[Path to the vault registry file. Defaults to \`\$HOME/.local/state/hidlins/vaults.toml\` (per \`hidlins_core\:\:HidlinsPaths\`)]:REGISTRY:_files' \
+'-h[Print help (see more with '\''--help'\'')]' \
+'--help[Print help (see more with '\''--help'\'')]' \
+&& ret=0
+;;
+(peers)
+_arguments "${_arguments_options[@]}" : \
+'--format=[Output format. \`human\` (default) is line-oriented for terminals; \`json\` is the stable machine-readable schema for scripts]:FORMAT:((human\:"Line-oriented human-readable output (default)"
+json\:"Stable JSON schema — see \`views/\` for per-subcommand shapes"))' \
+'--registry=[Path to the vault registry file. Defaults to \`\$HOME/.local/state/hidlins/vaults.toml\` (per \`hidlins_core\:\:HidlinsPaths\`)]:REGISTRY:_files' \
+'-h[Print help (see more with '\''--help'\'')]' \
+'--help[Print help (see more with '\''--help'\'')]' \
+":: :_hidlins__subcmd__sync__subcmd__peers_commands" \
+"*::: :->peers" \
+&& ret=0
+
+    case $state in
+    (peers)
+        words=($line[1] "${words[@]}")
+        (( CURRENT += 1 ))
+        curcontext="${curcontext%:*:*}:hidlins-sync-peers-command-$line[1]:"
+        case $line[1] in
+            (list)
+_arguments "${_arguments_options[@]}" : \
+'--vault=[Vault registry name. Defaults to the sole registered vault]:VAULT:_default' \
+'--format=[Output format. \`human\` (default) is line-oriented for terminals; \`json\` is the stable machine-readable schema for scripts]:FORMAT:((human\:"Line-oriented human-readable output (default)"
+json\:"Stable JSON schema — see \`views/\` for per-subcommand shapes"))' \
+'--registry=[Path to the vault registry file. Defaults to \`\$HOME/.local/state/hidlins/vaults.toml\` (per \`hidlins_core\:\:HidlinsPaths\`)]:REGISTRY:_files' \
+'-h[Print help (see more with '\''--help'\'')]' \
+'--help[Print help (see more with '\''--help'\'')]' \
+&& ret=0
+;;
+(rename)
+_arguments "${_arguments_options[@]}" : \
+'--vault=[Vault registry name. Defaults to the sole registered vault]:VAULT:_default' \
+'--peer=[Opaque \`peer-N\` handle from \`sync peers list\`]:PEER:_default' \
+'--name=[New local display name]:NAME:_default' \
+'--format=[Output format. \`human\` (default) is line-oriented for terminals; \`json\` is the stable machine-readable schema for scripts]:FORMAT:((human\:"Line-oriented human-readable output (default)"
+json\:"Stable JSON schema — see \`views/\` for per-subcommand shapes"))' \
+'--registry=[Path to the vault registry file. Defaults to \`\$HOME/.local/state/hidlins/vaults.toml\` (per \`hidlins_core\:\:HidlinsPaths\`)]:REGISTRY:_files' \
+'-h[Print help (see more with '\''--help'\'')]' \
+'--help[Print help (see more with '\''--help'\'')]' \
+&& ret=0
+;;
+(revoke)
+_arguments "${_arguments_options[@]}" : \
+'--vault=[Vault registry name. Defaults to the sole registered vault]:VAULT:_default' \
+'--peer=[Opaque \`peer-N\` handle from \`sync peers list\`]:PEER:_default' \
+'--format=[Output format. \`human\` (default) is line-oriented for terminals; \`json\` is the stable machine-readable schema for scripts]:FORMAT:((human\:"Line-oriented human-readable output (default)"
+json\:"Stable JSON schema — see \`views/\` for per-subcommand shapes"))' \
+'--registry=[Path to the vault registry file. Defaults to \`\$HOME/.local/state/hidlins/vaults.toml\` (per \`hidlins_core\:\:HidlinsPaths\`)]:REGISTRY:_files' \
+'-h[Print help (see more with '\''--help'\'')]' \
+'--help[Print help (see more with '\''--help'\'')]' \
+&& ret=0
+;;
+(help)
+_arguments "${_arguments_options[@]}" : \
+":: :_hidlins__subcmd__sync__subcmd__peers__subcmd__help_commands" \
+"*::: :->help" \
+&& ret=0
+
+    case $state in
+    (help)
+        words=($line[1] "${words[@]}")
+        (( CURRENT += 1 ))
+        curcontext="${curcontext%:*:*}:hidlins-sync-peers-help-command-$line[1]:"
+        case $line[1] in
+            (list)
+_arguments "${_arguments_options[@]}" : \
+&& ret=0
+;;
+(rename)
+_arguments "${_arguments_options[@]}" : \
+&& ret=0
+;;
+(revoke)
+_arguments "${_arguments_options[@]}" : \
+&& ret=0
+;;
+(help)
+_arguments "${_arguments_options[@]}" : \
+&& ret=0
+;;
+        esac
+    ;;
+esac
+;;
+        esac
+    ;;
+esac
+;;
+(help)
+_arguments "${_arguments_options[@]}" : \
+":: :_hidlins__subcmd__sync__subcmd__help_commands" \
+"*::: :->help" \
+&& ret=0
+
+    case $state in
+    (help)
+        words=($line[1] "${words[@]}")
+        (( CURRENT += 1 ))
+        curcontext="${curcontext%:*:*}:hidlins-sync-help-command-$line[1]:"
+        case $line[1] in
+            (now)
+_arguments "${_arguments_options[@]}" : \
+&& ret=0
+;;
+(serve)
+_arguments "${_arguments_options[@]}" : \
+&& ret=0
+;;
+(pair)
+_arguments "${_arguments_options[@]}" : \
+&& ret=0
+;;
+(import)
+_arguments "${_arguments_options[@]}" : \
+&& ret=0
+;;
+(status)
+_arguments "${_arguments_options[@]}" : \
+&& ret=0
+;;
+(peers)
+_arguments "${_arguments_options[@]}" : \
+":: :_hidlins__subcmd__sync__subcmd__help__subcmd__peers_commands" \
+"*::: :->peers" \
+&& ret=0
+
+    case $state in
+    (peers)
+        words=($line[1] "${words[@]}")
+        (( CURRENT += 1 ))
+        curcontext="${curcontext%:*:*}:hidlins-sync-help-peers-command-$line[1]:"
+        case $line[1] in
+            (list)
+_arguments "${_arguments_options[@]}" : \
+&& ret=0
+;;
+(rename)
+_arguments "${_arguments_options[@]}" : \
+&& ret=0
+;;
+(revoke)
+_arguments "${_arguments_options[@]}" : \
+&& ret=0
+;;
+        esac
+    ;;
+esac
+;;
+(help)
+_arguments "${_arguments_options[@]}" : \
+&& ret=0
+;;
+        esac
+    ;;
+esac
+;;
+        esac
+    ;;
+esac
 ;;
 (ssh)
 _arguments "${_arguments_options[@]}" : \
@@ -570,10 +778,6 @@ _arguments "${_arguments_options[@]}" : \
 _arguments "${_arguments_options[@]}" : \
 && ret=0
 ;;
-(set-sync)
-_arguments "${_arguments_options[@]}" : \
-&& ret=0
-;;
 (set-lock)
 _arguments "${_arguments_options[@]}" : \
 && ret=0
@@ -648,7 +852,67 @@ esac
 ;;
 (sync)
 _arguments "${_arguments_options[@]}" : \
+":: :_hidlins__subcmd__help__subcmd__sync_commands" \
+"*::: :->sync" \
 && ret=0
+
+    case $state in
+    (sync)
+        words=($line[1] "${words[@]}")
+        (( CURRENT += 1 ))
+        curcontext="${curcontext%:*:*}:hidlins-help-sync-command-$line[1]:"
+        case $line[1] in
+            (now)
+_arguments "${_arguments_options[@]}" : \
+&& ret=0
+;;
+(serve)
+_arguments "${_arguments_options[@]}" : \
+&& ret=0
+;;
+(pair)
+_arguments "${_arguments_options[@]}" : \
+&& ret=0
+;;
+(import)
+_arguments "${_arguments_options[@]}" : \
+&& ret=0
+;;
+(status)
+_arguments "${_arguments_options[@]}" : \
+&& ret=0
+;;
+(peers)
+_arguments "${_arguments_options[@]}" : \
+":: :_hidlins__subcmd__help__subcmd__sync__subcmd__peers_commands" \
+"*::: :->peers" \
+&& ret=0
+
+    case $state in
+    (peers)
+        words=($line[1] "${words[@]}")
+        (( CURRENT += 1 ))
+        curcontext="${curcontext%:*:*}:hidlins-help-sync-peers-command-$line[1]:"
+        case $line[1] in
+            (list)
+_arguments "${_arguments_options[@]}" : \
+&& ret=0
+;;
+(rename)
+_arguments "${_arguments_options[@]}" : \
+&& ret=0
+;;
+(revoke)
+_arguments "${_arguments_options[@]}" : \
+&& ret=0
+;;
+        esac
+    ;;
+esac
+;;
+        esac
+    ;;
+esac
 ;;
 (ssh)
 _arguments "${_arguments_options[@]}" : \
@@ -705,7 +969,7 @@ _hidlins_commands() {
 'vault:Vault lifecycle and registration commands' \
 'entry:Secret-entry CRUD, search, and TOTP commands' \
 'gen:Password and passphrase generation' \
-'sync:Synchronise a vault with its configured S3 target' \
+'sync:Pair and synchronize vaults over the local network' \
 'ssh:SSH key entry management' \
 'completions:Generate shell completion scripts' \
 'keys:Print the TUI'\''s effective keymap (command name, keys, description, group)' \
@@ -858,7 +1122,7 @@ _hidlins__subcmd__help_commands() {
 'vault:Vault lifecycle and registration commands' \
 'entry:Secret-entry CRUD, search, and TOTP commands' \
 'gen:Password and passphrase generation' \
-'sync:Synchronise a vault with its configured S3 target' \
+'sync:Pair and synchronize vaults over the local network' \
 'ssh:SSH key entry management' \
 'completions:Generate shell completion scripts' \
 'keys:Print the TUI'\''s effective keymap (command name, keys, description, group)' \
@@ -967,8 +1231,64 @@ _hidlins__subcmd__help__subcmd__ssh__subcmd__load_commands() {
 }
 (( $+functions[_hidlins__subcmd__help__subcmd__sync_commands] )) ||
 _hidlins__subcmd__help__subcmd__sync_commands() {
-    local commands; commands=()
+    local commands; commands=(
+'now:Synchronize a paired client vault now' \
+'serve:Run an authoritative sync server in the foreground until Ctrl+C' \
+'pair:Pair an existing vault with an authoritative server' \
+'import:Pair and import a complete encrypted vault' \
+'status:Show local-sync role, pairing, and server status' \
+'peers:List, rename, or revoke paired peers' \
+    )
     _describe -t commands 'hidlins help sync commands' commands "$@"
+}
+(( $+functions[_hidlins__subcmd__help__subcmd__sync__subcmd__import_commands] )) ||
+_hidlins__subcmd__help__subcmd__sync__subcmd__import_commands() {
+    local commands; commands=()
+    _describe -t commands 'hidlins help sync import commands' commands "$@"
+}
+(( $+functions[_hidlins__subcmd__help__subcmd__sync__subcmd__now_commands] )) ||
+_hidlins__subcmd__help__subcmd__sync__subcmd__now_commands() {
+    local commands; commands=()
+    _describe -t commands 'hidlins help sync now commands' commands "$@"
+}
+(( $+functions[_hidlins__subcmd__help__subcmd__sync__subcmd__pair_commands] )) ||
+_hidlins__subcmd__help__subcmd__sync__subcmd__pair_commands() {
+    local commands; commands=()
+    _describe -t commands 'hidlins help sync pair commands' commands "$@"
+}
+(( $+functions[_hidlins__subcmd__help__subcmd__sync__subcmd__peers_commands] )) ||
+_hidlins__subcmd__help__subcmd__sync__subcmd__peers_commands() {
+    local commands; commands=(
+'list:List configured peers' \
+'rename:Rename a peer'\''s local display label' \
+'revoke:Revoke a peer immediately' \
+    )
+    _describe -t commands 'hidlins help sync peers commands' commands "$@"
+}
+(( $+functions[_hidlins__subcmd__help__subcmd__sync__subcmd__peers__subcmd__list_commands] )) ||
+_hidlins__subcmd__help__subcmd__sync__subcmd__peers__subcmd__list_commands() {
+    local commands; commands=()
+    _describe -t commands 'hidlins help sync peers list commands' commands "$@"
+}
+(( $+functions[_hidlins__subcmd__help__subcmd__sync__subcmd__peers__subcmd__rename_commands] )) ||
+_hidlins__subcmd__help__subcmd__sync__subcmd__peers__subcmd__rename_commands() {
+    local commands; commands=()
+    _describe -t commands 'hidlins help sync peers rename commands' commands "$@"
+}
+(( $+functions[_hidlins__subcmd__help__subcmd__sync__subcmd__peers__subcmd__revoke_commands] )) ||
+_hidlins__subcmd__help__subcmd__sync__subcmd__peers__subcmd__revoke_commands() {
+    local commands; commands=()
+    _describe -t commands 'hidlins help sync peers revoke commands' commands "$@"
+}
+(( $+functions[_hidlins__subcmd__help__subcmd__sync__subcmd__serve_commands] )) ||
+_hidlins__subcmd__help__subcmd__sync__subcmd__serve_commands() {
+    local commands; commands=()
+    _describe -t commands 'hidlins help sync serve commands' commands "$@"
+}
+(( $+functions[_hidlins__subcmd__help__subcmd__sync__subcmd__status_commands] )) ||
+_hidlins__subcmd__help__subcmd__sync__subcmd__status_commands() {
+    local commands; commands=()
+    _describe -t commands 'hidlins help sync status commands' commands "$@"
 }
 (( $+functions[_hidlins__subcmd__help__subcmd__vault_commands] )) ||
 _hidlins__subcmd__help__subcmd__vault_commands() {
@@ -977,7 +1297,6 @@ _hidlins__subcmd__help__subcmd__vault_commands() {
 'register:Authenticate and register an existing KDBX vault' \
 'open:Probe vault unlock with the given master password' \
 'list:List registered vaults' \
-'set-sync:Configure the S3 target for a vault' \
 'set-lock:Configure the per-vault idle-lock timeout' \
     )
     _describe -t commands 'hidlins help vault commands' commands "$@"
@@ -1006,11 +1325,6 @@ _hidlins__subcmd__help__subcmd__vault__subcmd__register_commands() {
 _hidlins__subcmd__help__subcmd__vault__subcmd__set-lock_commands() {
     local commands; commands=()
     _describe -t commands 'hidlins help vault set-lock commands' commands "$@"
-}
-(( $+functions[_hidlins__subcmd__help__subcmd__vault__subcmd__set-sync_commands] )) ||
-_hidlins__subcmd__help__subcmd__vault__subcmd__set-sync_commands() {
-    local commands; commands=()
-    _describe -t commands 'hidlins help vault set-sync commands' commands "$@"
 }
 (( $+functions[_hidlins__subcmd__keys_commands] )) ||
 _hidlins__subcmd__keys_commands() {
@@ -1074,8 +1388,163 @@ _hidlins__subcmd__ssh__subcmd__load_commands() {
 }
 (( $+functions[_hidlins__subcmd__sync_commands] )) ||
 _hidlins__subcmd__sync_commands() {
-    local commands; commands=()
+    local commands; commands=(
+'now:Synchronize a paired client vault now' \
+'serve:Run an authoritative sync server in the foreground until Ctrl+C' \
+'pair:Pair an existing vault with an authoritative server' \
+'import:Pair and import a complete encrypted vault' \
+'status:Show local-sync role, pairing, and server status' \
+'peers:List, rename, or revoke paired peers' \
+'help:Print this message or the help of the given subcommand(s)' \
+    )
     _describe -t commands 'hidlins sync commands' commands "$@"
+}
+(( $+functions[_hidlins__subcmd__sync__subcmd__help_commands] )) ||
+_hidlins__subcmd__sync__subcmd__help_commands() {
+    local commands; commands=(
+'now:Synchronize a paired client vault now' \
+'serve:Run an authoritative sync server in the foreground until Ctrl+C' \
+'pair:Pair an existing vault with an authoritative server' \
+'import:Pair and import a complete encrypted vault' \
+'status:Show local-sync role, pairing, and server status' \
+'peers:List, rename, or revoke paired peers' \
+'help:Print this message or the help of the given subcommand(s)' \
+    )
+    _describe -t commands 'hidlins sync help commands' commands "$@"
+}
+(( $+functions[_hidlins__subcmd__sync__subcmd__help__subcmd__help_commands] )) ||
+_hidlins__subcmd__sync__subcmd__help__subcmd__help_commands() {
+    local commands; commands=()
+    _describe -t commands 'hidlins sync help help commands' commands "$@"
+}
+(( $+functions[_hidlins__subcmd__sync__subcmd__help__subcmd__import_commands] )) ||
+_hidlins__subcmd__sync__subcmd__help__subcmd__import_commands() {
+    local commands; commands=()
+    _describe -t commands 'hidlins sync help import commands' commands "$@"
+}
+(( $+functions[_hidlins__subcmd__sync__subcmd__help__subcmd__now_commands] )) ||
+_hidlins__subcmd__sync__subcmd__help__subcmd__now_commands() {
+    local commands; commands=()
+    _describe -t commands 'hidlins sync help now commands' commands "$@"
+}
+(( $+functions[_hidlins__subcmd__sync__subcmd__help__subcmd__pair_commands] )) ||
+_hidlins__subcmd__sync__subcmd__help__subcmd__pair_commands() {
+    local commands; commands=()
+    _describe -t commands 'hidlins sync help pair commands' commands "$@"
+}
+(( $+functions[_hidlins__subcmd__sync__subcmd__help__subcmd__peers_commands] )) ||
+_hidlins__subcmd__sync__subcmd__help__subcmd__peers_commands() {
+    local commands; commands=(
+'list:List configured peers' \
+'rename:Rename a peer'\''s local display label' \
+'revoke:Revoke a peer immediately' \
+    )
+    _describe -t commands 'hidlins sync help peers commands' commands "$@"
+}
+(( $+functions[_hidlins__subcmd__sync__subcmd__help__subcmd__peers__subcmd__list_commands] )) ||
+_hidlins__subcmd__sync__subcmd__help__subcmd__peers__subcmd__list_commands() {
+    local commands; commands=()
+    _describe -t commands 'hidlins sync help peers list commands' commands "$@"
+}
+(( $+functions[_hidlins__subcmd__sync__subcmd__help__subcmd__peers__subcmd__rename_commands] )) ||
+_hidlins__subcmd__sync__subcmd__help__subcmd__peers__subcmd__rename_commands() {
+    local commands; commands=()
+    _describe -t commands 'hidlins sync help peers rename commands' commands "$@"
+}
+(( $+functions[_hidlins__subcmd__sync__subcmd__help__subcmd__peers__subcmd__revoke_commands] )) ||
+_hidlins__subcmd__sync__subcmd__help__subcmd__peers__subcmd__revoke_commands() {
+    local commands; commands=()
+    _describe -t commands 'hidlins sync help peers revoke commands' commands "$@"
+}
+(( $+functions[_hidlins__subcmd__sync__subcmd__help__subcmd__serve_commands] )) ||
+_hidlins__subcmd__sync__subcmd__help__subcmd__serve_commands() {
+    local commands; commands=()
+    _describe -t commands 'hidlins sync help serve commands' commands "$@"
+}
+(( $+functions[_hidlins__subcmd__sync__subcmd__help__subcmd__status_commands] )) ||
+_hidlins__subcmd__sync__subcmd__help__subcmd__status_commands() {
+    local commands; commands=()
+    _describe -t commands 'hidlins sync help status commands' commands "$@"
+}
+(( $+functions[_hidlins__subcmd__sync__subcmd__import_commands] )) ||
+_hidlins__subcmd__sync__subcmd__import_commands() {
+    local commands; commands=()
+    _describe -t commands 'hidlins sync import commands' commands "$@"
+}
+(( $+functions[_hidlins__subcmd__sync__subcmd__now_commands] )) ||
+_hidlins__subcmd__sync__subcmd__now_commands() {
+    local commands; commands=()
+    _describe -t commands 'hidlins sync now commands' commands "$@"
+}
+(( $+functions[_hidlins__subcmd__sync__subcmd__pair_commands] )) ||
+_hidlins__subcmd__sync__subcmd__pair_commands() {
+    local commands; commands=()
+    _describe -t commands 'hidlins sync pair commands' commands "$@"
+}
+(( $+functions[_hidlins__subcmd__sync__subcmd__peers_commands] )) ||
+_hidlins__subcmd__sync__subcmd__peers_commands() {
+    local commands; commands=(
+'list:List configured peers' \
+'rename:Rename a peer'\''s local display label' \
+'revoke:Revoke a peer immediately' \
+'help:Print this message or the help of the given subcommand(s)' \
+    )
+    _describe -t commands 'hidlins sync peers commands' commands "$@"
+}
+(( $+functions[_hidlins__subcmd__sync__subcmd__peers__subcmd__help_commands] )) ||
+_hidlins__subcmd__sync__subcmd__peers__subcmd__help_commands() {
+    local commands; commands=(
+'list:List configured peers' \
+'rename:Rename a peer'\''s local display label' \
+'revoke:Revoke a peer immediately' \
+'help:Print this message or the help of the given subcommand(s)' \
+    )
+    _describe -t commands 'hidlins sync peers help commands' commands "$@"
+}
+(( $+functions[_hidlins__subcmd__sync__subcmd__peers__subcmd__help__subcmd__help_commands] )) ||
+_hidlins__subcmd__sync__subcmd__peers__subcmd__help__subcmd__help_commands() {
+    local commands; commands=()
+    _describe -t commands 'hidlins sync peers help help commands' commands "$@"
+}
+(( $+functions[_hidlins__subcmd__sync__subcmd__peers__subcmd__help__subcmd__list_commands] )) ||
+_hidlins__subcmd__sync__subcmd__peers__subcmd__help__subcmd__list_commands() {
+    local commands; commands=()
+    _describe -t commands 'hidlins sync peers help list commands' commands "$@"
+}
+(( $+functions[_hidlins__subcmd__sync__subcmd__peers__subcmd__help__subcmd__rename_commands] )) ||
+_hidlins__subcmd__sync__subcmd__peers__subcmd__help__subcmd__rename_commands() {
+    local commands; commands=()
+    _describe -t commands 'hidlins sync peers help rename commands' commands "$@"
+}
+(( $+functions[_hidlins__subcmd__sync__subcmd__peers__subcmd__help__subcmd__revoke_commands] )) ||
+_hidlins__subcmd__sync__subcmd__peers__subcmd__help__subcmd__revoke_commands() {
+    local commands; commands=()
+    _describe -t commands 'hidlins sync peers help revoke commands' commands "$@"
+}
+(( $+functions[_hidlins__subcmd__sync__subcmd__peers__subcmd__list_commands] )) ||
+_hidlins__subcmd__sync__subcmd__peers__subcmd__list_commands() {
+    local commands; commands=()
+    _describe -t commands 'hidlins sync peers list commands' commands "$@"
+}
+(( $+functions[_hidlins__subcmd__sync__subcmd__peers__subcmd__rename_commands] )) ||
+_hidlins__subcmd__sync__subcmd__peers__subcmd__rename_commands() {
+    local commands; commands=()
+    _describe -t commands 'hidlins sync peers rename commands' commands "$@"
+}
+(( $+functions[_hidlins__subcmd__sync__subcmd__peers__subcmd__revoke_commands] )) ||
+_hidlins__subcmd__sync__subcmd__peers__subcmd__revoke_commands() {
+    local commands; commands=()
+    _describe -t commands 'hidlins sync peers revoke commands' commands "$@"
+}
+(( $+functions[_hidlins__subcmd__sync__subcmd__serve_commands] )) ||
+_hidlins__subcmd__sync__subcmd__serve_commands() {
+    local commands; commands=()
+    _describe -t commands 'hidlins sync serve commands' commands "$@"
+}
+(( $+functions[_hidlins__subcmd__sync__subcmd__status_commands] )) ||
+_hidlins__subcmd__sync__subcmd__status_commands() {
+    local commands; commands=()
+    _describe -t commands 'hidlins sync status commands' commands "$@"
 }
 (( $+functions[_hidlins__subcmd__vault_commands] )) ||
 _hidlins__subcmd__vault_commands() {
@@ -1084,7 +1553,6 @@ _hidlins__subcmd__vault_commands() {
 'register:Authenticate and register an existing KDBX vault' \
 'open:Probe vault unlock with the given master password' \
 'list:List registered vaults' \
-'set-sync:Configure the S3 target for a vault' \
 'set-lock:Configure the per-vault idle-lock timeout' \
 'help:Print this message or the help of the given subcommand(s)' \
     )
@@ -1102,7 +1570,6 @@ _hidlins__subcmd__vault__subcmd__help_commands() {
 'register:Authenticate and register an existing KDBX vault' \
 'open:Probe vault unlock with the given master password' \
 'list:List registered vaults' \
-'set-sync:Configure the S3 target for a vault' \
 'set-lock:Configure the per-vault idle-lock timeout' \
 'help:Print this message or the help of the given subcommand(s)' \
     )
@@ -1138,11 +1605,6 @@ _hidlins__subcmd__vault__subcmd__help__subcmd__set-lock_commands() {
     local commands; commands=()
     _describe -t commands 'hidlins vault help set-lock commands' commands "$@"
 }
-(( $+functions[_hidlins__subcmd__vault__subcmd__help__subcmd__set-sync_commands] )) ||
-_hidlins__subcmd__vault__subcmd__help__subcmd__set-sync_commands() {
-    local commands; commands=()
-    _describe -t commands 'hidlins vault help set-sync commands' commands "$@"
-}
 (( $+functions[_hidlins__subcmd__vault__subcmd__list_commands] )) ||
 _hidlins__subcmd__vault__subcmd__list_commands() {
     local commands; commands=()
@@ -1162,11 +1624,6 @@ _hidlins__subcmd__vault__subcmd__register_commands() {
 _hidlins__subcmd__vault__subcmd__set-lock_commands() {
     local commands; commands=()
     _describe -t commands 'hidlins vault set-lock commands' commands "$@"
-}
-(( $+functions[_hidlins__subcmd__vault__subcmd__set-sync_commands] )) ||
-_hidlins__subcmd__vault__subcmd__set-sync_commands() {
-    local commands; commands=()
-    _describe -t commands 'hidlins vault set-sync commands' commands "$@"
 }
 
 if [ "$funcstack[1]" = "_hidlins" ]; then

@@ -1,0 +1,16 @@
+{
+  "standard_commands": [
+    "make check",
+    "make app-check",
+    "make ncsa-boundary-check"
+  ],
+  "final_commands": [
+    "make verify",
+    "make ncsa-boundary-check",
+    "make check-ios",
+    "make app-test-ios-simulator",
+    "make app-build-ios",
+    "make android-emulator-provision",
+    "make test-local-sync-mobile-scenarios HIDLINS_ANDROID_STRICT=1"
+  ]
+}

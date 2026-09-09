@@ -4,10 +4,8 @@
 from __future__ import annotations
 
 import argparse
-import json
 import re
 import tempfile
-import xml.etree.ElementTree as ET
 from dataclasses import dataclass
 from pathlib import Path
 
@@ -106,35 +104,16 @@ def validate(config: AndroidConfig) -> None:
         "release R8 minification must be enabled",
     )
     require(
-        r'implementation\("rustls:rustls-platform-verifier:0\.1\.1"\)',
-        app_gradle,
-        "production app must package the pinned rustls platform verifier",
-    )
-    require(
         r"dependencyLocking\s*\{\s*lockAllConfigurations\(\)",
         uncomment_kotlin(config.root_gradle),
         "all Android projects must lock every dependency configuration",
     )
-    for coordinate in (
-        "rustls:rustls-platform-verifier:0.1.1=",
-        "org.jetbrains.kotlin:kotlin-stdlib:2.4.0=",
-    ):
+    for coordinate in ("org.jetbrains.kotlin:kotlin-stdlib:2.4.0=",):
         if coordinate not in config.lockfile:
             fail(f"Android dependency lockfile does not pin {coordinate[:-1]}")
     for unsupported_engine in (r"io\.flutter:armeabi_v7a_", r"io\.flutter:x86_(?!64)"):
         if re.search(unsupported_engine, config.lockfile):
             fail(f"Android dependency lockfile includes unsupported engine {unsupported_engine}")
-    verifier = json.loads(
-        (ROOT / "tools/android-native/artifact-contract.json").read_text(encoding="utf-8")
-    )["verifier"]
-    metadata = ET.fromstring(config.verification_metadata)
-    hashes = {
-        node.attrib["value"]
-        for node in metadata.iter()
-        if node.tag.rsplit("}", 1)[-1] == "sha256" and "value" in node.attrib
-    }
-    if verifier["aar_sha256"] not in hashes or verifier["pom_sha256"] not in hashes:
-        fail("Android verification metadata does not pin the verifier AAR and POM")
     for host_artifact in (
         "aapt2-9.1.0-14792394-linux.jar",
         "aapt2-9.1.0-14792394-osx.jar",
@@ -198,21 +177,15 @@ android {
   buildTypes { release { isMinifyEnabled = true } }
 }
 kotlin { compilerOptions { allWarningsAsErrors.set(true) } }
-dependencies { implementation("rustls:rustls-platform-verifier:0.1.1") }
 ''',
         plugin_gradle="plugins { id 'com.android.library' }\n",
         root_gradle="allprojects { dependencyLocking { lockAllConfigurations() } }\n",
         wrapper="distributionUrl=https\\://services.gradle.org/distributions/gradle-9.3.1-all.zip\n",
-        lockfile=(
-            "rustls:rustls-platform-verifier:0.1.1=releaseRuntimeClasspath\n"
-            "org.jetbrains.kotlin:kotlin-stdlib:2.4.0=releaseRuntimeClasspath\n"
-        ),
+        lockfile="org.jetbrains.kotlin:kotlin-stdlib:2.4.0=releaseRuntimeClasspath\n",
         verification_metadata=(
             "<verification-metadata><components><component>"
             '<artifact name="aapt2-9.1.0-14792394-linux.jar"><sha256 value="linux"/></artifact>'
             '<artifact name="aapt2-9.1.0-14792394-osx.jar"><sha256 value="osx"/></artifact>'
-            '<artifact><sha256 value="667292cadd8fa589229dd0f716541236a761f29b774930868d218175633830fd"/></artifact>'
-            '<artifact><sha256 value="5468629ab3793f4768c0527b8ecca25219a00b5d9503d1ad657cc664c87e9081"/></artifact>'
             "</component></components></verification-metadata>"
         ),
         workflow_text="flutter build apk --no-pub\n",

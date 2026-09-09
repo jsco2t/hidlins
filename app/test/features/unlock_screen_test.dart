@@ -21,10 +21,11 @@ void main() {
     hasSync: false,
   );
 
-  Widget buildApp(FakeSessionRepository session) {
+  Widget buildApp(FakeSessionRepository session, [FakeSyncRepository? sync]) {
     return ProviderScope(
       overrides: [
         sessionRepositoryProvider.overrideWithValue(session),
+        syncRepositoryProvider.overrideWithValue(sync ?? FakeSyncRepository()),
         vaultListProvider.overrideWith((_) async => session.vaults),
       ],
       child: MaterialApp(
@@ -90,10 +91,13 @@ void main() {
       );
     });
 
+    // LNS-REVIEW-003
     testWidgets('calls unlock with the entered password', (tester) async {
       final session = FakeSessionRepository()..vaults = [testVault];
+      final sync = FakeSyncRepository();
       addTearDown(session.dispose);
-      await tester.pumpWidget(buildApp(session));
+      addTearDown(sync.dispose);
+      await tester.pumpWidget(buildApp(session, sync));
       await tester.pumpAndSettle();
 
       final passwordField = find.byWidgetPredicate(
@@ -106,6 +110,31 @@ void main() {
 
       expect(session.unlockCalled, isTrue);
       expect(session.lastUnlockPassword, 'mypassword');
+      expect(sync.startupOrder, ['discover', 'sync']);
+    });
+
+    testWidgets('startup discovery failure stays nonfatal after unlock', (
+      tester,
+    ) async {
+      final session = FakeSessionRepository()..vaults = [testVault];
+      final sync = FakeSyncRepository()
+        ..discoverError = const SyncUnreachable();
+      addTearDown(session.dispose);
+      addTearDown(sync.dispose);
+      await tester.pumpWidget(buildApp(session, sync));
+      await tester.pumpAndSettle();
+
+      final passwordField = find.byWidgetPredicate(
+        (widget) => widget is TextField && widget.obscureText,
+      );
+      await tester.enterText(passwordField, 'mypassword');
+      await tester.tap(find.text('Unlock'));
+      await tester.pump();
+      await tester.pump(const Duration(milliseconds: 100));
+
+      expect(session.unlockCalled, isTrue);
+      expect(sync.startupOrder, ['discover', 'sync']);
+      expect(find.text('Something went wrong'), findsNothing);
     });
 
     testWidgets('password field label is visible', (tester) async {

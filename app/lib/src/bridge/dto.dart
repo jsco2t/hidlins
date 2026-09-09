@@ -125,6 +125,35 @@ class CustomFieldInputDto {
           protected == other.protected;
 }
 
+enum DiscoveryPermissionDto {
+  notDetermined,
+  granted,
+  denied,
+  restricted,
+  unavailable,
+}
+
+class DiscoveryStatusDto {
+  final DiscoveryPermissionDto permission;
+  final List<LocalEndpointDto> candidates;
+
+  const DiscoveryStatusDto({
+    required this.permission,
+    required this.candidates,
+  });
+
+  @override
+  int get hashCode => permission.hashCode ^ candidates.hashCode;
+
+  @override
+  bool operator ==(Object other) =>
+      identical(this, other) ||
+      other is DiscoveryStatusDto &&
+          runtimeType == other.runtimeType &&
+          permission == other.permission &&
+          candidates == other.candidates;
+}
+
 class EntryDetail {
   final String uuid;
   final String title;
@@ -433,9 +462,53 @@ sealed class KeyfileRef with _$KeyfileRef {
 
 enum LifecycleStateDto { resumed, inactive, hidden, paused, detached }
 
+class LocalEndpointDto {
+  final String address;
+  final int port;
+  final int scopeId;
+
+  const LocalEndpointDto({
+    required this.address,
+    required this.port,
+    required this.scopeId,
+  });
+
+  @override
+  int get hashCode => address.hashCode ^ port.hashCode ^ scopeId.hashCode;
+
+  @override
+  bool operator ==(Object other) =>
+      identical(this, other) ||
+      other is LocalEndpointDto &&
+          runtimeType == other.runtimeType &&
+          address == other.address &&
+          port == other.port &&
+          scopeId == other.scopeId;
+}
+
+enum LocalSyncRoleDto { server, client }
+
 enum LockEvent { locked, unlocked }
 
 enum MatchedFieldDto { title, username, url, notes, tags }
+
+class PairingPromptDto {
+  final String transactionHandle;
+  final String sas;
+
+  const PairingPromptDto({required this.transactionHandle, required this.sas});
+
+  @override
+  int get hashCode => transactionHandle.hashCode ^ sas.hashCode;
+
+  @override
+  bool operator ==(Object other) =>
+      identical(this, other) ||
+      other is PairingPromptDto &&
+          runtimeType == other.runtimeType &&
+          transactionHandle == other.transactionHandle &&
+          sas == other.sas;
+}
 
 class PassphraseOptionsDto {
   final BigInt words;
@@ -502,49 +575,6 @@ sealed class RevealField with _$RevealField {
   const factory RevealField.customField(String field0) =
       RevealField_CustomField;
   const factory RevealField.totpUri() = RevealField_TotpUri;
-}
-
-class S3ConfigDto {
-  final String bucket;
-  final String key;
-  final String region;
-  final String? endpoint;
-  final bool pathStyle;
-  final String accessKeyId;
-  final String secretAccessKey;
-
-  const S3ConfigDto({
-    required this.bucket,
-    required this.key,
-    required this.region,
-    this.endpoint,
-    required this.pathStyle,
-    required this.accessKeyId,
-    required this.secretAccessKey,
-  });
-
-  @override
-  int get hashCode =>
-      bucket.hashCode ^
-      key.hashCode ^
-      region.hashCode ^
-      endpoint.hashCode ^
-      pathStyle.hashCode ^
-      accessKeyId.hashCode ^
-      secretAccessKey.hashCode;
-
-  @override
-  bool operator ==(Object other) =>
-      identical(this, other) ||
-      other is S3ConfigDto &&
-          runtimeType == other.runtimeType &&
-          bucket == other.bucket &&
-          key == other.key &&
-          region == other.region &&
-          endpoint == other.endpoint &&
-          pathStyle == other.pathStyle &&
-          accessKeyId == other.accessKeyId &&
-          secretAccessKey == other.secretAccessKey;
 }
 
 class SearchFieldMatchDto {
@@ -630,10 +660,16 @@ sealed class SearchScopeDto with _$SearchScopeDto {
 sealed class SyncEvent with _$SyncEvent {
   const SyncEvent._();
 
-  const factory SyncEvent.started() = SyncEvent_Started;
+  const factory SyncEvent.started({required bool automatic}) =
+      SyncEvent_Started;
   const factory SyncEvent.activity() = SyncEvent_Activity;
   const factory SyncEvent.done(SyncOutcomeDto field0) = SyncEvent_Done;
   const factory SyncEvent.failed(HidlinsApiError field0) = SyncEvent_Failed;
+  const factory SyncEvent.pairingRequested(PairingPromptDto field0) =
+      SyncEvent_PairingRequested;
+  const factory SyncEvent.serverStarted(LocalEndpointDto field0) =
+      SyncEvent_ServerStarted;
+  const factory SyncEvent.serverStopped() = SyncEvent_ServerStopped;
 }
 
 @freezed
@@ -652,20 +688,64 @@ sealed class SyncOutcomeDto with _$SyncOutcomeDto {
   const factory SyncOutcomeDto.unknown() = SyncOutcomeDto_Unknown;
 }
 
+class SyncPeerDto {
+  final String peerId;
+  final String displayName;
+  final bool revoked;
+
+  const SyncPeerDto({
+    required this.peerId,
+    required this.displayName,
+    required this.revoked,
+  });
+
+  @override
+  int get hashCode => peerId.hashCode ^ displayName.hashCode ^ revoked.hashCode;
+
+  @override
+  bool operator ==(Object other) =>
+      identical(this, other) ||
+      other is SyncPeerDto &&
+          runtimeType == other.runtimeType &&
+          peerId == other.peerId &&
+          displayName == other.displayName &&
+          revoked == other.revoked;
+}
+
 class SyncStatusDto {
   final bool configured;
   final bool inFlight;
   final SyncOutcomeDto? lastOutcome;
+  final LocalSyncRoleDto? role;
+  final bool paired;
+  final BigInt activePeerCount;
+  final bool serverEnabled;
+  final bool serverRunning;
+  final bool pairingOpen;
 
   const SyncStatusDto({
     required this.configured,
     required this.inFlight,
     this.lastOutcome,
+    this.role,
+    required this.paired,
+    required this.activePeerCount,
+    required this.serverEnabled,
+    required this.serverRunning,
+    required this.pairingOpen,
   });
 
   @override
   int get hashCode =>
-      configured.hashCode ^ inFlight.hashCode ^ lastOutcome.hashCode;
+      configured.hashCode ^
+      inFlight.hashCode ^
+      lastOutcome.hashCode ^
+      role.hashCode ^
+      paired.hashCode ^
+      activePeerCount.hashCode ^
+      serverEnabled.hashCode ^
+      serverRunning.hashCode ^
+      pairingOpen.hashCode;
 
   @override
   bool operator ==(Object other) =>
@@ -674,7 +754,13 @@ class SyncStatusDto {
           runtimeType == other.runtimeType &&
           configured == other.configured &&
           inFlight == other.inFlight &&
-          lastOutcome == other.lastOutcome;
+          lastOutcome == other.lastOutcome &&
+          role == other.role &&
+          paired == other.paired &&
+          activePeerCount == other.activePeerCount &&
+          serverEnabled == other.serverEnabled &&
+          serverRunning == other.serverRunning &&
+          pairingOpen == other.pairingOpen;
 }
 
 class TotpCode {

@@ -13,8 +13,8 @@ manager built on a Rust core with thin cross-platform UIs. Vaults are stored in
 the [KDBX (KeePass) format](https://keepass.info/help/kb/kdbx_4.html) via the
 [`keepass-rs`](https://crates.io/crates/keepass) crate, so every Hidlins vault
 is directly interoperable with KeePassXC, KeeWeb, KeePass2, and other
-standards-compliant KDBX clients. Sync transport is S3-compatible object storage,
-with in-app three-way merge at the entry level.
+standards-compliant KDBX clients. Sync uses authenticated local-network
+connections only, with in-app three-way merge at the entry level.
 
 ## !!WARNING!! PLEASE READ
 
@@ -41,7 +41,7 @@ this project wish to make the following **VERY** clear:
 | `hidlins-core`    | Library: KDBX I/O, vault registry, atomic writes, file locks, search |
 | `hidlins-genpw`   | Library: random password and diceware passphrase generation        |
 | `hidlins-security`| Library: auto-lock, OS lock events, clipboard, core-dump suppression |
-| `hidlins-sync`    | Library: S3 sync transport, SigV4 signing, three-way merge engine  |
+| `hidlins-sync`    | Library: secure local sync, discovery, trust, and three-way merge  |
 | `hidlins-cli`     | Binary: one-shot scriptable CLI (`hidlins`)                        |
 | `hidlins-tui`     | Binary: interactive terminal UI (`hidlins-tui`)                    |
 | `hidlins-agent`   | Binary: (placeholder) optional long-running unlock agent           |
@@ -152,6 +152,48 @@ scroll. Every mouse action has a keyboard equivalent. Hold Shift while dragging
 to use your terminal's native text selection. Disable with `--no-mouse` or
 `mouse = false` in `config.toml`.
 
+## Local-network synchronization
+
+Synchronization is direct between Hidlins devices on the same private/local
+network. One trusted desktop-class application is the authoritative server;
+the other applications are clients. DNS-SD/mDNS discovers a route only. The
+Noise XX pairing ceremony requires both people to compare and accept the same
+six-digit code, and later Noise IK connections authenticate the pinned
+per-vault device identities. A discovery result never grants trust.
+
+Every interactive application attempts one sync for each configured client
+vault when that vault first opens in a process. After that, sync happens only
+when the user selects **Sync now**. Saving, locking, reconnecting, and timers do
+not trigger another sync.
+
+- The CLI can deliberately keep a server in the foreground; `Ctrl+C` stops it.
+- The TUI and Flutter desktop application can deliberately start a server that
+  remains active only while enabled and while that application is running.
+- iOS and Android are client-only. They sync on foreground launch and manual
+  request, never listen, and do not support background or persistent sync.
+- There is no daemon or shipped `hidlins-agent` sync service.
+
+The non-bypassable address allowlist is IPv4 `10.0.0.0/8`,
+`172.16.0.0/12`, `192.168.0.0/16`, `169.254.0.0/16`, and `127.0.0.0/8`;
+and IPv6 `fc00::/7`, `fe80::/10` with a numeric interface scope, and `::1`.
+All other destinations are rejected, with no override. Manual endpoint entry
+is available where discovery is blocked and passes through the same policy.
+
+Common CLI operations are:
+
+```sh
+hidlins sync serve --vault work --pairing-window
+hidlins sync pair --vault work --name laptop
+hidlins sync now --vault work
+hidlins sync status --vault work
+hidlins sync peers list --vault work
+```
+
+Commands that unlock a vault collect its master password through the secure
+no-echo prompt. See [running and testing](docs/running-and-testing.md) for a
+two-device procedure and the [protocol contract](crates/hidlins-sync/docs/protocol-v1.md)
+for the security boundary.
+
 ## Build from source
 
 `make` is the canonical build interface — every workflow has a target. Run
@@ -166,6 +208,12 @@ make verify             # everything: check + app-check + ignored tests + docs +
 make interop            # vault-core KeePassXC interop tests; requires keepassxc-cli >= 2.7
 make interop-entry      # entry-management KeePassXC interop tests (TOTP cross-checks with oathtool if present)
 make bench-search-gate  # NFR-002 gate: fails if search exceeds the latency budget
+make test-local-sync-security    # protocol, trust, address, resource, and memory boundaries
+make test-local-sync-discovery   # discovery policy and desktop adapters
+make test-local-sync-integration # real local sockets and lifecycle
+make fuzz-local-sync-corpus      # deterministic committed parser corpus
+make fuzz-local-sync-ci          # bounded fixed-seed development fuzzing
+make ncsa-boundary-check         # keep fuzz-only NCSA code out of applications
 ```
 
 All dependencies are vendored in `vendor/`; offline is the only supported
@@ -176,9 +224,14 @@ and run `make vendor` as the only networked dependency step.
 
 ## Security and supply chain
 
-See [`CLAUDE.md`](CLAUDE.md)/[`AGENTS.md`](AGENTS.md) for the non-negotiable security and supply-chain
-rules: zeroize on drop, no plaintext to disk, atomic writes, permissive-license
-deps only, vendored + pinned, no telemetry.
+See [`CLAUDE.md`](CLAUDE.md)/[`AGENTS.md`](AGENTS.md) for the non-negotiable
+security and supply-chain rules: zeroize on drop, no plaintext to disk, atomic
+writes, vendored + pinned dependencies, and no telemetry. Production
+dependencies use the general permissive-license allowlist. The sole NCSA
+exception is exact `libfuzzer-sys 0.4.13` inside the isolated fuzz workspace,
+for development/testing only. Fuzz executables are non-distributable, and no
+CLI, TUI, agent, desktop, iOS, Android, or other packaged Hidlins application
+may contain NCSA-licensed code; `make ncsa-boundary-check` enforces this.
 
 ## AI Coding Policy
 

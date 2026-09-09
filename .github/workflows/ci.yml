@@ -64,6 +64,9 @@ jobs:
           RUSTUP_TOOLCHAIN: "1.95.0"
         run: cargo install --locked cargo-audit --version 0.22.1
 
+      - name: Install pinned local-sync fuzz toolchain
+        run: make fuzz-toolchain
+
       - name: Format check
         run: make fmt-check
 
@@ -93,6 +96,27 @@ jobs:
 
       - name: Test
         run: make test
+
+      - name: Local-sync security and adversarial tests
+        run: make test-local-sync-security
+
+      - name: Local-sync discovery policy tests
+        run: make test-local-sync-discovery
+
+      - name: Local-sync real-process and isolated-network tests
+        run: make test-local-sync-integration
+
+      - name: Stable local-sync fuzz corpus replay
+        run: make fuzz-local-sync-corpus
+
+      - name: Bounded local-sync fuzz campaigns
+        run: make fuzz-local-sync-ci
+
+      - name: NCSA development-only boundary
+        run: make ncsa-boundary-check
+
+      - name: Retired cloud-object sync surface rejection
+        run: make s3-removal-check
 
       - name: Ignored tests
         run: make test-ignored
@@ -132,41 +156,6 @@ jobs:
         continue-on-error: true
         run: make bench
 
-  # MinIO live-wire integration (s3-sync T6.2). Linux-only: GitHub's
-  # macOS runners have no Docker, so the #[ignore]-gated MINIO-* tests
-  # can't run there (the `vault-core` job's individual make targets all
-  # skip them — the MINIO cases only compile under `--features
-  # minio-tests`). Uses the same make targets as local dev, so CI and
-  # local runs are identical (CLAUDE.md CI/dev-parity rule).
-  integration-s3:
-    name: integration-s3 (ubuntu)
-    runs-on: ubuntu-latest
-
-    steps:
-      - uses: actions/checkout@v4
-
-      - name: Install pinned toolchain
-        run: rustup show
-
-      - name: Install Flutter SDK
-        uses: subosito/flutter-action@1a449444c387b1966244ae4d4f8c696479add0b2 # v2.23.0
-        with:
-          flutter-version-file: .flutter-version
-          channel: stable
-
-      - name: Disable telemetry (NFR-013)
-        run: tools/dev/telemetry-check.sh --write
-
-      - name: Install MinIO client (mc)
-        run: |
-          curl -fsSL https://dl.min.io/client/mc/release/linux-amd64/mc -o "$RUNNER_TEMP/mc"
-          chmod +x "$RUNNER_TEMP/mc"
-          sudo mv "$RUNNER_TEMP/mc" /usr/local/bin/mc
-          mc --version
-
-      - name: Managed Rust + real-bridge MinIO integration
-        run: make test-minio-managed
-
   android-rust:
     name: android-app (${{ matrix.os }})
     runs-on: ${{ matrix.os }}
@@ -195,9 +184,6 @@ jobs:
 
       - name: Cross-build, package, and inspect Android APKs
         run: make app-build-android HIDLINS_ANDROID_STRICT=1
-
-      - name: Build and inspect R8 verifier
-        run: make android-verifier-build HIDLINS_ANDROID_STRICT=1
 
   # Flutter app — analyze, format, native integration, interop, build,
   # codegen + supply-chain gates on both supported desktop hosts.
@@ -286,9 +272,9 @@ jobs:
         if: runner.os == 'macOS'
         run: make app-test-ios-simulator
 
-      - name: iPhone and iPad UI/real-bridge integration
+      - name: iPhone and iPad UI/real-bridge/CLI-authority scenarios
         if: runner.os == 'macOS'
-        run: make app-test-ios-integration
+        run: make test-local-sync-mobile-scenarios-ios
 
       - name: Build and inspect iOS artifacts
         if: runner.os == 'macOS'
@@ -333,9 +319,5 @@ jobs:
       - name: Provision host-native Android matrix
         run: make android-emulator-provision
 
-      - name: API 29/current native, UI, lifecycle, and real-bridge matrix
-        run: make app-test-android-emulator HIDLINS_ANDROID_STRICT=1
-
-      - name: API 29/current managed-MinIO sync matrix
-        if: runner.os == 'Linux'
-        run: make app-test-android-emulator-minio HIDLINS_ANDROID_STRICT=1
+      - name: API 29/current native, UI, lifecycle, and CLI-authority matrix
+        run: make test-local-sync-mobile-scenarios-android HIDLINS_ANDROID_STRICT=1

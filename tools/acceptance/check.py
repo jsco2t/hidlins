@@ -133,6 +133,31 @@ def check(data: dict[str, object]) -> None:
                 if precursor not in by_id or by_id[precursor].get("status") != "PASS":
                     fail(f"skipped residual {identifier} has a non-passing precursor {precursor}")
 
+    local_sync = data.get("local_sync_acceptance")
+    if not isinstance(local_sync, dict) or local_sync.get("status") != "PASS":
+        fail("local-sync acceptance must be automated and PASS")
+    local_targets = local_sync.get("make_targets")
+    required_local_targets = {
+        "test-local-sync-mobile-scenarios-ios",
+        "test-local-sync-mobile-scenarios-android",
+    }
+    if not isinstance(local_targets, list) or not required_local_targets.issubset(local_targets):
+        fail("local-sync acceptance lacks both real mobile scenario targets")
+    if any(target not in targets for target in local_targets):
+        fail("local-sync acceptance names an unknown Make target")
+    local_evidence = local_sync.get("evidence")
+    if not isinstance(local_evidence, list) or not local_evidence:
+        fail("local-sync acceptance lacks evidence")
+    for source in local_evidence:
+        if not (ROOT / source).exists():
+            fail(f"local-sync acceptance evidence does not exist: {source}")
+
+    optional = data.get("local_sync_optional_observations")
+    if not isinstance(optional, dict) or optional.get("status") != "OPTIONAL_NON_BLOCKING":
+        fail("local-sync human observations must be optional and non-blocking")
+    if not optional.get("reason") or not optional.get("procedure"):
+        fail("local-sync optional observations lack rationale or procedure")
+
     july = data.get("july_task_audit")
     if not isinstance(july, list):
         fail("july_task_audit must be a list")
@@ -175,6 +200,12 @@ class NegativeControls(unittest.TestCase):
         data = self.fixture()
         data["requirements"][0]["status"] = "MANUAL"
         with self.assertRaisesRegex(ValueError, "forbidden status"):
+            check(data)
+
+    def test_blocking_local_sync_manual_release_is_rejected(self) -> None:
+        data = self.fixture()
+        data["local_sync_acceptance"]["status"] = "BLOCKED"
+        with self.assertRaisesRegex(ValueError, "local-sync acceptance"):
             check(data)
 
     def test_missing_july_task_is_rejected(self) -> None:

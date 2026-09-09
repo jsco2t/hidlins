@@ -27,7 +27,7 @@ fn disjoint_edits_merge_without_data_loss() {
     {
         let b_bytes = std::fs::read(dev_b.vault_path()).unwrap();
         transport
-            .put_conditional(&b_bytes, None)
+            .commit_conditional(&b_bytes, None)
             .expect("device B push");
     }
 
@@ -39,8 +39,8 @@ fn disjoint_edits_merge_without_data_loss() {
         &dev_a.master(),
         None,
         &mut transport,
-        Some("stale-etag".to_string()), // ≠ remote → remote_changed
-        Some(&base_sha),                // ≠ current local → local_changed
+        Some("stale-version".to_string()), // ≠ remote → remote_changed
+        Some(&base_sha),                   // ≠ current local → local_changed
         SyncOptions::default(),
     )
     .expect("disjoint merge sync ok");
@@ -74,7 +74,7 @@ fn merge_result_uploads_and_is_idempotent_on_resync() {
     {
         let b_bytes = std::fs::read(dev_b.vault_path()).unwrap();
         transport
-            .put_conditional(&b_bytes, None)
+            .commit_conditional(&b_bytes, None)
             .expect("device B push");
     }
 
@@ -85,7 +85,7 @@ fn merge_result_uploads_and_is_idempotent_on_resync() {
         &dev_a.master(),
         None,
         &mut transport,
-        Some("stale-etag".to_string()),
+        Some("stale-version".to_string()),
         Some(&base_sha),
         SyncOptions::default(),
     )
@@ -99,7 +99,7 @@ fn merge_result_uploads_and_is_idempotent_on_resync() {
         &dev_a.master(),
         None,
         &mut transport,
-        pointers.remote_etag.clone(),
+        pointers.remote_version.clone(),
         pointers.local_sha256.as_deref(),
         SyncOptions::default(),
     )

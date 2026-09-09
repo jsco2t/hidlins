@@ -112,6 +112,32 @@ final class RunnerTests: XCTestCase {
     XCTAssertEqual(PlatformEnvelope.failure(code: "contains secret data"), ["status": "failure", "code": "platform-error"])
   }
 
+  func testLocalDiscoveryPayloadIsBoundedAndCarriesNoServiceMetadata() {
+    let candidates = (0..<20).map { index in
+      [
+        "address": "192.168.1.\(index)",
+        "port": 42_873,
+        "scopeId": 0,
+        "vault": "must-not-cross",
+      ] as [String: Any]
+    }
+    let payload = LocalDiscoveryPayload.make(permission: .granted, candidates: candidates)
+    let bounded = payload["candidates"] as? [[String: Any]]
+
+    XCTAssertEqual(payload["permission"] as? String, "granted")
+    XCTAssertEqual(bounded?.count, LocalDiscoveryPayload.maximumCandidates)
+    XCTAssertFalse(String(describing: payload).contains("vault"))
+    XCTAssertFalse(String(describing: payload).contains("key"))
+    XCTAssertFalse(String(describing: payload).contains("sas"))
+  }
+
+  func testLocalDiscoveryStripsIPv6ZoneTextAndKeepsNumericScopeSeparate() {
+    XCTAssertEqual(LocalDiscoveryService.routeHost("fe80::1%en0"), "fe80::1")
+    XCTAssertEqual(LocalDiscoveryService.routeHost("fe80::1%7"), "fe80::1")
+    XCTAssertNil(LocalDiscoveryService.routeHost(""))
+    XCTAssertNil(LocalDiscoveryService.routeHost(String(repeating: "a", count: 65)))
+  }
+
   func testPrivacyManifestDeclaresNoCollectionTrackingOrTrackingDomains() throws {
     let url = try XCTUnwrap(
       Bundle.main.url(forResource: "PrivacyInfo", withExtension: "xcprivacy")

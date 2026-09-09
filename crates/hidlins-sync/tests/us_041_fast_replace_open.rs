@@ -1,7 +1,7 @@
 //! US-041 — fast-replace on open (FR-041; impl plan §8.4.3). When the remote
 //! advanced but the local vault is unchanged since the last sync, the
 //! orchestrator replaces the local with the remote bytes WITHOUT invoking the
-//! merge engine. Driven through `MemoryTransport` — no network, no S3 types.
+//! merge engine. Driven through `MemoryTransport` — no network, no provider-specific types.
 
 #![allow(clippy::doc_markdown)]
 
@@ -19,10 +19,10 @@ fn remote_advanced_local_unchanged_fast_replaces() {
     let dev_a = SyncTestEnv::new("work");
     dev_a.add_entry("base");
     let mut transport = MemoryTransport::new();
-    let synced_etag = {
+    let synced_version = {
         let bytes = std::fs::read(dev_a.vault_path()).unwrap();
         transport
-            .put_conditional(&bytes, None)
+            .commit_conditional(&bytes, None)
             .expect("seed remote")
     };
     let synced_sha = dev_a.local_sha();
@@ -33,11 +33,11 @@ fn remote_advanced_local_unchanged_fast_replaces() {
     {
         let b_bytes = std::fs::read(dev_b.vault_path()).unwrap();
         transport
-            .put_conditional(&b_bytes, Some(&synced_etag))
+            .commit_conditional(&b_bytes, Some(&synced_version))
             .expect("device B push advances the remote");
     }
 
-    // Device A syncs: remote changed (etag moved), local unchanged (sha ==
+    // Device A syncs: remote changed (version moved), local unchanged (sha ==
     // last-synced). → FastReplaced, merge NOT invoked.
     let mut vault = open_vault(&dev_a);
     let (outcome, pointers) = run_state_machine(
@@ -45,7 +45,7 @@ fn remote_advanced_local_unchanged_fast_replaces() {
         &dev_a.master(),
         None,
         &mut transport,
-        Some(synced_etag.0),
+        Some(synced_version.0),
         Some(&synced_sha),
         SyncOptions::default(),
     )
@@ -63,5 +63,5 @@ fn remote_advanced_local_unchanged_fast_replaces() {
         titles.contains(&"from-b".to_string()),
         "remote bytes replaced local: {titles:?}"
     );
-    assert!(pointers.remote_etag.is_some() && pointers.local_sha256.is_some());
+    assert!(pointers.remote_version.is_some() && pointers.local_sha256.is_some());
 }

@@ -200,9 +200,8 @@ pub fn read_password_no_echo<R: BufRead, W: Write>(
 /// Read a single line from `stdin` with terminal echo **left on**,
 /// writing `prompt_label` to `stderr` first. This is the echoed
 /// counterpart to [`read_password_no_echo`] — use it for **non-secret**
-/// inputs the user should see as they type (e.g. an AWS access-key-id,
-/// which is public per AWS posture and appears in CloudTrail/IAM as
-/// cleartext). Never use it for secret material.
+/// inputs the user should see as they type (for example, a peer display
+/// name). Never use it for secret material.
 ///
 /// The trailing `\n` (and a preceding `\r`) are stripped, matching
 /// [`read_password_no_echo`]'s contract so both prompts return a clean
@@ -597,23 +596,23 @@ mod tests {
 
     #[test]
     fn prompt_line_writes_label_and_strips_newline() {
-        let mut stdin = std::io::Cursor::new(b"AKIAEXAMPLE\n".to_vec());
+        let mut stdin = std::io::Cursor::new(b"laptop\n".to_vec());
         let mut stderr = Vec::new();
-        let value = prompt_line("AWS access key id: ", &mut stdin, &mut stderr).unwrap();
-        assert_eq!(value, "AKIAEXAMPLE");
+        let value = prompt_line("Peer name: ", &mut stdin, &mut stderr).unwrap();
+        assert_eq!(value, "laptop");
         let stderr_str = String::from_utf8(stderr).unwrap();
         assert!(
-            stderr_str.starts_with("AWS access key id: "),
+            stderr_str.starts_with("Peer name: "),
             "stderr should start with the prompt label; got {stderr_str:?}"
         );
     }
 
     #[test]
     fn prompt_line_strips_trailing_crlf() {
-        let mut stdin = std::io::Cursor::new(b"AKIACRLF\r\n".to_vec());
+        let mut stdin = std::io::Cursor::new(b"desktop\r\n".to_vec());
         let mut stderr = Vec::new();
         let value = prompt_line("> ", &mut stdin, &mut stderr).unwrap();
-        assert_eq!(value, "AKIACRLF");
+        assert_eq!(value, "desktop");
     }
 
     #[test]

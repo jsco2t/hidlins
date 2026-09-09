@@ -10,7 +10,6 @@ import shutil
 import struct
 import sys
 import tempfile
-import xml.etree.ElementTree as ET
 from pathlib import Path
 
 ROOT = Path(__file__).resolve().parents[2]
@@ -97,49 +96,16 @@ def elf_metadata(path: Path) -> tuple[int, list[int]]:
     return machine, alignments
 
 
-def verify_vendor() -> None:
-    cfg = contract()["verifier"]
-    base = (
-        ROOT
-        / "vendor/rustls-platform-verifier-android/maven/rustls"
-        / "rustls-platform-verifier"
-        / cfg["android_version"]
-    )
-    aar = base / f"rustls-platform-verifier-{cfg['android_version']}.aar"
-    pom = base / f"rustls-platform-verifier-{cfg['android_version']}.pom"
-    for path, key in ((aar, "aar_sha256"), (pom, "pom_sha256")):
-        if not path.is_file() or digest(path) != cfg[key]:
-            fail(f"vendored verifier artifact mismatch: {path.relative_to(ROOT)}")
-    lock = (ROOT / "Cargo.lock").read_text(encoding="utf-8")
-    for name, version in (
-        (cfg["rust_crate"], cfg["rust_version"]),
-        (cfg["android_crate"], cfg["android_version"]),
-    ):
-        marker = f'name = "{name}"\nversion = "{version}"'
-        if marker not in lock:
-            fail(f"Cargo.lock does not pin {name} {version}")
-    gradle_lock = ROOT / "tools/android-verifier/app/gradle.lockfile"
-    coordinate = f"{cfg['maven_coordinate']}="
-    if coordinate not in gradle_lock.read_text(encoding="utf-8"):
-        fail("Gradle lockfile does not pin the verifier coordinate")
-    metadata_path = ROOT / "tools/android-verifier/gradle/verification-metadata.xml"
-    metadata = ET.parse(metadata_path)
-    values = {
-        node.attrib.get("value")
-        for node in metadata.iter()
-        if node.tag.rsplit("}", 1)[-1] == "sha256"
-        if node.attrib.get("value")
-    }
-    if cfg["aar_sha256"] not in values or cfg["pom_sha256"] not in values:
-        fail("Gradle verification metadata does not pin the verifier AAR and POM hashes")
+def verify_build_contract() -> None:
     app_gradle = (ROOT / "app/android/app/build.gradle.kts").read_text(encoding="utf-8")
     if f'ndkVersion = "{contract()["ndk_version"]}"' not in app_gradle:
         fail("application NDK version differs from the native artifact contract")
-    plugin_gradle = (ROOT / "app/rust_builder/android/build.gradle").read_text(encoding="utf-8")
+    plugin_gradle = (ROOT / "app/rust_builder/android/build.gradle").read_text(
+        encoding="utf-8"
+    )
     lowered_plugin = plugin_gradle.lower()
     if "apply from:" in lowered_plugin or "cargokit {" in lowered_plugin:
         fail("production Android plugin still references legacy Cargokit")
-
 
 def validate_artifact(path: Path, item: dict, cfg: dict) -> dict:
     machine, alignments = elf_metadata(path)
@@ -161,7 +127,7 @@ def validate_artifact(path: Path, item: dict, cfg: dict) -> dict:
 
 def stage() -> None:
     cfg = contract()
-    verify_vendor()
+    verify_build_contract()
     if STAGE_ROOT.exists():
         shutil.rmtree(STAGE_ROOT)
     records = []
@@ -183,7 +149,6 @@ def stage() -> None:
         "android_api_level": cfg["android_api_level"],
         "ndk_version": cfg["ndk_version"],
         "artifacts": records,
-        "verifier": cfg["verifier"],
     }
     MANIFEST_PATH.write_text(json.dumps(manifest, indent=2) + "\n", encoding="utf-8")
     check()
@@ -196,7 +161,7 @@ def check(
     announce: bool = True,
 ) -> None:
     cfg = contract()
-    verify_vendor()
+    verify_build_contract()
     manifest = load_json(manifest_path)
     expected = {
         "schema": cfg["schema"],
@@ -207,7 +172,6 @@ def check(
         "profile": cfg["profile"],
         "android_api_level": cfg["android_api_level"],
         "ndk_version": cfg["ndk_version"],
-        "verifier": cfg["verifier"],
     }
     for key, value in expected.items():
         if manifest.get(key) != value:
@@ -275,7 +239,6 @@ def self_test() -> None:
             "android_api_level": cfg["android_api_level"],
             "ndk_version": cfg["ndk_version"],
             "artifacts": records,
-            "verifier": cfg["verifier"],
         }
 
         def write_manifest(value: dict) -> None:
@@ -311,19 +274,16 @@ def self_test() -> None:
 
     print(
         "  OK: stale/wrong-API/wrong-profile/wrong-ABI/wrong-hash guards and "
-        "verifier hashes pass"
+        "native artifact hashes pass"
     )
 
 
 def main() -> None:
     parser = argparse.ArgumentParser()
-    parser.add_argument("command", choices=("self-test", "verify-vendor", "stage", "check"))
+    parser.add_argument("command", choices=("self-test", "stage", "check"))
     args = parser.parse_args()
     if args.command == "self-test":
         self_test()
-    elif args.command == "verify-vendor":
-        verify_vendor()
-        print("  OK: vendored Android verifier coordinate, lock versions, and hashes match")
     elif args.command == "stage":
         stage()
     else:

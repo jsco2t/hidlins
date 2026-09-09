@@ -21,9 +21,7 @@ MANIFEST = ROOT / "app/android/native-artifacts/manifest.json"
 EXPECTED_ABIS = {"arm64-v8a", "x86_64"}
 REQUIRED_CLASSES = (
     b"io/flutter/plugins/GeneratedPluginRegistrant",
-    b"org/rustls/platformverifier/CertificateVerifier",
     b"app/hidlins/HidlinsNative",
-    b"app/hidlins/HidlinsApplication",
     b"consumeClipboard",
     b"app.hidlins/clipboard",
     b"hidlins.snapshot-cover",
@@ -137,8 +135,6 @@ def verify_android_metadata(apk: Path, *, release: bool) -> None:
     if "application-icon-" not in badging:
         fail(f"{apk.name} has no installed launcher icon")
     manifest = run(aapt, "dump", "xmltree", str(apk), "AndroidManifest.xml").stdout
-    if '="app.hidlins.HidlinsApplication"' not in manifest:
-        fail(f"{apk.name} does not install HidlinsApplication")
     permissions = run(aapt, "dump", "permissions", str(apk)).stdout
     if "uses-permission: name='android.permission.INTERNET'" not in permissions:
         fail(f"{apk.name} cannot reach the user-configured sync service")
@@ -188,7 +184,7 @@ def main() -> None:
     run(build_tool("zipalign"), "-c", "-P", "16", "4", str(RELEASE_APK))
     print(
         "  OK: debug-signed and release-unsigned APKs preserve the real Rust bridge, "
-        "R8/TLS classes, API 29 floor, exact ABIs, sync permission, launcher metadata, "
+        "R8/JNI classes, API 29 floor, exact ABIs, sync permission, launcher metadata, "
         "and 16 KiB alignment"
     )
 

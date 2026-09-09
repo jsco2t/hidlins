@@ -28,9 +28,9 @@ case " ${RUSTFLAGS:-} " in
     *) fail "-D warnings is absent from exported RUSTFLAGS" ;;
 esac
 
-require_text "Makefile" 'app-build-linux: app-deps app-analyze' \
+require_text "Makefile" 'app-build-linux: ncsa-boundary-precheck app-deps app-analyze' \
     "Linux Flutter builds do not require fatal Dart analysis"
-require_text "Makefile" 'app-build-macos: app-deps app-analyze' \
+require_text "Makefile" 'app-build-macos: ncsa-boundary-precheck app-deps app-analyze' \
     "macOS Flutter builds do not require fatal Dart analysis"
 require_text "Makefile" 'dart analyze --fatal-warnings --fatal-infos' \
     "Dart analyzer warnings and infos are not fatal"

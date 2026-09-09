@@ -2,7 +2,7 @@
 //!
 //! Provides a `TempDir`-backed [`HidlinsPaths`] + [`VaultRegistry`] + an
 //! on-disk KDBX vault, plus the small set of mutation/read helpers the
-//! `us_04*` and `minio_integration` tests need. Every fs-touching test owns
+//! `us_04*` integration tests need. Every fs-touching test owns
 //! its own `TempDir`; nothing writes to the developer's real environment.
 
 // Each integration test file uses a subset (dead_code). Docs reference type

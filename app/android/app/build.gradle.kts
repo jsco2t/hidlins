@@ -86,10 +86,6 @@ tasks.named("preBuild") {
     dependsOn(verifyHidlinsNativeArtifacts)
 }
 
-dependencies {
-    implementation("rustls:rustls-platform-verifier:0.1.1")
-}
-
 flutter {
     source = "../.."
 }

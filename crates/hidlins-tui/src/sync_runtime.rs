@@ -1,5 +1,4 @@
-//! `SyncRuntime` — the background sync worker over `hidlins_sync::Sync` (T6.1 /
-//! ADR-T4a).
+//! `SyncRuntime` — the background local-sync worker (T6.1 / ADR-T4a).
 //!
 //! The worker **takes ownership of the moved vault** (and the registry) for the
 //! duration of a sync: `App.vault.take()` → spawn → `sync_now(&mut vault, …)` →
@@ -12,25 +11,24 @@
 //! `MasterPassword`. One is moved into [`SyncRuntime::start`] per sync and is
 //! dropped (zeroized) on the worker thread the moment `sync_now` returns.
 //!
-//! **No cancellation hook:** `hidlins_sync`'s `sync_now` exposes only
-//! `max_retries` + `on_activity` (no cancel). A lock that fires mid-sync is
-//! therefore *deferred* by the App until the worker returns (the App marks
-//! "lock pending"; on completion the vault is dropped+zeroized → `LockScreen`).
+//! **Cancellation:** the local client receives a cooperative cancellation
+//! signal. A lock request cancels in-flight network work and the returned vault
+//! is then dropped and zeroized before the lock screen is shown.
 //!
-//! **The engine seam:** there is no upstream `Sync` *trait* to mock — `Sync` is
-//! a concrete struct and `hidlins_sync`'s `MemoryTransport` can't be injected
-//! through the public `sync_now` (it builds the transport from registry config
-//! internally). So this module declares a local [`SyncEngine`] trait exactly
-//! like Phase 5's `ClipboardSink`: the real impl delegates to
-//! `hidlins_sync::Sync::sync_now`; tests inject a fake to control timing and
-//! outcomes.
+//! **The engine seam:** this module declares a local [`SyncEngine`] trait so
+//! tests can control timing and outcomes while production delegates to the
+//! authenticated local client.
 
 use std::sync::mpsc::{self, Receiver, TryRecvError};
 use std::sync::Arc;
 use std::thread;
 
 use hidlins_core::{MasterPassword, Vault, VaultRegistry};
-use hidlins_sync::{Sync, SyncError, SyncOptions, SyncOutcome};
+use hidlins_sync::{
+    client,
+    discovery::{self, CandidateCache, ServiceKind},
+    SyncError, SyncOptions, SyncOutcome,
+};
 
 /// Which trigger initiated a sync. Echoed back in [`SyncResult`] so the App
 /// knows what to do when it completes (e.g. lock or quit after an on-lock/quit
@@ -39,12 +37,8 @@ use hidlins_sync::{Sync, SyncError, SyncOptions, SyncOutcome};
 pub(crate) enum SyncTrigger {
     /// The `s` key (re-prompts the master password).
     Manual,
-    /// Auto-sync immediately after a successful unlock.
-    OnUnlock,
-    /// Flush before a manual lock (`Ctrl+L`).
-    OnLock,
-    /// Flush before quitting (`Ctrl+Q`).
-    OnQuit,
+    /// Fixed once-per-process client attempt after a successful unlock.
+    Startup,
 }
 
 /// A message from the sync worker to the main loop.
@@ -77,7 +71,7 @@ pub(crate) struct SyncResult {
 
 /// The engine seam (see module docs). `Send + Sync` so the `Arc<dyn SyncEngine>`
 /// can cross to the worker thread. (`std::marker::Sync` is spelled out because
-/// `hidlins_sync::Sync` — the concrete orchestrator struct — is in scope.)
+/// the worker can own it.)
 pub(crate) trait SyncEngine: Send + std::marker::Sync {
     /// Run one sync against the vault's configured remote.
     fn sync_now(
@@ -90,9 +84,7 @@ pub(crate) trait SyncEngine: Send + std::marker::Sync {
     ) -> Result<SyncOutcome, SyncError>;
 }
 
-/// Production engine: forwards to `hidlins_sync::Sync::sync_now`. The keyfile is
-/// `None` for MVP, matching the unlock path (the keyfile-unlock follow-up is
-/// tracked as DI-2 in `app.rs`).
+/// Production engine: discovers candidates and forwards to the local client.
 pub(crate) struct RealSyncEngine;
 
 impl SyncEngine for RealSyncEngine {
@@ -104,7 +96,32 @@ impl SyncEngine for RealSyncEngine {
         master_password: &MasterPassword,
         opts: SyncOptions,
     ) -> Result<SyncOutcome, SyncError> {
-        Sync::sync_now(vault, vault_name, registry, master_password, None, opts)
+        let mut candidates = Vec::new();
+        if let Ok(mut browser) = discovery::desktop::DesktopBrowser::start() {
+            let mut cache = CandidateCache::new();
+            let deadline = std::time::Instant::now() + std::time::Duration::from_millis(500);
+            loop {
+                if discovery::poll_into(&mut browser, &mut cache, std::time::Instant::now())
+                    .is_err()
+                {
+                    break;
+                }
+                candidates = cache.candidates(ServiceKind::Trusted);
+                if !candidates.is_empty() || std::time::Instant::now() >= deadline {
+                    break;
+                }
+                std::thread::sleep(std::time::Duration::from_millis(20));
+            }
+        }
+        client::sync_vault(
+            vault,
+            vault_name,
+            registry,
+            master_password,
+            None,
+            candidates,
+            opts,
+        )
     }
 }
 
