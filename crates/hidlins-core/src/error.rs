@@ -117,6 +117,17 @@ pub enum VaultError {
     #[error("vault registry changed concurrently; reload and retry")]
     RegistryChanged,
 
+    /// A durable password-rotation transaction cannot be recovered safely.
+    ///
+    /// The reason is a fixed, non-secret diagnostic chosen by Hidlins; it
+    /// never contains credentials, identity keys, registry values, or vault
+    /// contents. Recovery fails closed without replacing either live file.
+    #[error("password rotation recovery failed: {reason}")]
+    PasswordRotationRecoveryFailed {
+        /// Static non-secret reason for refusing recovery.
+        reason: &'static str,
+    },
+
     /// Serializing the in-memory registry to TOML failed (write path).
     ///
     /// Nearly impossible in practice — values that round-tripped from a

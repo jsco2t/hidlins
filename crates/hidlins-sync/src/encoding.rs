@@ -2,7 +2,7 @@
 
 /// Encode bytes as lowercase hexadecimal ASCII.
 ///
-/// Hidlins only needs the fixed lowercase form used by SHA-256 and SigV4.
+/// Hidlins only needs the fixed lowercase form used by SHA-256 digests.
 /// Keeping that narrow operation here avoids a direct dependency whose broader
 /// encode/decode API is unnecessary at these call sites.
 pub(crate) fn encode_lower(bytes: &[u8]) -> String {

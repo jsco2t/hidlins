@@ -330,37 +330,86 @@ class SyncStatusDto {
   final bool configured;
   final bool inFlight;
   final SyncOutcomeDto? lastOutcome;
+  final LocalSyncRole? role;
+  final bool paired;
+  final int activePeerCount;
+  final bool serverEnabled;
+  final bool serverRunning;
+  final bool pairingOpen;
 
   const SyncStatusDto({
     required this.configured,
     required this.inFlight,
     this.lastOutcome,
+    this.role,
+    this.paired = false,
+    this.activePeerCount = 0,
+    this.serverEnabled = false,
+    this.serverRunning = false,
+    this.pairingOpen = false,
   });
 }
 
 enum SyncOutcomeDto { alreadyInSync, pushed, fastReplaced, merged, unknown }
 
-class S3ConfigDto {
-  final String bucket;
-  final String key;
-  final String region;
-  final String? endpoint;
-  final bool pathStyle;
-  final String accessKeyId;
-  final String secretAccessKey;
+enum LocalSyncRole { server, client }
 
-  const S3ConfigDto({
-    required this.bucket,
-    required this.key,
-    required this.region,
-    this.endpoint,
-    this.pathStyle = false,
-    required this.accessKeyId,
-    required this.secretAccessKey,
+enum DiscoveryKind { trusted, pairing }
+
+enum LocalDiscoveryPermission {
+  notDetermined,
+  granted,
+  denied,
+  restricted,
+  unavailable,
+}
+
+class LocalEndpoint {
+  final String address;
+  final int port;
+  final int scopeId;
+
+  const LocalEndpoint({
+    required this.address,
+    required this.port,
+    this.scopeId = 0,
   });
 
   @override
-  String toString() => 'S3ConfigDto(bucket: $bucket, key: $key)';
+  String toString() =>
+      scopeId == 0 ? '$address:$port' : '[$address%$scopeId]:$port';
+}
+
+class LocalDiscoveryStatus {
+  final LocalDiscoveryPermission permission;
+  final List<LocalEndpoint> candidates;
+
+  const LocalDiscoveryStatus({
+    required this.permission,
+    this.candidates = const [],
+  });
+}
+
+class PairingPrompt {
+  final String transactionHandle;
+  final String sas;
+
+  const PairingPrompt({required this.transactionHandle, required this.sas});
+
+  @override
+  String toString() => 'PairingPrompt(***)';
+}
+
+class SyncPeer {
+  final String peerId;
+  final String displayName;
+  final bool revoked;
+
+  const SyncPeer({
+    required this.peerId,
+    required this.displayName,
+    required this.revoked,
+  });
 }
 
 enum GroupDeleteBehavior { refuse, recurse }

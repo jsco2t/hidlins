@@ -20,6 +20,10 @@ import java.nio.charset.StandardCharsets;
 import java.nio.file.Files;
 import java.util.concurrent.CountDownLatch;
 import java.util.concurrent.TimeUnit;
+import java.util.ArrayList;
+import java.util.HashMap;
+import java.util.List;
+import java.util.Map;
 import io.flutter.plugin.common.MethodChannel;
 import org.junit.Test;
 
@@ -109,6 +113,60 @@ public final class HidlinsAndroidTest {
     }
 
     @Test
+    public void localDiscoveryPayloadIsBoundedAndContainsOnlyRoutes() {
+        List<Map<String, Object>> routes = new ArrayList<>();
+        for (int index = 0; index < 20; index += 1) {
+            Map<String, Object> route = new HashMap<>();
+            route.put("address", "192.168.1." + index);
+            route.put("port", 42_873);
+            route.put("scopeId", 0);
+            route.put("vault", "must-not-cross");
+            routes.add(route);
+        }
+        Map<String, Object> payload = LocalDiscoveryController.boundedPayload("granted", routes);
+        assertEquals("granted", payload.get("permission"));
+        assertEquals(LocalDiscoveryController.MAX_CANDIDATES,
+                ((List<?>) payload.get("candidates")).size());
+        assertFalse(payload.toString().contains("vault"));
+        assertFalse(payload.toString().contains("key"));
+        assertFalse(payload.toString().contains("sas"));
+    }
+
+    // LNS-ANDROID-012: stopped discovery callbacks cannot acquire a restarted attempt.
+    @Test
+    public void discoveryAttemptGenerationRejectsStoppedAndDuplicateCallbacks() {
+        DiscoveryAttemptTracker attempts = new DiscoveryAttemptTracker();
+        long first = attempts.begin();
+        assertTrue(attempts.isActive(first));
+
+        attempts.invalidate();
+        long second = attempts.begin();
+        assertFalse(attempts.isActive(first));
+        assertTrue(attempts.isActive(second));
+        assertFalse(attempts.complete(first));
+        assertTrue(attempts.isActive(second));
+
+        assertTrue(attempts.complete(second));
+        assertFalse(attempts.complete(second));
+        assertFalse(attempts.isActive(second));
+    }
+
+    @Test
+    public void scenarioRegistrarAcceptsOnlyBoundedPortAndKnownServiceKind() {
+        assertTrue(ScenarioNsdRegistrarActivity.validPort(1));
+        assertTrue(ScenarioNsdRegistrarActivity.validPort(65_535));
+        assertFalse(ScenarioNsdRegistrarActivity.validPort(0));
+        assertFalse(ScenarioNsdRegistrarActivity.validPort(65_536));
+        assertEquals(
+                "_hidlins-pair._tcp.",
+                ScenarioNsdRegistrarActivity.serviceType("pairing"));
+        assertEquals(
+                "_hidlins-sync._tcp.",
+                ScenarioNsdRegistrarActivity.serviceType("trusted"));
+        assertEquals(null, ScenarioNsdRegistrarActivity.serviceType("other"));
+    }
+
+    @Test
     public void pickerCancellationAndActivityDestructionCompletePendingResults() {
         MainActivity activity = launchActivity();
         HidlinsPlatformServices services =
@@ -143,9 +201,17 @@ public final class HidlinsAndroidTest {
     }
 
     private static Context context() {
-        Context context = HidlinsApplication.currentForTest();
-        assertNotNull(context);
-        return context;
+        try {
+            Class<?> registry = Class.forName(
+                    "androidx.test.platform.app.InstrumentationRegistry");
+            Object value = registry.getMethod("getInstrumentation").invoke(null);
+            assertTrue(value instanceof android.app.Instrumentation);
+            Context context = ((android.app.Instrumentation) value).getTargetContext();
+            assertNotNull(context);
+            return context;
+        } catch (ReflectiveOperationException error) {
+            throw new AssertionError("Android instrumentation registry is unavailable", error);
+        }
     }
 
     private static MainActivity awaitActivity() throws AssertionError {

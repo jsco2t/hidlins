@@ -1,5 +1,5 @@
 //! Fault-injection tests for the pre-merge `.kdbx.bak` guarantee (FR-048;
-//! s3-sync T6.4; impl plan §8.4.5).
+//! sync fault-injection plan §8.4.5).
 //!
 //! These verify the *orchestrator's sequencing*: that `.kdbx.bak` is written
 //! before any state that's hard to roll back, so a process killed mid-sync
@@ -40,15 +40,21 @@ fn diverged_setup() -> (SyncTestEnv, Uuid, MemoryTransport, String, String) {
     let mut transport = MemoryTransport::new();
     let b_bytes = std::fs::read(dev_b.vault_path()).unwrap();
     let _b_version = transport
-        .put_conditional(&b_bytes, None)
+        .commit_conditional(&b_bytes, None)
         .expect("seed remote");
 
     // Device A diverges locally too.
     dev_a.add_entry("from-a");
 
-    // Pointers: a stale remote etag (≠ B's) → remote_changed; the pre-edit
+    // Pointers: a stale remote version (≠ B's) → remote_changed; the pre-edit
     // base sha (≠ A's current) → local_changed. Both axes true → merge path.
-    (dev_a, uuid, transport, "stale-etag".to_string(), base_sha)
+    (
+        dev_a,
+        uuid,
+        transport,
+        "stale-version".to_string(),
+        base_sha,
+    )
 }
 
 /// Serializes the process-global panic-hook swap below. The three fault
@@ -101,6 +107,7 @@ fn run_expecting_panic(
 // CLI maps to exit 3 and the TUI renders prominently), never save the
 // half-merged state, and leave `.kdbx.bak` holding the pre-merge vault.
 // ---------------------------------------------------------------------------
+// LNS-MERGE-FAULT-001
 #[test]
 fn unresolvable_merge_surfaces_error_and_preserves_disk_state() {
     // Same-second divergence: both devices edit the same entry with the
@@ -116,7 +123,7 @@ fn unresolvable_merge_surfaces_error_and_preserves_disk_state() {
     let mut transport = MemoryTransport::new();
     let b_bytes = std::fs::read(dev_b.vault_path()).unwrap();
     transport
-        .put_conditional(&b_bytes, None)
+        .commit_conditional(&b_bytes, None)
         .expect("seed remote");
 
     dev_a.edit_entry_at(uuid, "from-a", SAME_SECOND);
@@ -129,7 +136,7 @@ fn unresolvable_merge_surfaces_error_and_preserves_disk_state() {
             &dev_a.master(),
             None,
             &mut transport,
-            Some("stale-etag".to_string()),
+            Some("stale-version".to_string()),
             Some(&base_sha),
             SyncOptions::default(),
         )
@@ -165,6 +172,7 @@ fn unresolvable_merge_surfaces_error_and_preserves_disk_state() {
 // TC-FAULT-001 — panic after `.kdbx.bak`, before the fetch. The backup
 // exists and equals the (untouched) original local vault; no merge happened.
 // ---------------------------------------------------------------------------
+// LNS-MERGE-FAULT-002
 #[test]
 fn panic_after_bak_before_fetch_leaves_bak_and_original_intact() {
     let (dev, uuid, mut transport, last_remote, last_sha) = diverged_setup();
@@ -208,9 +216,10 @@ fn panic_after_bak_before_fetch_leaves_bak_and_original_intact() {
 }
 
 // ---------------------------------------------------------------------------
-// TC-FAULT-002 — panic after the merge + save, before the PUT. The live
+// TC-FAULT-002 — panic after the merge + save, before the commit. The live
 // `.kdbx` holds the merged state; `.kdbx.bak` holds the pre-merge state.
 // ---------------------------------------------------------------------------
+// LNS-MERGE-FAULT-003
 #[test]
 fn panic_after_merge_before_put_leaves_bak_intact_and_local_merged() {
     let (dev, _uuid, mut transport, last_remote, last_sha) = diverged_setup();
@@ -246,6 +255,7 @@ fn panic_after_merge_before_put_leaves_bak_intact_and_local_merged() {
 // `cp .kdbx.bak .kdbx` yields a vault that opens with the original password
 // and contains the pre-merge entries (the recovery rolls back the merge).
 // ---------------------------------------------------------------------------
+// LNS-MERGE-FAULT-004
 #[test]
 fn manual_bak_restore_recovers_pre_merge_state() {
     let (dev, uuid, mut transport, last_remote, last_sha) = diverged_setup();

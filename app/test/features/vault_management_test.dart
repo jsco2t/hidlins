@@ -150,11 +150,6 @@ void main() {
     Future<void> fillConnectForm(
       WidgetTester tester, {
       String name = 'my-vault',
-      String bucket = 'my-bucket',
-      String key = 'vault.kdbx',
-      String region = 'us-east-1',
-      String accessKey = 'AKID',
-      String secretKey = 'secret',
       String password = 'pass123',
     }) async {
       await tester.enterText(
@@ -162,109 +157,155 @@ void main() {
         name,
       );
       await tester.enterText(
-        find.widgetWithText(TextFormField, 'S3 Bucket'),
-        bucket,
-      );
-      await tester.enterText(
-        find.widgetWithText(TextFormField, 'Object key'),
-        key,
-      );
-      await tester.enterText(
-        find.widgetWithText(TextFormField, 'Region'),
-        region,
-      );
-      await tester.enterText(
-        find.widgetWithText(TextFormField, 'Access key ID'),
-        accessKey,
-      );
-      await tester.enterText(
-        find.widgetWithText(TextFormField, 'Secret access key'),
-        secretKey,
-      );
-      await tester.enterText(
         find.widgetWithText(TextFormField, 'Master password'),
         password,
       );
     }
 
-    testWidgets('successful bootstrap calls repo with S3 config', (
+    testWidgets('pair-and-import compares SAS and clears password', (
       tester,
     ) async {
-      final harness = await tester.pumpFeature(const ConnectSyncDialog());
+      final harness = await tester.pumpFeature(
+        const ConnectSyncDialog(mobileOverride: false),
+      );
       addTearDown(harness.dispose);
       await tester.pumpAndSettle();
 
-      expect(find.text('Connect to sync'), findsOneWidget);
+      expect(find.text('Import paired vault'), findsWidgets);
 
       await fillConnectForm(tester);
 
       await tester.scrollUntilVisible(
-        find.text('Confirm'),
+        find.widgetWithText(FilledButton, 'Import paired vault'),
         100,
         scrollable: find.byType(Scrollable).first,
       );
-      await tester.tap(find.text('Confirm'));
-      await tester.pumpAndSettle();
+      await tester.tap(
+        find.widgetWithText(FilledButton, 'Import paired vault'),
+      );
+      await tester.pump();
+      await tester.pump(const Duration(milliseconds: 10));
 
-      expect(harness.session.bootstrapCalled, isTrue);
+      expect(harness.sync.beginPairImportCalled, isTrue);
+      expect(find.text('Compare this code on both devices'), findsOneWidget);
+      expect(find.text('123 456'), findsOneWidget);
+      expect(find.text('pass123'), findsNothing);
+      await tester.tap(find.text('Codes match'));
+      await tester.pumpAndSettle();
+      expect(find.text('123 456'), findsNothing);
     });
 
     testWidgets('wrong password shows error', (tester) async {
-      final harness = await tester.pumpFeature(const ConnectSyncDialog());
+      final harness = await tester.pumpFeature(
+        const ConnectSyncDialog(mobileOverride: false),
+      );
       addTearDown(harness.dispose);
       await tester.pumpAndSettle();
 
-      harness.session.bootstrapError = const BadCredentials();
+      harness.sync.beginPairImportError = const BadCredentials();
 
       await fillConnectForm(tester, password: 'wrong');
 
       await tester.scrollUntilVisible(
-        find.text('Confirm'),
+        find.widgetWithText(FilledButton, 'Import paired vault'),
         100,
         scrollable: find.byType(Scrollable).first,
       );
-      await tester.tap(find.text('Confirm'));
+      await tester.tap(
+        find.widgetWithText(FilledButton, 'Import paired vault'),
+      );
       await tester.pumpAndSettle();
 
       expect(find.text('Wrong password or keyfile'), findsOneWidget);
     });
 
-    testWidgets('duplicate target shows error with vault name', (tester) async {
-      final harness = await tester.pumpFeature(const ConnectSyncDialog());
+    testWidgets('existing local target fails without showing SAS', (
+      tester,
+    ) async {
+      final harness = await tester.pumpFeature(
+        const ConnectSyncDialog(mobileOverride: false),
+      );
       addTearDown(harness.dispose);
       await tester.pumpAndSettle();
 
-      harness.session.bootstrapError = const SyncDuplicate('existing-vault');
+      harness.sync.beginPairImportError = const PathAlreadyExists(
+        '/vaults/dup.kdbx',
+      );
 
       await fillConnectForm(tester, name: 'dup');
 
       await tester.scrollUntilVisible(
-        find.text('Confirm'),
+        find.widgetWithText(FilledButton, 'Import paired vault'),
         100,
         scrollable: find.byType(Scrollable).first,
       );
-      await tester.tap(find.text('Confirm'));
+      await tester.tap(
+        find.widgetWithText(FilledButton, 'Import paired vault'),
+      );
       await tester.pumpAndSettle();
 
-      expect(find.textContaining('Duplicate sync target'), findsOneWidget);
-      expect(find.textContaining('existing-vault'), findsOneWidget);
+      expect(
+        find.text('A vault with this name already exists'),
+        findsOneWidget,
+      );
+      expect(find.text('123 456'), findsNothing);
     });
 
     testWidgets('validation prevents empty required fields', (tester) async {
-      final harness = await tester.pumpFeature(const ConnectSyncDialog());
+      final harness = await tester.pumpFeature(
+        const ConnectSyncDialog(mobileOverride: false),
+      );
       addTearDown(harness.dispose);
       await tester.pumpAndSettle();
 
       await tester.scrollUntilVisible(
-        find.text('Confirm'),
+        find.widgetWithText(FilledButton, 'Import paired vault'),
         100,
         scrollable: find.byType(Scrollable).first,
       );
-      await tester.tap(find.text('Confirm'));
+      await tester.tap(
+        find.widgetWithText(FilledButton, 'Import paired vault'),
+      );
       await tester.pumpAndSettle();
 
-      expect(harness.session.bootstrapCalled, isFalse);
+      expect(harness.sync.beginPairImportCalled, isFalse);
       expect(find.text('Required'), findsWidgets);
+    });
+
+    testWidgets('mobile import explains permission before pairing', (
+      tester,
+    ) async {
+      final harness = await tester.pumpFeature(
+        const ConnectSyncDialog(mobileOverride: true),
+      );
+      addTearDown(harness.dispose);
+      await tester.pumpAndSettle();
+      await fillConnectForm(tester);
+      await tester.scrollUntilVisible(
+        find.widgetWithText(FilledButton, 'Import paired vault'),
+        100,
+        scrollable: find.byType(Scrollable).first,
+      );
+
+      await tester.tap(
+        find.widgetWithText(FilledButton, 'Import paired vault'),
+      );
+      await tester.pumpAndSettle();
+      expect(find.text('Allow local network access'), findsOneWidget);
+      expect(
+        find.textContaining('It never uses this permission for internet sync'),
+        findsOneWidget,
+      );
+      expect(harness.sync.beginPairImportCalled, isFalse);
+
+      await tester.tap(find.text('Confirm'));
+      await tester.pump();
+      await tester.pump(const Duration(milliseconds: 10));
+      expect(harness.sync.beginPairImportCalled, isTrue);
+      expect(find.text('123 456'), findsOneWidget);
+      await tester.tap(find.text('Reject'));
+      await tester.pumpAndSettle();
+      expect(find.text('123 456'), findsNothing);
     });
   });
 
@@ -347,7 +388,9 @@ void main() {
       await tester.pumpAndSettle();
 
       expect(
-        find.text('Password changed. Re-enter your S3 sync credentials.'),
+        find.text(
+          'Password changed. Your local sync identity was re-protected.',
+        ),
         findsWidgets,
       );
     });

@@ -110,10 +110,12 @@ fn render_onboarding(
     let action_lines = match origin {
         OnboardingOrigin::FirstRun => vec![
             Line::from("Enter: Open vault"),
+            Line::from("F3: Import paired vault"),
             Line::from("Esc or Ctrl+Q: Exit"),
         ],
         OnboardingOrigin::VaultList { .. } => vec![
             Line::from("Enter: Open vault"),
+            Line::from("F3: Import paired vault"),
             Line::from("Esc: Back   Ctrl+Q: Exit"),
         ],
     };
@@ -126,7 +128,7 @@ fn render_vault_list(app: &App, frame: &mut Frame, area: Rect) {
         Constraint::Length(1),
         Constraint::Min(2),
         Constraint::Length(2),
-        Constraint::Length(2),
+        Constraint::Length(3),
     ])
     .areas(area);
 
@@ -158,7 +160,8 @@ fn render_vault_list(app: &App, frame: &mut Frame, area: Rect) {
     frame.render_widget(
         Paragraph::new(vec![
             Line::from("j/k: Select  Enter: Open"),
-            Line::from("a: Add existing vault Ctrl+Q: Exit"),
+            Line::from("a: Add existing vault"),
+            Line::from("F3: Import paired vault  Ctrl+Q: Exit"),
         ]),
         actions,
     );

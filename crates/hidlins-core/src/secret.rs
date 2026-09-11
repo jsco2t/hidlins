@@ -96,7 +96,7 @@ impl MasterPassword {
     ///
     /// Lifted from `pub(crate)` to `pub` so `hidlins-sync::auth::rstcred1`
     /// can feed the master password into Argon2id without duplicating
-    /// the zeroize-on-drop wrapper (`features/s3-sync/` T4.2).
+    /// the zeroize-on-drop wrapper.
     pub fn as_bytes(&self) -> &[u8] {
         self.0.as_bytes()
     }

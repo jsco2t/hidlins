@@ -8,7 +8,7 @@ use crossterm::event::KeyCode;
 use hidlins_core::{RegisteredVault, VaultRegistry};
 
 use crate::app::{Focus, Phase, TreeMode};
-use crate::overlay::Overlay;
+use crate::overlay::{Overlay, PeersState, SasState};
 use crate::test_support::{
     configured_app, key, key_alt, key_code, key_ctrl, mouse_down, onboarding_app, populated_app,
     render_at, type_text, unlock, MASTER_PASSWORD, SECRET_CANARY,
@@ -262,6 +262,77 @@ fn visual_readonly_and_mouse_journeys_keep_text_and_keyboard_parity() {
         "Default sort",
         "Theme",
         "Auto-lock",
-        "Configure sync target",
+        "Pair this vault",
     ]);
+}
+
+#[test]
+fn local_sync_keyboard_journey_is_reviewable_and_secret_safe() {
+    let (_dir, mut app) = populated_app();
+    unlock(&mut app);
+    app.handle_event(&key_alt('2'));
+    let settings = render_at(&app, 80, 24, Instant::now());
+    settings.assert_contains_all(&[
+        "Local sync Status",
+        "Configure as sync server",
+        "Pair this vault",
+        "Import paired vault",
+        "Start sync server",
+        "Allow pairing for 3 minutes",
+        "Manage peers",
+    ]);
+
+    app.handle_event(&key('P'));
+    assert!(matches!(app.overlay, Some(Overlay::LocalSync(_))));
+    let pair = render_at(&app, 80, 24, Instant::now());
+    pair.assert_contains_all(&[
+        "Pair existing vault",
+        "Secure discovery",
+        "Master password:",
+        "Enter: continue",
+    ]);
+    pair.assert_excludes(&[MASTER_PASSWORD, SECRET_CANARY]);
+    app.handle_event(&key_code(KeyCode::Esc));
+
+    app.handle_event(&key('I'));
+    let import = render_at(&app, 80, 24, Instant::now());
+    import.assert_contains_all(&["Import paired vault", "Vault name:", "bilateral SAS"]);
+    import.assert_excludes(&[MASTER_PASSWORD, SECRET_CANARY]);
+    app.handle_event(&key_code(KeyCode::Esc));
+
+    app.overlay = Some(Overlay::PairingSas(Box::new(SasState {
+        code: "123 456".to_string(),
+        peer_name: "nearby device".to_string(),
+        error: None,
+    })));
+    let sas = render_at(&app, 80, 24, Instant::now());
+    sas.assert_contains_in_order(&[
+        "Confirm pairing",
+        "Compare this six-digit SAS",
+        "123 456",
+        "y: codes match and pair",
+    ]);
+    sas.assert_excludes(&[MASTER_PASSWORD, SECRET_CANARY]);
+    app.handle_event(&key('x'));
+    assert!(matches!(app.overlay, Some(Overlay::PairingSas(_))));
+    app.handle_event(&key('n'));
+    assert!(app.overlay.is_none());
+
+    app.overlay = Some(Overlay::Peers(PeersState {
+        names: Vec::new(),
+        selected: 0,
+    }));
+    let peers = render_at(&app, 80, 24, Instant::now());
+    peers.assert_contains_all(&["opaque", "No paired peers", "Revoke peer"]);
+}
+
+#[test]
+fn first_run_can_open_pair_and_import_without_an_existing_vault() {
+    let (_dir, mut app, _) = onboarding_app();
+    let initial = render_at(&app, 60, 16, Instant::now());
+    initial.assert_contains_all(&["F3: Import paired vault", "Enter: Open vault"]);
+    app.handle_event(&key_code(KeyCode::F(3)));
+    assert!(matches!(app.overlay, Some(Overlay::LocalSync(_))));
+    let import = render_at(&app, 60, 16, Instant::now());
+    import.assert_contains_all(&["Import paired vault", "Vault name:", "Master password:"]);
 }

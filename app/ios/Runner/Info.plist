@@ -26,6 +26,13 @@
 	<string>$(FLUTTER_BUILD_NUMBER)</string>
 	<key>LSRequiresIPhoneOS</key>
 	<true/>
+	<key>NSLocalNetworkUsageDescription</key>
+	<string>Hidlins discovers and syncs directly with your trusted devices on this local network. Internet sync is not supported.</string>
+	<key>NSBonjourServices</key>
+	<array>
+		<string>_hidlins-sync._tcp</string>
+		<string>_hidlins-pair._tcp</string>
+	</array>
 	<key>UIApplicationSceneManifest</key>
 	<dict>
 		<key>UIApplicationSupportsMultipleScenes</key>

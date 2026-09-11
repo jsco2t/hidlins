@@ -1,10 +1,9 @@
 #!/usr/bin/env python3
-"""Persist Android verification logs after removing test and S3 secrets."""
+"""Persist Android verification logs after removing test secrets."""
 
 from __future__ import annotations
 
 import argparse
-import json
 import os
 import re
 from pathlib import Path
@@ -13,9 +12,6 @@ MARKERS = (
     "integration-master-marker",
     "integration-rotated-marker",
     "integration-entry-secret-marker",
-    "minio-integration-master-marker",
-    "minio-integration-new-master-marker",
-    "minio-integration-entry-secret-marker",
 )
 
 FLUTTER_DEVICE_FAILURE_MARKERS = (
@@ -24,22 +20,15 @@ FLUTTER_DEVICE_FAILURE_MARKERS = (
 )
 
 
-def sensitive_values(defines: Path | None) -> list[str]:
-    values = list(MARKERS)
-    if defines is None:
-        return values
-    data = json.loads(defines.read_text(encoding="utf-8"))
-    for key, value in data.items():
-        if ("ACCESS_KEY" in key or "SECRET_KEY" in key) and isinstance(value, str):
-            values.append(value)
-    return sorted({value for value in values if value}, key=len, reverse=True)
+def sensitive_values() -> list[str]:
+    return list(MARKERS)
 
 
 def redact(text: str, values: list[str]) -> str:
     for value in values:
         text = text.replace(value, "<redacted>")
     return re.sub(
-        r"(?i)(secret[_ -]?access[_ -]?key|access[_ -]?key|master[_ -]?password)"
+        r"(?i)(master[_ -]?password)"
         r"([=:]\s*)\S+",
         r"\1\2<redacted>",
         text,
@@ -55,10 +44,9 @@ def main() -> None:
     parser = argparse.ArgumentParser()
     parser.add_argument("source", type=Path)
     parser.add_argument("output", type=Path)
-    parser.add_argument("--defines", type=Path)
     parser.add_argument("--require-passed", action="store_true")
     args = parser.parse_args()
-    values = sensitive_values(args.defines)
+    values = sensitive_values()
     sanitized = redact(args.source.read_text(encoding="utf-8", errors="replace"), values)
     if any(value in sanitized for value in values):
         raise SystemExit("Android verification log redaction failed closed")

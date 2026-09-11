@@ -4,10 +4,9 @@
 from __future__ import annotations
 
 import copy
+import pathlib
 import sys
-import tempfile
 import unittest
-from pathlib import Path
 
 import emulator_matrix
 import redact_log
@@ -48,23 +47,73 @@ class EmulatorMatrixTests(unittest.TestCase):
         with self.assertRaises(SystemExit):
             emulator_matrix.validate(data)
 
+    def test_every_client_uses_distinct_matching_authority_and_replacement_avds(self) -> None:
+        authorities = emulator_matrix.scenario_entries("authority", "arm64")
+        replacements = emulator_matrix.scenario_entries("replacement", "arm64")
+        self.assertEqual([entry["api"] for entry in authorities], [29, 36])
+        self.assertEqual([entry["api"] for entry in replacements], [29, 36])
+        self.assertEqual(
+            [entry["avd"] for entry in authorities],
+            ["hidlins-api29-authority", "hidlins-api36-tablet-authority"],
+        )
+        self.assertEqual(
+            [entry["avd"] for entry in replacements],
+            [
+                "hidlins-api29-authority-replacement",
+                "hidlins-api36-tablet-authority-replacement",
+            ],
+        )
+
+    def test_matrix_cleanup_waits_for_adb_disconnect_before_full_scenario(self) -> None:
+        source = (
+            pathlib.Path(__file__).with_name("run_emulator_suite.sh")
+        ).read_text(encoding="utf-8")
+        cleanup = source.index("cleanup_emulator()")
+        self.assertIn('wait_for_disconnect "$CURRENT_SERIAL"', source)
+        self.assertIn('grep -Eq "^${serial}[[:space:]]"', source)
+        self.assertLess(
+            source.index('wait_for_disconnect "$CURRENT_SERIAL"', cleanup),
+            source.index('CURRENT_SERIAL=""', cleanup),
+        )
+        self.assertLess(
+            source.index("done 3<\"$MATRIX\""),
+            source.index("android_mobile_scenario.py"),
+        )
+
+    def test_android_test_authority_keeps_the_explicit_wlan_listener(self) -> None:
+        runtime = (
+            pathlib.Path(__file__).parents[2]
+            / "crates"
+            / "hidlins-sync"
+            / "src"
+            / "server"
+            / "runtime.rs"
+        ).read_text(encoding="utf-8")
+        listener_loop = runtime[
+            runtime.index('name("hidlins-sync-listener"') : runtime.index(
+                "let accepted =", runtime.index('name("hidlins-sync-listener"')
+            )
+        ]
+        self.assertNotIn("android-scenario-authority", listener_loop)
+        self.assertIn("refresh_desktop_listener", listener_loop)
+
+    def test_android_test_registrar_is_the_only_scenario_publisher(self) -> None:
+        runtime = (
+            pathlib.Path(__file__).parents[2]
+            / "crates"
+            / "hidlins-sync"
+            / "src"
+            / "server"
+            / "runtime.rs"
+        ).read_text(encoding="utf-8")
+        self.assertNotIn("android-scenario-authority", runtime)
+
 
 class RedactionTests(unittest.TestCase):
-    def test_test_markers_and_protected_config_values_are_removed(self) -> None:
-        with tempfile.TemporaryDirectory() as directory:
-            defines = Path(directory) / "defines.json"
-            defines.write_text(
-                '{"HIDLINS_TEST_S3_ACCESS_KEY":"access-canary",'
-                '"HIDLINS_TEST_S3_SECRET_KEY":"secret-canary"}',
-                encoding="utf-8",
-            )
-            values = redact_log.sensitive_values(defines)
-            sanitized = redact_log.redact(
-                "integration-master-marker access-canary secret-canary", values
-            )
-            self.assertNotIn("integration-master-marker", sanitized)
-            self.assertNotIn("access-canary", sanitized)
-            self.assertNotIn("secret-canary", sanitized)
+    def test_test_secret_markers_are_removed(self) -> None:
+        values = redact_log.sensitive_values()
+        sanitized = redact_log.redact("integration-master-marker", values)
+        self.assertNotIn("integration-master-marker", sanitized)
 
     def test_flutter_device_failure_markers_fail_closed(self) -> None:
         self.assertTrue(redact_log.has_flutter_device_failure("Some tests failed."))

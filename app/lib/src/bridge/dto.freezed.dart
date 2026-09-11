@@ -188,7 +188,7 @@ return customField(_that.field0);case _:
 
 class CopyField_Username extends CopyField {
   const CopyField_Username(): super._();
-  
+
 
 
 
@@ -220,7 +220,7 @@ String toString() {
 
 class CopyField_Password extends CopyField {
   const CopyField_Password(): super._();
-  
+
 
 
 
@@ -252,7 +252,7 @@ String toString() {
 
 class CopyField_TotpCode extends CopyField {
   const CopyField_TotpCode(): super._();
-  
+
 
 
 
@@ -284,7 +284,7 @@ String toString() {
 
 class CopyField_CustomField extends CopyField {
   const CopyField_CustomField(this.field0): super._();
-  
+
 
  final  String field0;
 
@@ -506,7 +506,7 @@ return bytes(_that.field0);case _:
 
 class KeyfileRef_Path extends KeyfileRef {
   const KeyfileRef_Path(this.field0): super._();
-  
+
 
 @override final  String field0;
 
@@ -568,7 +568,7 @@ as String,
 
 class KeyfileRef_Bytes extends KeyfileRef {
   const KeyfileRef_Bytes(this.field0): super._();
-  
+
 
 @override final  Uint8List field0;
 
@@ -796,7 +796,7 @@ return totpUri();case _:
 
 class RevealField_Password extends RevealField {
   const RevealField_Password(): super._();
-  
+
 
 
 
@@ -828,7 +828,7 @@ String toString() {
 
 class RevealField_CustomField extends RevealField {
   const RevealField_CustomField(this.field0): super._();
-  
+
 
  final  String field0;
 
@@ -894,7 +894,7 @@ as String,
 
 class RevealField_TotpUri extends RevealField {
   const RevealField_TotpUri(): super._();
-  
+
 
 
 
@@ -1092,7 +1092,7 @@ return tag(_that.field0);case _:
 
 class SearchScopeDto_All extends SearchScopeDto {
   const SearchScopeDto_All(): super._();
-  
+
 
 
 
@@ -1124,7 +1124,7 @@ String toString() {
 
 class SearchScopeDto_GroupSubtree extends SearchScopeDto {
   const SearchScopeDto_GroupSubtree(this.field0): super._();
-  
+
 
  final  String field0;
 
@@ -1190,7 +1190,7 @@ as String,
 
 class SearchScopeDto_Tag extends SearchScopeDto {
   const SearchScopeDto_Tag(this.field0): super._();
-  
+
 
  final  String field0;
 
@@ -1295,14 +1295,17 @@ extension SyncEventPatterns on SyncEvent {
 /// }
 /// ```
 
-@optionalTypeArgs TResult maybeMap<TResult extends Object?>({TResult Function( SyncEvent_Started value)?  started,TResult Function( SyncEvent_Activity value)?  activity,TResult Function( SyncEvent_Done value)?  done,TResult Function( SyncEvent_Failed value)?  failed,required TResult orElse(),}){
+@optionalTypeArgs TResult maybeMap<TResult extends Object?>({TResult Function( SyncEvent_Started value)?  started,TResult Function( SyncEvent_Activity value)?  activity,TResult Function( SyncEvent_Done value)?  done,TResult Function( SyncEvent_Failed value)?  failed,TResult Function( SyncEvent_PairingRequested value)?  pairingRequested,TResult Function( SyncEvent_ServerStarted value)?  serverStarted,TResult Function( SyncEvent_ServerStopped value)?  serverStopped,required TResult orElse(),}){
 final _that = this;
 switch (_that) {
 case SyncEvent_Started() when started != null:
 return started(_that);case SyncEvent_Activity() when activity != null:
 return activity(_that);case SyncEvent_Done() when done != null:
 return done(_that);case SyncEvent_Failed() when failed != null:
-return failed(_that);case _:
+return failed(_that);case SyncEvent_PairingRequested() when pairingRequested != null:
+return pairingRequested(_that);case SyncEvent_ServerStarted() when serverStarted != null:
+return serverStarted(_that);case SyncEvent_ServerStopped() when serverStopped != null:
+return serverStopped(_that);case _:
   return orElse();
 
 }
@@ -1320,14 +1323,17 @@ return failed(_that);case _:
 /// }
 /// ```
 
-@optionalTypeArgs TResult map<TResult extends Object?>({required TResult Function( SyncEvent_Started value)  started,required TResult Function( SyncEvent_Activity value)  activity,required TResult Function( SyncEvent_Done value)  done,required TResult Function( SyncEvent_Failed value)  failed,}){
+@optionalTypeArgs TResult map<TResult extends Object?>({required TResult Function( SyncEvent_Started value)  started,required TResult Function( SyncEvent_Activity value)  activity,required TResult Function( SyncEvent_Done value)  done,required TResult Function( SyncEvent_Failed value)  failed,required TResult Function( SyncEvent_PairingRequested value)  pairingRequested,required TResult Function( SyncEvent_ServerStarted value)  serverStarted,required TResult Function( SyncEvent_ServerStopped value)  serverStopped,}){
 final _that = this;
 switch (_that) {
 case SyncEvent_Started():
 return started(_that);case SyncEvent_Activity():
 return activity(_that);case SyncEvent_Done():
 return done(_that);case SyncEvent_Failed():
-return failed(_that);}
+return failed(_that);case SyncEvent_PairingRequested():
+return pairingRequested(_that);case SyncEvent_ServerStarted():
+return serverStarted(_that);case SyncEvent_ServerStopped():
+return serverStopped(_that);}
 }
 /// A variant of `map` that fallback to returning `null`.
 ///
@@ -1341,14 +1347,17 @@ return failed(_that);}
 /// }
 /// ```
 
-@optionalTypeArgs TResult? mapOrNull<TResult extends Object?>({TResult? Function( SyncEvent_Started value)?  started,TResult? Function( SyncEvent_Activity value)?  activity,TResult? Function( SyncEvent_Done value)?  done,TResult? Function( SyncEvent_Failed value)?  failed,}){
+@optionalTypeArgs TResult? mapOrNull<TResult extends Object?>({TResult? Function( SyncEvent_Started value)?  started,TResult? Function( SyncEvent_Activity value)?  activity,TResult? Function( SyncEvent_Done value)?  done,TResult? Function( SyncEvent_Failed value)?  failed,TResult? Function( SyncEvent_PairingRequested value)?  pairingRequested,TResult? Function( SyncEvent_ServerStarted value)?  serverStarted,TResult? Function( SyncEvent_ServerStopped value)?  serverStopped,}){
 final _that = this;
 switch (_that) {
 case SyncEvent_Started() when started != null:
 return started(_that);case SyncEvent_Activity() when activity != null:
 return activity(_that);case SyncEvent_Done() when done != null:
 return done(_that);case SyncEvent_Failed() when failed != null:
-return failed(_that);case _:
+return failed(_that);case SyncEvent_PairingRequested() when pairingRequested != null:
+return pairingRequested(_that);case SyncEvent_ServerStarted() when serverStarted != null:
+return serverStarted(_that);case SyncEvent_ServerStopped() when serverStopped != null:
+return serverStopped(_that);case _:
   return null;
 
 }
@@ -1365,13 +1374,16 @@ return failed(_that);case _:
 /// }
 /// ```
 
-@optionalTypeArgs TResult maybeWhen<TResult extends Object?>({TResult Function()?  started,TResult Function()?  activity,TResult Function( SyncOutcomeDto field0)?  done,TResult Function( HidlinsApiError field0)?  failed,required TResult orElse(),}) {final _that = this;
+@optionalTypeArgs TResult maybeWhen<TResult extends Object?>({TResult Function( bool automatic)?  started,TResult Function()?  activity,TResult Function( SyncOutcomeDto field0)?  done,TResult Function( HidlinsApiError field0)?  failed,TResult Function( PairingPromptDto field0)?  pairingRequested,TResult Function( LocalEndpointDto field0)?  serverStarted,TResult Function()?  serverStopped,required TResult orElse(),}) {final _that = this;
 switch (_that) {
 case SyncEvent_Started() when started != null:
-return started();case SyncEvent_Activity() when activity != null:
+return started(_that.automatic);case SyncEvent_Activity() when activity != null:
 return activity();case SyncEvent_Done() when done != null:
 return done(_that.field0);case SyncEvent_Failed() when failed != null:
-return failed(_that.field0);case _:
+return failed(_that.field0);case SyncEvent_PairingRequested() when pairingRequested != null:
+return pairingRequested(_that.field0);case SyncEvent_ServerStarted() when serverStarted != null:
+return serverStarted(_that.field0);case SyncEvent_ServerStopped() when serverStopped != null:
+return serverStopped();case _:
   return orElse();
 
 }
@@ -1389,13 +1401,16 @@ return failed(_that.field0);case _:
 /// }
 /// ```
 
-@optionalTypeArgs TResult when<TResult extends Object?>({required TResult Function()  started,required TResult Function()  activity,required TResult Function( SyncOutcomeDto field0)  done,required TResult Function( HidlinsApiError field0)  failed,}) {final _that = this;
+@optionalTypeArgs TResult when<TResult extends Object?>({required TResult Function( bool automatic)  started,required TResult Function()  activity,required TResult Function( SyncOutcomeDto field0)  done,required TResult Function( HidlinsApiError field0)  failed,required TResult Function( PairingPromptDto field0)  pairingRequested,required TResult Function( LocalEndpointDto field0)  serverStarted,required TResult Function()  serverStopped,}) {final _that = this;
 switch (_that) {
 case SyncEvent_Started():
-return started();case SyncEvent_Activity():
+return started(_that.automatic);case SyncEvent_Activity():
 return activity();case SyncEvent_Done():
 return done(_that.field0);case SyncEvent_Failed():
-return failed(_that.field0);}
+return failed(_that.field0);case SyncEvent_PairingRequested():
+return pairingRequested(_that.field0);case SyncEvent_ServerStarted():
+return serverStarted(_that.field0);case SyncEvent_ServerStopped():
+return serverStopped();}
 }
 /// A variant of `when` that fallback to returning `null`
 ///
@@ -1409,13 +1424,16 @@ return failed(_that.field0);}
 /// }
 /// ```
 
-@optionalTypeArgs TResult? whenOrNull<TResult extends Object?>({TResult? Function()?  started,TResult? Function()?  activity,TResult? Function( SyncOutcomeDto field0)?  done,TResult? Function( HidlinsApiError field0)?  failed,}) {final _that = this;
+@optionalTypeArgs TResult? whenOrNull<TResult extends Object?>({TResult? Function( bool automatic)?  started,TResult? Function()?  activity,TResult? Function( SyncOutcomeDto field0)?  done,TResult? Function( HidlinsApiError field0)?  failed,TResult? Function( PairingPromptDto field0)?  pairingRequested,TResult? Function( LocalEndpointDto field0)?  serverStarted,TResult? Function()?  serverStopped,}) {final _that = this;
 switch (_that) {
 case SyncEvent_Started() when started != null:
-return started();case SyncEvent_Activity() when activity != null:
+return started(_that.automatic);case SyncEvent_Activity() when activity != null:
 return activity();case SyncEvent_Done() when done != null:
 return done(_that.field0);case SyncEvent_Failed() when failed != null:
-return failed(_that.field0);case _:
+return failed(_that.field0);case SyncEvent_PairingRequested() when pairingRequested != null:
+return pairingRequested(_that.field0);case SyncEvent_ServerStarted() when serverStarted != null:
+return serverStarted(_that.field0);case SyncEvent_ServerStopped() when serverStopped != null:
+return serverStopped();case _:
   return null;
 
 }
@@ -1427,40 +1445,74 @@ return failed(_that.field0);case _:
 
 
 class SyncEvent_Started extends SyncEvent {
-  const SyncEvent_Started(): super._();
-  
+  const SyncEvent_Started({required this.automatic}): super._();
 
 
+ final  bool automatic;
 
+/// Create a copy of SyncEvent
+/// with the given fields replaced by the non-null parameter values.
+@JsonKey(includeFromJson: false, includeToJson: false)
+@pragma('vm:prefer-inline')
+$SyncEvent_StartedCopyWith<SyncEvent_Started> get copyWith => _$SyncEvent_StartedCopyWithImpl<SyncEvent_Started>(this, _$identity);
 
 
 
 @override
 bool operator ==(Object other) {
-  return identical(this, other) || (other.runtimeType == runtimeType&&other is SyncEvent_Started);
+  return identical(this, other) || (other.runtimeType == runtimeType&&other is SyncEvent_Started&&(identical(other.automatic, automatic) || other.automatic == automatic));
 }
 
 
 @override
-int get hashCode => runtimeType.hashCode;
+int get hashCode => Object.hash(runtimeType,automatic);
 
 @override
 String toString() {
-  return 'SyncEvent.started()';
+  return 'SyncEvent.started(automatic: $automatic)';
 }
 
 
 }
 
+/// @nodoc
+abstract mixin class $SyncEvent_StartedCopyWith<$Res> implements $SyncEventCopyWith<$Res> {
+  factory $SyncEvent_StartedCopyWith(SyncEvent_Started value, $Res Function(SyncEvent_Started) _then) = _$SyncEvent_StartedCopyWithImpl;
+@useResult
+$Res call({
+ bool automatic
+});
 
 
+
+
+}
+/// @nodoc
+class _$SyncEvent_StartedCopyWithImpl<$Res>
+    implements $SyncEvent_StartedCopyWith<$Res> {
+  _$SyncEvent_StartedCopyWithImpl(this._self, this._then);
+
+  final SyncEvent_Started _self;
+  final $Res Function(SyncEvent_Started) _then;
+
+/// Create a copy of SyncEvent
+/// with the given fields replaced by the non-null parameter values.
+@pragma('vm:prefer-inline') $Res call({Object? automatic = null,}) {
+  return _then(SyncEvent_Started(
+automatic: null == automatic ? _self.automatic : automatic // ignore: cast_nullable_to_non_nullable
+as bool,
+  ));
+}
+
+
+}
 
 /// @nodoc
 
 
 class SyncEvent_Activity extends SyncEvent {
   const SyncEvent_Activity(): super._();
-  
+
 
 
 
@@ -1492,7 +1544,7 @@ String toString() {
 
 class SyncEvent_Done extends SyncEvent {
   const SyncEvent_Done(this.field0): super._();
-  
+
 
  final  SyncOutcomeDto field0;
 
@@ -1555,7 +1607,7 @@ as SyncOutcomeDto,
 @override
 @pragma('vm:prefer-inline')
 $SyncOutcomeDtoCopyWith<$Res> get field0 {
-  
+
   return $SyncOutcomeDtoCopyWith<$Res>(_self.field0, (value) {
     return _then(_self.copyWith(field0: value));
   });
@@ -1567,7 +1619,7 @@ $SyncOutcomeDtoCopyWith<$Res> get field0 {
 
 class SyncEvent_Failed extends SyncEvent {
   const SyncEvent_Failed(this.field0): super._();
-  
+
 
  final  HidlinsApiError field0;
 
@@ -1630,12 +1682,176 @@ as HidlinsApiError,
 @override
 @pragma('vm:prefer-inline')
 $HidlinsApiErrorCopyWith<$Res> get field0 {
-  
+
   return $HidlinsApiErrorCopyWith<$Res>(_self.field0, (value) {
     return _then(_self.copyWith(field0: value));
   });
 }
 }
+
+/// @nodoc
+
+
+class SyncEvent_PairingRequested extends SyncEvent {
+  const SyncEvent_PairingRequested(this.field0): super._();
+
+
+ final  PairingPromptDto field0;
+
+/// Create a copy of SyncEvent
+/// with the given fields replaced by the non-null parameter values.
+@JsonKey(includeFromJson: false, includeToJson: false)
+@pragma('vm:prefer-inline')
+$SyncEvent_PairingRequestedCopyWith<SyncEvent_PairingRequested> get copyWith => _$SyncEvent_PairingRequestedCopyWithImpl<SyncEvent_PairingRequested>(this, _$identity);
+
+
+
+@override
+bool operator ==(Object other) {
+  return identical(this, other) || (other.runtimeType == runtimeType&&other is SyncEvent_PairingRequested&&(identical(other.field0, field0) || other.field0 == field0));
+}
+
+
+@override
+int get hashCode => Object.hash(runtimeType,field0);
+
+@override
+String toString() {
+  return 'SyncEvent.pairingRequested(field0: $field0)';
+}
+
+
+}
+
+/// @nodoc
+abstract mixin class $SyncEvent_PairingRequestedCopyWith<$Res> implements $SyncEventCopyWith<$Res> {
+  factory $SyncEvent_PairingRequestedCopyWith(SyncEvent_PairingRequested value, $Res Function(SyncEvent_PairingRequested) _then) = _$SyncEvent_PairingRequestedCopyWithImpl;
+@useResult
+$Res call({
+ PairingPromptDto field0
+});
+
+
+
+
+}
+/// @nodoc
+class _$SyncEvent_PairingRequestedCopyWithImpl<$Res>
+    implements $SyncEvent_PairingRequestedCopyWith<$Res> {
+  _$SyncEvent_PairingRequestedCopyWithImpl(this._self, this._then);
+
+  final SyncEvent_PairingRequested _self;
+  final $Res Function(SyncEvent_PairingRequested) _then;
+
+/// Create a copy of SyncEvent
+/// with the given fields replaced by the non-null parameter values.
+@pragma('vm:prefer-inline') $Res call({Object? field0 = null,}) {
+  return _then(SyncEvent_PairingRequested(
+null == field0 ? _self.field0 : field0 // ignore: cast_nullable_to_non_nullable
+as PairingPromptDto,
+  ));
+}
+
+
+}
+
+/// @nodoc
+
+
+class SyncEvent_ServerStarted extends SyncEvent {
+  const SyncEvent_ServerStarted(this.field0): super._();
+
+
+ final  LocalEndpointDto field0;
+
+/// Create a copy of SyncEvent
+/// with the given fields replaced by the non-null parameter values.
+@JsonKey(includeFromJson: false, includeToJson: false)
+@pragma('vm:prefer-inline')
+$SyncEvent_ServerStartedCopyWith<SyncEvent_ServerStarted> get copyWith => _$SyncEvent_ServerStartedCopyWithImpl<SyncEvent_ServerStarted>(this, _$identity);
+
+
+
+@override
+bool operator ==(Object other) {
+  return identical(this, other) || (other.runtimeType == runtimeType&&other is SyncEvent_ServerStarted&&(identical(other.field0, field0) || other.field0 == field0));
+}
+
+
+@override
+int get hashCode => Object.hash(runtimeType,field0);
+
+@override
+String toString() {
+  return 'SyncEvent.serverStarted(field0: $field0)';
+}
+
+
+}
+
+/// @nodoc
+abstract mixin class $SyncEvent_ServerStartedCopyWith<$Res> implements $SyncEventCopyWith<$Res> {
+  factory $SyncEvent_ServerStartedCopyWith(SyncEvent_ServerStarted value, $Res Function(SyncEvent_ServerStarted) _then) = _$SyncEvent_ServerStartedCopyWithImpl;
+@useResult
+$Res call({
+ LocalEndpointDto field0
+});
+
+
+
+
+}
+/// @nodoc
+class _$SyncEvent_ServerStartedCopyWithImpl<$Res>
+    implements $SyncEvent_ServerStartedCopyWith<$Res> {
+  _$SyncEvent_ServerStartedCopyWithImpl(this._self, this._then);
+
+  final SyncEvent_ServerStarted _self;
+  final $Res Function(SyncEvent_ServerStarted) _then;
+
+/// Create a copy of SyncEvent
+/// with the given fields replaced by the non-null parameter values.
+@pragma('vm:prefer-inline') $Res call({Object? field0 = null,}) {
+  return _then(SyncEvent_ServerStarted(
+null == field0 ? _self.field0 : field0 // ignore: cast_nullable_to_non_nullable
+as LocalEndpointDto,
+  ));
+}
+
+
+}
+
+/// @nodoc
+
+
+class SyncEvent_ServerStopped extends SyncEvent {
+  const SyncEvent_ServerStopped(): super._();
+
+
+
+
+
+
+
+@override
+bool operator ==(Object other) {
+  return identical(this, other) || (other.runtimeType == runtimeType&&other is SyncEvent_ServerStopped);
+}
+
+
+@override
+int get hashCode => runtimeType.hashCode;
+
+@override
+String toString() {
+  return 'SyncEvent.serverStopped()';
+}
+
+
+}
+
+
+
 
 /// @nodoc
 mixin _$SyncOutcomeDto {
@@ -1820,7 +2036,7 @@ return unknown();case _:
 
 class SyncOutcomeDto_AlreadyInSync extends SyncOutcomeDto {
   const SyncOutcomeDto_AlreadyInSync(): super._();
-  
+
 
 
 
@@ -1852,7 +2068,7 @@ String toString() {
 
 class SyncOutcomeDto_Pushed extends SyncOutcomeDto {
   const SyncOutcomeDto_Pushed({required this.isFirstSeed}): super._();
-  
+
 
  final  bool isFirstSeed;
 
@@ -1918,7 +2134,7 @@ as bool,
 
 class SyncOutcomeDto_FastReplaced extends SyncOutcomeDto {
   const SyncOutcomeDto_FastReplaced(): super._();
-  
+
 
 
 
@@ -1950,7 +2166,7 @@ String toString() {
 
 class SyncOutcomeDto_Merged extends SyncOutcomeDto {
   const SyncOutcomeDto_Merged({required this.entriesAdded, required this.entriesModified, required this.entriesRemoved}): super._();
-  
+
 
  final  BigInt entriesAdded;
  final  BigInt entriesModified;
@@ -2020,7 +2236,7 @@ as BigInt,
 
 class SyncOutcomeDto_Unknown extends SyncOutcomeDto {
   const SyncOutcomeDto_Unknown(): super._();
-  
+
 
 
 

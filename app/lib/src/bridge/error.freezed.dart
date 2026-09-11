@@ -55,7 +55,7 @@ extension HidlinsApiErrorPatterns on HidlinsApiError {
 /// }
 /// ```
 
-@optionalTypeArgs TResult maybeMap<TResult extends Object?>({TResult Function( HidlinsApiError_AuthenticationFailed value)?  authenticationFailed,TResult Function( HidlinsApiError_VaultLocked value)?  vaultLocked,TResult Function( HidlinsApiError_VaultBusySyncing value)?  vaultBusySyncing,TResult Function( HidlinsApiError_VaultContended value)?  vaultContended,TResult Function( HidlinsApiError_PathExists value)?  pathExists,TResult Function( HidlinsApiError_FileNotFound value)?  fileNotFound,TResult Function( HidlinsApiError_KeyfileRequired value)?  keyfileRequired,TResult Function( HidlinsApiError_UnsupportedPlatform value)?  unsupportedPlatform,TResult Function( HidlinsApiError_RegistryChanged value)?  registryChanged,TResult Function( HidlinsApiError_InvalidFormat value)?  invalidFormat,TResult Function( HidlinsApiError_RegistryMalformed value)?  registryMalformed,TResult Function( HidlinsApiError_SyncNotConfigured value)?  syncNotConfigured,TResult Function( HidlinsApiError_SyncRemoteUnreachable value)?  syncRemoteUnreachable,TResult Function( HidlinsApiError_SyncAuthFailed value)?  syncAuthFailed,TResult Function( HidlinsApiError_SyncConflictUnresolvable value)?  syncConflictUnresolvable,TResult Function( HidlinsApiError_SyncDuplicateTarget value)?  syncDuplicateTarget,TResult Function( HidlinsApiError_InvalidInput value)?  invalidInput,TResult Function( HidlinsApiError_Io value)?  io,TResult Function( HidlinsApiError_Internal value)?  internal,required TResult orElse(),}){
+@optionalTypeArgs TResult maybeMap<TResult extends Object?>({TResult Function( HidlinsApiError_AuthenticationFailed value)?  authenticationFailed,TResult Function( HidlinsApiError_VaultLocked value)?  vaultLocked,TResult Function( HidlinsApiError_VaultBusySyncing value)?  vaultBusySyncing,TResult Function( HidlinsApiError_VaultContended value)?  vaultContended,TResult Function( HidlinsApiError_PathExists value)?  pathExists,TResult Function( HidlinsApiError_FileNotFound value)?  fileNotFound,TResult Function( HidlinsApiError_KeyfileRequired value)?  keyfileRequired,TResult Function( HidlinsApiError_UnsupportedPlatform value)?  unsupportedPlatform,TResult Function( HidlinsApiError_RegistryChanged value)?  registryChanged,TResult Function( HidlinsApiError_InvalidFormat value)?  invalidFormat,TResult Function( HidlinsApiError_RegistryMalformed value)?  registryMalformed,TResult Function( HidlinsApiError_SyncNotConfigured value)?  syncNotConfigured,TResult Function( HidlinsApiError_LocalSyncConfiguration value)?  localSyncConfiguration,TResult Function( HidlinsApiError_SyncPermissionDenied value)?  syncPermissionDenied,TResult Function( HidlinsApiError_SyncNotFound value)?  syncNotFound,TResult Function( HidlinsApiError_SyncKeyMismatch value)?  syncKeyMismatch,TResult Function( HidlinsApiError_SyncRevoked value)?  syncRevoked,TResult Function( HidlinsApiError_SyncBusy value)?  syncBusy,TResult Function( HidlinsApiError_SyncConflict value)?  syncConflict,TResult Function( HidlinsApiError_SyncCanceled value)?  syncCanceled,TResult Function( HidlinsApiError_SyncOffline value)?  syncOffline,TResult Function( HidlinsApiError_SyncRemoteUnreachable value)?  syncRemoteUnreachable,TResult Function( HidlinsApiError_SyncAuthFailed value)?  syncAuthFailed,TResult Function( HidlinsApiError_SyncConflictUnresolvable value)?  syncConflictUnresolvable,TResult Function( HidlinsApiError_InvalidInput value)?  invalidInput,TResult Function( HidlinsApiError_Io value)?  io,TResult Function( HidlinsApiError_Internal value)?  internal,required TResult orElse(),}){
 final _that = this;
 switch (_that) {
 case HidlinsApiError_AuthenticationFailed() when authenticationFailed != null:
@@ -70,11 +70,19 @@ return unsupportedPlatform(_that);case HidlinsApiError_RegistryChanged() when re
 return registryChanged(_that);case HidlinsApiError_InvalidFormat() when invalidFormat != null:
 return invalidFormat(_that);case HidlinsApiError_RegistryMalformed() when registryMalformed != null:
 return registryMalformed(_that);case HidlinsApiError_SyncNotConfigured() when syncNotConfigured != null:
-return syncNotConfigured(_that);case HidlinsApiError_SyncRemoteUnreachable() when syncRemoteUnreachable != null:
+return syncNotConfigured(_that);case HidlinsApiError_LocalSyncConfiguration() when localSyncConfiguration != null:
+return localSyncConfiguration(_that);case HidlinsApiError_SyncPermissionDenied() when syncPermissionDenied != null:
+return syncPermissionDenied(_that);case HidlinsApiError_SyncNotFound() when syncNotFound != null:
+return syncNotFound(_that);case HidlinsApiError_SyncKeyMismatch() when syncKeyMismatch != null:
+return syncKeyMismatch(_that);case HidlinsApiError_SyncRevoked() when syncRevoked != null:
+return syncRevoked(_that);case HidlinsApiError_SyncBusy() when syncBusy != null:
+return syncBusy(_that);case HidlinsApiError_SyncConflict() when syncConflict != null:
+return syncConflict(_that);case HidlinsApiError_SyncCanceled() when syncCanceled != null:
+return syncCanceled(_that);case HidlinsApiError_SyncOffline() when syncOffline != null:
+return syncOffline(_that);case HidlinsApiError_SyncRemoteUnreachable() when syncRemoteUnreachable != null:
 return syncRemoteUnreachable(_that);case HidlinsApiError_SyncAuthFailed() when syncAuthFailed != null:
 return syncAuthFailed(_that);case HidlinsApiError_SyncConflictUnresolvable() when syncConflictUnresolvable != null:
-return syncConflictUnresolvable(_that);case HidlinsApiError_SyncDuplicateTarget() when syncDuplicateTarget != null:
-return syncDuplicateTarget(_that);case HidlinsApiError_InvalidInput() when invalidInput != null:
+return syncConflictUnresolvable(_that);case HidlinsApiError_InvalidInput() when invalidInput != null:
 return invalidInput(_that);case HidlinsApiError_Io() when io != null:
 return io(_that);case HidlinsApiError_Internal() when internal != null:
 return internal(_that);case _:
@@ -95,7 +103,7 @@ return internal(_that);case _:
 /// }
 /// ```
 
-@optionalTypeArgs TResult map<TResult extends Object?>({required TResult Function( HidlinsApiError_AuthenticationFailed value)  authenticationFailed,required TResult Function( HidlinsApiError_VaultLocked value)  vaultLocked,required TResult Function( HidlinsApiError_VaultBusySyncing value)  vaultBusySyncing,required TResult Function( HidlinsApiError_VaultContended value)  vaultContended,required TResult Function( HidlinsApiError_PathExists value)  pathExists,required TResult Function( HidlinsApiError_FileNotFound value)  fileNotFound,required TResult Function( HidlinsApiError_KeyfileRequired value)  keyfileRequired,required TResult Function( HidlinsApiError_UnsupportedPlatform value)  unsupportedPlatform,required TResult Function( HidlinsApiError_RegistryChanged value)  registryChanged,required TResult Function( HidlinsApiError_InvalidFormat value)  invalidFormat,required TResult Function( HidlinsApiError_RegistryMalformed value)  registryMalformed,required TResult Function( HidlinsApiError_SyncNotConfigured value)  syncNotConfigured,required TResult Function( HidlinsApiError_SyncRemoteUnreachable value)  syncRemoteUnreachable,required TResult Function( HidlinsApiError_SyncAuthFailed value)  syncAuthFailed,required TResult Function( HidlinsApiError_SyncConflictUnresolvable value)  syncConflictUnresolvable,required TResult Function( HidlinsApiError_SyncDuplicateTarget value)  syncDuplicateTarget,required TResult Function( HidlinsApiError_InvalidInput value)  invalidInput,required TResult Function( HidlinsApiError_Io value)  io,required TResult Function( HidlinsApiError_Internal value)  internal,}){
+@optionalTypeArgs TResult map<TResult extends Object?>({required TResult Function( HidlinsApiError_AuthenticationFailed value)  authenticationFailed,required TResult Function( HidlinsApiError_VaultLocked value)  vaultLocked,required TResult Function( HidlinsApiError_VaultBusySyncing value)  vaultBusySyncing,required TResult Function( HidlinsApiError_VaultContended value)  vaultContended,required TResult Function( HidlinsApiError_PathExists value)  pathExists,required TResult Function( HidlinsApiError_FileNotFound value)  fileNotFound,required TResult Function( HidlinsApiError_KeyfileRequired value)  keyfileRequired,required TResult Function( HidlinsApiError_UnsupportedPlatform value)  unsupportedPlatform,required TResult Function( HidlinsApiError_RegistryChanged value)  registryChanged,required TResult Function( HidlinsApiError_InvalidFormat value)  invalidFormat,required TResult Function( HidlinsApiError_RegistryMalformed value)  registryMalformed,required TResult Function( HidlinsApiError_SyncNotConfigured value)  syncNotConfigured,required TResult Function( HidlinsApiError_LocalSyncConfiguration value)  localSyncConfiguration,required TResult Function( HidlinsApiError_SyncPermissionDenied value)  syncPermissionDenied,required TResult Function( HidlinsApiError_SyncNotFound value)  syncNotFound,required TResult Function( HidlinsApiError_SyncKeyMismatch value)  syncKeyMismatch,required TResult Function( HidlinsApiError_SyncRevoked value)  syncRevoked,required TResult Function( HidlinsApiError_SyncBusy value)  syncBusy,required TResult Function( HidlinsApiError_SyncConflict value)  syncConflict,required TResult Function( HidlinsApiError_SyncCanceled value)  syncCanceled,required TResult Function( HidlinsApiError_SyncOffline value)  syncOffline,required TResult Function( HidlinsApiError_SyncRemoteUnreachable value)  syncRemoteUnreachable,required TResult Function( HidlinsApiError_SyncAuthFailed value)  syncAuthFailed,required TResult Function( HidlinsApiError_SyncConflictUnresolvable value)  syncConflictUnresolvable,required TResult Function( HidlinsApiError_InvalidInput value)  invalidInput,required TResult Function( HidlinsApiError_Io value)  io,required TResult Function( HidlinsApiError_Internal value)  internal,}){
 final _that = this;
 switch (_that) {
 case HidlinsApiError_AuthenticationFailed():
@@ -110,11 +118,19 @@ return unsupportedPlatform(_that);case HidlinsApiError_RegistryChanged():
 return registryChanged(_that);case HidlinsApiError_InvalidFormat():
 return invalidFormat(_that);case HidlinsApiError_RegistryMalformed():
 return registryMalformed(_that);case HidlinsApiError_SyncNotConfigured():
-return syncNotConfigured(_that);case HidlinsApiError_SyncRemoteUnreachable():
+return syncNotConfigured(_that);case HidlinsApiError_LocalSyncConfiguration():
+return localSyncConfiguration(_that);case HidlinsApiError_SyncPermissionDenied():
+return syncPermissionDenied(_that);case HidlinsApiError_SyncNotFound():
+return syncNotFound(_that);case HidlinsApiError_SyncKeyMismatch():
+return syncKeyMismatch(_that);case HidlinsApiError_SyncRevoked():
+return syncRevoked(_that);case HidlinsApiError_SyncBusy():
+return syncBusy(_that);case HidlinsApiError_SyncConflict():
+return syncConflict(_that);case HidlinsApiError_SyncCanceled():
+return syncCanceled(_that);case HidlinsApiError_SyncOffline():
+return syncOffline(_that);case HidlinsApiError_SyncRemoteUnreachable():
 return syncRemoteUnreachable(_that);case HidlinsApiError_SyncAuthFailed():
 return syncAuthFailed(_that);case HidlinsApiError_SyncConflictUnresolvable():
-return syncConflictUnresolvable(_that);case HidlinsApiError_SyncDuplicateTarget():
-return syncDuplicateTarget(_that);case HidlinsApiError_InvalidInput():
+return syncConflictUnresolvable(_that);case HidlinsApiError_InvalidInput():
 return invalidInput(_that);case HidlinsApiError_Io():
 return io(_that);case HidlinsApiError_Internal():
 return internal(_that);}
@@ -131,7 +147,7 @@ return internal(_that);}
 /// }
 /// ```
 
-@optionalTypeArgs TResult? mapOrNull<TResult extends Object?>({TResult? Function( HidlinsApiError_AuthenticationFailed value)?  authenticationFailed,TResult? Function( HidlinsApiError_VaultLocked value)?  vaultLocked,TResult? Function( HidlinsApiError_VaultBusySyncing value)?  vaultBusySyncing,TResult? Function( HidlinsApiError_VaultContended value)?  vaultContended,TResult? Function( HidlinsApiError_PathExists value)?  pathExists,TResult? Function( HidlinsApiError_FileNotFound value)?  fileNotFound,TResult? Function( HidlinsApiError_KeyfileRequired value)?  keyfileRequired,TResult? Function( HidlinsApiError_UnsupportedPlatform value)?  unsupportedPlatform,TResult? Function( HidlinsApiError_RegistryChanged value)?  registryChanged,TResult? Function( HidlinsApiError_InvalidFormat value)?  invalidFormat,TResult? Function( HidlinsApiError_RegistryMalformed value)?  registryMalformed,TResult? Function( HidlinsApiError_SyncNotConfigured value)?  syncNotConfigured,TResult? Function( HidlinsApiError_SyncRemoteUnreachable value)?  syncRemoteUnreachable,TResult? Function( HidlinsApiError_SyncAuthFailed value)?  syncAuthFailed,TResult? Function( HidlinsApiError_SyncConflictUnresolvable value)?  syncConflictUnresolvable,TResult? Function( HidlinsApiError_SyncDuplicateTarget value)?  syncDuplicateTarget,TResult? Function( HidlinsApiError_InvalidInput value)?  invalidInput,TResult? Function( HidlinsApiError_Io value)?  io,TResult? Function( HidlinsApiError_Internal value)?  internal,}){
+@optionalTypeArgs TResult? mapOrNull<TResult extends Object?>({TResult? Function( HidlinsApiError_AuthenticationFailed value)?  authenticationFailed,TResult? Function( HidlinsApiError_VaultLocked value)?  vaultLocked,TResult? Function( HidlinsApiError_VaultBusySyncing value)?  vaultBusySyncing,TResult? Function( HidlinsApiError_VaultContended value)?  vaultContended,TResult? Function( HidlinsApiError_PathExists value)?  pathExists,TResult? Function( HidlinsApiError_FileNotFound value)?  fileNotFound,TResult? Function( HidlinsApiError_KeyfileRequired value)?  keyfileRequired,TResult? Function( HidlinsApiError_UnsupportedPlatform value)?  unsupportedPlatform,TResult? Function( HidlinsApiError_RegistryChanged value)?  registryChanged,TResult? Function( HidlinsApiError_InvalidFormat value)?  invalidFormat,TResult? Function( HidlinsApiError_RegistryMalformed value)?  registryMalformed,TResult? Function( HidlinsApiError_SyncNotConfigured value)?  syncNotConfigured,TResult? Function( HidlinsApiError_LocalSyncConfiguration value)?  localSyncConfiguration,TResult? Function( HidlinsApiError_SyncPermissionDenied value)?  syncPermissionDenied,TResult? Function( HidlinsApiError_SyncNotFound value)?  syncNotFound,TResult? Function( HidlinsApiError_SyncKeyMismatch value)?  syncKeyMismatch,TResult? Function( HidlinsApiError_SyncRevoked value)?  syncRevoked,TResult? Function( HidlinsApiError_SyncBusy value)?  syncBusy,TResult? Function( HidlinsApiError_SyncConflict value)?  syncConflict,TResult? Function( HidlinsApiError_SyncCanceled value)?  syncCanceled,TResult? Function( HidlinsApiError_SyncOffline value)?  syncOffline,TResult? Function( HidlinsApiError_SyncRemoteUnreachable value)?  syncRemoteUnreachable,TResult? Function( HidlinsApiError_SyncAuthFailed value)?  syncAuthFailed,TResult? Function( HidlinsApiError_SyncConflictUnresolvable value)?  syncConflictUnresolvable,TResult? Function( HidlinsApiError_InvalidInput value)?  invalidInput,TResult? Function( HidlinsApiError_Io value)?  io,TResult? Function( HidlinsApiError_Internal value)?  internal,}){
 final _that = this;
 switch (_that) {
 case HidlinsApiError_AuthenticationFailed() when authenticationFailed != null:
@@ -146,11 +162,19 @@ return unsupportedPlatform(_that);case HidlinsApiError_RegistryChanged() when re
 return registryChanged(_that);case HidlinsApiError_InvalidFormat() when invalidFormat != null:
 return invalidFormat(_that);case HidlinsApiError_RegistryMalformed() when registryMalformed != null:
 return registryMalformed(_that);case HidlinsApiError_SyncNotConfigured() when syncNotConfigured != null:
-return syncNotConfigured(_that);case HidlinsApiError_SyncRemoteUnreachable() when syncRemoteUnreachable != null:
+return syncNotConfigured(_that);case HidlinsApiError_LocalSyncConfiguration() when localSyncConfiguration != null:
+return localSyncConfiguration(_that);case HidlinsApiError_SyncPermissionDenied() when syncPermissionDenied != null:
+return syncPermissionDenied(_that);case HidlinsApiError_SyncNotFound() when syncNotFound != null:
+return syncNotFound(_that);case HidlinsApiError_SyncKeyMismatch() when syncKeyMismatch != null:
+return syncKeyMismatch(_that);case HidlinsApiError_SyncRevoked() when syncRevoked != null:
+return syncRevoked(_that);case HidlinsApiError_SyncBusy() when syncBusy != null:
+return syncBusy(_that);case HidlinsApiError_SyncConflict() when syncConflict != null:
+return syncConflict(_that);case HidlinsApiError_SyncCanceled() when syncCanceled != null:
+return syncCanceled(_that);case HidlinsApiError_SyncOffline() when syncOffline != null:
+return syncOffline(_that);case HidlinsApiError_SyncRemoteUnreachable() when syncRemoteUnreachable != null:
 return syncRemoteUnreachable(_that);case HidlinsApiError_SyncAuthFailed() when syncAuthFailed != null:
 return syncAuthFailed(_that);case HidlinsApiError_SyncConflictUnresolvable() when syncConflictUnresolvable != null:
-return syncConflictUnresolvable(_that);case HidlinsApiError_SyncDuplicateTarget() when syncDuplicateTarget != null:
-return syncDuplicateTarget(_that);case HidlinsApiError_InvalidInput() when invalidInput != null:
+return syncConflictUnresolvable(_that);case HidlinsApiError_InvalidInput() when invalidInput != null:
 return invalidInput(_that);case HidlinsApiError_Io() when io != null:
 return io(_that);case HidlinsApiError_Internal() when internal != null:
 return internal(_that);case _:
@@ -170,7 +194,7 @@ return internal(_that);case _:
 /// }
 /// ```
 
-@optionalTypeArgs TResult maybeWhen<TResult extends Object?>({TResult Function()?  authenticationFailed,TResult Function()?  vaultLocked,TResult Function()?  vaultBusySyncing,TResult Function( int? holderPid)?  vaultContended,TResult Function( String path)?  pathExists,TResult Function( String path)?  fileNotFound,TResult Function()?  keyfileRequired,TResult Function( String capability)?  unsupportedPlatform,TResult Function()?  registryChanged,TResult Function()?  invalidFormat,TResult Function()?  registryMalformed,TResult Function()?  syncNotConfigured,TResult Function( String? endpoint)?  syncRemoteUnreachable,TResult Function()?  syncAuthFailed,TResult Function( String backupPath)?  syncConflictUnresolvable,TResult Function( String existingVault)?  syncDuplicateTarget,TResult Function( String field,  String reason)?  invalidInput,TResult Function( String context)?  io,TResult Function( String context)?  internal,required TResult orElse(),}) {final _that = this;
+@optionalTypeArgs TResult maybeWhen<TResult extends Object?>({TResult Function()?  authenticationFailed,TResult Function()?  vaultLocked,TResult Function()?  vaultBusySyncing,TResult Function( int? holderPid)?  vaultContended,TResult Function( String path)?  pathExists,TResult Function( String path)?  fileNotFound,TResult Function()?  keyfileRequired,TResult Function( String capability)?  unsupportedPlatform,TResult Function()?  registryChanged,TResult Function()?  invalidFormat,TResult Function()?  registryMalformed,TResult Function()?  syncNotConfigured,TResult Function()?  localSyncConfiguration,TResult Function()?  syncPermissionDenied,TResult Function()?  syncNotFound,TResult Function()?  syncKeyMismatch,TResult Function()?  syncRevoked,TResult Function()?  syncBusy,TResult Function()?  syncConflict,TResult Function()?  syncCanceled,TResult Function()?  syncOffline,TResult Function( String? endpoint)?  syncRemoteUnreachable,TResult Function()?  syncAuthFailed,TResult Function( String backupPath)?  syncConflictUnresolvable,TResult Function( String field,  String reason)?  invalidInput,TResult Function( String context)?  io,TResult Function( String context)?  internal,required TResult orElse(),}) {final _that = this;
 switch (_that) {
 case HidlinsApiError_AuthenticationFailed() when authenticationFailed != null:
 return authenticationFailed();case HidlinsApiError_VaultLocked() when vaultLocked != null:
@@ -184,11 +208,19 @@ return unsupportedPlatform(_that.capability);case HidlinsApiError_RegistryChange
 return registryChanged();case HidlinsApiError_InvalidFormat() when invalidFormat != null:
 return invalidFormat();case HidlinsApiError_RegistryMalformed() when registryMalformed != null:
 return registryMalformed();case HidlinsApiError_SyncNotConfigured() when syncNotConfigured != null:
-return syncNotConfigured();case HidlinsApiError_SyncRemoteUnreachable() when syncRemoteUnreachable != null:
+return syncNotConfigured();case HidlinsApiError_LocalSyncConfiguration() when localSyncConfiguration != null:
+return localSyncConfiguration();case HidlinsApiError_SyncPermissionDenied() when syncPermissionDenied != null:
+return syncPermissionDenied();case HidlinsApiError_SyncNotFound() when syncNotFound != null:
+return syncNotFound();case HidlinsApiError_SyncKeyMismatch() when syncKeyMismatch != null:
+return syncKeyMismatch();case HidlinsApiError_SyncRevoked() when syncRevoked != null:
+return syncRevoked();case HidlinsApiError_SyncBusy() when syncBusy != null:
+return syncBusy();case HidlinsApiError_SyncConflict() when syncConflict != null:
+return syncConflict();case HidlinsApiError_SyncCanceled() when syncCanceled != null:
+return syncCanceled();case HidlinsApiError_SyncOffline() when syncOffline != null:
+return syncOffline();case HidlinsApiError_SyncRemoteUnreachable() when syncRemoteUnreachable != null:
 return syncRemoteUnreachable(_that.endpoint);case HidlinsApiError_SyncAuthFailed() when syncAuthFailed != null:
 return syncAuthFailed();case HidlinsApiError_SyncConflictUnresolvable() when syncConflictUnresolvable != null:
-return syncConflictUnresolvable(_that.backupPath);case HidlinsApiError_SyncDuplicateTarget() when syncDuplicateTarget != null:
-return syncDuplicateTarget(_that.existingVault);case HidlinsApiError_InvalidInput() when invalidInput != null:
+return syncConflictUnresolvable(_that.backupPath);case HidlinsApiError_InvalidInput() when invalidInput != null:
 return invalidInput(_that.field,_that.reason);case HidlinsApiError_Io() when io != null:
 return io(_that.context);case HidlinsApiError_Internal() when internal != null:
 return internal(_that.context);case _:
@@ -209,7 +241,7 @@ return internal(_that.context);case _:
 /// }
 /// ```
 
-@optionalTypeArgs TResult when<TResult extends Object?>({required TResult Function()  authenticationFailed,required TResult Function()  vaultLocked,required TResult Function()  vaultBusySyncing,required TResult Function( int? holderPid)  vaultContended,required TResult Function( String path)  pathExists,required TResult Function( String path)  fileNotFound,required TResult Function()  keyfileRequired,required TResult Function( String capability)  unsupportedPlatform,required TResult Function()  registryChanged,required TResult Function()  invalidFormat,required TResult Function()  registryMalformed,required TResult Function()  syncNotConfigured,required TResult Function( String? endpoint)  syncRemoteUnreachable,required TResult Function()  syncAuthFailed,required TResult Function( String backupPath)  syncConflictUnresolvable,required TResult Function( String existingVault)  syncDuplicateTarget,required TResult Function( String field,  String reason)  invalidInput,required TResult Function( String context)  io,required TResult Function( String context)  internal,}) {final _that = this;
+@optionalTypeArgs TResult when<TResult extends Object?>({required TResult Function()  authenticationFailed,required TResult Function()  vaultLocked,required TResult Function()  vaultBusySyncing,required TResult Function( int? holderPid)  vaultContended,required TResult Function( String path)  pathExists,required TResult Function( String path)  fileNotFound,required TResult Function()  keyfileRequired,required TResult Function( String capability)  unsupportedPlatform,required TResult Function()  registryChanged,required TResult Function()  invalidFormat,required TResult Function()  registryMalformed,required TResult Function()  syncNotConfigured,required TResult Function()  localSyncConfiguration,required TResult Function()  syncPermissionDenied,required TResult Function()  syncNotFound,required TResult Function()  syncKeyMismatch,required TResult Function()  syncRevoked,required TResult Function()  syncBusy,required TResult Function()  syncConflict,required TResult Function()  syncCanceled,required TResult Function()  syncOffline,required TResult Function( String? endpoint)  syncRemoteUnreachable,required TResult Function()  syncAuthFailed,required TResult Function( String backupPath)  syncConflictUnresolvable,required TResult Function( String field,  String reason)  invalidInput,required TResult Function( String context)  io,required TResult Function( String context)  internal,}) {final _that = this;
 switch (_that) {
 case HidlinsApiError_AuthenticationFailed():
 return authenticationFailed();case HidlinsApiError_VaultLocked():
@@ -223,11 +255,19 @@ return unsupportedPlatform(_that.capability);case HidlinsApiError_RegistryChange
 return registryChanged();case HidlinsApiError_InvalidFormat():
 return invalidFormat();case HidlinsApiError_RegistryMalformed():
 return registryMalformed();case HidlinsApiError_SyncNotConfigured():
-return syncNotConfigured();case HidlinsApiError_SyncRemoteUnreachable():
+return syncNotConfigured();case HidlinsApiError_LocalSyncConfiguration():
+return localSyncConfiguration();case HidlinsApiError_SyncPermissionDenied():
+return syncPermissionDenied();case HidlinsApiError_SyncNotFound():
+return syncNotFound();case HidlinsApiError_SyncKeyMismatch():
+return syncKeyMismatch();case HidlinsApiError_SyncRevoked():
+return syncRevoked();case HidlinsApiError_SyncBusy():
+return syncBusy();case HidlinsApiError_SyncConflict():
+return syncConflict();case HidlinsApiError_SyncCanceled():
+return syncCanceled();case HidlinsApiError_SyncOffline():
+return syncOffline();case HidlinsApiError_SyncRemoteUnreachable():
 return syncRemoteUnreachable(_that.endpoint);case HidlinsApiError_SyncAuthFailed():
 return syncAuthFailed();case HidlinsApiError_SyncConflictUnresolvable():
-return syncConflictUnresolvable(_that.backupPath);case HidlinsApiError_SyncDuplicateTarget():
-return syncDuplicateTarget(_that.existingVault);case HidlinsApiError_InvalidInput():
+return syncConflictUnresolvable(_that.backupPath);case HidlinsApiError_InvalidInput():
 return invalidInput(_that.field,_that.reason);case HidlinsApiError_Io():
 return io(_that.context);case HidlinsApiError_Internal():
 return internal(_that.context);}
@@ -244,7 +284,7 @@ return internal(_that.context);}
 /// }
 /// ```
 
-@optionalTypeArgs TResult? whenOrNull<TResult extends Object?>({TResult? Function()?  authenticationFailed,TResult? Function()?  vaultLocked,TResult? Function()?  vaultBusySyncing,TResult? Function( int? holderPid)?  vaultContended,TResult? Function( String path)?  pathExists,TResult? Function( String path)?  fileNotFound,TResult? Function()?  keyfileRequired,TResult? Function( String capability)?  unsupportedPlatform,TResult? Function()?  registryChanged,TResult? Function()?  invalidFormat,TResult? Function()?  registryMalformed,TResult? Function()?  syncNotConfigured,TResult? Function( String? endpoint)?  syncRemoteUnreachable,TResult? Function()?  syncAuthFailed,TResult? Function( String backupPath)?  syncConflictUnresolvable,TResult? Function( String existingVault)?  syncDuplicateTarget,TResult? Function( String field,  String reason)?  invalidInput,TResult? Function( String context)?  io,TResult? Function( String context)?  internal,}) {final _that = this;
+@optionalTypeArgs TResult? whenOrNull<TResult extends Object?>({TResult? Function()?  authenticationFailed,TResult? Function()?  vaultLocked,TResult? Function()?  vaultBusySyncing,TResult? Function( int? holderPid)?  vaultContended,TResult? Function( String path)?  pathExists,TResult? Function( String path)?  fileNotFound,TResult? Function()?  keyfileRequired,TResult? Function( String capability)?  unsupportedPlatform,TResult? Function()?  registryChanged,TResult? Function()?  invalidFormat,TResult? Function()?  registryMalformed,TResult? Function()?  syncNotConfigured,TResult? Function()?  localSyncConfiguration,TResult? Function()?  syncPermissionDenied,TResult? Function()?  syncNotFound,TResult? Function()?  syncKeyMismatch,TResult? Function()?  syncRevoked,TResult? Function()?  syncBusy,TResult? Function()?  syncConflict,TResult? Function()?  syncCanceled,TResult? Function()?  syncOffline,TResult? Function( String? endpoint)?  syncRemoteUnreachable,TResult? Function()?  syncAuthFailed,TResult? Function( String backupPath)?  syncConflictUnresolvable,TResult? Function( String field,  String reason)?  invalidInput,TResult? Function( String context)?  io,TResult? Function( String context)?  internal,}) {final _that = this;
 switch (_that) {
 case HidlinsApiError_AuthenticationFailed() when authenticationFailed != null:
 return authenticationFailed();case HidlinsApiError_VaultLocked() when vaultLocked != null:
@@ -258,11 +298,19 @@ return unsupportedPlatform(_that.capability);case HidlinsApiError_RegistryChange
 return registryChanged();case HidlinsApiError_InvalidFormat() when invalidFormat != null:
 return invalidFormat();case HidlinsApiError_RegistryMalformed() when registryMalformed != null:
 return registryMalformed();case HidlinsApiError_SyncNotConfigured() when syncNotConfigured != null:
-return syncNotConfigured();case HidlinsApiError_SyncRemoteUnreachable() when syncRemoteUnreachable != null:
+return syncNotConfigured();case HidlinsApiError_LocalSyncConfiguration() when localSyncConfiguration != null:
+return localSyncConfiguration();case HidlinsApiError_SyncPermissionDenied() when syncPermissionDenied != null:
+return syncPermissionDenied();case HidlinsApiError_SyncNotFound() when syncNotFound != null:
+return syncNotFound();case HidlinsApiError_SyncKeyMismatch() when syncKeyMismatch != null:
+return syncKeyMismatch();case HidlinsApiError_SyncRevoked() when syncRevoked != null:
+return syncRevoked();case HidlinsApiError_SyncBusy() when syncBusy != null:
+return syncBusy();case HidlinsApiError_SyncConflict() when syncConflict != null:
+return syncConflict();case HidlinsApiError_SyncCanceled() when syncCanceled != null:
+return syncCanceled();case HidlinsApiError_SyncOffline() when syncOffline != null:
+return syncOffline();case HidlinsApiError_SyncRemoteUnreachable() when syncRemoteUnreachable != null:
 return syncRemoteUnreachable(_that.endpoint);case HidlinsApiError_SyncAuthFailed() when syncAuthFailed != null:
 return syncAuthFailed();case HidlinsApiError_SyncConflictUnresolvable() when syncConflictUnresolvable != null:
-return syncConflictUnresolvable(_that.backupPath);case HidlinsApiError_SyncDuplicateTarget() when syncDuplicateTarget != null:
-return syncDuplicateTarget(_that.existingVault);case HidlinsApiError_InvalidInput() when invalidInput != null:
+return syncConflictUnresolvable(_that.backupPath);case HidlinsApiError_InvalidInput() when invalidInput != null:
 return invalidInput(_that.field,_that.reason);case HidlinsApiError_Io() when io != null:
 return io(_that.context);case HidlinsApiError_Internal() when internal != null:
 return internal(_that.context);case _:
@@ -310,7 +358,7 @@ String toString() {
 
 class HidlinsApiError_VaultLocked extends HidlinsApiError {
   const HidlinsApiError_VaultLocked(): super._();
-  
+
 
 
 
@@ -342,7 +390,7 @@ String toString() {
 
 class HidlinsApiError_VaultBusySyncing extends HidlinsApiError {
   const HidlinsApiError_VaultBusySyncing(): super._();
-  
+
 
 
 
@@ -374,7 +422,7 @@ String toString() {
 
 class HidlinsApiError_VaultContended extends HidlinsApiError {
   const HidlinsApiError_VaultContended({this.holderPid}): super._();
-  
+
 
  final  int? holderPid;
 
@@ -440,7 +488,7 @@ as int?,
 
 class HidlinsApiError_PathExists extends HidlinsApiError {
   const HidlinsApiError_PathExists({required this.path}): super._();
-  
+
 
  final  String path;
 
@@ -506,7 +554,7 @@ as String,
 
 class HidlinsApiError_FileNotFound extends HidlinsApiError {
   const HidlinsApiError_FileNotFound({required this.path}): super._();
-  
+
 
  final  String path;
 
@@ -572,7 +620,7 @@ as String,
 
 class HidlinsApiError_KeyfileRequired extends HidlinsApiError {
   const HidlinsApiError_KeyfileRequired(): super._();
-  
+
 
 
 
@@ -670,7 +718,7 @@ as String,
 
 class HidlinsApiError_RegistryChanged extends HidlinsApiError {
   const HidlinsApiError_RegistryChanged(): super._();
-  
+
 
 
 
@@ -702,7 +750,7 @@ String toString() {
 
 class HidlinsApiError_InvalidFormat extends HidlinsApiError {
   const HidlinsApiError_InvalidFormat(): super._();
-  
+
 
 
 
@@ -734,7 +782,7 @@ String toString() {
 
 class HidlinsApiError_RegistryMalformed extends HidlinsApiError {
   const HidlinsApiError_RegistryMalformed(): super._();
-  
+
 
 
 
@@ -766,7 +814,7 @@ String toString() {
 
 class HidlinsApiError_SyncNotConfigured extends HidlinsApiError {
   const HidlinsApiError_SyncNotConfigured(): super._();
-  
+
 
 
 
@@ -796,9 +844,297 @@ String toString() {
 /// @nodoc
 
 
+class HidlinsApiError_LocalSyncConfiguration extends HidlinsApiError {
+  const HidlinsApiError_LocalSyncConfiguration(): super._();
+
+
+
+
+
+
+
+@override
+bool operator ==(Object other) {
+  return identical(this, other) || (other.runtimeType == runtimeType&&other is HidlinsApiError_LocalSyncConfiguration);
+}
+
+
+@override
+int get hashCode => runtimeType.hashCode;
+
+@override
+String toString() {
+  return 'HidlinsApiError.localSyncConfiguration()';
+}
+
+
+}
+
+
+
+
+/// @nodoc
+
+
+class HidlinsApiError_SyncPermissionDenied extends HidlinsApiError {
+  const HidlinsApiError_SyncPermissionDenied(): super._();
+
+
+
+
+
+
+
+@override
+bool operator ==(Object other) {
+  return identical(this, other) || (other.runtimeType == runtimeType&&other is HidlinsApiError_SyncPermissionDenied);
+}
+
+
+@override
+int get hashCode => runtimeType.hashCode;
+
+@override
+String toString() {
+  return 'HidlinsApiError.syncPermissionDenied()';
+}
+
+
+}
+
+
+
+
+/// @nodoc
+
+
+class HidlinsApiError_SyncNotFound extends HidlinsApiError {
+  const HidlinsApiError_SyncNotFound(): super._();
+
+
+
+
+
+
+
+@override
+bool operator ==(Object other) {
+  return identical(this, other) || (other.runtimeType == runtimeType&&other is HidlinsApiError_SyncNotFound);
+}
+
+
+@override
+int get hashCode => runtimeType.hashCode;
+
+@override
+String toString() {
+  return 'HidlinsApiError.syncNotFound()';
+}
+
+
+}
+
+
+
+
+/// @nodoc
+
+
+class HidlinsApiError_SyncKeyMismatch extends HidlinsApiError {
+  const HidlinsApiError_SyncKeyMismatch(): super._();
+
+
+
+
+
+
+
+@override
+bool operator ==(Object other) {
+  return identical(this, other) || (other.runtimeType == runtimeType&&other is HidlinsApiError_SyncKeyMismatch);
+}
+
+
+@override
+int get hashCode => runtimeType.hashCode;
+
+@override
+String toString() {
+  return 'HidlinsApiError.syncKeyMismatch()';
+}
+
+
+}
+
+
+
+
+/// @nodoc
+
+
+class HidlinsApiError_SyncRevoked extends HidlinsApiError {
+  const HidlinsApiError_SyncRevoked(): super._();
+
+
+
+
+
+
+
+@override
+bool operator ==(Object other) {
+  return identical(this, other) || (other.runtimeType == runtimeType&&other is HidlinsApiError_SyncRevoked);
+}
+
+
+@override
+int get hashCode => runtimeType.hashCode;
+
+@override
+String toString() {
+  return 'HidlinsApiError.syncRevoked()';
+}
+
+
+}
+
+
+
+
+/// @nodoc
+
+
+class HidlinsApiError_SyncBusy extends HidlinsApiError {
+  const HidlinsApiError_SyncBusy(): super._();
+
+
+
+
+
+
+
+@override
+bool operator ==(Object other) {
+  return identical(this, other) || (other.runtimeType == runtimeType&&other is HidlinsApiError_SyncBusy);
+}
+
+
+@override
+int get hashCode => runtimeType.hashCode;
+
+@override
+String toString() {
+  return 'HidlinsApiError.syncBusy()';
+}
+
+
+}
+
+
+
+
+/// @nodoc
+
+
+class HidlinsApiError_SyncConflict extends HidlinsApiError {
+  const HidlinsApiError_SyncConflict(): super._();
+
+
+
+
+
+
+
+@override
+bool operator ==(Object other) {
+  return identical(this, other) || (other.runtimeType == runtimeType&&other is HidlinsApiError_SyncConflict);
+}
+
+
+@override
+int get hashCode => runtimeType.hashCode;
+
+@override
+String toString() {
+  return 'HidlinsApiError.syncConflict()';
+}
+
+
+}
+
+
+
+
+/// @nodoc
+
+
+class HidlinsApiError_SyncCanceled extends HidlinsApiError {
+  const HidlinsApiError_SyncCanceled(): super._();
+
+
+
+
+
+
+
+@override
+bool operator ==(Object other) {
+  return identical(this, other) || (other.runtimeType == runtimeType&&other is HidlinsApiError_SyncCanceled);
+}
+
+
+@override
+int get hashCode => runtimeType.hashCode;
+
+@override
+String toString() {
+  return 'HidlinsApiError.syncCanceled()';
+}
+
+
+}
+
+
+
+
+/// @nodoc
+
+
+class HidlinsApiError_SyncOffline extends HidlinsApiError {
+  const HidlinsApiError_SyncOffline(): super._();
+
+
+
+
+
+
+
+@override
+bool operator ==(Object other) {
+  return identical(this, other) || (other.runtimeType == runtimeType&&other is HidlinsApiError_SyncOffline);
+}
+
+
+@override
+int get hashCode => runtimeType.hashCode;
+
+@override
+String toString() {
+  return 'HidlinsApiError.syncOffline()';
+}
+
+
+}
+
+
+
+
+/// @nodoc
+
+
 class HidlinsApiError_SyncRemoteUnreachable extends HidlinsApiError {
   const HidlinsApiError_SyncRemoteUnreachable({this.endpoint}): super._();
-  
+
 
  final  String? endpoint;
 
@@ -864,7 +1200,7 @@ as String?,
 
 class HidlinsApiError_SyncAuthFailed extends HidlinsApiError {
   const HidlinsApiError_SyncAuthFailed(): super._();
-  
+
 
 
 
@@ -896,7 +1232,7 @@ String toString() {
 
 class HidlinsApiError_SyncConflictUnresolvable extends HidlinsApiError {
   const HidlinsApiError_SyncConflictUnresolvable({required this.backupPath}): super._();
-  
+
 
  final  String backupPath;
 
@@ -960,75 +1296,9 @@ as String,
 /// @nodoc
 
 
-class HidlinsApiError_SyncDuplicateTarget extends HidlinsApiError {
-  const HidlinsApiError_SyncDuplicateTarget({required this.existingVault}): super._();
-  
-
- final  String existingVault;
-
-/// Create a copy of HidlinsApiError
-/// with the given fields replaced by the non-null parameter values.
-@JsonKey(includeFromJson: false, includeToJson: false)
-@pragma('vm:prefer-inline')
-$HidlinsApiError_SyncDuplicateTargetCopyWith<HidlinsApiError_SyncDuplicateTarget> get copyWith => _$HidlinsApiError_SyncDuplicateTargetCopyWithImpl<HidlinsApiError_SyncDuplicateTarget>(this, _$identity);
-
-
-
-@override
-bool operator ==(Object other) {
-  return identical(this, other) || (other.runtimeType == runtimeType&&other is HidlinsApiError_SyncDuplicateTarget&&(identical(other.existingVault, existingVault) || other.existingVault == existingVault));
-}
-
-
-@override
-int get hashCode => Object.hash(runtimeType,existingVault);
-
-@override
-String toString() {
-  return 'HidlinsApiError.syncDuplicateTarget(existingVault: $existingVault)';
-}
-
-
-}
-
-/// @nodoc
-abstract mixin class $HidlinsApiError_SyncDuplicateTargetCopyWith<$Res> implements $HidlinsApiErrorCopyWith<$Res> {
-  factory $HidlinsApiError_SyncDuplicateTargetCopyWith(HidlinsApiError_SyncDuplicateTarget value, $Res Function(HidlinsApiError_SyncDuplicateTarget) _then) = _$HidlinsApiError_SyncDuplicateTargetCopyWithImpl;
-@useResult
-$Res call({
- String existingVault
-});
-
-
-
-
-}
-/// @nodoc
-class _$HidlinsApiError_SyncDuplicateTargetCopyWithImpl<$Res>
-    implements $HidlinsApiError_SyncDuplicateTargetCopyWith<$Res> {
-  _$HidlinsApiError_SyncDuplicateTargetCopyWithImpl(this._self, this._then);
-
-  final HidlinsApiError_SyncDuplicateTarget _self;
-  final $Res Function(HidlinsApiError_SyncDuplicateTarget) _then;
-
-/// Create a copy of HidlinsApiError
-/// with the given fields replaced by the non-null parameter values.
-@pragma('vm:prefer-inline') $Res call({Object? existingVault = null,}) {
-  return _then(HidlinsApiError_SyncDuplicateTarget(
-existingVault: null == existingVault ? _self.existingVault : existingVault // ignore: cast_nullable_to_non_nullable
-as String,
-  ));
-}
-
-
-}
-
-/// @nodoc
-
-
 class HidlinsApiError_InvalidInput extends HidlinsApiError {
   const HidlinsApiError_InvalidInput({required this.field, required this.reason}): super._();
-  
+
 
  final  String field;
  final  String reason;
@@ -1096,7 +1366,7 @@ as String,
 
 class HidlinsApiError_Io extends HidlinsApiError {
   const HidlinsApiError_Io({required this.context}): super._();
-  
+
 
  final  String context;
 
@@ -1162,7 +1432,7 @@ as String,
 
 class HidlinsApiError_Internal extends HidlinsApiError {
   const HidlinsApiError_Internal({required this.context}): super._();
-  
+
 
  final  String context;
 

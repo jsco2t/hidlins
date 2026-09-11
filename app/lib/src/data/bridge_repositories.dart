@@ -4,6 +4,7 @@ import '../bridge/api/session.dart' as bridge_api;
 import '../bridge/dto.dart' as bridge;
 import '../bridge/error.dart';
 import '../platform/platform_result.dart';
+import '../platform/local_discovery.dart';
 import '../platform/secure_clipboard.dart';
 import 'failures.dart';
 import 'models.dart';
@@ -121,18 +122,6 @@ bridge.CopyField _copyField(CopyField value) {
   };
 }
 
-bridge.S3ConfigDto _s3Config(S3ConfigDto value) {
-  return bridge.S3ConfigDto(
-    bucket: value.bucket,
-    key: value.key,
-    region: value.region,
-    endpoint: value.endpoint,
-    pathStyle: value.pathStyle,
-    accessKeyId: value.accessKeyId,
-    secretAccessKey: value.secretAccessKey,
-  );
-}
-
 final class BridgeSessionRepository implements SessionRepository {
   const BridgeSessionRepository(this._session);
 
@@ -233,24 +222,6 @@ final class BridgeSessionRepository implements SessionRepository {
         newPassword: newPassword,
       ),
     );
-  }
-
-  @override
-  Future<VaultSummary> bootstrapFromRemote({
-    required String name,
-    required S3ConfigDto config,
-    required String masterPassword,
-    KeyfileRef? keyfile,
-  }) async {
-    final value = await _bridgeFuture(
-      () => _session.bootstrapVaultFromRemote(
-        name: name,
-        cfg: _s3Config(config),
-        masterPassword: masterPassword,
-        keyfile: keyfile,
-      ),
-    );
-    return _vaultSummary(value);
   }
 }
 
@@ -556,9 +527,15 @@ final class BridgeGeneratorRepository implements GeneratorRepository {
 }
 
 final class BridgeSyncRepository implements SyncRepository {
-  const BridgeSyncRepository(this._session);
+  const BridgeSyncRepository(
+    this._session, {
+    this.nativeDiscovery,
+    this.useNativeDiscovery = false,
+  });
 
   final bridge_api.AppSession _session;
+  final LocalDiscoveryCapability? nativeDiscovery;
+  final bool useNativeDiscovery;
 
   @override
   Future<SyncStatusDto> syncStatus() async {
@@ -567,6 +544,16 @@ final class BridgeSyncRepository implements SyncRepository {
       configured: value.configured,
       inFlight: value.inFlight,
       lastOutcome: _syncOutcome(value.lastOutcome),
+      role: switch (value.role) {
+        bridge.LocalSyncRoleDto.server => LocalSyncRole.server,
+        bridge.LocalSyncRoleDto.client => LocalSyncRole.client,
+        null => null,
+      },
+      paired: value.paired,
+      activePeerCount: value.activePeerCount.toInt(),
+      serverEnabled: value.serverEnabled,
+      serverRunning: value.serverRunning,
+      pairingOpen: value.pairingOpen,
     );
   }
 
@@ -582,8 +569,180 @@ final class BridgeSyncRepository implements SyncRepository {
   }
 
   @override
-  Future<void> configureSync(S3ConfigDto config) {
-    return _bridgeFuture(() => _session.configureSync(cfg: _s3Config(config)));
+  Future<void> configureLocalSync(LocalSyncRole role) {
+    return _bridgeFuture(
+      () => _session.configureLocalSync(
+        role: role == LocalSyncRole.server
+            ? bridge.LocalSyncRoleDto.server
+            : bridge.LocalSyncRoleDto.client,
+      ),
+    );
+  }
+
+  @override
+  Future<LocalDiscoveryStatus> discover(DiscoveryKind kind) async {
+    if (useNativeDiscovery) {
+      final result =
+          await (nativeDiscovery ?? const MethodChannelLocalDiscovery())
+              .discover(kind);
+      final status = switch (result) {
+        PlatformSuccess<LocalDiscoveryStatus>(:final value) => value,
+        PlatformDenied<LocalDiscoveryStatus>() => const LocalDiscoveryStatus(
+          permission: LocalDiscoveryPermission.denied,
+        ),
+        PlatformUnsupported<LocalDiscoveryStatus>() =>
+          const LocalDiscoveryStatus(
+            permission: LocalDiscoveryPermission.unavailable,
+          ),
+        PlatformCanceled<LocalDiscoveryStatus>() ||
+        PlatformStale<LocalDiscoveryStatus>() ||
+        PlatformFailure<LocalDiscoveryStatus>() => const LocalDiscoveryStatus(
+          permission: LocalDiscoveryPermission.restricted,
+        ),
+      };
+      await _bridgeFuture(
+        () => _session.setDiscoveryCandidates(
+          permission: _permissionToBridge(status.permission),
+          candidates: status.candidates.map(_endpointToBridge).toList(),
+        ),
+      );
+      return status;
+    }
+    final value = await _bridgeFuture(_session.pollLocalDiscovery);
+    return _discoveryStatus(value);
+  }
+
+  @override
+  Future<void> openDiscoverySettings() async {
+    final result =
+        await (nativeDiscovery ?? const MethodChannelLocalDiscovery())
+            .openSettings();
+    if (result is! PlatformSuccess<PlatformUnit>) {
+      throw const PlatformOperationFailure(
+        capability: 'local discovery settings',
+        state: 'unavailable',
+      );
+    }
+  }
+
+  @override
+  Future<void> stopDiscovery() async {
+    if (!useNativeDiscovery) return;
+    await (nativeDiscovery ?? const MethodChannelLocalDiscovery()).stop();
+  }
+
+  @override
+  Future<void> setManualEndpoint(LocalEndpoint endpoint) async {
+    await _bridgeFuture(
+      () => _session.setDiscoveryCandidates(
+        permission: bridge.DiscoveryPermissionDto.granted,
+        candidates: [_endpointToBridge(endpoint)],
+      ),
+    );
+  }
+
+  @override
+  Future<PairingPrompt> beginPairing() async {
+    final value = await _bridgeFuture(_session.beginPairing);
+    return PairingPrompt(
+      transactionHandle: value.transactionHandle,
+      sas: value.sas,
+    );
+  }
+
+  @override
+  Future<PairingPrompt> beginPairImport({
+    required String name,
+    required String masterPassword,
+    KeyfileRef? keyfile,
+  }) async {
+    final discovery = await _bridgeFuture(_session.localDiscoveryStatus);
+    final value = await _bridgeFuture(
+      () => _session.beginPairImport(
+        name: name,
+        masterPassword: masterPassword,
+        keyfile: keyfile,
+        candidates: discovery.candidates,
+      ),
+    );
+    return PairingPrompt(
+      transactionHandle: value.transactionHandle,
+      sas: value.sas,
+    );
+  }
+
+  @override
+  Future<VaultSummary?> confirmPairing({
+    required String transactionHandle,
+    required bool accepted,
+    required String peerDisplayName,
+  }) async {
+    final value = await _bridgeFuture(
+      () => _session.confirmPairing(
+        transactionHandle: transactionHandle,
+        accepted: accepted,
+        peerDisplayName: peerDisplayName,
+      ),
+    );
+    return value == null ? null : _vaultSummary(value);
+  }
+
+  @override
+  Future<List<SyncPeer>> listPeers() async {
+    final values = await _bridgeFuture(_session.listSyncPeers);
+    return [
+      for (final value in values)
+        SyncPeer(
+          peerId: value.peerId,
+          displayName: value.displayName,
+          revoked: value.revoked,
+        ),
+    ];
+  }
+
+  @override
+  Future<void> renamePeer(String peerId, String displayName) => _bridgeFuture(
+    () => _session.renameSyncPeer(peerId: peerId, displayName: displayName),
+  );
+
+  @override
+  Future<void> revokePeer(String peerId) =>
+      _bridgeFuture(() => _session.revokeSyncPeer(peerId: peerId));
+
+  @override
+  Future<List<LocalEndpoint>> serverEndpoints() async {
+    final values = await _bridgeFuture(_session.localServerEndpoints);
+    return values.map(_endpointFromBridge).toList();
+  }
+
+  @override
+  Future<LocalEndpoint> startServer(LocalEndpoint endpoint) async {
+    final value = await _bridgeFuture(
+      () => _session.startSyncServer(endpoint: _endpointToBridge(endpoint)),
+    );
+    return _endpointFromBridge(value);
+  }
+
+  @override
+  Future<void> stopServer() => _bridgeFuture(_session.stopSyncServer);
+
+  @override
+  Future<void> openPairingWindow() => _bridgeFuture(_session.openPairingWindow);
+
+  @override
+  Future<void> closePairingWindow() =>
+      _bridgeFuture(_session.closePairingWindow);
+
+  @override
+  Future<void> cancelSync() => _bridgeFuture(_session.cancelSync);
+
+  @override
+  Future<void> startStartupSync() async {
+    try {
+      await discover(DiscoveryKind.trusted);
+    } finally {
+      await _bridgeFuture(_session.startStartupSync);
+    }
   }
 
   @override
@@ -599,6 +758,49 @@ final class BridgeSyncRepository implements SyncRepository {
   @override
   Stream<SyncEvent> syncEvents() => _bridgeStream(_session.syncEvents);
 }
+
+LocalEndpoint _endpointFromBridge(bridge.LocalEndpointDto value) =>
+    LocalEndpoint(
+      address: value.address,
+      port: value.port,
+      scopeId: value.scopeId,
+    );
+
+bridge.LocalEndpointDto _endpointToBridge(LocalEndpoint value) =>
+    bridge.LocalEndpointDto(
+      address: value.address,
+      port: value.port,
+      scopeId: value.scopeId,
+    );
+
+LocalDiscoveryStatus _discoveryStatus(bridge.DiscoveryStatusDto value) =>
+    LocalDiscoveryStatus(
+      permission: switch (value.permission) {
+        bridge.DiscoveryPermissionDto.notDetermined =>
+          LocalDiscoveryPermission.notDetermined,
+        bridge.DiscoveryPermissionDto.granted =>
+          LocalDiscoveryPermission.granted,
+        bridge.DiscoveryPermissionDto.denied => LocalDiscoveryPermission.denied,
+        bridge.DiscoveryPermissionDto.restricted =>
+          LocalDiscoveryPermission.restricted,
+        bridge.DiscoveryPermissionDto.unavailable =>
+          LocalDiscoveryPermission.unavailable,
+      },
+      candidates: value.candidates.map(_endpointFromBridge).toList(),
+    );
+
+bridge.DiscoveryPermissionDto _permissionToBridge(
+  LocalDiscoveryPermission value,
+) => switch (value) {
+  LocalDiscoveryPermission.notDetermined =>
+    bridge.DiscoveryPermissionDto.notDetermined,
+  LocalDiscoveryPermission.granted => bridge.DiscoveryPermissionDto.granted,
+  LocalDiscoveryPermission.denied => bridge.DiscoveryPermissionDto.denied,
+  LocalDiscoveryPermission.restricted =>
+    bridge.DiscoveryPermissionDto.restricted,
+  LocalDiscoveryPermission.unavailable =>
+    bridge.DiscoveryPermissionDto.unavailable,
+};
 
 final class BridgePrefsRepository implements PrefsRepository {
   const BridgePrefsRepository(this._session);

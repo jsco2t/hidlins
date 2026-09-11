@@ -48,6 +48,14 @@
       "methods": ["chooseDestination"],
       "policy_owner": "rust",
       "mechanism_owner": "native"
+    },
+    {
+      "name": "local_discovery",
+      "file": "local_discovery.dart",
+      "channel": "app.hidlins/local_discovery",
+      "methods": ["permissionStatus", "discover", "openSettings", "stop"],
+      "policy_owner": "rust",
+      "mechanism_owner": "native"
     }
   ]
 }

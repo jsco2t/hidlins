@@ -10,6 +10,9 @@ members = [
     "crates/hidlins-tui",
     "crates/hidlins-agent",
 ]
+# Security fuzzing deliberately has its own lockfile and license policy.  It is
+# never part of the production dependency graph or any application build.
+exclude = ["fuzz"]
 
 [workspace.package]
 version = "0.1.0"

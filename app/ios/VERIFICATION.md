@@ -1,8 +1,11 @@
-# iOS simulator verification
+# iOS verification
 
-Physical hardware is not required. The acceptance baseline is the repository's
-automated simulator, native-hosted, widget, real-bridge, network, and artifact
-inspection targets.
+The repository's automated simulator, native-hosted, widget, real-bridge,
+network, artifact-inspection, and real simulator/CLI scenario targets are the
+release authority. Physical-device permission presentation, representative
+router behavior, human SAS perception, and VoiceOver speech are optional,
+non-blocking confidence observations documented in
+[`../../docs/local-network-sync-manual-verification.md`](../../docs/local-network-sync-manual-verification.md).
 
 ## Automated targets
 
@@ -14,56 +17,31 @@ inspection targets.
   Components if the harness reports that only one is available.
 - `make app-test-ios-simulator` runs native XCTest coverage for clipboard,
   snapshot shielding, storage/import, lifecycle acknowledgement, platform error
-  redaction, bridge loading, resources, and the privacy manifest.
-- `make app-test-ios-simulator-minio` creates an isolated bucket and runs the
-  two-session real-bridge suite against managed MinIO. It covers bootstrap and
-  rollback, offline edits, network failure/retry, merge, same-field loser history,
-  same-second conflict backup/recovery, password rotation, and suspend/resume/
-  detach locking.
+  redaction, local discovery bounds, bridge loading, resources, and the privacy
+  manifest.
+- `make app-test-integration` runs a two-session real-bridge local-network
+  journey covering server start, SAS pairing, paired-vault import, startup and
+  manual sync, DHCP candidate replacement, peer rename/revocation, and shutdown.
 - `make app-build-ios` builds and inspects simulator-debug and unsigned
   device-release artifacts, including identifiers, OS floor, icons, privacy,
   telemetry-framework absence, and Rust bridge symbols.
+- `make test-local-sync-mobile-scenarios-ios` runs the expensive iPhone/iPad
+  application scenarios against a separate release-mode CLI authority and
+  records redacted per-device evidence under
+  `build/verification/mobile-local-sync/`.
 
-## Optional credentialed S3-compatible service
+## Optional manual observations
 
-This live-service run is not an acceptance gate. Revision 5 records it as
-`SKIPPED — user decision / credentials not supplied`. Managed MinIO plus the
-transport/state-machine suites are the executed sync baseline. The target remains
-available as a later confidence run without changing that recorded result.
+Physical iOS local-network permission presentation/recovery, foreground-only
+OS scheduling, human SAS comparison, representative-router discovery/DHCP
+churn, and VoiceOver speech may be observed on physical hardware, but do not
+block acceptance. Programmatic foreground cancellation/resume, pairing,
+discovery, restart, revocation, and client-only behavior are covered by the
+automated simulator and process scenarios.
 
-Create a JSON file outside the repository with exactly these keys:
-
-```json
-{
-  "endpoint": "https://s3.example.invalid",
-  "bucket": "hidlins-test-bucket",
-  "region": "us-east-1",
-  "path_style": false,
-  "access_key_id": "REDACTED",
-  "secret_access_key": "REDACTED"
-}
-```
-
-Protect it with `chmod 600`, then run:
-
-```sh
-HIDLINS_IOS_S3_CONFIG=/absolute/path/to/config.json make app-test-ios-simulator-s3
-```
-
-The environment contains only the non-secret path. The harness validates the
-file permissions, creates a protected temporary define file, never prints the
-values, uses a unique object key, directs Flutter into an isolated build
-directory, and removes both that directory and the installed test app on exit.
-The configured account must be restricted to a disposable test bucket.
-
-## User-skipped residual observations
-
-Manual iOS validation is not required for this work package. The following
-residuals are recorded as `SKIPPED — user decision` and must not be represented
-as passing:
-
-- VoiceOver's exact spoken output and gesture traversal.
-- The OS shell's final launcher masking and app-switcher compositing.
+The OS shell's final launcher masking and app-switcher compositing remains a
+separate optional visual confidence observation; it does not replace the
+required sync lifecycle and accessibility cases.
 
 Automated acceptance instead requires semantics, focus order, labels/roles/state,
 secret concealment, scaling, touch-target guidelines, keyboard traversal, brand
@@ -71,10 +49,9 @@ hash/dimension/opacity/safe-zone checks, compiled resource inspection, controlle
 captures, lifecycle tests, and proof that the opaque snapshot cover is installed
 before backgrounding.
 
-The commands and procedures below remain optional future confidence checks only.
-If someone chooses to run them later, record simulator name, iOS runtime, Git
-revision, Flutter version, expected result, and a redacted observation; they do
-not alter this package's recorded skip without a new acceptance decision.
+The simulator procedures below remain useful for optional visual observation.
+The automated local-sync scenario procedure, including exact simulator startup
+commands, is in the shared guide.
 
 Build, install, and launch the inspected simulator artifact before either
 observation:
@@ -86,7 +63,7 @@ make app-prepare-ios-observation
 The target prints the selected simulator name, runtime, and UDID for the
 evidence record.
 
-### Optional VoiceOver spoken navigation
+### Simulator VoiceOver precursor
 
 1. With the installed build open, enable VoiceOver in Settings >
    Accessibility > VoiceOver.

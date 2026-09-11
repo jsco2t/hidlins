@@ -1,3 +1,5 @@
+import 'dart:async';
+
 import 'package:material_ui/material_ui.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 
@@ -68,6 +70,11 @@ class _UnlockScreenState extends ConsumerState<UnlockScreen> {
       final repo = ref.read(sessionRepositoryProvider);
       await repo.unlock(_selectedVault!, password, keyfile: keyfile);
       _passwordController.clear();
+      // Local use is available as soon as unlock returns. Discovery and the
+      // once-per-process automatic attempt continue independently; offline or
+      // permission failures are delivered through the sync event stream and
+      // never turn a valid unlock into an error.
+      unawaited(_startStartupSync());
     } on AppFailure catch (e) {
       if (!mounted) return;
       setState(() {
@@ -92,6 +99,16 @@ class _UnlockScreenState extends ConsumerState<UnlockScreen> {
       if (reference != null) {
         await ref.read(keyfileAccessCapabilityProvider).release(reference);
       }
+    }
+  }
+
+  Future<void> _startStartupSync() async {
+    try {
+      await ref.read(syncRepositoryProvider).startStartupSync();
+    } on Object {
+      // Rust emits the terminal, secret-free automatic-sync failure whenever
+      // the attempt can be scheduled. A concurrent lock/pause can invalidate
+      // this UI-owned continuation and is intentionally nonfatal to unlock.
     }
   }
 

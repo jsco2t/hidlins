@@ -23,20 +23,26 @@ name = "hidlins_cli"
 path = "src/lib.rs"
 
 [features]
+default = ["desktop"]
+
+# Normal distributed CLI behavior. Keeping desktop discovery and clipboard
+# support behind one default feature lets the Android scenario build exercise
+# the real CLI dispatcher without linking desktop-only clipboard code.
+desktop = ["hidlins-security/desktop", "hidlins-sync/desktop-discovery"]
+
+# Test-only: cross-build the actual CLI authority for an Android emulator.
+# This is never enabled by release or Flutter builds and deliberately omits
+# clipboard support. The sync feature lets the complete CLI dispatcher
+# type-check; the authority runtime does not start a Rust advertiser.
+android-scenario-authority = ["hidlins-sync/android-scenario-authority"]
+
 # Test-only gate for the `entry get --copy` clipboard hand-off
 # integration test. It spawns the binary, which opens the real system
 # clipboard via `arboard`, so it needs a usable display/pasteboard and
 # must NOT be swept up by `make test-ignored`
 # (`cargo test --workspace -- --ignored`) on headless hosts. Mirrors
 # `hidlins-security/clipboard-tests`; enabled only by `make test-clipboard`.
-clipboard-tests = []
-# Test-only gate for the live-wire `hidlins sync` end-to-end case
-# (`cli_sync_minio.rs`), which spawns the binary against a real MinIO. The
-# file is `#![cfg(feature = "minio-tests")]`-gated so the blanket
-# `make test` / `make test-ignored` sweeps never build it; only
-# `make test-s3-integration` (after `make minio-up`) turns it on. Mirrors
-# `hidlins-sync/minio-tests`.
-minio-tests = []
+clipboard-tests = ["desktop"]
 
 [dependencies]
 # CLI parsing. `clap` is the project-standard parser (see CLAUDE.md
@@ -71,15 +77,12 @@ serde_json = "1.0"
 # version pin still applies in practice.
 hidlins-core = { path = "../hidlins-core", version = "0.1" }
 hidlins-genpw = { path = "../hidlins-genpw", version = "0.1" }
-# Phase 1 — sync wiring for `hidlins sync` + `hidlins vault set-sync`
-# (features/cli-sync-wiring). Consumes `Sync::sync_now`,
-# `Sync::configure_remote`, `S3Config`, `CredentialSource`, and the
-# `SyncError` type — see design §2.4 + impl plan.
-hidlins-sync = { path = "../hidlins-sync", version = "0.1" }
+# Local-network sync, pairing, discovery, and foreground serving.
+hidlins-sync = { path = "../hidlins-sync", version = "0.1", default-features = false }
 # Phase 3 — clipboard hand-off for `entry get --copy` / `gen --copy`
 # (FR-053). Consumes `Clipboard::copy_with_autoclear` +
 # `AutoClearGuard::wait_for_clear` — see design §2.5 + §3.9.
-hidlins-security = { path = "../hidlins-security", version = "0.1" }
+hidlins-security = { path = "../hidlins-security", version = "0.1", default-features = false }
 
 # Misc — all already in the workspace tree.
 chrono = { version = "0.4", default-features = false, features = ["clock", "serde", "std"] }

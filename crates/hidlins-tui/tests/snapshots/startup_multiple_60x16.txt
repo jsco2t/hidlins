@@ -7,9 +7,9 @@
   ║  ┌─────────────┐  ║ │                                  │
   ║  │o  HIDLINS  o│  ║ │                                  │
   ║  └─────────────┘  ║ │                                  │
-  ║       ▄▄▄▄▄       ║ │                                  │
-  ║         █         ║ │Status: Ready                     │
-  ║       ▄▄█▄▄       ║ │                                  │
-  ╚═══════════════════╝ │j/k: Select  Enter: Open          │
-                        │a: Add existing vault Ctrl+Q: Exit│
+  ║       ▄▄▄▄▄       ║ │Status: Ready                     │
+  ║         █         ║ │                                  │
+  ║       ▄▄█▄▄       ║ │j/k: Select  Enter: Open          │
+  ╚═══════════════════╝ │a: Add existing vault             │
+                        │F3: Import paired vault  Ctrl+Q: E│
                         └──────────────────────────────────┘

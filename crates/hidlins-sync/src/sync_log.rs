@@ -1,5 +1,4 @@
-// Domain acronyms saturate sync_log's docs; see the same note on
-// `crate::s3::mod` for the rationale.
+// Domain acronyms saturate sync_log's docs.
 #![allow(clippy::doc_markdown)]
 
 //! Structured one-line sync log (design.md §4.9).
@@ -8,14 +7,14 @@
 //! sync produces a single stderr line summarizing what happened:
 //!
 //! ```text
-//! hidlins sync: <outcome> [host=<hostname>] [delta=<N>/<M>/<K>] [attempts=<A>] [duration=<D>ms]
+//! hidlins sync: <outcome> [delta=<N>/<M>/<K>] [attempts=<A>] [duration=<D>ms]
 //! ```
 //!
 //! - `<outcome>` is one of `already-in-sync`, `pushed`, `pushed-first-seed`,
 //!   `fast-replaced`, `merged`, or `failed`.
 //! - `delta=<added>/<modified>/<removed>` is present only for `merged`.
 //! - `attempts` is present for `pushed` and `merged` (1 for non-merge).
-//! - `host` and `duration` are always present.
+//! - `duration` is always present.
 //!
 //! The CLI / TUI decide when to emit this — to human stderr (this format)
 //! or to JSON (`--format json`). This module only owns the
@@ -28,12 +27,8 @@ use crate::sync::SyncOutcome;
 
 /// Format a one-line sync log per design.md §4.9.
 ///
-/// `hostname` is typically `gethostname::gethostname().to_string_lossy()`
-/// at the call site; passed in here so this module stays pure-function
-/// (no syscalls, no allocation source other than the format string) and
-/// trivially testable.
 #[must_use]
-pub fn format(outcome: &SyncOutcome, hostname: &str, duration: Duration) -> String {
+pub fn format(outcome: &SyncOutcome, duration: Duration) -> String {
     let outcome_name = match outcome {
         SyncOutcome::AlreadyInSync => "already-in-sync",
         SyncOutcome::Pushed {
@@ -44,7 +39,7 @@ pub fn format(outcome: &SyncOutcome, hostname: &str, duration: Duration) -> Stri
         SyncOutcome::Merged { .. } => "merged",
     };
 
-    let mut line = format!("hidlins sync: {outcome_name} [host={hostname}]");
+    let mut line = format!("hidlins sync: {outcome_name}");
 
     // `write!(&mut String, ...)` cannot fail (the `fmt::Write` impl on
     // `String` panics on OOM, not returns an error). Drop the `Result`
@@ -84,15 +79,8 @@ mod tests {
     // -- TC-LOG-001 ---------------------------------------------------------
     #[test]
     fn format_already_in_sync_minimal_line() {
-        let line = format(
-            &SyncOutcome::AlreadyInSync,
-            "host-foo",
-            Duration::from_millis(12),
-        );
-        assert_eq!(
-            line,
-            "hidlins sync: already-in-sync [host=host-foo] [duration=12ms]"
-        );
+        let line = format(&SyncOutcome::AlreadyInSync, Duration::from_millis(12));
+        assert_eq!(line, "hidlins sync: already-in-sync [duration=12ms]");
     }
 
     // -- TC-LOG-002 ---------------------------------------------------------
@@ -104,7 +92,7 @@ mod tests {
             removed: vec![],
         };
         let outcome = SyncOutcome::Merged { delta, attempts: 2 };
-        let line = format(&outcome, "host-bar", Duration::from_millis(345));
+        let line = format(&outcome, Duration::from_millis(345));
         assert!(line.contains("merged"), "got: {line}");
         assert!(line.contains("[delta=2/1/0]"), "got: {line}");
         assert!(line.contains("[attempts=2]"), "got: {line}");
@@ -118,7 +106,6 @@ mod tests {
             &SyncOutcome::Pushed {
                 is_first_seed: true,
             },
-            "host-baz",
             Duration::from_millis(50),
         );
         assert!(
@@ -129,7 +116,6 @@ mod tests {
             &SyncOutcome::Pushed {
                 is_first_seed: false,
             },
-            "host-baz",
             Duration::from_millis(50),
         );
         assert!(line_steady.contains("hidlins sync: pushed "));
@@ -139,11 +125,7 @@ mod tests {
     // -- TC-LOG-004 ---------------------------------------------------------
     #[test]
     fn format_fast_replaced_omits_delta() {
-        let line = format(
-            &SyncOutcome::FastReplaced,
-            "host-qux",
-            Duration::from_millis(99),
-        );
+        let line = format(&SyncOutcome::FastReplaced, Duration::from_millis(99));
         assert!(line.contains("fast-replaced"), "got: {line}");
         assert!(
             !line.contains("delta="),

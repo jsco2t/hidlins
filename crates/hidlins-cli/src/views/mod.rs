@@ -2,7 +2,7 @@
 //!
 //! The shipped modules are:
 //!
-//! - [`vault`]: `VaultCreateView`, `VaultListView`, `VaultOpenView`, `VaultSetLockView`, `VaultSetSyncView`.
+//! - [`vault`]: `VaultCreateView`, `VaultListView`, `VaultOpenView`, `VaultSetLockView`.
 //! - [`entry`]: `EntryGetView`, `EntryListView`, `EntrySearchView`, `EntryAddView`, `EntryEditView`, `EntryRmView`.
 //! - [`gen`]: `PasswordGenView`, `PassphraseGenView`.
 //! - [`sync`]: the `hidlins sync` outcome view `SyncView`.

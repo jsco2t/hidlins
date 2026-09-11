@@ -1,0 +1,80 @@
+{
+  "schema_version": 2,
+  "work_id": "2026-09-10-local-sync-review-repairs",
+  "title": "Local Sync Review Repairs",
+  "phase": "DONE",
+  "created_at": "2026-09-10T15:31:01Z",
+  "updated_at": "2026-09-11T01:59:01Z",
+  "approved_at": "2026-09-10T15:58:53Z",
+  "completed_at": "2026-09-11T01:34:56Z",
+  "archived_at": "2026-09-11T01:59:01Z",
+  "baseline_sha": "0725603cc9b746f3632a0e02f8f81a55930721b0",
+  "final_sha": "0725603cc9b746f3632a0e02f8f81a55930721b0",
+  "plan_revision": 1,
+  "acceptance_round": 1,
+  "completed_rounds": [],
+  "approved_plan_sha256": "7ee8a5119109bcd077aec1cbc2e2ab5a5fff47c6247d43e9d1415edbb9f74f7a",
+  "current_task": null,
+  "tasks": [
+    {
+      "id": "001",
+      "path": "tasks/001-pairing-durability-and-recovery.md",
+      "round": 1,
+      "status": "COMPLETE",
+      "attempts": 3,
+      "implementation": "main",
+      "evidence": "evidence/001.md"
+    },
+    {
+      "id": "002",
+      "path": "tasks/002-tui-pairing-cancellation.md",
+      "round": 1,
+      "status": "COMPLETE",
+      "attempts": 1,
+      "implementation": "main",
+      "evidence": "evidence/002.md"
+    },
+    {
+      "id": "003",
+      "path": "tasks/003-temporal-discovery-fallback.md",
+      "round": 1,
+      "status": "COMPLETE",
+      "attempts": 1,
+      "implementation": "main",
+      "evidence": "evidence/003.md"
+    },
+    {
+      "id": "004",
+      "path": "tasks/004-atomic-password-and-identity-rotation.md",
+      "round": 1,
+      "status": "COMPLETE",
+      "attempts": 1,
+      "implementation": "main",
+      "evidence": "evidence/004.md"
+    },
+    {
+      "id": "005",
+      "path": "tasks/005-ios-discovery-generation-safety.md",
+      "round": 1,
+      "status": "COMPLETE",
+      "attempts": 1,
+      "implementation": "main",
+      "evidence": "evidence/005.md"
+    },
+    {
+      "id": "006",
+      "path": "tasks/006-coverage-contract-audit.md",
+      "round": 1,
+      "status": "COMPLETE",
+      "attempts": 3,
+      "implementation": "main",
+      "evidence": "evidence/006.md"
+    }
+  ],
+  "task_retry_limit": 3,
+  "final_retry_limit": 2,
+  "final_attempts": 2,
+  "stop_continuations": 0,
+  "max_stop_continuations": 50,
+  "block_reason": null
+}

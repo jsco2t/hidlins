@@ -96,6 +96,15 @@ abstract class RustLibApiImplPlatform extends BaseApiImpl<RustLibWire> {
   KeyfileRef dco_decode_box_autoadd_keyfile_ref(dynamic raw);
 
   @protected
+  LocalEndpointDto dco_decode_box_autoadd_local_endpoint_dto(dynamic raw);
+
+  @protected
+  LocalSyncRoleDto dco_decode_box_autoadd_local_sync_role_dto(dynamic raw);
+
+  @protected
+  PairingPromptDto dco_decode_box_autoadd_pairing_prompt_dto(dynamic raw);
+
+  @protected
   PassphraseOptionsDto dco_decode_box_autoadd_passphrase_options_dto(
     dynamic raw,
   );
@@ -105,9 +114,6 @@ abstract class RustLibApiImplPlatform extends BaseApiImpl<RustLibWire> {
 
   @protected
   RevealField dco_decode_box_autoadd_reveal_field(dynamic raw);
-
-  @protected
-  S3ConfigDto dco_decode_box_autoadd_s_3_config_dto(dynamic raw);
 
   @protected
   SearchOptionsDto dco_decode_box_autoadd_search_options_dto(dynamic raw);
@@ -122,6 +128,9 @@ abstract class RustLibApiImplPlatform extends BaseApiImpl<RustLibWire> {
   UiPrefs dco_decode_box_autoadd_ui_prefs(dynamic raw);
 
   @protected
+  VaultSummary dco_decode_box_autoadd_vault_summary(dynamic raw);
+
+  @protected
   ClipboardTransferTicket dco_decode_clipboard_transfer_ticket(dynamic raw);
 
   @protected
@@ -132,6 +141,12 @@ abstract class RustLibApiImplPlatform extends BaseApiImpl<RustLibWire> {
 
   @protected
   CustomFieldInputDto dco_decode_custom_field_input_dto(dynamic raw);
+
+  @protected
+  DiscoveryPermissionDto dco_decode_discovery_permission_dto(dynamic raw);
+
+  @protected
+  DiscoveryStatusDto dco_decode_discovery_status_dto(dynamic raw);
 
   @protected
   EntryDetail dco_decode_entry_detail(dynamic raw);
@@ -200,6 +215,9 @@ abstract class RustLibApiImplPlatform extends BaseApiImpl<RustLibWire> {
   List<HistorySummary> dco_decode_list_history_summary(dynamic raw);
 
   @protected
+  List<LocalEndpointDto> dco_decode_list_local_endpoint_dto(dynamic raw);
+
+  @protected
   Uint8List dco_decode_list_prim_u_8_strict(dynamic raw);
 
   @protected
@@ -212,7 +230,16 @@ abstract class RustLibApiImplPlatform extends BaseApiImpl<RustLibWire> {
   List<SearchHit> dco_decode_list_search_hit(dynamic raw);
 
   @protected
+  List<SyncPeerDto> dco_decode_list_sync_peer_dto(dynamic raw);
+
+  @protected
   List<VaultSummary> dco_decode_list_vault_summary(dynamic raw);
+
+  @protected
+  LocalEndpointDto dco_decode_local_endpoint_dto(dynamic raw);
+
+  @protected
+  LocalSyncRoleDto dco_decode_local_sync_role_dto(dynamic raw);
 
   @protected
   LockEvent dco_decode_lock_event(dynamic raw);
@@ -236,10 +263,16 @@ abstract class RustLibApiImplPlatform extends BaseApiImpl<RustLibWire> {
   KeyfileRef? dco_decode_opt_box_autoadd_keyfile_ref(dynamic raw);
 
   @protected
+  LocalSyncRoleDto? dco_decode_opt_box_autoadd_local_sync_role_dto(dynamic raw);
+
+  @protected
   SyncOutcomeDto? dco_decode_opt_box_autoadd_sync_outcome_dto(dynamic raw);
 
   @protected
   int? dco_decode_opt_box_autoadd_u_32(dynamic raw);
+
+  @protected
+  VaultSummary? dco_decode_opt_box_autoadd_vault_summary(dynamic raw);
 
   @protected
   List<String>? dco_decode_opt_list_String(dynamic raw);
@@ -248,6 +281,9 @@ abstract class RustLibApiImplPlatform extends BaseApiImpl<RustLibWire> {
   List<CustomFieldInputDto>? dco_decode_opt_list_custom_field_input_dto(
     dynamic raw,
   );
+
+  @protected
+  PairingPromptDto dco_decode_pairing_prompt_dto(dynamic raw);
 
   @protected
   PassphraseOptionsDto dco_decode_passphrase_options_dto(dynamic raw);
@@ -260,9 +296,6 @@ abstract class RustLibApiImplPlatform extends BaseApiImpl<RustLibWire> {
 
   @protected
   RevealField dco_decode_reveal_field(dynamic raw);
-
-  @protected
-  S3ConfigDto dco_decode_s_3_config_dto(dynamic raw);
 
   @protected
   SearchFieldMatchDto dco_decode_search_field_match_dto(dynamic raw);
@@ -286,10 +319,16 @@ abstract class RustLibApiImplPlatform extends BaseApiImpl<RustLibWire> {
   SyncOutcomeDto dco_decode_sync_outcome_dto(dynamic raw);
 
   @protected
+  SyncPeerDto dco_decode_sync_peer_dto(dynamic raw);
+
+  @protected
   SyncStatusDto dco_decode_sync_status_dto(dynamic raw);
 
   @protected
   TotpCode dco_decode_totp_code(dynamic raw);
+
+  @protected
+  int dco_decode_u_16(dynamic raw);
 
   @protected
   int dco_decode_u_32(dynamic raw);
@@ -394,6 +433,21 @@ abstract class RustLibApiImplPlatform extends BaseApiImpl<RustLibWire> {
   KeyfileRef sse_decode_box_autoadd_keyfile_ref(SseDeserializer deserializer);
 
   @protected
+  LocalEndpointDto sse_decode_box_autoadd_local_endpoint_dto(
+    SseDeserializer deserializer,
+  );
+
+  @protected
+  LocalSyncRoleDto sse_decode_box_autoadd_local_sync_role_dto(
+    SseDeserializer deserializer,
+  );
+
+  @protected
+  PairingPromptDto sse_decode_box_autoadd_pairing_prompt_dto(
+    SseDeserializer deserializer,
+  );
+
+  @protected
   PassphraseOptionsDto sse_decode_box_autoadd_passphrase_options_dto(
     SseDeserializer deserializer,
   );
@@ -405,11 +459,6 @@ abstract class RustLibApiImplPlatform extends BaseApiImpl<RustLibWire> {
 
   @protected
   RevealField sse_decode_box_autoadd_reveal_field(SseDeserializer deserializer);
-
-  @protected
-  S3ConfigDto sse_decode_box_autoadd_s_3_config_dto(
-    SseDeserializer deserializer,
-  );
 
   @protected
   SearchOptionsDto sse_decode_box_autoadd_search_options_dto(
@@ -428,6 +477,11 @@ abstract class RustLibApiImplPlatform extends BaseApiImpl<RustLibWire> {
   UiPrefs sse_decode_box_autoadd_ui_prefs(SseDeserializer deserializer);
 
   @protected
+  VaultSummary sse_decode_box_autoadd_vault_summary(
+    SseDeserializer deserializer,
+  );
+
+  @protected
   ClipboardTransferTicket sse_decode_clipboard_transfer_ticket(
     SseDeserializer deserializer,
   );
@@ -440,6 +494,16 @@ abstract class RustLibApiImplPlatform extends BaseApiImpl<RustLibWire> {
 
   @protected
   CustomFieldInputDto sse_decode_custom_field_input_dto(
+    SseDeserializer deserializer,
+  );
+
+  @protected
+  DiscoveryPermissionDto sse_decode_discovery_permission_dto(
+    SseDeserializer deserializer,
+  );
+
+  @protected
+  DiscoveryStatusDto sse_decode_discovery_status_dto(
     SseDeserializer deserializer,
   );
 
@@ -524,6 +588,11 @@ abstract class RustLibApiImplPlatform extends BaseApiImpl<RustLibWire> {
   );
 
   @protected
+  List<LocalEndpointDto> sse_decode_list_local_endpoint_dto(
+    SseDeserializer deserializer,
+  );
+
+  @protected
   Uint8List sse_decode_list_prim_u_8_strict(SseDeserializer deserializer);
 
   @protected
@@ -540,9 +609,18 @@ abstract class RustLibApiImplPlatform extends BaseApiImpl<RustLibWire> {
   List<SearchHit> sse_decode_list_search_hit(SseDeserializer deserializer);
 
   @protected
+  List<SyncPeerDto> sse_decode_list_sync_peer_dto(SseDeserializer deserializer);
+
+  @protected
   List<VaultSummary> sse_decode_list_vault_summary(
     SseDeserializer deserializer,
   );
+
+  @protected
+  LocalEndpointDto sse_decode_local_endpoint_dto(SseDeserializer deserializer);
+
+  @protected
+  LocalSyncRoleDto sse_decode_local_sync_role_dto(SseDeserializer deserializer);
 
   @protected
   LockEvent sse_decode_lock_event(SseDeserializer deserializer);
@@ -568,6 +646,11 @@ abstract class RustLibApiImplPlatform extends BaseApiImpl<RustLibWire> {
   );
 
   @protected
+  LocalSyncRoleDto? sse_decode_opt_box_autoadd_local_sync_role_dto(
+    SseDeserializer deserializer,
+  );
+
+  @protected
   SyncOutcomeDto? sse_decode_opt_box_autoadd_sync_outcome_dto(
     SseDeserializer deserializer,
   );
@@ -576,12 +659,20 @@ abstract class RustLibApiImplPlatform extends BaseApiImpl<RustLibWire> {
   int? sse_decode_opt_box_autoadd_u_32(SseDeserializer deserializer);
 
   @protected
+  VaultSummary? sse_decode_opt_box_autoadd_vault_summary(
+    SseDeserializer deserializer,
+  );
+
+  @protected
   List<String>? sse_decode_opt_list_String(SseDeserializer deserializer);
 
   @protected
   List<CustomFieldInputDto>? sse_decode_opt_list_custom_field_input_dto(
     SseDeserializer deserializer,
   );
+
+  @protected
+  PairingPromptDto sse_decode_pairing_prompt_dto(SseDeserializer deserializer);
 
   @protected
   PassphraseOptionsDto sse_decode_passphrase_options_dto(
@@ -598,9 +689,6 @@ abstract class RustLibApiImplPlatform extends BaseApiImpl<RustLibWire> {
 
   @protected
   RevealField sse_decode_reveal_field(SseDeserializer deserializer);
-
-  @protected
-  S3ConfigDto sse_decode_s_3_config_dto(SseDeserializer deserializer);
 
   @protected
   SearchFieldMatchDto sse_decode_search_field_match_dto(
@@ -626,10 +714,16 @@ abstract class RustLibApiImplPlatform extends BaseApiImpl<RustLibWire> {
   SyncOutcomeDto sse_decode_sync_outcome_dto(SseDeserializer deserializer);
 
   @protected
+  SyncPeerDto sse_decode_sync_peer_dto(SseDeserializer deserializer);
+
+  @protected
   SyncStatusDto sse_decode_sync_status_dto(SseDeserializer deserializer);
 
   @protected
   TotpCode sse_decode_totp_code(SseDeserializer deserializer);
+
+  @protected
+  int sse_decode_u_16(SseDeserializer deserializer);
 
   @protected
   int sse_decode_u_32(SseDeserializer deserializer);
@@ -758,6 +852,24 @@ abstract class RustLibApiImplPlatform extends BaseApiImpl<RustLibWire> {
   );
 
   @protected
+  void sse_encode_box_autoadd_local_endpoint_dto(
+    LocalEndpointDto self,
+    SseSerializer serializer,
+  );
+
+  @protected
+  void sse_encode_box_autoadd_local_sync_role_dto(
+    LocalSyncRoleDto self,
+    SseSerializer serializer,
+  );
+
+  @protected
+  void sse_encode_box_autoadd_pairing_prompt_dto(
+    PairingPromptDto self,
+    SseSerializer serializer,
+  );
+
+  @protected
   void sse_encode_box_autoadd_passphrase_options_dto(
     PassphraseOptionsDto self,
     SseSerializer serializer,
@@ -772,12 +884,6 @@ abstract class RustLibApiImplPlatform extends BaseApiImpl<RustLibWire> {
   @protected
   void sse_encode_box_autoadd_reveal_field(
     RevealField self,
-    SseSerializer serializer,
-  );
-
-  @protected
-  void sse_encode_box_autoadd_s_3_config_dto(
-    S3ConfigDto self,
     SseSerializer serializer,
   );
 
@@ -800,6 +906,12 @@ abstract class RustLibApiImplPlatform extends BaseApiImpl<RustLibWire> {
   void sse_encode_box_autoadd_ui_prefs(UiPrefs self, SseSerializer serializer);
 
   @protected
+  void sse_encode_box_autoadd_vault_summary(
+    VaultSummary self,
+    SseSerializer serializer,
+  );
+
+  @protected
   void sse_encode_clipboard_transfer_ticket(
     ClipboardTransferTicket self,
     SseSerializer serializer,
@@ -817,6 +929,18 @@ abstract class RustLibApiImplPlatform extends BaseApiImpl<RustLibWire> {
   @protected
   void sse_encode_custom_field_input_dto(
     CustomFieldInputDto self,
+    SseSerializer serializer,
+  );
+
+  @protected
+  void sse_encode_discovery_permission_dto(
+    DiscoveryPermissionDto self,
+    SseSerializer serializer,
+  );
+
+  @protected
+  void sse_encode_discovery_status_dto(
+    DiscoveryStatusDto self,
     SseSerializer serializer,
   );
 
@@ -920,6 +1044,12 @@ abstract class RustLibApiImplPlatform extends BaseApiImpl<RustLibWire> {
   );
 
   @protected
+  void sse_encode_list_local_endpoint_dto(
+    List<LocalEndpointDto> self,
+    SseSerializer serializer,
+  );
+
+  @protected
   void sse_encode_list_prim_u_8_strict(
     Uint8List self,
     SseSerializer serializer,
@@ -944,8 +1074,26 @@ abstract class RustLibApiImplPlatform extends BaseApiImpl<RustLibWire> {
   );
 
   @protected
+  void sse_encode_list_sync_peer_dto(
+    List<SyncPeerDto> self,
+    SseSerializer serializer,
+  );
+
+  @protected
   void sse_encode_list_vault_summary(
     List<VaultSummary> self,
+    SseSerializer serializer,
+  );
+
+  @protected
+  void sse_encode_local_endpoint_dto(
+    LocalEndpointDto self,
+    SseSerializer serializer,
+  );
+
+  @protected
+  void sse_encode_local_sync_role_dto(
+    LocalSyncRoleDto self,
     SseSerializer serializer,
   );
 
@@ -980,6 +1128,12 @@ abstract class RustLibApiImplPlatform extends BaseApiImpl<RustLibWire> {
   );
 
   @protected
+  void sse_encode_opt_box_autoadd_local_sync_role_dto(
+    LocalSyncRoleDto? self,
+    SseSerializer serializer,
+  );
+
+  @protected
   void sse_encode_opt_box_autoadd_sync_outcome_dto(
     SyncOutcomeDto? self,
     SseSerializer serializer,
@@ -989,11 +1143,23 @@ abstract class RustLibApiImplPlatform extends BaseApiImpl<RustLibWire> {
   void sse_encode_opt_box_autoadd_u_32(int? self, SseSerializer serializer);
 
   @protected
+  void sse_encode_opt_box_autoadd_vault_summary(
+    VaultSummary? self,
+    SseSerializer serializer,
+  );
+
+  @protected
   void sse_encode_opt_list_String(List<String>? self, SseSerializer serializer);
 
   @protected
   void sse_encode_opt_list_custom_field_input_dto(
     List<CustomFieldInputDto>? self,
+    SseSerializer serializer,
+  );
+
+  @protected
+  void sse_encode_pairing_prompt_dto(
+    PairingPromptDto self,
     SseSerializer serializer,
   );
 
@@ -1014,9 +1180,6 @@ abstract class RustLibApiImplPlatform extends BaseApiImpl<RustLibWire> {
 
   @protected
   void sse_encode_reveal_field(RevealField self, SseSerializer serializer);
-
-  @protected
-  void sse_encode_s_3_config_dto(S3ConfigDto self, SseSerializer serializer);
 
   @protected
   void sse_encode_search_field_match_dto(
@@ -1052,10 +1215,16 @@ abstract class RustLibApiImplPlatform extends BaseApiImpl<RustLibWire> {
   );
 
   @protected
+  void sse_encode_sync_peer_dto(SyncPeerDto self, SseSerializer serializer);
+
+  @protected
   void sse_encode_sync_status_dto(SyncStatusDto self, SseSerializer serializer);
 
   @protected
   void sse_encode_totp_code(TotpCode self, SseSerializer serializer);
+
+  @protected
+  void sse_encode_u_16(int self, SseSerializer serializer);
 
   @protected
   void sse_encode_u_32(int self, SseSerializer serializer);

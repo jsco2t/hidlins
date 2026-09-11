@@ -27,14 +27,6 @@ plugins {
 
 dependencyResolutionManagement {
     repositories {
-        exclusiveContent {
-            forRepository {
-                maven {
-                    url = uri(rootDir.resolve("../../vendor/rustls-platform-verifier-android/maven"))
-                }
-            }
-            filter { includeGroup("rustls") }
-        }
         google()
         mavenCentral()
     }

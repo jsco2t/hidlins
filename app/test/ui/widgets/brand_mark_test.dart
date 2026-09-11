@@ -47,18 +47,22 @@ void main() {
     testWidgets('${variant.name} native-size raster golden', (tester) async {
       await tester.binding.setSurfaceSize(const Size.square(256));
       addTearDown(() => tester.binding.setSurfaceSize(null));
+      final image = AssetImage(variant.asset);
       await tester.pumpWidget(
         MaterialApp(
           theme: ThemeData(brightness: variant.brightness),
           home: Center(
-            child: Image.asset(
-              variant.asset,
+            child: Image(
+              image: image,
               width: 256,
               height: 256,
               filterQuality: FilterQuality.none,
             ),
           ),
         ),
+      );
+      await tester.runAsync(
+        () => precacheImage(image, tester.element(find.byType(Image))),
       );
       await tester.pumpAndSettle();
 

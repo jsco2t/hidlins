@@ -4,7 +4,4 @@
          to allow setting breakpoints, to provide hot reload, etc.
     -->
     <uses-permission android:name="android.permission.INTERNET"/>
-    <!-- Managed MinIO acceptance uses the emulator-only 10.0.2.2 HTTP route.
-         Release builds inherit neither this source-set override nor cleartext. -->
-    <application android:usesCleartextTraffic="true"/>
 </manifest>

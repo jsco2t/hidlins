@@ -66,7 +66,14 @@ final generatorRepositoryProvider = Provider<GeneratorRepository>((ref) {
 });
 
 final syncRepositoryProvider = Provider<SyncRepository>((ref) {
-  return BridgeSyncRepository(ref.watch(appSessionProvider));
+  final mobile =
+      !kIsWeb &&
+      (defaultTargetPlatform == TargetPlatform.android ||
+          defaultTargetPlatform == TargetPlatform.iOS);
+  return BridgeSyncRepository(
+    ref.watch(appSessionProvider),
+    useNativeDiscovery: mobile,
+  );
 });
 
 final prefsRepositoryProvider = Provider<PrefsRepository>((ref) {

@@ -24,6 +24,7 @@ final class HidlinsPlatformServices {
     private final ClipboardController clipboard;
     private final KeyfileReferenceStore keyfiles;
     private final SnapshotCoverController cover;
+    private final LocalDiscoveryController localDiscovery;
     private MethodChannel lifecycle;
     private MethodChannel.Result pendingPicker;
     private int pendingRequest;
@@ -34,6 +35,7 @@ final class HidlinsPlatformServices {
         storage = new AppStorage(activity);
         clipboard = new ClipboardController(activity);
         keyfiles = new KeyfileReferenceStore(activity);
+        localDiscovery = new LocalDiscoveryController(activity);
     }
 
     void register(BinaryMessenger messenger) {
@@ -43,6 +45,7 @@ final class HidlinsPlatformServices {
         channel(messenger, "app.hidlins/clipboard", this::handleClipboard);
         channel(messenger, "app.hidlins/vault_import", this::handleVaultImport);
         channel(messenger, "app.hidlins/keyfile", this::handleKeyfile);
+        channel(messenger, "app.hidlins/local_discovery", this::handleLocalDiscovery);
     }
 
     private static void channel(
@@ -52,11 +55,39 @@ final class HidlinsPlatformServices {
 
     void reportLifecycle(String state) {
         if (!"resumed".equals(state)) cover.show(activity);
+        if (!"resumed".equals(state)) localDiscovery.stop();
         if (lifecycle != null) {
             Map<String, Object> arguments = new HashMap<>();
             arguments.put("state", state);
             lifecycle.invokeMethod("reportState", arguments);
         }
+    }
+
+    private void handleLocalDiscovery(MethodCall call, MethodChannel.Result result) {
+        switch (call.method) {
+            case "permissionStatus" -> result.success(
+                    PlatformEnvelope.success(localDiscovery.permissionStatus()).envelope());
+            case "discover" -> {
+                Map<?, ?> arguments = call.arguments instanceof Map<?, ?> map ? map : null;
+                Object kind = arguments == null ? null : arguments.get("kind");
+                Object timeout = arguments == null ? null : arguments.get("timeoutMs");
+                if (!(kind instanceof String value) || !(timeout instanceof Integer milliseconds)) {
+                    result.success(PlatformEnvelope.failure("invalid-discovery-request").envelope());
+                } else {
+                    localDiscovery.discover(value, milliseconds, result);
+                }
+            }
+            case "openSettings" -> localDiscovery.openSettings(result);
+            case "stop" -> {
+                localDiscovery.stop();
+                result.success(PlatformEnvelope.success(null).envelope());
+            }
+            default -> result.success(PlatformEnvelope.unsupported().envelope());
+        }
+    }
+
+    void onRequestPermissionsResult(int requestCode, int[] grantResults) {
+        localDiscovery.onPermissionResult(requestCode, grantResults);
     }
 
     private void handleLifecycle(MethodCall call, MethodChannel.Result result) {
@@ -208,6 +239,7 @@ final class HidlinsPlatformServices {
     }
 
     void close() {
+        localDiscovery.stop();
         completePending(PlatformEnvelope.failure("activity-destroyed"));
         keyfiles.closeAll();
     }

@@ -13,7 +13,18 @@ readonly MATRIX="$(mktemp "${TMPDIR:-/tmp}/hidlins-android-matrix.XXXXXX")"
 readonly SCRATCH="$(mktemp -d "${TMPDIR:-/tmp}/hidlins-android-suite.XXXXXX")"
 CURRENT_SERIAL=""
 CURRENT_PID=""
-CURRENT_DEFINES=""
+
+wait_for_disconnect() {
+  local serial="$1"
+  for _ in $(seq 1 100); do
+    if ! "$ADB" devices | grep -Eq "^${serial}[[:space:]]"; then
+      return 0
+    fi
+    sleep 0.1
+  done
+  echo "error: Android emulator remained attached after shutdown: $serial" >&2
+  return 1
+}
 
 cleanup_emulator() {
   if [[ -n "$CURRENT_SERIAL" ]]; then
@@ -22,9 +33,9 @@ cleanup_emulator() {
     "$ADB" -s "$CURRENT_SERIAL" emu kill >/dev/null 2>&1 || true
   fi
   if [[ -n "$CURRENT_PID" ]]; then wait "$CURRENT_PID" >/dev/null 2>&1 || true; fi
+  if [[ -n "$CURRENT_SERIAL" ]]; then wait_for_disconnect "$CURRENT_SERIAL"; fi
   CURRENT_SERIAL=""
   CURRENT_PID=""
-  CURRENT_DEFINES=""
 }
 
 cleanup() {
@@ -38,14 +49,9 @@ cleanup() {
 trap cleanup EXIT
 
 case "$MODE" in
-  core | minio | real) ;;
-  *) echo "usage: $0 {core|minio|real}" >&2; exit 2 ;;
+  core) ;;
+  *) echo "usage: $0 core" >&2; exit 2 ;;
 esac
-
-if [[ "$MODE" == "real" && -z "${HIDLINS_ANDROID_S3_CONFIG:-}" ]]; then
-  echo "SKIPPED — user decision / credentials not supplied: Android live S3 emulator run"
-  exit 0
-fi
 
 mkdir -p "$RESULTS_DIR"
 chmod 700 "$RESULTS_DIR"
@@ -69,13 +75,8 @@ run_logged() {
   local status=$?
   set -e
   local log_status=0
-  if [[ -n "$CURRENT_DEFINES" ]]; then
-    python3 "$ROOT/tools/android-native/redact_log.py" "$raw" "$saved" \
-      --defines "$CURRENT_DEFINES" --require-passed || log_status=$?
-  else
-    python3 "$ROOT/tools/android-native/redact_log.py" "$raw" "$saved" \
-      --require-passed || log_status=$?
-  fi
+  python3 "$ROOT/tools/android-native/redact_log.py" "$raw" "$saved" \
+    --require-passed || log_status=$?
   cat "$saved"
   if [[ $status -ne 0 ]]; then
     echo "error: Android $name failed; redacted log: $saved" >&2
@@ -156,71 +157,39 @@ exercise_airplane_recovery() {
   echo "  OK: Android airplane mode transitioned offline and recovered"
 }
 
-setup_defines() {
-  local avd="$1"
-  CURRENT_DEFINES="$SCRATCH/$MODE-$avd-defines.json"
-  if [[ "$MODE" == "minio" ]]; then
-    local bucket="hidlins-android-$PPID-$RANDOM"
-    "$ROOT/tools/sync-tests/fixtures/make_bucket.sh" "$bucket"
-    python3 "$ROOT/tools/ios-native/secure_s3_config.py" minio \
-      "$ROOT/tools/sync-tests/fixtures/.minio-env" "$CURRENT_DEFINES" \
-      --bucket "$bucket" --key-prefix hidlins-android-alpha --endpoint-host 10.0.2.2
-  else
-    python3 "$ROOT/tools/ios-native/secure_s3_config.py" real \
-      "$HIDLINS_ANDROID_S3_CONFIG" "$CURRENT_DEFINES" \
-      --key-prefix hidlins-android-alpha
-  fi
-}
-
 while IFS=$'\t' read -r avd api abi form_factor system_image <&3; do
   echo "Android matrix entry: avd=$avd api=$api abi=$abi form_factor=$form_factor image=$system_image"
   boot_emulator "$avd" "$api" "$abi"
   logs=()
-  if [[ "$MODE" == "core" ]]; then
-    native_name="core-$api-$abi-native"
-    run_logged "$native_name" env \
-      HIDLINS_ANDROID_AVD="$avd" HIDLINS_ANDROID_EXPECTED_API="$api" \
-      HIDLINS_ANDROID_EXPECTED_ABI="$abi" "$ROOT/tools/android-native/run_app_tests.sh"
-    logs+=("native=$RESULTS_DIR/$native_name.log")
-    ui_name="core-$api-$abi-ui"
-    (cd "$APP_DIR" && run_logged "$ui_name" python3 \
-      "$ROOT/tools/android-native/run_with_timeout.py" 240 \
-      flutter drive --no-pub -d "$CURRENT_SERIAL" \
-      --timeout=180 \
-      --driver=test_driver/integration_test.dart \
-      --target=integration_test/android_emulator_ui_test.dart \
-      --android-project-arg=target-platform=android-arm64,android-x64)
-    logs+=("ui=$RESULTS_DIR/$ui_name.log")
-    lifecycle_name="core-$api-$abi-os-lifecycle"
-    run_logged "$lifecycle_name" exercise_os_lifecycle
-    logs+=("os-lifecycle=$RESULTS_DIR/$lifecycle_name.log")
-    bridge_name="core-$api-$abi-bridge"
-    (cd "$APP_DIR" && run_logged "$bridge_name" python3 \
-      "$ROOT/tools/android-native/run_with_timeout.py" 240 \
-      flutter drive --no-pub -d "$CURRENT_SERIAL" \
-      --timeout=180 \
-      --driver=test_driver/integration_test.dart \
-      --target=integration_test/android_real_bridge_test.dart \
-      --android-project-arg=target-platform=android-arm64,android-x64)
-    logs+=("bridge=$RESULTS_DIR/$bridge_name.log")
-  else
-    setup_defines "$avd"
-    airplane_name="$MODE-$api-$abi-airplane"
-    run_logged "$airplane_name" exercise_airplane_recovery
-    logs+=("airplane=$RESULTS_DIR/$airplane_name.log")
-    s3_name="$MODE-$api-$abi-sync"
-    (cd "$APP_DIR" && run_logged "$s3_name" python3 \
-      "$ROOT/tools/android-native/run_with_timeout.py" 480 \
-      flutter drive --no-pub -d "$CURRENT_SERIAL" \
-      --timeout=420 \
-      --driver=test_driver/integration_test.dart \
-      --target=integration_test/android_real_bridge_s3_test.dart \
-      --android-project-arg=target-platform=android-arm64,android-x64 \
-      --dart-define-from-file="$CURRENT_DEFINES" \
-    )
-    logs+=("sync=$RESULTS_DIR/$s3_name.log")
-  fi
-
+  native_name="core-$api-$abi-native"
+  run_logged "$native_name" env \
+    HIDLINS_ANDROID_AVD="$avd" HIDLINS_ANDROID_EXPECTED_API="$api" \
+    HIDLINS_ANDROID_EXPECTED_ABI="$abi" "$ROOT/tools/android-native/run_app_tests.sh"
+  logs+=("native=$RESULTS_DIR/$native_name.log")
+  ui_name="core-$api-$abi-ui"
+  (cd "$APP_DIR" && run_logged "$ui_name" python3 \
+    "$ROOT/tools/android-native/run_with_timeout.py" 240 \
+    flutter drive --no-pub -d "$CURRENT_SERIAL" \
+    --timeout=180 \
+    --driver=test_driver/integration_test.dart \
+    --target=integration_test/android_emulator_ui_test.dart \
+    --android-project-arg=target-platform=android-arm64,android-x64)
+  logs+=("ui=$RESULTS_DIR/$ui_name.log")
+  lifecycle_name="core-$api-$abi-os-lifecycle"
+  run_logged "$lifecycle_name" exercise_os_lifecycle
+  logs+=("os-lifecycle=$RESULTS_DIR/$lifecycle_name.log")
+  airplane_name="core-$api-$abi-airplane"
+  run_logged "$airplane_name" exercise_airplane_recovery
+  logs+=("airplane=$RESULTS_DIR/$airplane_name.log")
+  bridge_name="core-$api-$abi-bridge"
+  (cd "$APP_DIR" && run_logged "$bridge_name" python3 \
+    "$ROOT/tools/android-native/run_with_timeout.py" 240 \
+    flutter drive --no-pub -d "$CURRENT_SERIAL" \
+    --timeout=180 \
+    --driver=test_driver/integration_test.dart \
+    --target=integration_test/android_real_bridge_test.dart \
+    --android-project-arg=target-platform=android-arm64,android-x64)
+  logs+=("bridge=$RESULTS_DIR/$bridge_name.log")
   model="$($ADB -s "$CURRENT_SERIAL" shell getprop ro.product.model | tr -d '\r')"
   record_args=(
     --output "$RESULTS_DIR/$MODE-api$api-$abi.json"
@@ -233,5 +202,9 @@ while IFS=$'\t' read -r avd api abi form_factor system_image <&3; do
   python3 "$ROOT/tools/android-native/record_result.py" "${record_args[@]}"
   cleanup_emulator
 done 3<"$MATRIX"
+
+if [[ "${HIDLINS_MOBILE_SYNC_SCENARIOS:-0}" == 1 ]]; then
+  python3 "$ROOT/tools/android-native/android_mobile_scenario.py"
+fi
 
 echo "  OK: Android $MODE matrix passed; manifests: $RESULTS_DIR/$MODE-api*.json"

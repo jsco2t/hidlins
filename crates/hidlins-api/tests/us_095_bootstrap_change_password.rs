@@ -1,372 +1,449 @@
-//! T1.9: bootstrap-from-remote + change-master-password flows.
-//!
-//! Tests for the two cross-cutting flows added by the independent review.
-//! Bootstrap network-dependent tests (wrong-password-before-install, happy
-//! path, rollback matrix) require `MinIO` and are deferred to T5.4's
-//! real-bridge integration tests. This file covers the guard checks and
-//! the change-master-password flow end-to-end.
-
 mod common;
 
-use std::sync::Arc;
-
 use hidlins_api::api::session::AppSession;
-use hidlins_api::dto::S3ConfigDto;
+use hidlins_api::dto::{KeyfileRef, LocalSyncRoleDto};
 use hidlins_api::error::HidlinsApiError;
-use hidlins_api::sync_port::SucceedingSyncEngine;
+use hidlins_sync::config::local::LocalSyncConfig;
 
-use common::{create_test_vault, register_vault, TestEnv};
+#[cfg(unix)]
+use std::io::Write as _;
+#[cfg(unix)]
+use std::process::{Command, Stdio};
+#[cfg(unix)]
+use std::time::{Duration, Instant};
 
-fn s3_cfg(marker_secret: &str) -> S3ConfigDto {
-    S3ConfigDto {
-        bucket: "test-bucket".to_string(),
-        key: "test.kdbx".to_string(),
-        region: "us-east-1".to_string(),
-        endpoint: None,
-        path_style: false,
-        access_key_id: "AKIAIOSFODNN7EXAMPLE".to_string(),
-        secret_access_key: marker_secret.to_string(),
+#[test]
+fn password_change_rewraps_local_identity_without_changing_public_key() {
+    let env = common::TestEnv::new();
+    let path = common::create_test_vault(&env, "rewrap", "old-pass");
+    common::register_vault(&env, "rewrap", &path);
+    let session = AppSession::for_test(env.paths_clone()).expect("session");
+    session
+        .unlock("rewrap".to_string(), "old-pass".to_string(), None)
+        .expect("unlock");
+    session
+        .configure_local_sync(LocalSyncRoleDto::Server)
+        .expect("configure");
+
+    let registry = hidlins_core::VaultRegistry::load(env.paths_clone()).expect("registry");
+    let before = LocalSyncConfig::from_vault_entry(registry.get("rewrap").expect("entry"))
+        .expect("local config");
+    let public_before = before.identity().public_key();
+    let sealed_before = before.identity().sealed_value().to_string();
+
+    session
+        .change_master_password("old-pass".to_string(), "new-pass".to_string())
+        .expect("password change");
+    let registry = hidlins_core::VaultRegistry::load(env.paths_clone()).expect("registry");
+    let after = LocalSyncConfig::from_vault_entry(registry.get("rewrap").expect("entry"))
+        .expect("local config");
+    assert_eq!(after.identity().public_key(), public_before);
+    assert_ne!(after.identity().sealed_value(), sealed_before);
+    assert!(after
+        .identity()
+        .unlock(
+            "rewrap",
+            hidlins_sync::identity::SyncRole::Server,
+            &hidlins_core::MasterPassword::new("new-pass".to_string()),
+        )
+        .is_ok());
+
+    session.lock_now().expect("lock");
+    assert!(session
+        .unlock("rewrap".to_string(), "new-pass".to_string(), None)
+        .is_ok());
+    session.lock_now().expect("lock");
+    assert!(matches!(
+        session.unlock("rewrap".to_string(), "old-pass".to_string(), None),
+        Err(HidlinsApiError::AuthenticationFailed)
+    ));
+}
+
+#[test]
+fn wrong_current_password_changes_neither_vault_nor_identity() {
+    let env = common::TestEnv::new();
+    let path = common::create_test_vault(&env, "wrong", "correct");
+    common::register_vault(&env, "wrong", &path);
+    let session = AppSession::for_test(env.paths_clone()).expect("session");
+    session
+        .unlock("wrong".to_string(), "correct".to_string(), None)
+        .expect("unlock");
+    session
+        .configure_local_sync(LocalSyncRoleDto::Client)
+        .expect("configure");
+    let registry = hidlins_core::VaultRegistry::load(env.paths_clone()).expect("registry");
+    let before =
+        LocalSyncConfig::from_vault_entry(registry.get("wrong").expect("entry")).expect("config");
+    let sealed = before.identity().sealed_value().to_string();
+
+    assert!(matches!(
+        session.change_master_password("incorrect".to_string(), "new".to_string()),
+        Err(HidlinsApiError::AuthenticationFailed)
+    ));
+    assert!(session.has_vault());
+    let registry = hidlins_core::VaultRegistry::load(env.paths_clone()).expect("registry");
+    let after =
+        LocalSyncConfig::from_vault_entry(registry.get("wrong").expect("entry")).expect("config");
+    assert_eq!(after.identity().sealed_value(), sealed);
+}
+
+#[test]
+fn locked_password_change_is_rejected() {
+    let env = common::TestEnv::new();
+    let session = AppSession::for_test(env.paths_clone()).expect("session");
+    assert!(matches!(
+        session.change_master_password("old".to_string(), "new".to_string()),
+        Err(HidlinsApiError::VaultLocked)
+    ));
+}
+
+#[cfg(unix)]
+fn interrupt_rotation(env: &common::TestEnv, name: &str, phase: &str) {
+    let mut child = Command::new(env!("CARGO_BIN_EXE_api-test-driver"))
+        .arg("change-password")
+        .arg(env.paths().state_dir())
+        .arg(name)
+        .env("HIDLINS_ROTATION_FAULT_SIGNAL_DIR", env.tempdir())
+        .env("HIDLINS_ROTATION_FAULT_PAUSE_PHASE", phase)
+        .stdin(Stdio::piped())
+        .spawn()
+        .expect("spawn password-change helper");
+    child
+        .stdin
+        .take()
+        .expect("helper stdin")
+        .write_all(b"old-pass\nnew-pass\n")
+        .expect("write helper credentials");
+
+    let signal = env.tempdir().join(phase);
+    let deadline = Instant::now() + Duration::from_secs(5);
+    while !signal.exists() {
+        assert!(
+            Instant::now() < deadline,
+            "helper did not pause at password-rotation phase {phase}"
+        );
+        std::thread::yield_now();
+    }
+    child.kill().expect("kill paused helper");
+    child.wait().expect("wait for helper");
+}
+
+#[cfg(unix)]
+fn rotation_artifacts(env: &common::TestEnv) -> Vec<std::path::PathBuf> {
+    std::fs::read_dir(env.paths().state_dir())
+        .expect("read state directory")
+        .map(|entry| entry.expect("directory entry").path())
+        .filter(|path| {
+            path.file_name().is_some_and(|name| {
+                name.to_string_lossy()
+                    .starts_with(".hidlins-password-rotation-")
+            })
+        })
+        .collect()
+}
+
+#[cfg(unix)]
+fn configured_rotation_fixture(
+    name: &str,
+) -> (common::TestEnv, hidlins_sync::identity::PublicIdentity) {
+    let env = common::TestEnv::new();
+    let path = common::create_test_vault(&env, name, "old-pass");
+    common::register_vault(&env, name, &path);
+    let session = AppSession::for_test(env.paths_clone()).expect("session");
+    session
+        .unlock(name.to_string(), "old-pass".to_string(), None)
+        .expect("unlock");
+    session
+        .configure_local_sync(LocalSyncRoleDto::Server)
+        .expect("configure");
+    let registry = hidlins_core::VaultRegistry::load(env.paths_clone()).expect("registry");
+    let public_key = LocalSyncConfig::from_vault_entry(registry.get(name).expect("entry"))
+        .expect("local config")
+        .identity()
+        .public_key();
+    drop(session);
+    (env, public_key)
+}
+
+#[cfg(unix)]
+// LNS-IDENTITY-004
+#[test]
+fn interrupted_rotation_after_vault_commit_recovers_matching_identity() {
+    let (env, public_before) = configured_rotation_fixture("recover");
+    interrupt_rotation(&env, "recover", "vault_committed");
+
+    // Constructing the next application session is the restart recovery
+    // boundary. Both durable authorities must then accept the new password.
+    let recovered = AppSession::for_test(env.paths_clone()).expect("restart session");
+    recovered
+        .unlock("recover".to_string(), "new-pass".to_string(), None)
+        .expect("new password opens recovered vault");
+    let registry = hidlins_core::VaultRegistry::load(env.paths_clone()).expect("registry");
+    let config = LocalSyncConfig::from_vault_entry(registry.get("recover").expect("entry"))
+        .expect("local config");
+    assert_eq!(config.identity().public_key(), public_before);
+    config
+        .identity()
+        .unlock(
+            "recover",
+            hidlins_sync::identity::SyncRole::Server,
+            &hidlins_core::MasterPassword::new("new-pass".to_string()),
+        )
+        .expect("new password unwraps recovered sync identity");
+    assert!(rotation_artifacts(&env).is_empty());
+}
+
+#[cfg(unix)]
+// LNS-IDENTITY-005
+#[test]
+fn every_durable_rotation_boundary_recovers_idempotently() {
+    let boundaries = [
+        ("stages_durable", false),
+        ("prepared", true),
+        ("vault_commit_started", true),
+        ("vault_renamed", true),
+        ("vault_committed", true),
+        ("registry_renamed", true),
+        ("registry_committed", true),
+    ];
+    for (index, (phase, expects_new)) in boundaries.into_iter().enumerate() {
+        let name = format!("boundary-{index}");
+        let (env, public_before) = configured_rotation_fixture(&name);
+        interrupt_rotation(&env, &name, phase);
+
+        AppSession::for_test(env.paths_clone()).expect("first restart recovery");
+        AppSession::for_test(env.paths_clone()).expect("repeated recovery is a no-op");
+        let registry = hidlins_core::VaultRegistry::load(env.paths_clone()).expect("registry");
+        let entry = registry.get(&name).expect("entry");
+        let config = LocalSyncConfig::from_vault_entry(entry).expect("local config");
+        assert_eq!(
+            config.identity().public_key(),
+            public_before,
+            "phase {phase}"
+        );
+        let expected_password = if expects_new { "new-pass" } else { "old-pass" };
+        hidlins_core::Vault::open(
+            &entry.path,
+            &hidlins_core::MasterPassword::new(expected_password.to_string()),
+            None,
+        )
+        .unwrap_or_else(|error| panic!("phase {phase} did not recover vault: {error:?}"));
+        config
+            .identity()
+            .unlock(
+                &name,
+                hidlins_sync::identity::SyncRole::Server,
+                &hidlins_core::MasterPassword::new(expected_password.to_string()),
+            )
+            .unwrap_or_else(|error| panic!("phase {phase} did not recover identity: {error:?}"));
+        assert!(rotation_artifacts(&env).is_empty(), "phase {phase}");
     }
 }
 
-fn session_with_sync_engine(env: &TestEnv) -> AppSession {
-    AppSession::with_ports(
-        env.paths_clone(),
+#[cfg(unix)]
+// LNS-IDENTITY-006
+#[test]
+fn recovery_merges_without_losing_unrelated_registry_changes() {
+    let (env, _) = configured_rotation_fixture("merge");
+    interrupt_rotation(&env, "merge", "vault_committed");
+    let unrelated_path = common::create_test_vault(&env, "unrelated", "other-pass");
+    common::register_vault(&env, "unrelated", &unrelated_path);
+
+    AppSession::for_test(env.paths_clone()).expect("restart recovery");
+    let registry = hidlins_core::VaultRegistry::load(env.paths_clone()).expect("registry");
+    assert!(registry.get("unrelated").is_some());
+    let config = LocalSyncConfig::from_vault_entry(registry.get("merge").expect("entry"))
+        .expect("local config");
+    config
+        .identity()
+        .unlock(
+            "merge",
+            hidlins_sync::identity::SyncRole::Server,
+            &hidlins_core::MasterPassword::new("new-pass".to_string()),
+        )
+        .expect("merged registry retains rewrapped identity");
+}
+
+// LNS-IDENTITY-007
+#[test]
+fn password_change_with_keyfile_path_rewraps_matching_identity() {
+    let env = common::TestEnv::new();
+    let (path, keyfile_path, _) =
+        common::create_test_vault_with_keyfile(&env, "keyfile", "old-pass");
+    common::register_vault(&env, "keyfile", &path);
+    let keyfile = || KeyfileRef::Path(keyfile_path.to_string_lossy().into_owned());
+    let session = AppSession::for_test(env.paths_clone()).expect("session");
+    session
+        .unlock(
+            "keyfile".to_string(),
+            "old-pass".to_string(),
+            Some(keyfile()),
+        )
+        .expect("unlock with keyfile");
+    session
+        .configure_local_sync(LocalSyncRoleDto::Server)
+        .expect("configure");
+    session
+        .change_master_password("old-pass".to_string(), "new-pass".to_string())
+        .expect("rotate with retained keyfile");
+    session.lock_now().expect("lock");
+    session
+        .unlock(
+            "keyfile".to_string(),
+            "new-pass".to_string(),
+            Some(keyfile()),
+        )
+        .expect("new password and keyfile open vault");
+
+    let registry = hidlins_core::VaultRegistry::load(env.paths_clone()).expect("registry");
+    let config = LocalSyncConfig::from_vault_entry(registry.get("keyfile").expect("entry"))
+        .expect("local config");
+    config
+        .identity()
+        .unlock(
+            "keyfile",
+            hidlins_sync::identity::SyncRole::Server,
+            &hidlins_core::MasterPassword::new("new-pass".to_string()),
+        )
+        .expect("new password unwraps identity");
+}
+
+#[cfg(unix)]
+// LNS-IDENTITY-008
+#[test]
+fn recovery_fails_closed_for_corrupt_marker_without_touching_old_pair() {
+    use std::os::unix::fs::PermissionsExt as _;
+
+    let (env, _) = configured_rotation_fixture("corrupt");
+    interrupt_rotation(&env, "corrupt", "prepared");
+    let artifacts = rotation_artifacts(&env);
+    for artifact in &artifacts {
+        let bytes = std::fs::read(artifact).expect("read transaction artifact");
+        assert_eq!(
+            std::fs::metadata(artifact)
+                .expect("artifact metadata")
+                .permissions()
+                .mode()
+                & 0o777,
+            0o600,
+            "transaction artifacts stay owner-only"
+        );
+        assert!(!bytes
+            .windows(b"old-pass".len())
+            .any(|part| part == b"old-pass"));
+        assert!(!bytes
+            .windows(b"new-pass".len())
+            .any(|part| part == b"new-pass"));
+    }
+    let marker = artifacts
+        .into_iter()
+        .find(|path| path.extension().is_some_and(|extension| extension == "txn"))
+        .expect("transaction marker");
+    let canary = "marker-secret-canary-must-not-escape";
+    std::fs::write(&marker, format!("invalid = '{canary}'")).expect("corrupt marker");
+
+    let error = AppSession::for_test(env.paths_clone()).expect_err("corrupt marker must fail");
+    let error = format!("{error:?}");
+    assert!(error.contains("marker is malformed"));
+    assert!(!error.contains(canary));
+    hidlins_core::Vault::open(
+        &env.paths().state_dir().join("corrupt.kdbx"),
+        &hidlins_core::MasterPassword::new("old-pass".to_string()),
         None,
-        Arc::new(SucceedingSyncEngine(
-            hidlins_sync::SyncOutcome::AlreadyInSync,
-        )),
     )
-    .expect("create session with sync engine")
+    .expect("old live vault remains intact");
 }
 
-// -----------------------------------------------------------------------
-// Bootstrap guard tests (no network needed)
-// -----------------------------------------------------------------------
-
+#[cfg(unix)]
+// LNS-IDENTITY-009
 #[test]
-fn bootstrap_duplicate_name_rejected() {
-    let env = TestEnv::new();
-    let vault_path = create_test_vault(&env, "existing", "pass");
-    register_vault(&env, "existing", &vault_path);
+fn recovery_fails_closed_when_committed_vault_loses_registry_stage() {
+    let (env, _) = configured_rotation_fixture("missing");
+    interrupt_rotation(&env, "missing", "vault_committed");
+    let stage = rotation_artifacts(&env)
+        .into_iter()
+        .find(|path| path.to_string_lossy().ends_with(".registry.stage"))
+        .expect("registry stage");
+    std::fs::remove_file(stage).expect("remove stage to simulate damage");
 
-    let session = session_with_sync_engine(&env);
-    session
-        .unlock("existing".to_string(), "pass".to_string(), None)
-        .expect("unlock");
-
-    let result = session.bootstrap_vault_from_remote(
-        "existing".to_string(),
-        s3_cfg("secret"),
-        "remote-pass".to_string(),
+    let error = AppSession::for_test(env.paths_clone()).expect_err("missing stage must fail");
+    assert!(format!("{error:?}").contains("required password rotation stage is missing"));
+    hidlins_core::Vault::open(
+        &env.paths().state_dir().join("missing.kdbx"),
+        &hidlins_core::MasterPassword::new("new-pass".to_string()),
         None,
-    );
-
-    assert!(
-        matches!(result, Err(HidlinsApiError::PathExists { .. })),
-        "bootstrap must reject a name already registered; got: {result:?}"
-    );
-}
-
-#[test]
-fn bootstrap_duplicate_target_rejected() {
-    let env = TestEnv::new();
-    let vault_path = create_test_vault(&env, "first", "pass");
-    register_vault(&env, "first", &vault_path);
-
-    let session = session_with_sync_engine(&env);
-    session
-        .unlock("first".to_string(), "pass".to_string(), None)
-        .expect("unlock");
-
-    // Configure sync on "first" to create the duplicate target.
-    session
-        .configure_sync(s3_cfg("secret"))
-        .expect("configure sync");
-
-    // Attempt to bootstrap a second vault pointing at the same bucket+key.
-    let result = session.bootstrap_vault_from_remote(
-        "second".to_string(),
-        s3_cfg("other-secret"),
-        "remote-pass".to_string(),
-        None,
-    );
-
-    assert!(
-        matches!(result, Err(HidlinsApiError::SyncDuplicateTarget { .. })),
-        "bootstrap must reject a duplicate sync target; got: {result:?}"
-    );
-}
-
-// -----------------------------------------------------------------------
-// Change master password
-// -----------------------------------------------------------------------
-
-#[test]
-fn change_master_password_succeeds_and_new_password_unlocks() {
-    let env = TestEnv::new();
-    let vault_path = create_test_vault(&env, "chpw", "old-pass");
-    register_vault(&env, "chpw", &vault_path);
-
-    let session = AppSession::for_test(env.paths_clone()).expect("create session");
-    session
-        .unlock("chpw".to_string(), "old-pass".to_string(), None)
-        .expect("unlock");
-
-    session
-        .change_master_password("old-pass".to_string(), "new-pass".to_string())
-        .expect("change password");
-
-    // Lock and re-unlock with the new password.
-    session.lock_now().expect("lock");
-    let result = session.unlock("chpw".to_string(), "new-pass".to_string(), None);
-    assert!(result.is_ok(), "new password must unlock; got: {result:?}");
-
-    // Old password should fail.
-    session.lock_now().expect("lock");
-    let old_result = session.unlock("chpw".to_string(), "old-pass".to_string(), None);
-    assert!(
-        matches!(old_result, Err(HidlinsApiError::AuthenticationFailed)),
-        "old password must fail; got: {old_result:?}"
-    );
-}
-
-#[test]
-fn change_master_password_blocked_during_sync() {
-    use hidlins_api::sync_port::BlockingSyncEngine;
-    use std::sync::Barrier;
-
-    let env = TestEnv::new();
-    let vault_path = create_test_vault(&env, "chpw-sync", "pass");
-    register_vault(&env, "chpw-sync", &vault_path);
-
-    let barrier = Arc::new(Barrier::new(2));
-    let (engine, entered_rx) = BlockingSyncEngine::with_entry_signal(
-        Arc::clone(&barrier),
-        hidlins_sync::SyncOutcome::AlreadyInSync,
-    );
-
-    let session = Arc::new(session_with_sync_engine_custom(&env, Arc::new(engine)));
-    session
-        .unlock("chpw-sync".to_string(), "pass".to_string(), None)
-        .expect("unlock");
-    session
-        .configure_sync(s3_cfg("secret"))
-        .expect("configure sync");
-
-    // Start sync on another thread — blocks on barrier.
-    let session_clone = Arc::clone(&session);
-    let sync_thread = std::thread::spawn(move || session_clone.sync_now());
-
-    entered_rx
-        .recv_timeout(std::time::Duration::from_secs(5))
-        .expect("sync engine must signal entry");
-
-    // Attempt to change password while syncing.
-    let result = session.change_master_password("pass".to_string(), "new-pass".to_string());
-    assert!(
-        matches!(result, Err(HidlinsApiError::VaultBusySyncing)),
-        "change_master_password must be blocked during sync; got: {result:?}"
-    );
-
-    // Release the barrier so sync completes.
-    barrier.wait();
-    let _ = sync_thread.join();
-}
-
-fn session_with_sync_engine_custom(
-    env: &TestEnv,
-    engine: Arc<dyn hidlins_api::sync_port::SyncEnginePort>,
-) -> AppSession {
-    AppSession::with_ports(env.paths_clone(), None, engine).expect("create session")
-}
-
-#[test]
-fn change_master_password_reencrypts_sync_credentials() {
-    let env = TestEnv::new();
-    let vault_path = create_test_vault(&env, "reencrypt", "old-pass");
-    register_vault(&env, "reencrypt", &vault_path);
-
-    let session = AppSession::for_test(env.paths_clone()).expect("create session");
-    session
-        .unlock("reencrypt".to_string(), "old-pass".to_string(), None)
-        .expect("unlock");
-
-    let marker_secret = "MARKER-s3cret-K3Y-DO-NOT-LEAK";
-    session
-        .configure_sync(s3_cfg(marker_secret))
-        .expect("configure sync");
-
-    // Read encrypted credential before password change.
-    let before = std::fs::read_to_string(env.paths().vaults_toml()).expect("read vaults.toml");
-    assert!(
-        !before.contains(marker_secret),
-        "plaintext secret must not appear before password change"
-    );
-    assert!(
-        before.contains("AKIAIOSFODNN7EXAMPLE"),
-        "access_key_id must be present"
-    );
-
-    // Extract the encrypted value before the change.
-    let encrypted_before = before
-        .lines()
-        .find(|l| l.contains("secret_access_key_encrypted"))
-        .expect("encrypted key must exist before change")
-        .to_string();
-
-    // Change password.
-    session
-        .change_master_password("old-pass".to_string(), "new-pass".to_string())
-        .expect("change password");
-
-    // Read again — the encrypted value should have changed (re-encrypted
-    // with new master) and plaintext still absent.
-    let after = std::fs::read_to_string(env.paths().vaults_toml()).expect("read vaults.toml after");
-    assert!(
-        !after.contains(marker_secret),
-        "plaintext secret must not appear after password change"
-    );
-
-    let encrypted_after = after
-        .lines()
-        .find(|l| l.contains("secret_access_key_encrypted"))
-        .expect("encrypted key must exist after change")
-        .to_string();
-
-    assert_ne!(
-        encrypted_before, encrypted_after,
-        "encrypted credential must change after password change (re-encrypted with new master)"
-    );
-}
-
-#[test]
-fn change_master_password_preserves_sync_divergence_pointers() {
-    let env = TestEnv::new();
-    let vault_path = create_test_vault(&env, "pointer-preserve", "old-pass");
-    register_vault(&env, "pointer-preserve", &vault_path);
-
-    let session = AppSession::for_test(env.paths_clone()).expect("create session");
-    session
-        .unlock("pointer-preserve".to_string(), "old-pass".to_string(), None)
-        .expect("unlock");
-    session
-        .configure_sync(s3_cfg("marker-secret"))
-        .expect("configure sync");
-    session.shutdown();
-
-    // Model a vault that has completed at least one sync. Password rotation
-    // must not reset these pointers: doing so makes the next sync classify the
-    // old-password remote and new-password local as a first-time divergence,
-    // then fail while attempting to decrypt the remote with the new password.
-    let mut registry = hidlins_core::VaultRegistry::load(env.paths_clone()).expect("load registry");
-    let mut updated = registry
-        .get("pointer-preserve")
-        .expect("registered vault")
-        .clone();
-    let mut cfg = hidlins_sync::SyncConfig::from_vault_entry(&updated).expect("sync config");
-    cfg.last_synced_remote_etag = Some("etag-before-password-change".to_string());
-    cfg.last_synced_local_sha256 = Some("ab".repeat(32));
-    cfg.to_vault_entry(&mut updated);
-    registry
-        .deregister("pointer-preserve", false)
-        .expect("replace old record");
-    registry.register(updated).expect("replace record");
-    registry.save().expect("save pointers");
-
-    let session = AppSession::for_test(env.paths_clone()).expect("reload session");
-    session
-        .unlock("pointer-preserve".to_string(), "old-pass".to_string(), None)
-        .expect("unlock reloaded session");
-    session
-        .change_master_password("old-pass".to_string(), "new-pass".to_string())
-        .expect("change password");
-
-    let registry = hidlins_core::VaultRegistry::load(env.paths_clone()).expect("reload registry");
-    let cfg = hidlins_sync::SyncConfig::from_vault_entry(
-        registry.get("pointer-preserve").expect("vault remains"),
     )
-    .expect("sync config remains");
-    assert_eq!(
-        cfg.last_synced_remote_etag.as_deref(),
-        Some("etag-before-password-change")
-    );
-    assert_eq!(
-        cfg.last_synced_local_sha256.as_deref(),
-        Some("ab".repeat(32).as_str())
-    );
+    .expect("committed live vault remains intact");
 }
 
+#[cfg(unix)]
+// LNS-IDENTITY-011
 #[test]
-fn change_master_password_credentials_replaced_before_registry_write() {
-    let env = TestEnv::new();
-    let vault_path = create_test_vault(&env, "cred-replace", "old-pass");
-    register_vault(&env, "cred-replace", &vault_path);
+fn recovery_fails_closed_when_registry_stage_hash_is_corrupt() {
+    let (env, _) = configured_rotation_fixture("corrupt-stage");
+    interrupt_rotation(&env, "corrupt-stage", "vault_committed");
+    let stage = rotation_artifacts(&env)
+        .into_iter()
+        .find(|path| path.to_string_lossy().ends_with(".registry.stage"))
+        .expect("registry stage");
+    std::fs::write(stage, b"valid-looking = 'but unauthenticated'")
+        .expect("corrupt staged registry");
 
-    let session = AppSession::for_test(env.paths_clone()).expect("create session");
+    let error = AppSession::for_test(env.paths_clone()).expect_err("corrupt stage must fail");
+    assert!(format!("{error:?}").contains("password rotation stage hash mismatch"));
+    hidlins_core::Vault::open(
+        &env.paths().state_dir().join("corrupt-stage.kdbx"),
+        &hidlins_core::MasterPassword::new("new-pass".to_string()),
+        None,
+    )
+    .expect("committed live vault remains intact");
+}
+
+#[cfg(unix)]
+// LNS-IDENTITY-010
+#[test]
+fn stage_write_failure_changes_neither_live_authority() {
+    use std::os::unix::fs::PermissionsExt as _;
+
+    let (env, _) = configured_rotation_fixture("stage-failure");
+    let original_mode = std::fs::metadata(env.paths().state_dir())
+        .expect("state metadata")
+        .permissions()
+        .mode();
+    std::fs::set_permissions(
+        env.paths().state_dir(),
+        std::fs::Permissions::from_mode(0o500),
+    )
+    .expect("make state directory read-only");
+    let session = AppSession::for_test(env.paths_clone()).expect("session");
     session
-        .unlock("cred-replace".to_string(), "old-pass".to_string(), None)
+        .unlock("stage-failure".to_string(), "old-pass".to_string(), None)
         .expect("unlock");
+    let result = session.change_master_password("old-pass".to_string(), "new-pass".to_string());
+    std::fs::set_permissions(
+        env.paths().state_dir(),
+        std::fs::Permissions::from_mode(original_mode),
+    )
+    .expect("restore state directory permissions");
+    assert!(result.is_err(), "read-only stage creation must fail");
+    drop(session);
 
-    assert!(
-        session.has_credentials(),
-        "credentials must be retained after unlock (D-11)"
-    );
-
-    session
-        .change_master_password("old-pass".to_string(), "new-pass".to_string())
-        .expect("change password");
-
-    // Credentials are still present (replaced, not dropped).
-    assert!(
-        session.has_credentials(),
-        "credentials must still be present after password change"
-    );
-
-    // Lock and verify new password works (proves credentials were replaced).
-    session.lock_now().expect("lock");
-    let result = session.unlock("cred-replace".to_string(), "new-pass".to_string(), None);
-    assert!(
-        result.is_ok(),
-        "new password must work after credential replacement; got: {result:?}"
-    );
-}
-
-#[test]
-fn change_master_password_wrong_current_fails() {
-    let env = TestEnv::new();
-    let vault_path = create_test_vault(&env, "wrong-curr", "correct-pass");
-    register_vault(&env, "wrong-curr", &vault_path);
-
-    let session = AppSession::for_test(env.paths_clone()).expect("create session");
-    session
-        .unlock("wrong-curr".to_string(), "correct-pass".to_string(), None)
-        .expect("unlock");
-
-    let result = session.change_master_password("wrong-pass".to_string(), "new-pass".to_string());
-    assert!(
-        matches!(result, Err(HidlinsApiError::AuthenticationFailed)),
-        "wrong current password must fail; got: {result:?}"
-    );
-
-    // Vault should still be unlocked (no state corruption).
-    assert!(
-        session.has_vault(),
-        "vault must still be unlocked after failed password change"
-    );
-}
-
-#[test]
-fn change_master_password_on_locked_vault_fails() {
-    let env = TestEnv::new();
-    let _vault_path = create_test_vault(&env, "locked-chpw", "pass");
-
-    let session = AppSession::for_test(env.paths_clone()).expect("create session");
-    // Do NOT unlock.
-
-    let result = session.change_master_password("pass".to_string(), "new-pass".to_string());
-    assert!(
-        matches!(result, Err(HidlinsApiError::VaultLocked)),
-        "change password on locked vault must fail; got: {result:?}"
-    );
+    let registry = hidlins_core::VaultRegistry::load(env.paths_clone()).expect("registry");
+    let entry = registry.get("stage-failure").expect("entry");
+    hidlins_core::Vault::open(
+        &entry.path,
+        &hidlins_core::MasterPassword::new("old-pass".to_string()),
+        None,
+    )
+    .expect("old password still opens vault");
+    LocalSyncConfig::from_vault_entry(entry)
+        .expect("local config")
+        .identity()
+        .unlock(
+            "stage-failure",
+            hidlins_sync::identity::SyncRole::Server,
+            &hidlins_core::MasterPassword::new("old-pass".to_string()),
+        )
+        .expect("old password still unwraps identity");
+    assert!(rotation_artifacts(&env).is_empty());
 }

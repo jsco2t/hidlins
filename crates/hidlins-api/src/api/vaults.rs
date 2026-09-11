@@ -30,7 +30,8 @@ impl AppSession {
                 name: entry.name.clone(),
                 path: entry.path.display().to_string(),
                 has_keyfile: entry.keyfile_path.is_some(),
-                has_sync: hidlins_sync::SyncConfig::from_vault_entry(entry).is_some(),
+                has_sync: hidlins_sync::config::local::LocalSyncConfig::from_vault_entry(entry)
+                    .is_some(),
             })
             .collect();
         Ok(summaries)

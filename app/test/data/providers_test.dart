@@ -88,7 +88,7 @@ void main() {
         entries: const [],
       );
 
-      syncRepo.syncController.add(const SyncEvent.started());
+      syncRepo.syncController.add(const SyncEvent.started(automatic: false));
       await Future<void>.delayed(Duration.zero);
       await container.read(vaultTreeProvider.future);
       final afterStarted = (await container.read(vaultTreeProvider.future))

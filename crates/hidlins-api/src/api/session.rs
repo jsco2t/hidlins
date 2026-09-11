@@ -7,6 +7,12 @@ use std::time::{Duration, Instant};
 
 use hidlins_core::{HidlinsPaths, Keyfile, MasterPassword, Totp, Uuid, Vault, VaultRegistry};
 use hidlins_security::{AutoLockConfig, AutoLockController, LockState, OsLockReason};
+use hidlins_sync::{
+    address::LocalEndpoint,
+    client::StartupSyncTracker,
+    discovery::{CandidateCache, DiscoveryPermission},
+    server::{HostProcessor, ServerController},
+};
 use zeroize::Zeroize;
 
 pub use crate::dto::{
@@ -101,6 +107,7 @@ pub(crate) struct SessionState {
     /// A sync worker owns the vault + registry; queries return
     /// `VaultBusySyncing`.
     pub(crate) syncing: bool,
+    pub(crate) sync_cancellation: Option<hidlins_sync::client::LanCancellation>,
     pub(crate) lock_sink: Option<Box<dyn EventSink<LockEvent>>>,
     pub(crate) sync_sink: Option<Box<dyn EventSink<SyncEvent>>>,
     pub(crate) dead: bool,
@@ -108,6 +115,20 @@ pub(crate) struct SessionState {
     baseline_lock_config: AutoLockConfig,
     pub(crate) startup_warnings: Vec<String>,
     pub(crate) clipboard_owner: u64,
+    pub(crate) startup_sync_tracker: StartupSyncTracker,
+    pub(crate) discovery_cache: CandidateCache,
+    pub(crate) discovery_permission: DiscoveryPermission,
+    pub(crate) injected_candidates: Vec<LocalEndpoint>,
+    pub(crate) server_capable: bool,
+    pub(crate) server_requested: Option<LocalEndpoint>,
+    pub(crate) server_runtime: Option<SessionServerRuntime>,
+    pub(crate) pairing_open: bool,
+    pub(crate) pairing_api: Arc<crate::api::sync::PairingApiState>,
+}
+
+pub(crate) struct SessionServerRuntime {
+    pub(crate) controller: ServerController,
+    pub(crate) processor: HostProcessor,
 }
 
 impl SessionState {
@@ -150,6 +171,8 @@ impl SessionState {
 
     pub(crate) fn do_lock(&mut self) {
         crate::api::secrets::purge_clipboard_transfers(self.clipboard_owner);
+        self.pairing_api.cancel_all();
+        self.stop_server_runtime();
         self.vault = None;
         self.credentials = None;
         self.controller.lock_now(OsLockReason::Manual);
@@ -179,6 +202,9 @@ impl SessionState {
         // poison-recovery path and the ticker's poison branch call this.
         let was_alive = !self.dead;
         crate::api::secrets::purge_clipboard_transfers(self.clipboard_owner);
+        self.pairing_api.cancel_all();
+        self.server_requested = None;
+        self.stop_server_runtime();
         self.vault = None;
         self.credentials = None;
         self.dead = true;
@@ -188,6 +214,15 @@ impl SessionState {
         // A dead session emits nothing further — drop the sink so Dart
         // observes end-of-stream rather than indefinite silence.
         self.lock_sink = None;
+    }
+
+    pub(crate) fn stop_server_runtime(&mut self) {
+        self.pairing_open = false;
+        if let Some(mut runtime) = self.server_runtime.take() {
+            runtime.processor.shutdown();
+            runtime.controller.stop();
+            self.push_sync_event(SyncEvent::ServerStopped);
+        }
     }
 }
 
@@ -216,7 +251,7 @@ impl SessionState {
 /// in the generated bindings.
 #[flutter_rust_bridge::frb(opaque)]
 pub struct AppSession {
-    inner: Arc<Mutex<SessionState>>,
+    pub(crate) inner: Arc<Mutex<SessionState>>,
     activity_counter: Arc<AtomicU64>,
     lifecycle_state: Arc<AtomicU8>,
     ticker_progress: Arc<Mutex<TickerProgress>>,
@@ -228,6 +263,10 @@ pub struct AppSession {
     #[cfg_attr(not(feature = "desktop"), allow(dead_code))]
     pub(crate) clipboard: Option<Arc<dyn crate::clipboard_port::ClipboardPort>>,
     pub(crate) sync_engine: Arc<dyn crate::sync_port::SyncEnginePort>,
+    pub(crate) background_workers: Mutex<Vec<JoinHandle<()>>>,
+    pub(crate) discovery_port:
+        Mutex<Option<Box<dyn hidlins_sync::discovery::DiscoveryPort + Send>>>,
+    pub(crate) pairing_api: Arc<crate::api::sync::PairingApiState>,
 }
 
 #[derive(Default)]
@@ -340,6 +379,7 @@ pub fn init_app(cfg: AppInitConfig) -> Result<AppSession, HidlinsApiError> {
     paths.ensure_exists()?;
 
     let session_paths = paths.clone();
+    VaultRegistry::recover_password_rotations(&paths)?;
     let registry = VaultRegistry::load(paths)?;
 
     let controller = AutoLockController::new(AutoLockConfig::default()).map_err(|e| {
@@ -354,6 +394,7 @@ pub fn init_app(cfg: AppInitConfig) -> Result<AppSession, HidlinsApiError> {
     // `startup_warnings()` (FR-052 best-effort).
     let (controller, startup_warnings) = attach_platform_lock_sources(controller);
 
+    let pairing_api = Arc::new(crate::api::sync::PairingApiState::new());
     let state = SessionState {
         registry,
         vault: None,
@@ -362,6 +403,7 @@ pub fn init_app(cfg: AppInitConfig) -> Result<AppSession, HidlinsApiError> {
         lock_pending: false,
         unlocking: false,
         syncing: false,
+        sync_cancellation: None,
         lock_sink: None,
         sync_sink: None,
         dead: false,
@@ -369,6 +411,19 @@ pub fn init_app(cfg: AppInitConfig) -> Result<AppSession, HidlinsApiError> {
         baseline_lock_config: AutoLockConfig::default(),
         startup_warnings,
         clipboard_owner: crate::api::secrets::new_clipboard_owner(),
+        startup_sync_tracker: StartupSyncTracker::default(),
+        discovery_cache: CandidateCache::new(),
+        discovery_permission: if cfg!(feature = "desktop") {
+            DiscoveryPermission::Granted
+        } else {
+            DiscoveryPermission::NotDetermined
+        },
+        injected_candidates: Vec::new(),
+        server_capable: cfg!(feature = "desktop"),
+        server_requested: None,
+        server_runtime: None,
+        pairing_open: false,
+        pairing_api: Arc::clone(&pairing_api),
     };
 
     let inner = Arc::new(Mutex::new(state));
@@ -409,6 +464,9 @@ pub fn init_app(cfg: AppInitConfig) -> Result<AppSession, HidlinsApiError> {
         paths: session_paths,
         clipboard,
         sync_engine: Arc::new(crate::sync_port::DefaultSyncEngine),
+        background_workers: Mutex::new(Vec::new()),
+        discovery_port: Mutex::new(None),
+        pairing_api,
     })
 }
 
@@ -459,6 +517,13 @@ impl AppSession {
             .lock()
             .unwrap_or_else(std::sync::PoisonError::into_inner);
         let mut session = self.lock_state();
+        let cancel_foreground =
+            session.lifecycle_enabled && !matches!(state, LifecycleStateDto::Resumed);
+        if cancel_foreground {
+            if let Some(cancellation) = session.sync_cancellation.as_ref() {
+                cancellation.cancel();
+            }
+        }
         let locked_before = !session.is_unlocked();
         let TickerProgress {
             grace_start,
@@ -475,6 +540,10 @@ impl AppSession {
         let locked_after = !session.is_unlocked() || session.lock_pending;
         drop(session);
         drop(progress);
+
+        if cancel_foreground {
+            self.pairing_api.cancel_all();
+        }
 
         if !locked_before && locked_after {
             clear_totp_cache_inner(&self.totp_cache);
@@ -646,141 +715,15 @@ impl AppSession {
             keyfile: kf,
         });
         state.vault = Some(vault);
+        crate::api::sync::restart_requested_server(self, &mut state);
+        let tree = crate::dto::vault_tree_from_database(
+            state.vault.as_ref().expect("just committed").database(),
+            chrono::Utc::now(),
+        );
+        state.push_lock_event(LockEvent::Unlocked);
+        drop(state);
 
-        // FR-041: merge-before-present. If sync is configured, enter
-        // Syncing state BEFORE releasing the guard so no concurrent
-        // caller can read the pre-merge vault (threading rule 8: the
-        // unlock-merge window never exposes a readable vault).
-        let sync_configured = {
-            let vault_path = state
-                .vault
-                .as_ref()
-                .expect("just committed")
-                .path()
-                .to_path_buf();
-            state
-                .registry
-                .list()
-                .find(|e| e.path == vault_path)
-                .and_then(hidlins_sync::SyncConfig::from_vault_entry)
-                .is_some()
-        };
-
-        if sync_configured {
-            // Move vault + registry out and set syncing under this
-            // guard — no concurrent caller can read the pre-merge
-            // vault (threading rule 8 / finding 4).
-            let creds = state.credentials.as_ref().expect("just committed");
-            let master_clone =
-                MasterPassword::new(String::from_utf8_lossy(creds.master.as_bytes()).into_owned());
-            let keyfile_clone = creds.keyfile.as_ref().map(|kf| match kf {
-                Keyfile::Path(p) => Keyfile::Path(p.clone()),
-                Keyfile::Bytes(b) => Keyfile::Bytes(b.clone()),
-            });
-            let vault_path = state
-                .vault
-                .as_ref()
-                .expect("just committed")
-                .path()
-                .to_path_buf();
-            let vault_name = state
-                .registry
-                .list()
-                .find(|e| e.path == vault_path)
-                .map(|e| e.name.clone())
-                .expect("just committed vault is registered");
-            let mut sync_vault = state.vault.take().expect("just committed");
-            let placeholder_paths = state.registry.paths().clone();
-            let mut sync_registry = std::mem::replace(
-                &mut state.registry,
-                VaultRegistry::with_paths(placeholder_paths),
-            );
-            state.syncing = true;
-            state.push_sync_event(SyncEvent::Started);
-            drop(state);
-
-            // Phase 2: sync without the session mutex.
-            let engine = Arc::clone(&self.sync_engine);
-            let sync_result = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
-                engine.sync_now(
-                    &mut sync_vault,
-                    &vault_name,
-                    &mut sync_registry,
-                    &master_clone,
-                    keyfile_clone.as_ref(),
-                    hidlins_sync::SyncOptions::default(),
-                )
-            }));
-
-            // Phase 3: commit or discard.
-            let mut state = self.lock_state();
-            state.syncing = false;
-            let lock_requested = std::mem::take(&mut state.lock_pending);
-            self.clear_totp_cache();
-
-            if lock_requested || state.dead {
-                state.registry = sync_registry;
-                state.credentials = None;
-                state.controller.lock_now(OsLockReason::Manual);
-                state.push_sync_event(SyncEvent::Failed(HidlinsApiError::VaultLocked));
-                if !state.dead {
-                    state.push_lock_event(LockEvent::Locked);
-                }
-                return Err(HidlinsApiError::VaultLocked);
-            }
-
-            if let Ok(Ok(outcome)) = sync_result {
-                let dto = crate::dto::sync_outcome_from_core(&outcome);
-                state.push_sync_event(SyncEvent::Done(dto));
-                state.vault = Some(sync_vault);
-                state.registry = sync_registry;
-            } else {
-                state.push_sync_event(SyncEvent::Failed(HidlinsApiError::Internal {
-                    context: "FR-041 merge failed; using local vault".to_string(),
-                }));
-                state.vault = Some(sync_vault);
-                state.registry = sync_registry;
-            }
-        } else {
-            drop(state);
-        }
-
-        // Re-acquire and branch on vault presence — the only safe
-        // way to determine whether sync succeeded, failed-and-restored,
-        // or dropped the vault (lock_pending / panic / dead).
-        let final_state = self.lock_state();
-        if let Some(ref v) = final_state.vault {
-            final_state.push_lock_event(LockEvent::Unlocked);
-            Ok(crate::dto::vault_tree_from_database(
-                v.database(),
-                chrono::Utc::now(),
-            ))
-        } else {
-            // Vault was dropped by sync (lock_pending, panic, or dead).
-            // No Unlocked event — the session is locked.
-            Err(HidlinsApiError::VaultLocked)
-        }
-    }
-
-    pub(crate) fn maybe_sync_after_save(&self) {
-        let should_sync = {
-            let state = self.lock_state();
-            if !state.is_unlocked() || state.syncing {
-                return;
-            }
-            let Some(vault) = state.vault.as_ref() else {
-                return;
-            };
-            let vault_path = vault.path().to_path_buf();
-            let found = state.registry.list().any(|e| {
-                e.path == vault_path && hidlins_sync::SyncConfig::from_vault_entry(e).is_some()
-            });
-            found
-        };
-
-        if should_sync {
-            let _ = self.sync_now();
-        }
+        Ok(tree)
     }
 
     pub fn sync_events(&self, sink: crate::frb_generated::StreamSink<SyncEvent>) {
@@ -800,6 +743,9 @@ impl AppSession {
             state.do_lock();
         } else if state.unlocking || state.syncing {
             state.lock_pending = true;
+            if let Some(cancellation) = state.sync_cancellation.as_ref() {
+                cancellation.cancel();
+            }
         }
         Ok(())
     }
@@ -833,13 +779,24 @@ impl AppSession {
     pub fn shutdown(&self) {
         self.ticker_shutdown.store(true, Ordering::Relaxed);
         self.clear_totp_cache();
+        if let Ok(mut port) = self.discovery_port.lock() {
+            if let Some(mut port) = port.take() {
+                let _ = port.shutdown();
+            }
+        }
 
         {
             let mut state = self.lock_state();
             state.dead = true;
+            if let Some(cancellation) = state.sync_cancellation.as_ref() {
+                cancellation.cancel();
+            }
+            state.server_requested = None;
+            state.stop_server_runtime();
             if state.is_unlocked() {
                 state.do_lock();
             }
+            state.sync_sink = None;
             state.lock_sink = None;
             state.controller.shutdown_sources();
         }
@@ -853,6 +810,11 @@ impl AppSession {
                 // join here would stall the UI thread.
                 handle.thread().unpark();
                 let _ = handle.join();
+            }
+        }
+        if let Ok(mut workers) = self.background_workers.lock() {
+            for worker in workers.drain(..) {
+                let _ = worker.join();
             }
         }
     }
@@ -932,12 +894,14 @@ impl AppSession {
         lifecycle_enabled: bool,
     ) -> Result<Self, HidlinsApiError> {
         let session_paths = paths.clone();
+        VaultRegistry::recover_password_rotations(&paths)?;
         let registry = VaultRegistry::load(paths)?;
         let controller =
             AutoLockController::new(config).map_err(|e| HidlinsApiError::Internal {
                 context: format!("controller init: {e}"),
             })?;
 
+        let pairing_api = Arc::new(crate::api::sync::PairingApiState::new());
         let state = SessionState {
             registry,
             vault: None,
@@ -946,6 +910,7 @@ impl AppSession {
             lock_pending: false,
             unlocking: false,
             syncing: false,
+            sync_cancellation: None,
             lock_sink: None,
             sync_sink: None,
             dead: false,
@@ -953,6 +918,19 @@ impl AppSession {
             baseline_lock_config: config,
             startup_warnings: Vec::new(),
             clipboard_owner: crate::api::secrets::new_clipboard_owner(),
+            startup_sync_tracker: StartupSyncTracker::default(),
+            discovery_cache: CandidateCache::new(),
+            discovery_permission: if lifecycle_enabled {
+                DiscoveryPermission::NotDetermined
+            } else {
+                DiscoveryPermission::Granted
+            },
+            injected_candidates: Vec::new(),
+            server_capable: !lifecycle_enabled,
+            server_requested: None,
+            server_runtime: None,
+            pairing_open: false,
+            pairing_api: Arc::clone(&pairing_api),
         };
 
         Ok(Self {
@@ -967,6 +945,9 @@ impl AppSession {
             paths: session_paths,
             clipboard: None,
             sync_engine: Arc::new(crate::sync_port::DefaultSyncEngine),
+            background_workers: Mutex::new(Vec::new()),
+            discovery_port: Mutex::new(None),
+            pairing_api,
         })
     }
 
@@ -974,6 +955,23 @@ impl AppSession {
         paths: HidlinsPaths,
         clipboard: Option<Arc<dyn crate::clipboard_port::ClipboardPort>>,
         sync_engine: Arc<dyn crate::sync_port::SyncEnginePort>,
+    ) -> Result<Self, HidlinsApiError> {
+        Self::with_ports_inner(paths, clipboard, sync_engine, false)
+    }
+
+    pub fn with_mobile_ports(
+        paths: HidlinsPaths,
+        clipboard: Option<Arc<dyn crate::clipboard_port::ClipboardPort>>,
+        sync_engine: Arc<dyn crate::sync_port::SyncEnginePort>,
+    ) -> Result<Self, HidlinsApiError> {
+        Self::with_ports_inner(paths, clipboard, sync_engine, true)
+    }
+
+    fn with_ports_inner(
+        paths: HidlinsPaths,
+        clipboard: Option<Arc<dyn crate::clipboard_port::ClipboardPort>>,
+        sync_engine: Arc<dyn crate::sync_port::SyncEnginePort>,
+        lifecycle_enabled: bool,
     ) -> Result<Self, HidlinsApiError> {
         let session_paths = paths.clone();
         let registry = VaultRegistry::load(paths)?;
@@ -983,6 +981,7 @@ impl AppSession {
             }
         })?;
 
+        let pairing_api = Arc::new(crate::api::sync::PairingApiState::new());
         let state = SessionState {
             registry,
             vault: None,
@@ -991,13 +990,27 @@ impl AppSession {
             lock_pending: false,
             unlocking: false,
             syncing: false,
+            sync_cancellation: None,
             lock_sink: None,
             sync_sink: None,
             dead: false,
-            lifecycle_enabled: false,
+            lifecycle_enabled,
             baseline_lock_config: AutoLockConfig::default(),
             startup_warnings: Vec::new(),
             clipboard_owner: crate::api::secrets::new_clipboard_owner(),
+            startup_sync_tracker: StartupSyncTracker::default(),
+            discovery_cache: CandidateCache::new(),
+            discovery_permission: if lifecycle_enabled {
+                DiscoveryPermission::NotDetermined
+            } else {
+                DiscoveryPermission::Granted
+            },
+            injected_candidates: Vec::new(),
+            server_capable: !lifecycle_enabled,
+            server_requested: None,
+            server_runtime: None,
+            pairing_open: false,
+            pairing_api: Arc::clone(&pairing_api),
         };
 
         Ok(Self {
@@ -1012,6 +1025,9 @@ impl AppSession {
             paths: session_paths,
             clipboard,
             sync_engine,
+            background_workers: Mutex::new(Vec::new()),
+            discovery_port: Mutex::new(None),
+            pairing_api,
         })
     }
 
@@ -1086,6 +1102,22 @@ impl AppSession {
 
     pub fn has_credentials(&self) -> bool {
         self.lock_state().credentials.is_some()
+    }
+
+    pub fn sync_server_is_running_for_test(&self) -> bool {
+        self.lock_state().server_runtime.is_some()
+    }
+
+    pub fn pump_sync_server_for_test(&self) {
+        crate::api::sync::pump_server_once(&self.inner);
+    }
+
+    pub fn join_background_syncs_for_test(&self) {
+        if let Ok(mut workers) = self.background_workers.lock() {
+            for worker in workers.drain(..) {
+                let _ = worker.join();
+            }
+        }
     }
 
     pub fn is_dead(&self) -> bool {
@@ -1182,12 +1214,15 @@ fn spawn_ticker(
                 if !locked_before && locked_after {
                     clear_totp_cache_inner(&totp_cache);
                 }
+                drop(state);
+                drop(progress);
+                crate::api::sync::pump_server_once(&inner);
             }
         })
         .expect("failed to spawn ticker thread")
 }
 
-fn clear_totp_cache_inner(cache: &RwLock<HashMap<Uuid, TotpSnapshot>>) {
+pub(crate) fn clear_totp_cache_inner(cache: &RwLock<HashMap<Uuid, TotpSnapshot>>) {
     match cache.write() {
         Ok(mut c) => c.clear(),
         Err(poison) => {

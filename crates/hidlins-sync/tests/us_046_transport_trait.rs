@@ -1,8 +1,8 @@
 //! US-046 — the `SyncTransport` abstraction proof (FR-046; impl plan §8.4.3).
 //!
 //! The orchestrator drives a full merge cycle through a transport it knows
-//! only as `impl SyncTransport` — here `MemoryTransport`, with no S3, no
-//! signer, no network, and no filesystem remote. That the disjoint-merge
+//! only as `impl SyncTransport` — here `MemoryTransport`, with no provider-specific, no
+//! authentication implementation, no network, and no filesystem authority. That the disjoint-merge
 //! scenario (US-043) works unchanged through this substitute transport is the
 //! evidence that sync logic is transport-agnostic.
 
@@ -13,11 +13,11 @@ mod common;
 use common::sync_env::{open_vault, vault_entry_titles, SyncTestEnv};
 use hidlins_sync::sync::run_state_machine;
 use hidlins_sync::transport::memory::MemoryTransport;
-use hidlins_sync::transport::{ObjectSnapshot, ObjectVersion, SyncTransport};
+use hidlins_sync::transport::{SyncSnapshot, SyncTransport, SyncVersion};
 use hidlins_sync::{SyncOptions, SyncOutcome};
 
 /// Compile-time evidence that the orchestrator entry point is generic over
-/// the trait, not bound to the production `S3Transport`. If this fn compiles,
+/// the trait, not bound to the production `provider-specificTransport`. If this fn compiles,
 /// any `SyncTransport` (a Phase-4 NFS/WebDAV impl included) plugs in.
 fn assert_accepts_any_transport<T: SyncTransport>(_t: &T)
 where
@@ -38,7 +38,7 @@ fn memory_transport_drives_a_full_merge_cycle() {
     {
         let b_bytes = std::fs::read(dev_b.vault_path()).unwrap();
         transport
-            .put_conditional(&b_bytes, None)
+            .commit_conditional(&b_bytes, None)
             .expect("device B push");
     }
     assert_accepts_any_transport(&transport);
@@ -50,7 +50,7 @@ fn memory_transport_drives_a_full_merge_cycle() {
         &dev_a.master(),
         None,
         &mut transport,
-        Some("stale-etag".to_string()),
+        Some("stale-version".to_string()),
         Some(&base_sha),
         SyncOptions::default(),
     )
@@ -73,22 +73,22 @@ fn memory_transport_drives_a_full_merge_cycle() {
 fn memory_transport_honours_the_trait_contract() {
     // The trait's documented promises, exercised directly: head None on
     // empty; conditional GET 304-equivalent on a matching version;
-    // precondition failure on a stale conditional PUT.
+    // precondition failure on a stale conditional commit.
     let mut t = MemoryTransport::new();
     assert_eq!(t.head().unwrap(), None, "empty transport → head None");
 
-    let v1 = t.put_conditional(b"v1", None).unwrap();
+    let v1 = t.commit_conditional(b"v1", None).unwrap();
     assert_eq!(
         t.fetch_if_changed(Some(&v1))
             .unwrap()
-            .map(|s: ObjectSnapshot| s.bytes),
+            .map(|s: SyncSnapshot| s.bytes),
         None,
         "matching version → no snapshot (304-equivalent)"
     );
 
-    let stale = ObjectVersion("memv-stale".to_string());
+    let stale = SyncVersion("memv-stale".to_string());
     assert!(
-        t.put_conditional(b"v2", Some(&stale)).is_err(),
-        "stale conditional PUT must fail the precondition"
+        t.commit_conditional(b"v2", Some(&stale)).is_err(),
+        "stale conditional commit must fail the precondition"
     );
 }

@@ -1,10 +1,11 @@
 import 'package:flutter/services.dart';
 import 'package:flutter_test/flutter_test.dart';
-import 'package:app/src/bridge/dto.dart' show LockEvent;
+import 'package:app/src/data/models.dart';
 import 'package:app/src/platform/app_paths.dart';
 import 'package:app/src/platform/attachment_export.dart';
 import 'package:app/src/platform/keyfile_access.dart';
 import 'package:app/src/platform/lifecycle.dart';
+import 'package:app/src/platform/local_discovery.dart';
 import 'package:app/src/platform/platform_channel.dart';
 import 'package:app/src/platform/platform_result.dart';
 import 'package:app/src/platform/secure_clipboard.dart';
@@ -208,6 +209,145 @@ void main() {
       expect(_kind(result), status == 'failure' ? 'failure' : status);
     }
   });
+
+  test('local discovery channel is bounded and carries routes only', () async {
+    final client = _RecordingClient(
+      result: {
+        'status': 'success',
+        'value': {
+          'permission': 'granted',
+          'candidates': [
+            {'address': '192.168.1.7', 'port': 42873, 'scopeId': 0},
+          ],
+        },
+      },
+    );
+    final result = await MethodChannelLocalDiscovery(client)
+        .discover(DiscoveryKind.pairing);
+
+    expect(result, isA<PlatformSuccess<LocalDiscoveryStatus>>());
+    expect(client.channel, 'app.hidlins/local_discovery');
+    expect(client.method, 'discover');
+    expect(client.arguments, {'kind': 'pairing', 'timeoutMs': 1200});
+    expect(
+      (result as PlatformSuccess<LocalDiscoveryStatus>)
+          .value
+          .candidates
+          .single
+          .address,
+      '192.168.1.7',
+    );
+    expect(client.arguments.toString(), isNot(contains('vault')));
+    expect(client.arguments.toString(), isNot(contains('sas')));
+  });
+
+  test('local discovery replaces a DHCP-changed candidate', () async {
+    final client = _RecordingClient(
+      result: {
+        'status': 'success',
+        'value': {
+          'permission': 'granted',
+          'candidates': [
+            {'address': '192.168.1.7', 'port': 42873, 'scopeId': 0},
+          ],
+        },
+      },
+    );
+    final discovery = MethodChannelLocalDiscovery(client);
+    final first = await discovery.discover(DiscoveryKind.trusted);
+    client.result = {
+      'status': 'success',
+      'value': {
+        'permission': 'granted',
+        'candidates': [
+          {'address': '192.168.1.42', 'port': 42873, 'scopeId': 0},
+        ],
+      },
+    };
+    final changed = await discovery.discover(DiscoveryKind.trusted);
+
+    expect(
+      (first as PlatformSuccess<LocalDiscoveryStatus>)
+          .value
+          .candidates
+          .single
+          .address,
+      '192.168.1.7',
+    );
+    expect(
+      (changed as PlatformSuccess<LocalDiscoveryStatus>)
+          .value
+          .candidates
+          .single
+          .address,
+      '192.168.1.42',
+    );
+  });
+
+  test(
+    'local discovery rejects malformed and oversized native results',
+    () async {
+      final oversized = _RecordingClient(
+        result: {
+          'status': 'success',
+          'value': {
+            'permission': 'granted',
+            'candidates': List.generate(
+              9,
+              (index) => {
+                'address': '192.168.1.$index',
+                'port': 42873,
+                'scopeId': 0,
+              },
+            ),
+          },
+        },
+      );
+      final malformed = _RecordingClient(
+        result: {
+          'status': 'success',
+          'value': {
+            'permission': 'granted',
+            'candidates': [
+              {'address': 'server.local', 'port': 'secret', 'scopeId': 0},
+            ],
+          },
+        },
+      );
+      final metadataBearing = _RecordingClient(
+        result: {
+          'status': 'success',
+          'value': {
+            'permission': 'granted',
+            'candidates': [
+              {
+                'address': '192.168.1.9',
+                'port': 42873,
+                'scopeId': 0,
+                'vault': 'must-not-cross',
+              },
+            ],
+          },
+        },
+      );
+
+      expect(
+        await MethodChannelLocalDiscovery(oversized)
+            .discover(DiscoveryKind.trusted),
+        isA<PlatformFailure<LocalDiscoveryStatus>>(),
+      );
+      expect(
+        await MethodChannelLocalDiscovery(malformed)
+            .discover(DiscoveryKind.trusted),
+        isA<PlatformFailure<LocalDiscoveryStatus>>(),
+      );
+      expect(
+        await MethodChannelLocalDiscovery(metadataBearing)
+            .discover(DiscoveryKind.trusted),
+        isA<PlatformFailure<LocalDiscoveryStatus>>(),
+      );
+    },
+  );
 
   test('missing plugin and native exceptions fail closed', () async {
     final missing = await MethodChannelAppPaths(

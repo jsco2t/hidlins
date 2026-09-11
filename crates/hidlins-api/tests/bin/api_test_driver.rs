@@ -11,9 +11,12 @@
 //!                 Reads the password from one stdin line.
 //!   edit-entry   <dir> <name> <entry-uuid> <field>
 //!                 Reads two lines from stdin: password, then value.
+//!   change-password <dir> <name>
+//!                 Reads two lines from stdin: current password, then new password.
 
 use std::process::ExitCode;
 
+use hidlins_api::api::session::AppSession;
 use hidlins_api::fixtures;
 use hidlins_core::HidlinsPaths;
 
@@ -21,7 +24,10 @@ fn main() -> ExitCode {
     let args: Vec<String> = std::env::args().collect();
     if args.len() < 2 {
         eprintln!("usage: api-test-driver <subcommand> [args...]");
-        eprintln!("subcommands: create-vault, add-corpus, create-search-corpus, edit-entry");
+        eprintln!(
+            "subcommands: create-vault, add-corpus, create-search-corpus, edit-entry, \
+             change-password"
+        );
         return ExitCode::from(1);
     }
 
@@ -30,6 +36,7 @@ fn main() -> ExitCode {
         "add-corpus" => cmd_add_corpus(&args[2..]),
         "create-search-corpus" => cmd_create_search_corpus(&args[2..]),
         "edit-entry" => cmd_edit_entry(&args[2..]),
+        "change-password" => cmd_change_password(&args[2..]),
         other => {
             eprintln!("unknown subcommand: {other}");
             Err("unknown subcommand".into())
@@ -43,6 +50,28 @@ fn main() -> ExitCode {
             ExitCode::from(1)
         }
     }
+}
+
+fn cmd_change_password(args: &[String]) -> Result<(), Box<dyn std::error::Error>> {
+    if args.len() < 2 {
+        return Err("usage: change-password <dir> <name>\n\
+                    reads current and new password lines from stdin"
+            .into());
+    }
+    let paths = HidlinsPaths::with_state_dir(args[0].clone().into());
+    let session = AppSession::for_test(paths)?;
+
+    let mut current = String::new();
+    std::io::stdin().read_line(&mut current)?;
+    let current = current.trim_end().to_string();
+    let mut new_password = String::new();
+    std::io::stdin().read_line(&mut new_password)?;
+    let new_password = new_password.trim_end().to_string();
+
+    session.unlock(args[1].clone(), current.clone(), None)?;
+    session.change_master_password(current, new_password)?;
+    println!("password changed for {}", args[1]);
+    Ok(())
 }
 
 fn cmd_create_search_corpus(args: &[String]) -> Result<(), Box<dyn std::error::Error>> {

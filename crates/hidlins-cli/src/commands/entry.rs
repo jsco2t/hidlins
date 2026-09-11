@@ -20,19 +20,18 @@ use std::collections::HashMap;
 
 use chrono::Utc;
 use hidlins_core::{
-    EntryBuilder, EntryKind, Keyfile, MatchedField, RegisteredVault, SearchMode, SearchOptions,
-    SearchScope, Vault, VaultError, VaultReadOnly, VaultRegistry,
+    EntryBuilder, EntryKind, MatchedField, SearchMode, SearchOptions, SearchScope, Vault,
+    VaultError, VaultReadOnly,
 };
 use hidlins_genpw::{CharSet, PasswordBuilder};
 
-use crate::agent::NoAgentClient;
 use crate::cli::{
     Cli, EntryAddArgs, EntryArgs, EntryEditArgs, EntryGetArgs, EntryListArgs, EntryRmArgs,
     EntrySearchArgs, EntryVerb, PasswordClassFlags, SearchModeArg,
 };
-use crate::commands::{arm_clipboard, resolve_paths, write_success};
+use crate::commands::{arm_clipboard, open, write_success};
 use crate::exit::CliExit;
-use crate::prompt::{master_password, read_password_no_echo, PromptOpts};
+use crate::prompt::read_password_no_echo;
 use crate::views::entry::{
     EntryAddView, EntryEditView, EntryGetView, EntryListItem, EntryListView, EntryRmView,
     EntrySearchItem, EntrySearchView, FieldIndices,
@@ -82,9 +81,8 @@ pub fn run(cli: &Cli, args: &EntryArgs) -> Result<(), CliExit> {
 // ---------------------------------------------------------------------------
 
 fn run_add(cli: &Cli, args: &EntryAddArgs) -> Result<(), CliExit> {
-    let record = load_registry_record(cli, &args.vault)?;
-    let master = prompt_for_vault(&args.vault)?;
-    let keyfile = record.keyfile_path.clone().map(Keyfile::Path);
+    let opened = open::prepare(cli, &args.vault)?;
+    let (record, master, keyfile) = (opened.record, opened.master, opened.keyfile);
 
     // Decide the entry password BEFORE opening the vault so a stdin
     // failure doesn't leave the file locked with no committed change.
@@ -165,9 +163,8 @@ fn resolve_add_password(args: &EntryAddArgs) -> Result<Option<String>, CliExit> 
 // ---------------------------------------------------------------------------
 
 fn run_get(cli: &Cli, args: &EntryGetArgs) -> Result<(), CliExit> {
-    let record = load_registry_record(cli, &args.vault)?;
-    let master = prompt_for_vault(&args.vault)?;
-    let keyfile = record.keyfile_path.clone().map(Keyfile::Path);
+    let opened = open::prepare(cli, &args.vault)?;
+    let (record, master, keyfile) = (opened.record, opened.master, opened.keyfile);
     let vault =
         VaultReadOnly::open(&record.path, &master, keyfile.as_ref()).map_err(CliExit::from)?;
 
@@ -266,9 +263,8 @@ fn resolve_entry_uuid(vault: &VaultReadOnly, args: &EntryGetArgs) -> Result<uuid
 
 fn run_edit(cli: &Cli, args: &EntryEditArgs) -> Result<(), CliExit> {
     let uuid = parse_uuid(&args.uuid)?;
-    let record = load_registry_record(cli, &args.vault)?;
-    let master = prompt_for_vault(&args.vault)?;
-    let keyfile = record.keyfile_path.clone().map(Keyfile::Path);
+    let opened = open::prepare(cli, &args.vault)?;
+    let (record, master, keyfile) = (opened.record, opened.master, opened.keyfile);
 
     // Capture the new password (if requested) BEFORE opening the vault
     // so a stdin failure doesn't hold the write lock open.
@@ -350,9 +346,8 @@ fn run_edit(cli: &Cli, args: &EntryEditArgs) -> Result<(), CliExit> {
 
 fn run_rm(cli: &Cli, args: &EntryRmArgs) -> Result<(), CliExit> {
     let uuid = parse_uuid(&args.uuid)?;
-    let record = load_registry_record(cli, &args.vault)?;
-    let master = prompt_for_vault(&args.vault)?;
-    let keyfile = record.keyfile_path.clone().map(Keyfile::Path);
+    let opened = open::prepare(cli, &args.vault)?;
+    let (record, master, keyfile) = (opened.record, opened.master, opened.keyfile);
     let mut vault = Vault::open(&record.path, &master, keyfile.as_ref()).map_err(CliExit::from)?;
 
     if args.permanent {
@@ -374,9 +369,8 @@ fn run_rm(cli: &Cli, args: &EntryRmArgs) -> Result<(), CliExit> {
 // ---------------------------------------------------------------------------
 
 fn run_list(cli: &Cli, args: &EntryListArgs) -> Result<(), CliExit> {
-    let record = load_registry_record(cli, &args.vault)?;
-    let master = prompt_for_vault(&args.vault)?;
-    let keyfile = record.keyfile_path.clone().map(Keyfile::Path);
+    let opened = open::prepare(cli, &args.vault)?;
+    let (record, master, keyfile) = (opened.record, opened.master, opened.keyfile);
     let vault =
         VaultReadOnly::open(&record.path, &master, keyfile.as_ref()).map_err(CliExit::from)?;
     // Collect tag filter parsed once.
@@ -437,9 +431,8 @@ fn run_list(cli: &Cli, args: &EntryListArgs) -> Result<(), CliExit> {
 // ---------------------------------------------------------------------------
 
 fn run_search(cli: &Cli, args: &EntrySearchArgs) -> Result<(), CliExit> {
-    let record = load_registry_record(cli, &args.vault)?;
-    let master = prompt_for_vault(&args.vault)?;
-    let keyfile = record.keyfile_path.clone().map(Keyfile::Path);
+    let opened = open::prepare(cli, &args.vault)?;
+    let (record, master, keyfile) = (opened.record, opened.master, opened.keyfile);
     let vault =
         VaultReadOnly::open(&record.path, &master, keyfile.as_ref()).map_err(CliExit::from)?;
     let mode = match args.mode {
@@ -590,24 +583,4 @@ fn optional_field(value: &str) -> Option<&str> {
     } else {
         Some(value)
     }
-}
-
-fn load_registry_record(cli: &Cli, vault_id: &str) -> Result<RegisteredVault, CliExit> {
-    let paths = resolve_paths(cli)?;
-    let registry = VaultRegistry::load(paths).map_err(CliExit::from)?;
-    registry.get(vault_id).cloned().ok_or_else(|| {
-        CliExit::from(VaultError::NotRegistered {
-            name: vault_id.to_string(),
-        })
-    })
-}
-
-fn prompt_for_vault(vault_id: &str) -> Result<hidlins_core::MasterPassword, CliExit> {
-    let agent = NoAgentClient;
-    let opts = PromptOpts {
-        vault: vault_id,
-        agent: &agent,
-        prompt_label: "Master password: ",
-    };
-    master_password(&opts)
 }

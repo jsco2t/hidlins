@@ -143,7 +143,7 @@ platform_output=""
 if ! platform_output=$(python3 "$REPO_ROOT/tools/dev/platform-boundary-check.py" check 2>&1); then
   err "platform channel capability manifest failed" "$platform_output"
 else
-  ok "platform channels match the fixed lifecycle/clipboard/path/import/keyfile/attachment-export manifest"
+  ok "platform channels match the fixed lifecycle/clipboard/path/import/keyfile/attachment-export/local-discovery manifest"
 fi
 if ! platform_output=$(python3 "$REPO_ROOT/tools/dev/platform-boundary-check.py" self-test 2>&1); then
   err "platform channel negative controls failed" "$platform_output"
@@ -234,7 +234,7 @@ fi
 # *value* (a password String, a field read out of a DTO) into a log or
 # exception message.
 # ---------------------------------------------------------------------------
-SECRET_IDENTS='keyfile|keyfileRef|masterPassword|password|secretAccessKey|totpUri'
+SECRET_IDENTS='keyfile|keyfileRef|masterPassword|password|totpUri'
 if [ ${#dart_roots[@]} -gt 0 ]; then
   leak=$(grep -rn --include="*.dart" --exclude-dir=bridge \
     -E "(print|debugPrint|log)\([^)]*(${SECRET_IDENTS})|(Exception|Error)\([^)]*(${SECRET_IDENTS})|[\"'][^\"']*\\\$\{?(${SECRET_IDENTS})" \
@@ -243,6 +243,20 @@ if [ ${#dart_roots[@]} -gt 0 ]; then
     err "secret-bearing value reaches a string/log/exception in Dart" "$leak"
   else
     ok "no secret-bearing DTO reaches a string, log, or exception message"
+  fi
+fi
+
+# Local-sync trust and Noise internals are Rust-only. Generated Dart may carry
+# an opaque transaction/peer handle and the display-only SAS, but never raw
+# keys or transcript hashes.
+if [ -d "$REPO_ROOT/app/lib/src/bridge" ]; then
+  sync_boundary_leak=$(grep -rn --include="*.dart" \
+    -E '(^|[[:space:]])(Uint8List|List<int>|String)[[:space:]]+(privateKey|publicKey|serverKey|clientKey|handshakeHash|transcriptDigest|noiseKey)' \
+    "$REPO_ROOT/app/lib/src/bridge" 2>/dev/null || true)
+  if [ -n "$sync_boundary_leak" ]; then
+    err "generated Dart exposes local-sync key or transcript material" "$sync_boundary_leak"
+  else
+    ok "generated Dart exposes no local-sync key or transcript material"
   fi
 fi
 

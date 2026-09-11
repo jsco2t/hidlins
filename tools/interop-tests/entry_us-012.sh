@@ -58,22 +58,36 @@ if [ "$have_oathtool" -eq 1 ]; then
     fi
 fi
 
-# 3. KeePassXC cross-check uses the live system clock — race-tolerant.
-#    Capture `now`, ask both hidlins and KeePassXC for the live code, and
-#    accept either the current or next TOTP window. We use now+period
-#    (not now+1) because the two hidlins invocations plus keepassxc-cli's
-#    Argon2id decrypt can consume several seconds — enough to cross a
-#    30-second window boundary that a 1-second offset would miss.
-now=$(date +%s)
-next=$((now + 30))
-hidlins_now=$(printf '%s\n' "$PASSWORD" | "$DRIVER" entry totp \
-    --vault "$vault" --uuid "$uuid" --at "$now" | jq -r .code)
-hidlins_next=$(printf '%s\n' "$PASSWORD" | "$DRIVER" entry totp \
-    --vault "$vault" --uuid "$uuid" --at "$next" | jq -r .code)
+# 3. KeePassXC cross-check uses the live system clock. Bracket the external
+#    invocation, then compare against every TOTP counter that existed inside
+#    that interval. Computing expected values before invoking KeePassXC races
+#    when its Argon2id decrypt spans more than one 30-second boundary.
+before=$(date +%s)
 kpxc_code=$(printf '%s\n' "$PASSWORD" | keepassxc-cli show -q -t "$vault" "Example")
+after=$(date +%s)
 
-if [ "$kpxc_code" != "$hidlins_now" ] && [ "$kpxc_code" != "$hidlins_next" ]; then
-    echo "FAIL: keepassxc-cli code '$kpxc_code' matches neither hidlins@now ('$hidlins_now') nor hidlins@next ('$hidlins_next')" >&2
+if [ "$after" -lt "$before" ] || [ $((after - before)) -gt 120 ]; then
+    echo "FAIL: wall-clock interval around keepassxc-cli was invalid or exceeded 120 seconds" >&2
+    exit 1
+fi
+
+first_counter=$((before / 30))
+last_counter=$((after / 30))
+matched=0
+counter=$first_counter
+while [ "$counter" -le "$last_counter" ]; do
+    at=$((counter * 30))
+    hidlins_code=$(printf '%s\n' "$PASSWORD" | "$DRIVER" entry totp \
+        --vault "$vault" --uuid "$uuid" --at "$at" | jq -r .code)
+    if [ "$kpxc_code" = "$hidlins_code" ]; then
+        matched=1
+        break
+    fi
+    counter=$((counter + 1))
+done
+
+if [ "$matched" -ne 1 ]; then
+    echo "FAIL: keepassxc-cli code did not match any Hidlins TOTP counter observed during its invocation" >&2
     exit 1
 fi
 

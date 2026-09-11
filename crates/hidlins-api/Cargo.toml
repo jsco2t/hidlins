@@ -25,17 +25,14 @@ tempfile = { version = "3", optional = true }
 toml = "0.8"
 zeroize = { version = "1", features = ["derive"] }
 
-# Android-only promotion of dependencies already present in the vendored
-# ureq/rustls graph. The verifier requirement must resolve to the same crate
-# instance used by hidlins-sync; the Android build gate enforces that invariant.
 [target.'cfg(target_os = "android")'.dependencies]
-rustls-platform-verifier = "0.6"
+# Safe JNI wrappers for the single-use clipboard transfer boundary.
 jni = "0.21"
 
 [features]
 default = ["desktop"]
 test-fixtures = ["dep:tempfile"]
-desktop = ["hidlins-security/desktop"]
+desktop = ["hidlins-security/desktop", "hidlins-sync/desktop-discovery"]
 logind = ["hidlins-security/logind"]
 iokit = ["hidlins-security/iokit"]
 

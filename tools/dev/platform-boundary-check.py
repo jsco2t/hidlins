@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""Fail closed around Hidlins' six fixed native capability adapters."""
+"""Fail closed around Hidlins' seven fixed native capability adapters."""
 
 from __future__ import annotations
 
@@ -24,6 +24,11 @@ EXPECTED = {
         "app.hidlins/attachment_export",
         ("chooseDestination",),
     ),
+    "local_discovery": (
+        "local_discovery.dart",
+        "app.hidlins/local_discovery",
+        ("permissionStatus", "discover", "openSettings", "stop"),
+    ),
 }
 NATIVE_ATTACHMENT_EXPORT = {
     "app/macos/Runner/HidlinsAttachmentExport.swift": (
@@ -42,6 +47,24 @@ NATIVE_ATTACHMENT_EXPORT = {
         "app.hidlins/attachment_export",
         "chooseDestination",
         "GTK_FILE_CHOOSER_ACTION_SAVE",
+    ),
+}
+NATIVE_LOCAL_DISCOVERY = {
+    "app/ios/Runner/HidlinsPlatformServices.swift": (
+        "app.hidlins/local_discovery",
+        "LocalDiscoveryService",
+        "permissionStatus",
+        "discover",
+        "openSettings",
+        "stop",
+    ),
+    "app/android/app/src/main/java/app/hidlins/HidlinsPlatformServices.java": (
+        "app.hidlins/local_discovery",
+        "LocalDiscoveryController",
+        "permissionStatus",
+        "discover",
+        "openSettings",
+        "stop",
     ),
 }
 CHANNEL_DECL = re.compile(r"channelName\s*=\s*['\"]([^'\"]+)['\"]")
@@ -127,6 +150,17 @@ def validate(root: Path) -> list[str]:
                 errors.append(
                     f"attachment export native registration {relative} is missing {token}"
                 )
+    for relative, required_tokens in NATIVE_LOCAL_DISCOVERY.items():
+        try:
+            source = (root / relative).read_text(encoding="utf-8")
+        except OSError as error:
+            errors.append(f"missing local discovery native registration {relative}: {error}")
+            continue
+        for token in required_tokens:
+            if token not in source:
+                errors.append(
+                    f"local discovery native registration {relative} is missing {token}"
+                )
     return errors
 
 
@@ -160,6 +194,10 @@ def write_fixture(root: Path) -> None:
         path = root / relative
         path.parent.mkdir(parents=True, exist_ok=True)
         path.write_text("\n".join(required_tokens), encoding="utf-8")
+    for relative, required_tokens in NATIVE_LOCAL_DISCOVERY.items():
+        path = root / relative
+        path.parent.mkdir(parents=True, exist_ok=True)
+        path.write_text("\n".join(required_tokens), encoding="utf-8")
 
 
 def self_test() -> None:
@@ -185,6 +223,9 @@ def self_test() -> None:
             "app.hidlins/attachment_export\nwrongMethod\nGTK_FILE_CHOOSER_ACTION_SAVE\n",
             encoding="utf-8",
         ),
+        "missing native local discovery registration": lambda root: (
+            root / "app/android/app/src/main/java/app/hidlins/HidlinsPlatformServices.java"
+        ).unlink(),
     }
     for label, mutate in mutations.items():
         with tempfile.TemporaryDirectory(prefix="hidlins-platform-boundary-") as scratch:
@@ -212,7 +253,7 @@ def main() -> None:
     errors = validate(args.root)
     if errors:
         raise SystemExit("\n".join(f"error: {error}" for error in errors))
-    print("  OK: platform channels match the fixed six-capability manifest")
+    print("  OK: platform channels match the fixed seven-capability manifest")
 
 
 if __name__ == "__main__":

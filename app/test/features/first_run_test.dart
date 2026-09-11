@@ -14,10 +14,7 @@ void main() {
 
       expect(find.text('Welcome to Hidlins'), findsOneWidget);
       expect(find.text('Create a new vault'), findsOneWidget);
-      expect(
-        find.text('Connect to an existing vault via sync'),
-        findsOneWidget,
-      );
+      expect(find.text('Import paired vault'), findsOneWidget);
       expect(find.text('Import a .kdbx file'), findsOneWidget);
       expect(find.byType(BrandMark), findsOneWidget);
     });
@@ -42,7 +39,7 @@ void main() {
       addTearDown(harness.dispose);
       await tester.pumpAndSettle();
 
-      await tester.tap(find.text('Connect to an existing vault via sync'));
+      await tester.tap(find.text('Import paired vault'));
       expect(chosen, FirstRunChoice.connectSync);
     });
 

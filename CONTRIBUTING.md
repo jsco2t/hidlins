@@ -75,12 +75,37 @@ make acceptance-evidence-check # audit release/CI/PRD evidence, skips, and all 4
 make verify        # everything: check + app-check + ignored tests + docs + supply-chain + interop + boundary-check
 make deny          # cargo-deny (license + advisory + bans)
 make vendor        # re-vendor dependencies (the only target that needs network)
+make vendor-patches # verify exact vendored patches and their negative guards
+make test-local-sync-security # local-sync crypto and memory-hygiene boundary
+make test-local-sync-discovery # deterministic LAN discovery + desktop adapter boundary
+make test-local-sync-integration # real local sockets, shutdown, and isolation boundary
+make fuzz-local-sync-corpus # deterministic committed parser corpus replay
+make fuzz-local-sync-ci # bounded fixed-seed development fuzzing
+make ncsa-boundary-check # prove fuzz-only NCSA code cannot enter product artifacts
 ```
 
 These targets wrap `cargo` with `--workspace --offline --locked`. A clean
 clone produces identical results to CI because `Cargo.lock`, `vendor/`,
 `rust-toolchain.toml`, and the `Makefile` itself are all committed and
 authoritative.
+
+Snow is an exceptional security-sensitive vendored dependency: the repository
+maintains an exact-version zeroization and feature-closure patch until upstream
+provides independently verified equivalent coverage. See
+[`crates/hidlins-sync/docs/snow-dependency.md`](crates/hidlins-sync/docs/snow-dependency.md)
+before changing its version, features, manifests, or patched source. Never edit
+`vendor/snow` without making the same exact-context and digest change in
+`tools/dev/vendor.py`.
+
+The isolated `fuzz/` workspace has the only NCSA exception: exact
+`libfuzzer-sys 0.4.13`, development/testing only. Its fuzz executables are
+non-distributable. Root `deny.toml` does not allow NCSA, and no CLI, TUI, agent,
+Flutter desktop, iOS, Android, or other application artifact may contain that
+crate or its LLVM libFuzzer code. Run `make ncsa-boundary-check` before any
+release or packaging change; it checks dependency closures, exact policy scope,
+negative controls, packaging hooks, and produced raw/bundle/APK/IPA artifacts.
+Do not move a fuzz dependency into the root workspace or reuse a fuzz build
+output in application packaging.
 
 All Rust compilation reached through `make` appends `-D warnings` to any
 caller-supplied `RUSTFLAGS`; rustdoc does the same through `RUSTDOCFLAGS`.
@@ -101,11 +126,15 @@ Run the corresponding Flutter target on each supported host; these commands do
 not claim to cross-build every platform from one workstation.
 
 The complete unsigned alpha artifact matrix, Flutter 3.47.2 Android exception,
-automated acceptance map, manual/user skip register, and disposition of all 45
-July Flutter tasks are documented in
+automated acceptance map, optional human-observation register, and disposition
+of all 45 July Flutter tasks are documented in
 [`docs/flutter-alpha-release.md`](docs/flutter-alpha-release.md) and its checked
 machine-readable companion. Android CI uses `make android-emulator-provision`
-followed by the same core and managed-MinIO emulator targets used locally.
+followed by the same local-sync emulator targets used locally. The isolated,
+expensive `make test-local-sync-mobile-scenarios HIDLINS_ANDROID_STRICT=1`
+target drives real iPhone, iPad, Android phone, and Android tablet applications
+against a separate release CLI authority; use its platform-specific `-ios` and
+`-android` targets while iterating.
 The local Apple Rust plugin is deliberately CocoaPods/Cargokit-only, with
 project-scoped SwiftPM disablement; Flutter's future-migration advisory is a
 tool notice, not a compiler warning. See the release document for the exact
@@ -125,14 +154,21 @@ supply-chain policy, Rule 4). Document each step in the PR description.
 
 ### 1. License check
 
-The dependency's license **must be one of**: `MIT`, `Apache-2.0`,
+Production and distributable application dependencies **must be one of**:
+`MIT`, `Apache-2.0`,
 `BSD-2-Clause`, `BSD-3-Clause`, `ISC`, `Zlib`, `Unicode-3.0`,
 `Unicode-DFS-2016`, `Unlicense`, `CC0-1.0`.
+
+The only development/testing exception is exact `libfuzzer-sys 0.4.13` in the
+isolated `fuzz/` workspace under NCSA. Its fuzz executables are
+non-distributable. Root policy and every product graph continue to reject NCSA;
+`make ncsa-boundary-check` enforces the exception's crate/version, dependency
+closure, packaging hooks, negative controls, and produced artifacts.
 
 The following are **forbidden**, including via transitive deps:
 `GPL-*`, `LGPL-*`, `AGPL-*`, `SSPL-*`, `Commons Clause`,
 **including GPL-with-linking-exception** (the ambiguity isn't worth it —
-e.g., `libgit2` is banned in favor of `gitoxide`).
+e.g., `libgit2` remains banned).
 
 `cargo deny check licenses` enforces this.
 
@@ -198,6 +234,45 @@ Direct dependencies added through the workflow above, newest first. Each line
 records the review at its add point; transitive crates are covered en masse by
 `make deny` (license + bans) over the four Phase-0 targets.
 
+#### Desktop DNS-SD/mDNS discovery (local-network-sync Task 005, 2026-09-06)
+
+`mdns-sd` is exact-pinned at 0.20.3, optional behind `desktop-discovery`, and
+target-scoped to macOS/Linux. The crates.io archive SHA-256 is
+`86dbb9f00c8c367f75ed3a775d3eb31d0375a72f58275ef64a1bc53c255a2ce2`;
+its embedded provenance identifies upstream `keepsimple1/mdns-sd` commit
+`30432c20738f8efbf373c7333075e4e4532228ff`. The crate is Apache-2.0 OR MIT,
+has no build script, and `#![forbid(unsafe_code)]`. Its default `async` and
+`logging` features are disabled and optional `serde` is not enabled. Hidlins
+uses the synchronous receiver and its own bounded DTOs, errors, and policy.
+
+The applicable added graph is six vendored directories (about 1.9 MiB):
+`mdns-sd` 0.20.3 (Apache-2.0 OR MIT), `flume` 0.12.0 (Apache-2.0/MIT),
+`if-addrs` 0.15.0 (MIT OR BSD-3-Clause), `socket-pktinfo` 0.4.1 (MIT),
+`socket2` 0.6.5 (MIT OR Apache-2.0), and `spin` 0.9.9 (MIT). `fastrand`,
+`mio`, `log`, `lock_api`, `scopeguard`, `libc`, and the off-target Windows
+support were already present; `socket-pktinfo` raises the shared `libc` lock
+from 0.2.186 to 0.2.189. None of the six new crates has a build script.
+The mDNS crate itself is safe Rust; the focused socket/interface wrappers
+contain their expected platform FFI, reviewed as a narrower surface than a
+new in-repository cross-platform socket implementation.
+
+Maintenance and adoption are strong enough for this narrow role: 0.20.3 was
+released 2026-07-26 with a malformed-label panic fix, upstream had 349 commits,
+roughly 220 stars/70 forks, later maintained releases, and public ecosystem
+indexes reported about 4.25 million total and 196,000 weekly downloads at
+review time. A hand-written DNS parser/responder would create a large hostile
+packet parser and protocol-maintenance burden; OS-native-only code would split
+desktop behavior and require Avahi/D-Bus runtime coupling on Linux; broader
+async/native discovery crates add runtimes or platform frameworks. The chosen
+crate uniquely closes desktop browse, advertise, interface-change, TTL, and
+shutdown behavior while Rust still owns address filtering and Noise identity.
+
+The vendored source and lock diff were reviewed before first feature-enabled
+execution. `make test-local-sync-discovery` covers the adapter and deterministic
+spoof/DHCP/expiry simulation; `check-feature-gates` proves `mdns-sd` is absent
+from Android and iOS dependency graphs. `make deny` and `make audit` gate the
+complete exact graph.
+
 #### iOS simulator integration runner (flutter-app Task 010, 2026-09-01)
 
 `integration_test` 0.0.0 is the official Flutter SDK device-test runner. It is
@@ -222,29 +297,6 @@ ecosystem components maintained by the SDK's own team; no feature reduction
 exists on the SDK dependency. The vendored trees, hosted hashes, lockfile,
 curated allowlist, and byte-integrity manifest were reviewed together;
 `make pub-vendor-check` gates their exact bytes.
-
-#### Android TLS verifier JNI foundation (flutter-app Task 007, 2026-09-01)
-
-`hidlins-api` promotes two Android-only crates already present in the locked,
-vendored `ureq` graph: `rustls-platform-verifier` 0.6.2 and `jni` 0.21.1.
-No package or vendor directory was added. Both are MIT OR Apache-2.0. The
-upstream verifier is maintained by the rustls organization, continues to ship
-signed releases, and is already the certificate-verification implementation
-used by Hidlins sync; replacing it would mean hand-writing Android certificate
-verification, which is prohibited. `jni` is the narrow safe wrapper that keeps
-the sole hand-written export free of raw-pointer JNI calls; replacing it with
-raw JNI would enlarge the audited unsafe surface.
-
-The Android companion artifact is the AAR embedded by the existing
-`rustls-platform-verifier-android` 0.1.1 crate:
-`rustls:rustls-platform-verifier:0.1.1`. Its AAR and POM remain inside
-`vendor/rustls-platform-verifier-android/maven/`. The committed artifact
-contract, Gradle lockfile, and strict SHA-256 verification metadata all pin the
-same coordinate and bytes. An exclusive Gradle content filter prevents the
-`rustls` group from resolving from Google or Maven Central. `make
-build-android` also requires exactly one `rustls-platform-verifier` crate in
-the Android graph, because initializing a second crate instance would not
-initialize the instance used by `ureq`.
 
 The dependency cost is therefore zero new Rust transitives and one already
 vendored 10 KiB AAR. No feature reduction is available: Android system trust
@@ -417,8 +469,8 @@ handler) was already vendored.
 
 **Historical incidental supply-chain fix (separate from the TUI deps):** the re-vendor
 surfaced that `aes 0.9.0` — a transitive of `keepass 0.12.9` (`hidlins-core`) —
-was **yanked** upstream (after the 2026-05-31 `s3-sync` merge, so not caught
-then), which `deny.toml`'s `yanked = "deny"` rejects. Resolved with the
+was **yanked** upstream after its original integration, which
+`deny.toml`'s `yanked = "deny"` rejects. Resolved with the
 registry's intended replacement via `cargo update -p aes --precise 0.9.1`
 (satisfies keepass's `^0.9`; **no keepass change**). KDBX crypto behaviour
 unchanged — verified by `cargo test -p hidlins-core -p hidlins-sync` (incl. the
@@ -704,7 +756,7 @@ The codes:
 | 0    | Success                                              |
 | 1    | User error (bad flag, missing vault, parse failure)  |
 | 2    | Vault locked / authentication failed / contended     |
-| 3    | Sync conflict requiring user action (sync-git only)  |
+| 3    | Sync conflict requiring user action                  |
 | 10   | Internal / unexpected failure                        |
 | 11   | Known unimplemented surface (slot subcommands)       |
 
@@ -751,7 +803,6 @@ with the implementing feature, which fills in only the body.
 | `hidlins vault open`      | Probe vault unlock (MVP one-shot; agent caches in post-MVP).            | Implemented                  |
 | `hidlins vault list`      | List registered vaults from `vaults.toml`.                              | Implemented                  |
 | `hidlins vault set-lock`  | Configure or clear the per-vault idle-lock timeout.                     | Implemented                  |
-| `hidlins vault set-sync`  | Configure the sync transport for a vault.                               | Slot → `features/sync-git/`  |
 | `hidlins entry add`       | Add a new entry. `--password-stdin` or `--generate` is required.        | Implemented                  |
 | `hidlins entry get`       | Read an entry by UUID or title. `--copy` hands to the clipboard.        | Implemented                  |
 | `hidlins entry edit`      | Update entry fields and tags.                                            | Implemented                  |
@@ -760,7 +811,12 @@ with the implementing feature, which fills in only the body.
 | `hidlins entry search`    | Full-text search over titles, usernames, URLs, notes.                    | Implemented                  |
 | `hidlins gen password`    | Generate a random password. `--copy` hands to the clipboard.             | Implemented                  |
 | `hidlins gen passphrase`  | Generate an EFF-large-wordlist diceware passphrase. `--copy` supported.  | Implemented                  |
-| `hidlins sync`            | Synchronise a vault against its configured transport.                    | Slot → `features/sync-git/`  |
+| `hidlins sync now`        | Synchronize a paired client vault once.                                  | Implemented                  |
+| `hidlins sync serve`      | Run an authoritative server in the foreground until `Ctrl+C`.            | Implemented                  |
+| `hidlins sync pair`       | Pair an existing vault by discovery or a policy-checked local literal.   | Implemented                  |
+| `hidlins sync import`     | Pair and import an encrypted vault.                                      | Implemented                  |
+| `hidlins sync status`     | Show local role, pairing, and server status.                             | Implemented                  |
+| `hidlins sync peers`      | List, rename, or revoke pinned peers.                                    | Implemented                  |
 | `hidlins ssh add`         | Import an SSH key into a vault.                                          | Slot → `features/ssh-keys/`  |
 | `hidlins ssh load`        | Load an SSH key from a vault into the running `ssh-agent`.               | Slot → `features/ssh-keys/`  |
 | `hidlins ssh generate`    | Generate a new SSH keypair and store it in a vault.                      | Slot → `features/ssh-keys/`  |

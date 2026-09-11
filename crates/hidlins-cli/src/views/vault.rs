@@ -241,49 +241,6 @@ impl HumanFormat for VaultSetLockView<'_> {
 }
 
 // ---------------------------------------------------------------------------
-// vault set-sync
-// ---------------------------------------------------------------------------
-
-/// JSON output for `hidlins vault set-sync`.
-///
-/// **Secret-free by construction.** The struct carries only the S3
-/// *target* coordinates plus a structural `credentials_source` kind tag
-/// (`"prompt"` / `"iam-role"` / `"aws-profile"` / `"env-vars"`). It never
-/// carries the sealed secret, the access-key-id, a profile name, or an
-/// env prefix — so `--format json` output can never leak credential
-/// material (guarded by `set_sync_json_schema_omits_secret`).
-#[derive(Serialize, Debug)]
-pub struct VaultSetSyncView<'a> {
-    /// Registry name of the configured vault.
-    pub id: &'a str,
-    /// S3 bucket the vault syncs to.
-    pub bucket: &'a str,
-    /// S3 object key (the `.kdbx` on the remote).
-    pub key: &'a str,
-    /// Custom endpoint URL, when one was supplied. Omitted (not `null`)
-    /// when the vault uses the default AWS regional endpoint.
-    #[serde(skip_serializing_if = "Option::is_none")]
-    pub endpoint: Option<&'a str>,
-    /// Structural kind tag for the resolved credential source — never
-    /// the secret, access-key-id, profile name, or env prefix.
-    pub credentials_source: &'static str,
-}
-
-impl HumanFormat for VaultSetSyncView<'_> {
-    fn write_human(&self, out: &mut dyn std::io::Write) -> std::io::Result<()> {
-        write!(
-            out,
-            "configured sync for vault '{}' → bucket '{}' key '{}'",
-            self.id, self.bucket, self.key
-        )?;
-        if let Some(endpoint) = self.endpoint {
-            write!(out, " endpoint '{endpoint}'")?;
-        }
-        writeln!(out, " (credentials: {})", self.credentials_source)
-    }
-}
-
-// ---------------------------------------------------------------------------
 // Tests — JSON-schema regression gate for each view.
 // ---------------------------------------------------------------------------
 
@@ -546,71 +503,5 @@ mod tests {
             v.get("idle_timeout_seconds").is_none(),
             "cleared override must omit the field, not emit null"
         );
-    }
-
-    // ---- set-sync ----
-
-    #[test]
-    fn vault_set_sync_view_schema_with_endpoint() {
-        let view = VaultSetSyncView {
-            id: "personal",
-            bucket: "my-bucket",
-            key: "personal.kdbx",
-            endpoint: Some("https://minio.internal"),
-            credentials_source: "iam-role",
-        };
-        assert_eq!(
-            json_of(&view),
-            json!({
-                "id": "personal",
-                "bucket": "my-bucket",
-                "key": "personal.kdbx",
-                "endpoint": "https://minio.internal",
-                "credentials_source": "iam-role",
-            })
-        );
-    }
-
-    #[test]
-    fn vault_set_sync_view_omits_endpoint_when_none() {
-        let view = VaultSetSyncView {
-            id: "personal",
-            bucket: "b",
-            key: "k",
-            endpoint: None,
-            credentials_source: "prompt",
-        };
-        let v = json_of(&view);
-        assert!(
-            v.get("endpoint").is_none(),
-            "default endpoint must be omitted, not null"
-        );
-    }
-
-    #[test]
-    fn vault_set_sync_view_carries_no_secret_fields() {
-        // Defence-in-depth: the view is the JSON contract for the output
-        // channel; it must never grow a secret-bearing field. Pin the
-        // exact key set so a future edit that adds `access_key_id` or the
-        // sealed container gets caught here.
-        let view = VaultSetSyncView {
-            id: "personal",
-            bucket: "b",
-            key: "k",
-            endpoint: None,
-            credentials_source: "prompt",
-        };
-        let v = json_of(&view);
-        let obj = v.as_object().expect("view serializes to a JSON object");
-        for forbidden in [
-            "access_key_id",
-            "secret_access_key",
-            "secret_access_key_encrypted",
-        ] {
-            assert!(
-                obj.get(forbidden).is_none(),
-                "set-sync view must not expose `{forbidden}`"
-            );
-        }
     }
 }

@@ -1,8 +1,8 @@
 # Hidlins
 
-Hidlins (Scots: "in secret, in hiding", pronounced HID-linz) is an offline-first secrets manager built on a Rust core with thin cross-platform UIs. Vaults are stored in the KDBX (KeePass) format via the `keepass-rs` crate, so every Hidlins vault is directly interoperable with KeePassXC, KeeWeb, KeePass2, and mobile KDBX clients. Default sync transport is S3-compatible object storage (PRD §6.5 v1.1), with in-app three-way merge at the entry level.
+Hidlins (Scots: "in secret, in hiding", pronounced HID-linz) is an offline-first secrets manager built on a Rust core with thin cross-platform UIs. Vaults are stored in the KDBX (KeePass) format via the `keepass-rs` crate, so every Hidlins vault is directly interoperable with KeePassXC, KeeWeb, KeePass2, and mobile KDBX clients. Sync runs only over private/local network addresses with authenticated device pairing and in-app three-way merge at the entry level.
 
-**License:** MIT. **Status:** Phase-0 MVP code-complete; manual accessibility verification remains.
+**License:** MIT. **Status:** Phase-0 MVP code-complete; optional non-gating accessibility observations remain.
 
 ## Planning docs (authoritative)
 
@@ -21,7 +21,7 @@ When implementing a feature, the corresponding `plans/implementation-plan.md` an
 - **Rust core, thin UIs.** All business logic and crypto live in the Rust core library. CLI and TUI are presentation layers over the same core. Future Flutter UIs (Phase 1+) bind to the same core via FFI. No UI-layer logic leaks into the core.
 - **TUI is the reference UX.** Every feature lands in the TUI with full keyboard parity before any GUI work begins. CLI provides one-shot scriptable access to every core operation.
 - **Offline-first.** Every feature works without network. Sync is opt-in and operates on top of the offline core — never a precondition.
-- **Sync trait abstraction.** Phase 0 sync is **S3-compatible object storage** per PRD §6.5 v1.1 (2026-05-27 — replaces the originally-planned git transport, which was abandoned mid-implementation; see notebook `features/archive/sync-git/` and PRD §C decision #17). Later transports (NFS, Samba, WebDAV, possibly a reconsidered git transport) implement the same `SyncTransport` trait. CRUD and merge logic stay transport-agnostic. The gix-based scaffolding and its vendored deps were removed in `features/s3-sync/` T1; the S3 transport (hand-rolled SigV4 + `ureq`, design.md ADR-1) landed across `features/s3-sync/` Phases 2–6.
+- **Sync trait abstraction.** Local-network client/server code implements the shared `SyncTransport` contract. CRUD and merge logic stay transport-agnostic; address admission, discovery, Noise authentication, identity pinning, and authority behavior live in the Rust sync crate.
 
 ## Engineering principles
 
@@ -48,13 +48,13 @@ When implementing a feature, the corresponding `plans/implementation-plan.md` an
 
 ## Supply chain rules (non-negotiable)
 
-- **Minimize external dependencies — actively and audibly.** Before adding, upgrading, or retaining a direct dependency for new work, record its purpose, exact license, meaningful transitive cost, maintenance signal, narrower alternatives, and whether a small in-repository implementation can safely replace it. Before removing or reimplementing a dependency, pin its required behavior with tests. Prefer deletion, feature reduction, or a small well-specified in-repository implementation when that is simpler to test and maintain than the dependency plus its transitives (the SigV4 signer in `features/s3-sync/` is the worked example). Do not hand-roll cryptography, TLS, KDBX parsing/writing, authentication primitives, or other security-sensitive machinery; use the narrowest established crate that closes the actual gap.
-- **Permissive licenses only — no exceptions:** MIT, Apache-2.0, BSD-2/3-Clause, ISC, Zlib, Unlicense, CC0-1.0, Unicode-3.0, Unicode-DFS-2016. Verify the exact license before executing newly obtained dependency code or writing product code against it. A forbidden, ambiguous, missing, unverified, or linking-exception license blocks the change. This applies equally to crates, copied implementations, vendored source, fonts/data assets, and build tools. Never weaken `deny.toml`, audit configuration, or a gate to rationalize an otherwise disallowed dependency.
+- **Minimize external dependencies — actively and audibly.** Before adding, upgrading, or retaining a direct dependency for new work, record its purpose, exact license, meaningful transitive cost, maintenance signal, narrower alternatives, and whether a small in-repository implementation can safely replace it. Before removing or reimplementing a dependency, pin its required behavior with tests. Prefer deletion, feature reduction, or a small well-specified in-repository implementation when that is simpler to test and maintain than the dependency plus its transitives. Do not hand-roll cryptography, TLS, KDBX parsing/writing, authentication primitives, or other security-sensitive machinery; use the narrowest established crate that closes the actual gap.
+- **Permissive production licenses; one development-only NCSA exception:** MIT, Apache-2.0, BSD-2/3-Clause, ISC, Zlib, Unlicense, CC0-1.0, Unicode-3.0, and Unicode-DFS-2016 are allowed generally. NCSA is allowed only for the exact pinned `libfuzzer-sys 0.4.13` dependency in the isolated `fuzz/` workspace, and only for development/testing. No CLI, TUI, agent, Flutter desktop, iOS, Android, or other packaged/distributed application may contain NCSA-licensed code. Root `deny.toml` continues to reject NCSA; `fuzz/deny.toml` owns the single crate/version exception; `make ncsa-boundary-check` enforces workspace, lockfile, production-graph, packaging-hook, and artifact boundaries with negative controls. Verify the exact license before executing newly obtained dependency code or writing code against it. Any other forbidden, ambiguous, missing, unverified, or linking-exception license blocks the change. Never weaken either policy or its boundary gate to rationalize a dependency.
 - **Forbidden:** GPL-2.0, GPL-3.0, LGPL-2.1/3.0, AGPL-3.0, SSPL, Commons Clause, anything copyleft. **GPL-with-linking-exception is also forbidden** (e.g., libgit2 — the ambiguity isn't worth it; `git2` / `libgit2-sys` are explicitly banned in `deny.toml`).
 - **Pinned exact versions.** `Cargo.lock` is the source of truth and is committed.
 - **Vendored dependency tree.** All crates vendored at `vendor/` via `cargo vendor`. Builds run `--offline` / `CARGO_NET_OFFLINE=true`.
 - **No Git submodules or embedded repositories — no exceptions.** Checked-in dependencies must be ordinary reviewed files in this repository; never add a gitlink (mode `160000`), a `.gitmodules` file, or a nested checkout as a dependency. Downloaded SDKs, toolchains, and source checkouts belong outside the repository or in an explicitly ignored scratch directory such as `.codex-tmp/`. Before committing, treat Git's “adding embedded git repository” warning as a hard failure and remove the path from the index rather than converting it to a submodule.
-- **Off-target vendored sources are unavoidable; budget for them.** `Cargo.lock` is target-agnostic by design — the resolver records every platform-conditional dep across every triple a transitive could ever reach (Windows, Android, wasm32, etc.) so the lockfile is reproducible across hosts. Cargo's source-replacement (`replace-with = "vendored-sources"`) then validates the *entire* lockfile against `vendor/` at resolution time, so every locked package must exist on disk even if rustc will never compile it for our Phase-0 triples (macOS aarch64/x86_64, Linux x86_64/aarch64). The cost is disk space — `vendor/` currently carries ~90 directories of Windows / Android / wasm sources that rustc skips via `#[cfg(target_os = ...)]`. The supply-chain audit (`cargo deny`) sees through this via `deny.toml`'s `targets = [...]` constraint, so licenses + advisories only check the four target triples we actually ship. **This makes "minimize external dependencies" non-negotiable** — every new direct dep can drag Windows / Android / wasm transitives into `vendor/` that bloat the tree without ever being shipped. Recent example: adding `ureq 3.3.0` for the S3 transport pulled ~51 new vendored crates, of which roughly 20 are off-target placeholders (mostly Android `jni`-family + Windows `schannel` + wasm `webpki-root-certs`).
+- **Off-target vendored sources are unavoidable; budget for them.** `Cargo.lock` is target-agnostic, so platform-conditional sources may be vendored even when they are not compiled for shipped targets. Audit only the supported target matrix and keep every direct dependency narrowly justified, exact-pinned, feature-reduced, and vendored.
 - **No build-script networking.** Dependencies' `build.rs` must not fetch anything or shell out to undocumented executables.
 - **Dependency-add/upgrade/removal checklist** (documented in task evidence or the PR description): purpose, exact license, upstream maintenance signal, popularity baseline, transitive footprint, feature reduction, diff review of vendored sources, behavior-preserving tests for removal, and an honest assessment of whether a small non-security capability should live in-repository instead.
 - **Enforcement:** `cargo deny` for license + advisory + banned crates; `cargo audit` for RustSec advisories. Both are CI gates.
@@ -73,7 +73,7 @@ When implementing a feature, the corresponding `plans/implementation-plan.md` an
   - `clap` (MIT/Apache-2.0) — CLI parsing.
   - `ratatui` (MIT) — TUI framework.
   - RustCrypto family — crypto primitives.
-- **Phase-0 sync transport (lands in `features/s3-sync/` Phases 2–6):** S3-compatible object storage via a hand-rolled SigV4 signer + `ureq 3.3` (MIT OR Apache-2.0) over `rustls` with the `ring` provider, per design.md ADR-1. The earlier `gitoxide` / `gix-*` stack was removed in `features/s3-sync/` T1.
+- **Local sync transport:** Noise-authenticated connections over private/local IP ranges only, with secure discovery and pinned per-vault identities. Public IP ranges are rejected without an override.
 
 ## Build system
 
@@ -142,11 +142,11 @@ non-gating confidence checks and have not been executed.
 - **`password-generation`: complete.** Random + EFF diceware via `getrandom` (11/11 tasks).
 - **`security-behaviors`: complete.** Idle auto-lock, OS lock events (`LogindSource`/`IoKitSource`), clipboard auto-clear (12/12 tasks, all 5 phases).
 - **`cli-skeleton`: complete.** `clap`-based one-shot subcommands, secure-stdin prompt, JSON output, stable exit codes, shell completions (all 4 phases).
-- **`s3-sync`: complete.** Sync trait + S3-compatible transport (hand-rolled SigV4 + `ureq`) + in-app three-way merge with loser-as-history preservation (25/25 tasks; merged to `main` 2026-05-31).
+- **`local-network-sync`: active.** Secure discovery, pairing, authenticated client/server synchronization, and all application surfaces are implemented under the approved workflow.
 - **`tui-skeleton`: complete.** `ratatui` tabbed-workspace shell — unlock,
   navigable tree, scrollable multi-type detail, action overlays
   (search/edit/generate/history), pinned tabs, MRU recents, Settings + live
-  `hidlins-sync` integration with secure S3-credential entry (32/32 tasks; all
+  `hidlins-sync` local pairing, sync, peer-management, and server controls (32/32 tasks; all
   7 phases). Deterministic journeys and accessibility semantics run in-process
   through Ratatui's test backend; optional Linux Orca/AT-SPI and macOS VoiceOver
   cases remain external, non-gating, and unexecuted.

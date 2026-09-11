@@ -1,5 +1,3 @@
-# Rust resolves the verifier class by exact name through JNI. The application
-# classes are also JNI/lifecycle entry points, not ordinary Java call sites.
--keep class org.rustls.platformverifier.** { *; }
+# Rust resolves this application class by exact name through JNI, so it is not
+# an ordinary Java-only call site.
 -keep class app.hidlins.HidlinsNative { *; }
--keep class app.hidlins.HidlinsApplication { *; }

@@ -11,8 +11,8 @@
     ║  ┌─────────────┐  ║ │Status: Ready                                     │
     ║  │o  HIDLINS  o│  ║ │                                                  │
     ║  └─────────────┘  ║ │Enter: Open vault                                 │
-    ║       ▄▄▄▄▄       ║ │Esc or Ctrl+Q: Exit                               │
-    ║         █         ║ │                                                  │
+    ║       ▄▄▄▄▄       ║ │F3: Import paired vault                           │
+    ║         █         ║ │Esc or Ctrl+Q: Exit                               │
     ║       ▄▄█▄▄       ║ │                                                  │
     ╚═══════════════════╝ │                                                  │
                           │                                                  │

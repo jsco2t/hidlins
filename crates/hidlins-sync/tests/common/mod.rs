@@ -1,4 +1,4 @@
-//! Shared test helpers for the s3-sync integration tests.
+//! Shared synchronization integration-test helpers.
 //!
 //! Compiled independently into each integration test binary that does
 //! `mod common;`. The `dead_code` allow on submodules reflects that any
@@ -7,5 +7,4 @@
 #![allow(dead_code, clippy::doc_markdown)]
 
 pub mod encoding;
-pub mod minio_env;
 pub mod sync_env;

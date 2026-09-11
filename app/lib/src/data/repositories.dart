@@ -32,12 +32,6 @@ abstract class SessionRepository {
   });
   Future<void> deregisterVault(String name, {required bool deleteFile});
   Future<void> changeMasterPassword(String current, String newPassword);
-  Future<VaultSummary> bootstrapFromRemote({
-    required String name,
-    required S3ConfigDto config,
-    required String masterPassword,
-    KeyfileRef? keyfile,
-  });
 }
 
 abstract class EntryRepository {
@@ -87,7 +81,35 @@ abstract class GeneratorRepository {
 
 abstract class SyncRepository {
   Future<SyncStatusDto> syncStatus();
-  Future<void> configureSync(S3ConfigDto config);
+  Future<LocalDiscoveryStatus> discover(DiscoveryKind kind);
+  Future<void> openDiscoverySettings();
+  Future<void> stopDiscovery();
+  Future<void> setManualEndpoint(LocalEndpoint endpoint);
+  Future<void> configureLocalSync(LocalSyncRole role);
+  Future<PairingPrompt> beginPairing();
+  Future<PairingPrompt> beginPairImport({
+    required String name,
+    required String masterPassword,
+    KeyfileRef? keyfile,
+  });
+  Future<VaultSummary?> confirmPairing({
+    required String transactionHandle,
+    required bool accepted,
+    required String peerDisplayName,
+  });
+  Future<List<SyncPeer>> listPeers();
+  Future<void> renamePeer(String peerId, String displayName);
+  Future<void> revokePeer(String peerId);
+  Future<List<LocalEndpoint>> serverEndpoints();
+  Future<LocalEndpoint> startServer(LocalEndpoint endpoint);
+  Future<void> stopServer();
+  Future<void> openPairingWindow();
+  Future<void> closePairingWindow();
+  Future<void> cancelSync();
+
+  /// Discover trusted routes, then consume the once-per-process automatic
+  /// startup attempt. Implementations must preserve this ordering.
+  Future<void> startStartupSync();
   Future<void> syncNow();
   Future<void> clearSyncConfig(String name);
   Stream<SyncEvent> syncEvents();

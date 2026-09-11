@@ -1182,62 +1182,9 @@ fn shutdown_during_failing_unlock_surfaces_the_open_error() {
     assert!(session.is_dead());
 }
 
-// ---------------------------------------------------------------------------
-// Sync API — security marker probe (T1.6): plaintext secret must never
-// appear in vaults.toml after configure_sync seals it.
-// ---------------------------------------------------------------------------
-
 #[test]
-fn configure_sync_seals_secret_and_plaintext_never_reaches_disk() {
-    use hidlins_api::dto::S3ConfigDto;
-
-    let env = TestEnv::new();
-    let name = "sync-marker";
-    let password = "sync-test-pass";
-    let vault_path = create_test_vault(&env, name, password);
-    register_vault(&env, name, &vault_path);
-
-    let session = AppSession::for_test(env.paths_clone()).expect("create session");
-    session
-        .unlock(name.to_string(), password.to_string(), None)
-        .expect("unlock");
-
-    let marker_secret = "MARKER-s3cret-K3Y-DO-NOT-LEAK";
-
-    let cfg = S3ConfigDto {
-        bucket: "test-bucket".to_string(),
-        key: "test.kdbx".to_string(),
-        region: "us-east-1".to_string(),
-        endpoint: None,
-        path_style: false,
-        access_key_id: "AKIAIOSFODNN7EXAMPLE".to_string(),
-        secret_access_key: marker_secret.to_string(),
-    };
-    session
-        .configure_sync(cfg)
-        .expect("configure_sync must succeed");
-
-    // Read the on-disk vaults.toml and assert:
-    // 1. The plaintext secret is NOT present.
-    // 2. The access_key_id IS present (proves the write actually happened).
-    let contents =
-        std::fs::read_to_string(env.paths().vaults_toml()).expect("vaults.toml must be readable");
-
-    assert!(
-        !contents.contains(marker_secret),
-        "plaintext secret must not appear in vaults.toml;\n\
-         got:\n{contents}"
-    );
-    assert!(
-        contents.contains("AKIAIOSFODNN7EXAMPLE"),
-        "access_key_id must be present in vaults.toml (proves the write landed);\n\
-         got:\n{contents}"
-    );
-}
-
-#[test]
-fn sync_status_reports_configured_after_configure_sync() {
-    use hidlins_api::dto::S3ConfigDto;
+fn sync_status_reports_local_role_after_configuration() {
+    use hidlins_api::dto::{LocalSyncRoleDto, SyncStatusDto};
 
     let env = TestEnv::new();
     let name = "sync-status";
@@ -1252,30 +1199,21 @@ fn sync_status_reports_configured_after_configure_sync() {
 
     // Before configuring: not configured.
     let status = session.sync_status().expect("sync_status");
-    assert!(!status.configured, "not configured before configure_sync");
-    assert!(!status.in_flight, "in_flight always false in sync version");
-
-    let cfg = S3ConfigDto {
-        bucket: "test-bucket".to_string(),
-        key: "test.kdbx".to_string(),
-        region: "us-east-1".to_string(),
-        endpoint: None,
-        path_style: false,
-        access_key_id: "AKIAIOSFODNN7EXAMPLE".to_string(),
-        secret_access_key: "dummy-secret".to_string(),
-    };
+    assert!(!status.configured);
+    let _: SyncStatusDto = status;
     session
-        .configure_sync(cfg)
-        .expect("configure_sync must succeed");
+        .configure_local_sync(LocalSyncRoleDto::Server)
+        .expect("configure local sync");
 
     // After configuring: configured.
     let status = session.sync_status().expect("sync_status");
-    assert!(status.configured, "configured after configure_sync");
+    assert!(status.configured);
+    assert_eq!(status.role, Some(LocalSyncRoleDto::Server));
 }
 
 #[test]
 fn clear_sync_config_removes_sync_block() {
-    use hidlins_api::dto::S3ConfigDto;
+    use hidlins_api::dto::LocalSyncRoleDto;
 
     let env = TestEnv::new();
     let name = "sync-clear";
@@ -1288,19 +1226,9 @@ fn clear_sync_config_removes_sync_block() {
         .unlock(name.to_string(), password.to_string(), None)
         .expect("unlock");
 
-    // Configure sync.
-    let cfg = S3ConfigDto {
-        bucket: "test-bucket".to_string(),
-        key: "test.kdbx".to_string(),
-        region: "us-east-1".to_string(),
-        endpoint: None,
-        path_style: false,
-        access_key_id: "AKIAIOSFODNN7EXAMPLE".to_string(),
-        secret_access_key: "dummy-secret".to_string(),
-    };
     session
-        .configure_sync(cfg)
-        .expect("configure_sync must succeed");
+        .configure_local_sync(LocalSyncRoleDto::Client)
+        .expect("configure local sync");
     assert!(
         session.sync_status().expect("status").configured,
         "configured before clear"
@@ -1333,7 +1261,7 @@ fn clear_sync_config_removes_sync_block() {
 
 #[test]
 fn sync_api_methods_reject_locked_vault() {
-    use hidlins_api::dto::S3ConfigDto;
+    use hidlins_api::dto::LocalSyncRoleDto;
 
     let env = TestEnv::new();
     let name = "sync-locked";
@@ -1344,21 +1272,12 @@ fn sync_api_methods_reject_locked_vault() {
     let session = AppSession::for_test(env.paths_clone()).expect("create session");
     // Do NOT unlock — vault stays locked.
 
-    let cfg = S3ConfigDto {
-        bucket: "b".to_string(),
-        key: "k".to_string(),
-        region: "r".to_string(),
-        endpoint: None,
-        path_style: false,
-        access_key_id: "A".to_string(),
-        secret_access_key: "S".to_string(),
-    };
     assert!(
         matches!(
-            session.configure_sync(cfg),
+            session.configure_local_sync(LocalSyncRoleDto::Client),
             Err(HidlinsApiError::VaultLocked)
         ),
-        "configure_sync must reject a locked vault"
+        "configure_local_sync must reject a locked vault"
     );
     assert!(
         matches!(session.sync_status(), Err(HidlinsApiError::VaultLocked)),

@@ -1,5 +1,5 @@
 //! `merge-interop-driver` — emit a *merged* KDBX vault for the KeePassXC
-//! interop test (`tools/interop-tests/sync_us-044.sh`, s3-sync T6.3/§8.4.4).
+//! interop test (`tools/interop-tests/sync_us-044.sh`, §8.4.4).
 //!
 //! Produces the US-044 collision outcome on disk: a single entry whose
 //! current title is `winner` and whose history contains the collision loser

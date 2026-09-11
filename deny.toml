@@ -56,7 +56,7 @@ exceptions = []
 
 # NOTE: a `[[licenses.clarify]]` for `ring` was needed historically (older
 # ring versions declared "MIT AND ISC AND OpenSSL", and OpenSSL is not on
-# the allowlist). features/s3-sync/ T2.1 re-introduced ring (via
+# the allowlist). The cryptographic dependency graph includes ring via
 # ureq → rustls's ring provider); the current ring release declares
 # "Apache-2.0 AND ISC", both already on the allowlist, so no clarify is
 # needed. Restore the clarify if a future ring version reintroduces OpenSSL
@@ -80,7 +80,7 @@ deny = [
 
     # libgit2: GPL-2.0 with linking exception. Policy forbids the ambiguity.
     # The git transport itself was abandoned (PRD §C decision #17 / 2026-05-27);
-    # s3-sync replaces it. The ban stays — Hidlins policy is permissive licenses
+    # The ban stays — Hidlins policy is permissive licenses
     # only, regardless of whether we ship a git transport.
     { name = "git2",        reason = "GPL-2.0 with linking exception; not on the permissive-only allowlist" },
     { name = "libgit2-sys", reason = "GPL-2.0 with linking exception; not on the permissive-only allowlist" },

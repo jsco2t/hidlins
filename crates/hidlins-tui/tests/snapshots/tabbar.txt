@@ -1,1 +1,1 @@
-1:Secrets │ [2:aws-prod] │ 3:github │ 4:Settings
+1:Secrets │ [2:prod-admin] │ 3:github │ 4:Settings

@@ -12,6 +12,11 @@ use crate::locking::{acquire_exclusive, acquire_shared};
 use crate::unlock::{build_database_key, build_database_key_from_material, KeyfileMaterial};
 use crate::{ExclusiveLock, Keyfile, MasterPassword, SharedLock, VaultError};
 
+pub(crate) struct StagedPasswordChange {
+    pub(crate) path: PathBuf,
+    new_key: keepass::DatabaseKey,
+}
+
 /// KDF settings for newly-created KDBX4 vaults.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub struct KdfParams {
@@ -195,6 +200,27 @@ impl Vault {
         Ok(())
     }
 
+    pub(crate) fn stage_master_password_change(
+        &mut self,
+        current: &MasterPassword,
+        new: &MasterPassword,
+        stage_path: PathBuf,
+    ) -> Result<StagedPasswordChange, VaultError> {
+        let current_key = build_database_key_from_material(current, &self.keyfile_material)?;
+        open_database(&self.path, current_key)?;
+
+        let new_key = build_database_key_from_material(new, &self.keyfile_material)?;
+        save_database(&stage_path, &mut self.database, new_key.clone())?;
+        Ok(StagedPasswordChange {
+            path: stage_path,
+            new_key,
+        })
+    }
+
+    pub(crate) fn finish_staged_password_change(&mut self, staged: StagedPasswordChange) {
+        self.key = staged.new_key;
+    }
+
     /// Return the on-disk vault path.
     pub fn path(&self) -> &Path {
         &self.path
@@ -266,6 +292,32 @@ impl Vault {
             return Err(VaultError::DatabaseIdentityMismatch { expected, found });
         }
         self.database = new_db;
+        Ok(())
+    }
+
+    /// Replace and atomically save a same-identity database, restoring the
+    /// prior live database if serialization or the atomic write fails.
+    ///
+    /// This is the host-owned commit primitive for local-network sync. The
+    /// caller already holds this vault's exclusive lock; a network worker must
+    /// never call it directly.
+    #[doc(hidden)]
+    pub fn replace_database_and_save(&mut self, new_db: Database) -> Result<(), VaultError> {
+        let expected = self.database.root().id().uuid();
+        let found = new_db.root().id().uuid();
+        if expected != found {
+            return Err(VaultError::DatabaseIdentityMismatch { expected, found });
+        }
+
+        let previous = std::mem::replace(&mut self.database, new_db);
+        if let Err(error) = save_database(&self.path, &mut self.database, self.key.clone()) {
+            // A failure before rename leaves the previous file; a directory
+            // fsync failure can occur after rename. Reopen whichever complete
+            // encrypted KDBX is actually canonical so live and disk state do
+            // not diverge across that ambiguous durability boundary.
+            self.database = open_database(&self.path, self.key.clone()).unwrap_or(previous);
+            return Err(error);
+        }
         Ok(())
     }
 }

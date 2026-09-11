@@ -1,6 +1,6 @@
-//! US-042 — conditional PUT on save (FR-042; impl plan §8.4.3). When the
+//! US-042 — conditional commit on save (FR-042; impl plan §8.4.3). When the
 //! local vault changed but the remote did not, the orchestrator uploads via a
-//! conditional PUT against the last-synced ETag (the `Pushed` outcome).
+//! conditional commit against the last-synced version (the `Pushed` outcome).
 
 #![allow(clippy::doc_markdown)]
 
@@ -19,10 +19,10 @@ fn local_changed_remote_unchanged_pushes_conditionally() {
 
     // Seed the remote with the synced state.
     let mut transport = MemoryTransport::new();
-    let synced_etag = {
+    let synced_version = {
         let bytes = std::fs::read(dev.vault_path()).unwrap();
         transport
-            .put_conditional(&bytes, None)
+            .commit_conditional(&bytes, None)
             .expect("seed remote")
     };
     let synced_sha = dev.local_sha();
@@ -36,7 +36,7 @@ fn local_changed_remote_unchanged_pushes_conditionally() {
         &dev.master(),
         None,
         &mut transport,
-        Some(synced_etag.clone().0),
+        Some(synced_version.clone().0),
         Some(&synced_sha),
         SyncOptions::default(),
     )
@@ -52,29 +52,28 @@ fn local_changed_remote_unchanged_pushes_conditionally() {
         "steady-state push expected, got {outcome:?}"
     );
 
-    // The remote advanced past the last-synced version (the conditional PUT
+    // The remote advanced past the last-synced version (the conditional commit
     // landed) and the new pointer was recorded.
     let head = transport.head().expect("head ok").expect("remote present");
     assert_ne!(
-        head, synced_etag,
-        "conditional PUT must advance the remote ETag"
+        head, synced_version,
+        "conditional commit must advance the remote version"
     );
-    assert_eq!(pointers.remote_etag.as_deref(), Some(head.0.as_str()));
+    assert_eq!(pointers.remote_version.as_deref(), Some(head.0.as_str()));
 }
 
 #[test]
-fn conditional_put_against_stale_etag_is_rejected() {
-    // Sanity that the transport enforces If-Match: a PUT claiming a stale
-    // version is rejected (the precondition primitive the orchestrator relies
-    // on). MemoryTransport mirrors S3's 412 here.
+fn conditional_commit_against_stale_version_is_rejected() {
+    // A commit claiming a stale version is rejected; this is the
+    // compare-and-swap primitive the orchestrator relies on.
     let mut transport = MemoryTransport::new();
-    let v1 = transport.put_conditional(b"v1", None).expect("seed");
+    let v1 = transport.commit_conditional(b"v1", None).expect("seed");
     let _v2 = transport
-        .put_conditional(b"v2", Some(&v1))
+        .commit_conditional(b"v2", Some(&v1))
         .expect("advance");
     let err = transport
-        .put_conditional(b"v3", Some(&v1))
-        .expect_err("stale If-Match must be rejected");
+        .commit_conditional(b"v3", Some(&v1))
+        .expect_err("stale authority version must be rejected");
     assert!(matches!(
         err,
         hidlins_sync::MemoryTransportError::PreconditionFailed

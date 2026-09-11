@@ -21,13 +21,12 @@ void main() {
       const HidlinsApiError.invalidFormat(): InvalidInputFailure,
       const HidlinsApiError.registryMalformed(): InternalFailure,
       const HidlinsApiError.syncNotConfigured(): SyncNotReady,
-      const HidlinsApiError.syncRemoteUnreachable(endpoint: 'https://s3'):
-          SyncUnreachable,
+      const HidlinsApiError.syncRemoteUnreachable(
+        endpoint: '192.168.1.8:42873',
+      ): SyncUnreachable,
       const HidlinsApiError.syncAuthFailed(): SyncAuthFailure,
       const HidlinsApiError.syncConflictUnresolvable(backupPath: '/bak'):
           SyncConflict,
-      const HidlinsApiError.syncDuplicateTarget(existingVault: 'v1'):
-          SyncDuplicate,
       const HidlinsApiError.io(context: 'disk full'): IoFailure,
       const HidlinsApiError.internal(context: 'panic'): InternalFailure,
     };
@@ -66,18 +65,12 @@ void main() {
 
     test('SyncUnreachable preserves endpoint', () {
       final result = mapApiError(
-        const HidlinsApiError.syncRemoteUnreachable(endpoint: 'https://minio'),
+        const HidlinsApiError.syncRemoteUnreachable(
+          endpoint: '192.168.1.8:42873',
+        ),
       );
       expect(result, isA<SyncUnreachable>());
-      expect((result as SyncUnreachable).endpoint, 'https://minio');
-    });
-
-    test('SyncDuplicate preserves existingVault', () {
-      final result = mapApiError(
-        const HidlinsApiError.syncDuplicateTarget(existingVault: 'work'),
-      );
-      expect(result, isA<SyncDuplicate>());
-      expect((result as SyncDuplicate).existingVault, 'work');
+      expect((result as SyncUnreachable).endpoint, '192.168.1.8:42873');
     });
   });
 }

@@ -67,10 +67,7 @@ pub enum Command {
     Entry(EntryArgs),
     /// Password and passphrase generation.
     Gen(GenArgs),
-    /// Synchronise a vault with its configured S3 target.
-    ///
-    /// Unlocks the selected vault, runs its configured sync transport, and
-    /// renders the outcome in human or JSON format.
+    /// Pair and synchronize vaults over the local network.
     Sync(SyncArgs),
     /// SSH key entry management.
     ///
@@ -143,11 +140,6 @@ pub enum VaultVerb {
     Open(VaultOpenArgs),
     /// List registered vaults.
     List(VaultListArgs),
-    /// Configure the S3 target for a vault.
-    ///
-    /// Validates and persists an S3 target and credential source for the
-    /// selected registered vault.
-    SetSync(VaultSetSyncArgs),
     /// Configure the per-vault idle-lock timeout.
     SetLock(VaultSetLockArgs),
 }
@@ -196,45 +188,6 @@ pub struct VaultOpenArgs {
 /// forward-compat with future `--filter`-style flags).
 #[derive(Args, Debug)]
 pub struct VaultListArgs {}
-
-/// Flags for `hidlins vault set-sync`.
-///
-/// `--s3-credentials-source` grammar (design §2.4):
-/// - `prompt` (default): collect access-key-id + secret on secure
-///   stdin and seal via RST-CRED-1.
-/// - `iam-role`: use EC2 `IMDSv2` instance-role credentials.
-/// - `profile:<name>`: read from `~/.aws/credentials` under the named
-///   profile section.
-/// - `env:<prefix>`: read `PREFIX_AWS_ACCESS_KEY_ID` +
-///   `PREFIX_AWS_SECRET_ACCESS_KEY` from the process environment.
-#[derive(Args, Debug)]
-pub struct VaultSetSyncArgs {
-    /// Registry name of the vault to configure.
-    #[arg(long)]
-    pub id: String,
-    /// S3 bucket name.
-    #[arg(long)]
-    pub s3_bucket: String,
-    /// S3 object key (the `.kdbx` filename on the remote).
-    #[arg(long)]
-    pub s3_key: String,
-    /// Optional custom S3 endpoint URL (e.g. `https://minio.internal`).
-    /// Defaults to the AWS regional endpoint for `--s3-region`.
-    #[arg(long)]
-    pub s3_endpoint: Option<String>,
-    /// S3 region (required for `SigV4` signing). Defaults to `us-east-1`.
-    #[arg(long, default_value = "us-east-1")]
-    pub s3_region: String,
-    /// Use path-style addressing (`hostname/bucket`) instead of
-    /// virtual-hosted-style (`bucket.hostname`). Defaults to false.
-    #[arg(long)]
-    pub s3_path_style: bool,
-    /// How to obtain S3 credentials. Grammar:
-    /// `prompt` (default), `iam-role`, `profile:<name>`,
-    /// `env:<prefix>` (see struct docs).
-    #[arg(long, default_value = "prompt")]
-    pub s3_credentials_source: String,
-}
 
 /// Flags for `hidlins vault set-lock`.
 ///
@@ -538,17 +491,160 @@ pub struct GenPassphraseArgs {
     pub show: bool,
 }
 
-/// `hidlins sync` — sync one registered vault with its configured S3 target.
-///
-/// Note: `--dry-run` is deferred (s3-sync Deferred Item #8); the flag
-/// is intentionally absent so the CLI does not silently imply
-/// unimplemented behavior.
+/// `hidlins sync` — local-network synchronization and serving.
 #[derive(Args, Debug)]
 pub struct SyncArgs {
-    /// Vault registry name to sync. Optional: if only one vault is
-    /// registered, that one is used by default.
+    /// Local-sync operation.
+    #[command(subcommand)]
+    pub verb: Option<SyncVerb>,
+}
+
+/// Local-sync operations.
+#[derive(Subcommand, Debug)]
+pub enum SyncVerb {
+    /// Synchronize a paired client vault now.
+    Now(SyncNowArgs),
+    /// Run an authoritative sync server in the foreground until Ctrl+C.
+    Serve(SyncServeArgs),
+    /// Pair an existing vault with an authoritative server.
+    Pair(SyncPairArgs),
+    /// Pair and import a complete encrypted vault.
+    Import(SyncImportArgs),
+    /// Show local-sync role, pairing, and server status.
+    Status(SyncStatusArgs),
+    /// List, rename, or revoke paired peers.
+    Peers(SyncPeersArgs),
+}
+
+/// Common existing-vault selector for a one-shot sync.
+#[derive(Args, Debug)]
+pub struct SyncNowArgs {
+    /// Vault registry name. Defaults to the sole registered vault.
     #[arg(long)]
     pub vault: Option<String>,
+    /// Restricted IP-literal diagnostic fallback when discovery is unavailable.
+    #[arg(long, requires = "port")]
+    pub address: Option<String>,
+    /// Port paired with `--address`.
+    #[arg(long, requires = "address")]
+    pub port: Option<u16>,
+}
+
+/// Foreground authoritative server options.
+#[derive(Args, Debug)]
+pub struct SyncServeArgs {
+    /// Vault registry name. Defaults to the sole registered vault.
+    #[arg(long)]
+    pub vault: Option<String>,
+    /// Restricted IP literal to bind; otherwise an allowed active interface is selected.
+    #[arg(long)]
+    pub address: Option<String>,
+    /// Listener port.
+    #[arg(long, default_value_t = 37371)]
+    pub port: u16,
+    /// Open the bounded pairing window immediately after startup.
+    #[arg(long)]
+    pub pairing_window: bool,
+}
+
+/// Existing-vault pairing options.
+#[derive(Args, Debug)]
+pub struct SyncPairArgs {
+    /// Vault registry name. Defaults to the sole registered vault.
+    #[arg(long)]
+    pub vault: Option<String>,
+    /// Restricted IP-literal diagnostic fallback.
+    #[arg(long, requires = "port")]
+    pub address: Option<String>,
+    /// Port paired with `--address`.
+    #[arg(long, requires = "address")]
+    pub port: Option<u16>,
+    /// Local display name for the authority.
+    #[arg(long, default_value = "authority")]
+    pub name: String,
+}
+
+/// Pair-and-import options. Passwords remain secure stdin-only.
+#[derive(Args, Debug)]
+pub struct SyncImportArgs {
+    /// New local registry name.
+    #[arg(long)]
+    pub id: String,
+    /// Destination KDBX path. Defaults to the Hidlins state directory.
+    #[arg(long)]
+    pub path: Option<PathBuf>,
+    /// Optional keyfile required by the remote vault.
+    #[arg(long)]
+    pub keyfile: Option<PathBuf>,
+    /// Restricted IP-literal diagnostic fallback.
+    #[arg(long, requires = "port")]
+    pub address: Option<String>,
+    /// Port paired with `--address`.
+    #[arg(long, requires = "address")]
+    pub port: Option<u16>,
+    /// Local display name for the authority.
+    #[arg(long, default_value = "authority")]
+    pub name: String,
+}
+
+/// Local-sync status options.
+#[derive(Args, Debug)]
+pub struct SyncStatusArgs {
+    /// Vault registry name. Defaults to the sole registered vault.
+    #[arg(long)]
+    pub vault: Option<String>,
+}
+
+/// Peer-management command group.
+#[derive(Args, Debug)]
+pub struct SyncPeersArgs {
+    /// Peer operation.
+    #[command(subcommand)]
+    pub verb: Option<SyncPeersVerb>,
+}
+
+/// Peer-management operations.
+#[derive(Subcommand, Debug)]
+pub enum SyncPeersVerb {
+    /// List configured peers.
+    List(SyncPeerListArgs),
+    /// Rename a peer's local display label.
+    Rename(SyncPeerRenameArgs),
+    /// Revoke a peer immediately.
+    Revoke(SyncPeerRevokeArgs),
+}
+
+/// Peer-list options.
+#[derive(Args, Debug)]
+pub struct SyncPeerListArgs {
+    /// Vault registry name. Defaults to the sole registered vault.
+    #[arg(long)]
+    pub vault: Option<String>,
+}
+
+/// Peer-rename options.
+#[derive(Args, Debug)]
+pub struct SyncPeerRenameArgs {
+    /// Vault registry name. Defaults to the sole registered vault.
+    #[arg(long)]
+    pub vault: Option<String>,
+    /// Opaque `peer-N` handle from `sync peers list`.
+    #[arg(long)]
+    pub peer: String,
+    /// New local display name.
+    #[arg(long)]
+    pub name: String,
+}
+
+/// Peer-revocation options.
+#[derive(Args, Debug)]
+pub struct SyncPeerRevokeArgs {
+    /// Vault registry name. Defaults to the sole registered vault.
+    #[arg(long)]
+    pub vault: Option<String>,
+    /// Opaque `peer-N` handle from `sync peers list`.
+    #[arg(long)]
+    pub peer: String,
 }
 
 /// `hidlins ssh` — slot only.
