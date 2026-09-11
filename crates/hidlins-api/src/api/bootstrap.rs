@@ -1,6 +1,7 @@
 //! Vault credential rotation coordinated with sealed local-sync identity.
 
 use hidlins_core::MasterPassword;
+use hidlins_sync::config::local::SYNC_KEY;
 
 use super::session::{AppSession, SessionCredentials};
 use crate::error::HidlinsApiError;
@@ -46,53 +47,60 @@ impl AppSession {
         })?;
         hidlins_core::Vault::open_from_bytes(&bytes, &current_master, keyfile)?;
 
-        let replacement_config = state
+        let sync_value = state
             .registry
             .get(&vault_name)
-            .and_then(hidlins_sync::config::local::LocalSyncConfig::from_vault_entry)
-            .map(|mut config| {
+            .and_then(|entry| entry.extra.get(SYNC_KEY))
+            .cloned();
+        let replacement = sync_value
+            .as_ref()
+            .map(|old_value| {
+                let mut config = state
+                    .registry
+                    .get(&vault_name)
+                    .and_then(hidlins_sync::config::local::LocalSyncConfig::from_vault_entry)
+                    .ok_or(HidlinsApiError::LocalSyncConfiguration)?;
                 config
                     .rewrap_identity(&vault_name, &current_master, &new_master)
-                    .map(|()| config)
+                    .map_err(|_| HidlinsApiError::LocalSyncConfiguration)?;
+                let replacement = toml::Value::try_from(config)
+                    .map_err(|_| HidlinsApiError::LocalSyncConfiguration)?;
+                Ok::<_, HidlinsApiError>((old_value.clone(), replacement))
             })
-            .transpose()
-            .map_err(|_| HidlinsApiError::LocalSyncConfiguration)?;
+            .transpose()?;
 
-        {
+        let result = if let Some((old_value, replacement)) = replacement {
+            let state = &mut *state;
             let vault = state
                 .vault
                 .as_mut()
                 .ok_or_else(|| HidlinsApiError::Internal {
                     context: "vault ownership changed during password rotation".to_string(),
                 })?;
-            vault.change_master_password(&current_master, &new_master)?;
-            if let Err(error) = vault.save() {
-                let _ = vault.change_master_password(&new_master, &current_master);
-                return Err(error.into());
-            }
-        }
-
-        if let Some(config) = replacement_config {
-            if config.persist(&mut state.registry, &vault_name).is_err() {
-                // Restore the old KDBX credential. If this rollback itself
-                // fails, fail closed: no credentials remain usable in the
-                // session and the caller must recover from the atomic file.
-                let rollback_failed = if let Some(vault) = state.vault.as_mut() {
-                    vault
-                        .change_master_password(&new_master, &current_master)
-                        .and_then(|()| vault.save())
-                        .is_err()
-                } else {
-                    true
-                };
-                if rollback_failed {
-                    state.do_lock();
-                    return Err(HidlinsApiError::Internal {
-                        context: "password rotation rollback failed; session locked".to_string(),
-                    });
-                }
-                return Err(HidlinsApiError::LocalSyncConfiguration);
-            }
+            state.registry.change_master_password_and_extra(
+                vault,
+                &vault_name,
+                &current_master,
+                &new_master,
+                SYNC_KEY,
+                &old_value,
+                &replacement,
+            )
+        } else {
+            state
+                .vault
+                .as_mut()
+                .ok_or_else(|| HidlinsApiError::Internal {
+                    context: "vault ownership changed during password rotation".to_string(),
+                })?
+                .change_master_password(&current_master, &new_master)
+        };
+        if let Err(error) = result {
+            // The transaction may already have committed one durable file.
+            // Discard all credential-bearing in-memory state and let startup
+            // recovery finish from encrypted stages and the non-secret marker.
+            state.do_lock();
+            return Err(error.into());
         }
 
         let old_keyfile = state

@@ -379,6 +379,7 @@ pub fn init_app(cfg: AppInitConfig) -> Result<AppSession, HidlinsApiError> {
     paths.ensure_exists()?;
 
     let session_paths = paths.clone();
+    VaultRegistry::recover_password_rotations(&paths)?;
     let registry = VaultRegistry::load(paths)?;
 
     let controller = AutoLockController::new(AutoLockConfig::default()).map_err(|e| {
@@ -893,6 +894,7 @@ impl AppSession {
         lifecycle_enabled: bool,
     ) -> Result<Self, HidlinsApiError> {
         let session_paths = paths.clone();
+        VaultRegistry::recover_password_rotations(&paths)?;
         let registry = VaultRegistry::load(paths)?;
         let controller =
             AutoLockController::new(config).map_err(|e| HidlinsApiError::Internal {

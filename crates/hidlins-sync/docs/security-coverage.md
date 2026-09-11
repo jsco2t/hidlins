@@ -12,17 +12,17 @@ Makefile and is run by CI directly or through `make verify`.
 |---|---|---|
 | FR-001 | `tools/dev/s3-removal-check.py` negative controls and active-tree scan | `s3-removal-check` |
 | FR-002 | LNS-TRUST-002, LNS-TRUST-004, LNS-SERVER-007 | `test-local-sync-security`, `test-local-sync-integration` |
-| FR-003 | LNS-DISCOVERY-001/002/004 plus the real desktop `mdns-sd` publisher/browser exchange | `test-local-sync-discovery` |
+| FR-003 | LNS-DISCOVERY-001/002/004/006 plus the real desktop `LNS-DISC-006` publisher/browser exchange | `test-local-sync-discovery` |
 | FR-004 | LNS-ADDR-001 through 005, LNS-DISCOVERY-002/003/005, LNS-PROCESS-001 | all three local-sync gates |
-| FR-005 | LNS-NOISE-001/002/005, LNS-PAIRING-001/002, LNS-TRUST-001/002 | `test-local-sync-security` |
+| FR-005 | LNS-NOISE-001/002/005, LNS-PAIRING-001/002, LNS-PAIR-004..007, LNS-PROCESS-002/003, LNS-TRUST-001/002 | `test-local-sync-security`, `test-local-sync-integration` |
 | FR-006 | LNS-NOISE-003/004/005, LNS-TRUST-002/003, LNS-SERVER-003/006 | `test-local-sync-security`, `test-local-sync-integration` |
-| FR-007 | LNS-IDENTITY-001/002/003, LNS-NOISE source-patch unit tests, LNS-LIFECYCLE-001 | `test-local-sync-security` |
+| FR-007 | LNS-IDENTITY-001..011, LNS-NOISE source-patch unit tests, LNS-LIFECYCLE-001 | `test-local-sync-security`, `test-local-sync-integration` |
 | FR-008 | LNS-FRAME-001, LNS-PROTO-001 through 004, LNS-STATE-001 through 003, LNS-LIMIT-001, LNS-FUZZ-CORPUS-001 through 003 | `test-local-sync-security`, `fuzz-local-sync-corpus`, `fuzz-local-sync-ci` |
 | FR-009 | LNS-SERVER-001/004/005/007, LNS-MERGE-FAULT-001 through 004, merge property tests | `test-local-sync-security`, `test-local-sync-integration`, `test-merge-properties`, `interop-sync` |
 | FR-010 | LNS-CLIENT-002, `us_094_sync_api::startup_sync_is_once_and_local_failures_do_not_block_use`, CLI/TUI/Flutter lifecycle tests | `test-local-sync-security`, `app-check`, `check` |
 | FR-011 | LNS-PROCESS-001, LNS-LIFECYCLE-001, TUI sync journey tests, Flutter desktop lifecycle integration | `test-local-sync-integration`, `test-local-sync-security`, `app-check` |
 | FR-012 | LNS-MOBILE-001, iOS `RunnerTests` listener/background assertions, Android `HidlinsAndroidTest` client-only assertions, Flutter mobile control-absence widgets, and platform-discovered real mobile/CLI scenarios | `test-local-sync-security`, `check-ios`, `app-test-ios-simulator`, `check-android`, `app-test-android-emulator`, `test-local-sync-mobile-scenarios` |
-| FR-013 | LNS-CLIENT-003/004, LNS-PROCESS-001, CLI/TUI/Flutter import contracts | `test-local-sync-integration`, `app-check` |
+| FR-013 | LNS-CLIENT-003/004, LNS-PROCESS-001/003, API bilateral-absence assertions, CLI/TUI/Flutter import contracts | `test-local-sync-integration`, `app-check` |
 | FR-014 | `cli_sync`, TUI local-sync journeys, `us_094_sync_api`, Flutter `sync_test.dart` and bridge tests | `test-local-sync-security`, `test-tui-contracts`, `app-check` |
 | FR-015 | LNS-DISCOVERY-005, Flutter platform-service and permission-state tests, iOS/Android native adapter tests | `test-local-sync-discovery`, `app-check`, `check-ios`, `check-android` |
 | FR-016 | LNS-ADDR-003/004, LNS-DISCOVERY-005, CLI/TUI/Flutter manual-route tests | `test-local-sync-security`, `test-local-sync-discovery`, `app-check` |
@@ -50,12 +50,12 @@ Makefile and is run by CI directly or through `make verify`.
 | Discovery spoof, metadata correlation, candidate flood, DHCP/interface churn | LNS-DISCOVERY-001 through 004; Android API 29/36 replacement-authority scenarios |
 | Public/special address and mapped/scope bypass | LNS-ADDR-001 through 005, LNS-DISCOVERY-002/003/005 |
 | Replay, reorder, duplicate, truncate, malformed record/frame, invalid commit order | LNS-FRAME-001, LNS-PROTO-001/002/003, LNS-STATE-001/002/003 and all fuzz targets |
-| Pairing rejection, expiry, failed acknowledgement, transcript/role/key substitution | LNS-PAIRING-001/002, LNS-TRUST-001/002 |
+| Pairing rejection, expiry, failed acknowledgement, transcript/role/key substitution | LNS-PAIRING-001/002, LNS-PAIR-004..007, LNS-PROCESS-002/003, LNS-TRUST-001/002 |
 | Revocation and authorization oracle probing | LNS-TRUST-002/003, LNS-SERVER-003 |
 | Frame/chunk/vault/allocation/connection/queue exhaustion | LNS-LIMIT-001, LNS-DISCOVERY-002, LNS-SERVER-002/005 |
-| Timeout, cancellation, disconnect, server shutdown/lock/restart | LNS-CLIENT-001, LNS-SERVER-002/004, LNS-LIFECYCLE-001, LNS-PROCESS-001 |
+| Timeout, cancellation, disconnect, server shutdown/lock/restart | LNS-CLIENT-001/005, LNS-SERVER-002/004, LNS-LIFECYCLE-001, LNS-PROCESS-001..004, LNS-TUI-012..015 |
 | Multi-client CAS and registry/local-write races | LNS-SERVER-007, LNS-TRUST-004, API concurrent sync/lock tests |
-| Pair/upload/commit crash boundaries and partial import | LNS-TRUST-001, LNS-SERVER-004, LNS-CLIENT-004, LNS-MERGE-FAULT-001 through 004 |
+| Interrupted pairing, unauthorized/invalid import, and upload/commit crash boundaries | LNS-PROCESS-002/003, LNS-CLIENT-004, LNS-SERVER-004, LNS-MERGE-FAULT-001 through 004 |
 | Secret leakage through debug/error/JSON/event/process output | LNS-NOISE-006, LNS-PROTO-004, LNS-SERVER-003/005 and surface redaction contracts |
 | Panic containment | fuzz targets, LNS-MERGE-FAULT-002/003, API `sync_panic_is_contained_locks_and_emits_one_terminal_failure` |
 | NCSA/libFuzzer production or artifact contamination | `ncsa-boundary-check.py` self-test fixtures for manifest, lock, policy, hooks, raw binaries, directory bundles, APK, and IPA |
@@ -79,6 +79,28 @@ remain supporting evidence, not substitutes for this table.
 | `LNS-REVIEW-009` | A wrong-key first route prevented valid fallback | `client_falls_back_from_forged_route_but_never_accepts_a_wrong_pin` |
 | `LNS-REVIEW-010` | Authority listener/advertisement stayed stale after interface change | `listener_refresh_rebinds_to_an_injected_allowed_snapshot`, discovery DHCP/cache tests |
 | `LNS-REVIEW-011` | Retired-transport removal matching missed case variants | removal check self-test exact uppercase and mixed-case negative controls |
+
+## Five-finding repair map (2026-09-10)
+
+This table is the current coverage contract for the five later review findings.
+It supersedes any historical evidence text that described a directly invoked
+core helper as application-orchestration coverage.
+
+| Finding | Production entry point | Injected failure or ordering | Observable assertion | Owning test |
+| --- | --- | --- | --- | --- |
+| Pairing can strand a client after server activation | `ClientPairingSession::confirm`, followed by a newly spawned `hidlins sync pair` or `hidlins sync import` command | The authority activates the exact client, then deliberately withholds `PAIR_ACTIVATED` | Restart sees sealed provisional state; import has no KDBX or registration; the command chooses authenticated IK recovery and ends active; pending import state clears only after valid KDBX registration | `LNS-PROCESS-002/003` in `cli_local_sync_process.rs` |
+| Active authority trust is only in memory | A real `hidlins sync serve` process and a paired client's first IK sync | The authority process exits after pairing and restarts from the same sealed registry before any trusted sync | The restarted process admits the client and completes authenticated sync using persisted active trust | `LNS-PROCESS-004` in `cli_local_sync_process.rs` |
+| TUI lock/cancel can detach secret-bearing pairing work | `PairingRuntime::cancel` and `App`'s Ctrl+L/Ctrl+Q handlers | Barrier-held owned worker; operation replacement; real established pairing socket | Cancellation joins before return, prevents the modeled late mutation, drops the worker capture, and shuts down blocking socket I/O | `LNS-TUI-012..015`; `LNS-PAIR-007` |
+| First discovery batch can hide a later valid authority | `AppSession::poll_local_discovery` and `LanTransport` candidate traversal | Wrong/stale route arrives in batch one; valid pinned route arrives in batch two | API returns the accumulated bounded set and authenticated sync succeeds only through the later pinned authority | `LNS-DISCOVERY-006`; `LNS-SERVER-006` (`client_falls_back_from_forged_route_but_never_accepts_a_wrong_pin`) |
+| Restarted sole authority can lose one handshake | `LanTransport::connect` through the platform-discovered route | The first TCP connection to the only route drops before IK completes; the second reaches the production server | The same operation retries once, authenticates the pinned authority, and still satisfies the absolute handshake-deadline test | `LNS-CLIENT-005` (`client_retries_one_discovered_authority_after_a_transient_handshake_failure`) plus `LNS-CLIENT-001` |
+| Password change can split KDBX and identity credentials | Password-change subprocess and `AppSession` startup recovery | Process termination at every durable stage/rename/commit boundary | Restart yields an openable KDBX and unwrap-able unchanged public identity; repeat recovery is a no-op; corrupt/missing stages fail closed | `LNS-IDENTITY-004..011` in `us_095_bootstrap_change_password.rs` |
+| Stale iOS discovery callbacks can mutate a restarted attempt | `LocalDiscoveryService.discover/stop` with its production delegate methods | Retained canceled timer and browser callbacks from A fire after B starts | A cannot stop, complete, change permission, or attach a service to B; active success/error/timeout/stop completes exactly once | `LNS-IOS-012..014` in `RunnerTests.swift` |
+
+Android had the same callback-generation risk and was repaired adjacent to the
+iOS finding. `LNS-ANDROID-012` directly tests the monotonic attempt-token
+invariant; the supported emulator matrix compiles and executes the production
+controller wiring. It does not claim to replay framework callbacks through a
+fake `NsdManager`.
 
 ## Optional non-blocking observation residue
 

@@ -6,13 +6,13 @@ use std::{
     net::{Shutdown, SocketAddr, TcpStream},
     sync::{
         atomic::{AtomicBool, Ordering},
-        Arc,
+        Arc, Mutex,
     },
     time::Instant,
 };
 
 use sha2::{Digest, Sha256};
-use std::path::Path;
+use std::path::{Path, PathBuf};
 
 use hidlins_core::{Keyfile, MasterPassword, RegisteredVault, Vault, VaultRegistry};
 
@@ -38,6 +38,7 @@ pub struct ClientPairingSession {
     confirmation: ConfirmedPairing,
     server_key: crate::identity::PublicIdentity,
     endpoint: LocalEndpoint,
+    cancellation: LanCancellation,
 }
 
 impl ClientPairingSession {
@@ -46,9 +47,19 @@ impl ClientPairingSession {
         identity: &NoiseKeypair,
         candidates: impl IntoIterator<Item = LocalEndpoint>,
     ) -> Result<Self, LanError> {
+        Self::begin_with_cancellation(identity, candidates, LanCancellation::default())
+    }
+
+    /// Complete first-contact XX with caller-owned cooperative cancellation.
+    pub fn begin_with_cancellation(
+        identity: &NoiseKeypair,
+        candidates: impl IntoIterator<Item = LocalEndpoint>,
+        cancellation: LanCancellation,
+    ) -> Result<Self, LanError> {
         let connect_deadline = Instant::now() + TOTAL_CONNECT_BUDGET;
         let pairing_deadline = Instant::now() + crate::protocol::PAIRING_WINDOW;
         for endpoint in candidates.into_iter().take(MAX_CANDIDATE_ATTEMPTS) {
+            cancellation.check()?;
             let Some(remaining) = connect_deadline.checked_duration_since(Instant::now()) else {
                 break;
             };
@@ -58,7 +69,9 @@ impl ClientPairingSession {
             ) else {
                 continue;
             };
+            cancellation.register_stream(&stream)?;
             if checked_peer(stream.peer_addr().map_err(|_| LanError::Unreachable)?).is_err() {
+                cancellation.clear_stream();
                 continue;
             }
             let handshake_deadline = connect_deadline.min(Instant::now() + HANDSHAKE_TIMEOUT);
@@ -96,12 +109,15 @@ impl ClientPairingSession {
                     transport,
                     protocol,
                     deadline: pairing_deadline,
+                    cancellation: cancellation.clone(),
                 },
                 confirmation,
                 server_key,
                 endpoint,
+                cancellation,
             });
         }
+        cancellation.clear_stream();
         Err(LanError::Unreachable)
     }
 
@@ -123,7 +139,9 @@ impl ClientPairingSession {
         config: &mut LocalSyncConfig,
         server_display_name: String,
         now_epoch_seconds: u64,
+        mut persist: impl FnMut(&LocalSyncConfig) -> Result<(), LocalConfigError>,
     ) -> Result<PairingTransaction, LanError> {
+        self.cancellation.check()?;
         let transaction = self
             .confirmation
             .transaction(self.server_key, config.identity().public_key())
@@ -148,6 +166,7 @@ impl ClientPairingSession {
             (1, Message::Error { code }) => return Err(from_error(code)),
             _ => return Err(LanError::Protocol),
         }
+        self.cancellation.check()?;
         config
             .prepare_server(
                 &transaction,
@@ -157,6 +176,8 @@ impl ClientPairingSession {
                 now_epoch_seconds.saturating_add(crate::protocol::PAIRING_WINDOW.as_secs()),
             )
             .map_err(|_| LanError::Protocol)?;
+        persist(config).map_err(|_| LanError::Protocol)?;
+        self.cancellation.check()?;
         self.session.send(
             1,
             &Message::PairActivate {
@@ -175,10 +196,142 @@ impl ClientPairingSession {
             (1, Message::Error { code }) => return Err(from_error(code)),
             _ => return Err(LanError::Protocol),
         }
+        self.cancellation.check()?;
         config
             .activate_server(&transaction, now_epoch_seconds)
             .map_err(|_| LanError::Protocol)?;
+        persist(config).map_err(|_| LanError::Protocol)?;
         Ok(transaction)
+    }
+}
+
+impl Drop for ClientPairingSession {
+    fn drop(&mut self) {
+        self.cancellation.clear_stream();
+    }
+}
+
+/// Resume an interrupted pairing transaction over authenticated IK.
+pub fn recover_pairing(
+    config: &mut LocalSyncConfig,
+    vault_name: &str,
+    master_password: &MasterPassword,
+    discovered: impl IntoIterator<Item = LocalEndpoint>,
+    now_epoch_seconds: u64,
+    mut persist: impl FnMut(&LocalSyncConfig) -> Result<(), LocalConfigError>,
+) -> Result<PairingTransaction, LanError> {
+    let server = config
+        .provisional()
+        .ok_or(LanError::Authentication)?
+        .peer_key();
+    let transaction = config
+        .recover_pairing_transaction(server, now_epoch_seconds)
+        .map_err(|_| LanError::Authentication)?;
+    let identity = config
+        .identity()
+        .unlock(vault_name, config.role(), master_password)
+        .map_err(|_| LanError::Authentication)?;
+    let transport = LanTransport::new(
+        identity,
+        server.into_bytes(),
+        config.routing_hint(),
+        discovered,
+    )?;
+    let mut session = transport.connect()?;
+    let transaction_id = transaction.transaction_id().into_bytes();
+    let transcript_digest = transaction.transcript_digest().into_bytes();
+    session.send(
+        1,
+        &Message::PairActivate {
+            transaction_id,
+            transcript_digest,
+        },
+    )?;
+    match session.receive()? {
+        (
+            1,
+            Message::PairActivated {
+                transaction_id: received_id,
+                transcript_digest: received_digest,
+            },
+        ) if received_id == transaction_id && received_digest == transcript_digest => {}
+        (1, Message::Error { code }) => return Err(from_error(code)),
+        _ => return Err(LanError::Protocol),
+    }
+    config
+        .activate_server(&transaction, now_epoch_seconds)
+        .map_err(|_| LanError::Protocol)?;
+    persist(config).map_err(|_| LanError::Protocol)?;
+    Ok(transaction)
+}
+
+/// Durable, non-authorizing storage for an import pairing that has no registry entry yet.
+#[derive(Clone, Debug)]
+pub struct PendingPairingStore {
+    path: PathBuf,
+}
+
+impl PendingPairingStore {
+    /// Derive a fixed sibling path without incorporating the vault name into a pathname.
+    #[must_use]
+    pub fn new(state_dir: &Path, vault_name: &str) -> Self {
+        let digest = Sha256::digest(vault_name.as_bytes());
+        Self {
+            path: state_dir.join(format!(".pairing-{}.toml", encode_lower(&digest))),
+        }
+    }
+
+    /// Atomically store sealed provisional or active pairing state.
+    pub fn save(&self, config: &LocalSyncConfig) -> Result<(), LocalConfigError> {
+        let parent = self.path.parent().ok_or(LocalConfigError::Malformed)?;
+        std::fs::create_dir_all(parent).map_err(|source| hidlins_core::VaultError::Io {
+            source,
+            path: parent.to_path_buf(),
+        })?;
+        #[cfg(unix)]
+        {
+            use std::os::unix::fs::PermissionsExt as _;
+            std::fs::set_permissions(parent, std::fs::Permissions::from_mode(0o700)).map_err(
+                |source| hidlins_core::VaultError::Io {
+                    source,
+                    path: parent.to_path_buf(),
+                },
+            )?;
+        }
+        let encoded = config.to_pending_toml()?;
+        hidlins_core::atomic::write_atomic(&self.path, encoded.as_bytes()).map_err(Into::into)
+    }
+
+    /// Load validated pending pairing state when present.
+    pub fn load(&self) -> Result<Option<LocalSyncConfig>, LocalConfigError> {
+        match std::fs::read_to_string(&self.path) {
+            Ok(value) => LocalSyncConfig::from_pending_toml(&value).map(Some),
+            Err(error) if error.kind() == io::ErrorKind::NotFound => Ok(None),
+            Err(error) => Err(hidlins_core::VaultError::Io {
+                source: error,
+                path: self.path.clone(),
+            }
+            .into()),
+        }
+    }
+
+    /// Remove the pending artifact after the final vault registration commits.
+    pub fn clear(&self) -> Result<(), LocalConfigError> {
+        match std::fs::remove_file(&self.path) {
+            Ok(()) => Ok(()),
+            Err(error) if error.kind() == io::ErrorKind::NotFound => Ok(()),
+            Err(error) => Err(hidlins_core::VaultError::Io {
+                source: error,
+                path: self.path.clone(),
+            }
+            .into()),
+        }
+    }
+
+    /// Return the artifact path for recovery diagnostics and tests.
+    #[must_use]
+    pub fn path(&self) -> &Path {
+        &self.path
     }
 }
 
@@ -262,6 +415,23 @@ pub fn fetch_paired_vault(
     config: &LocalSyncConfig,
     discovered: impl IntoIterator<Item = LocalEndpoint>,
 ) -> Result<(Vec<u8>, crate::protocol::RemoteVersion), LanError> {
+    fetch_paired_vault_with_cancellation(
+        vault_name,
+        master_password,
+        config,
+        discovered,
+        LanCancellation::default(),
+    )
+}
+
+/// Fetch the first complete canonical KDBX with caller-owned cancellation.
+pub fn fetch_paired_vault_with_cancellation(
+    vault_name: &str,
+    master_password: &MasterPassword,
+    config: &LocalSyncConfig,
+    discovered: impl IntoIterator<Item = LocalEndpoint>,
+    cancellation: LanCancellation,
+) -> Result<(Vec<u8>, crate::protocol::RemoteVersion), LanError> {
     if !config.is_active_client() {
         return Err(LanError::Authentication);
     }
@@ -274,7 +444,8 @@ pub fn fetch_paired_vault(
         .ok_or(LanError::Authentication)?
         .public_key()
         .into_bytes();
-    let mut transport = LanTransport::new(identity, pinned, config.routing_hint(), discovered)?;
+    let mut transport = LanTransport::new(identity, pinned, config.routing_hint(), discovered)?
+        .with_cancellation(cancellation);
     let snapshot = transport
         .fetch_if_changed(None)?
         .ok_or(LanError::Protocol)?;
@@ -301,20 +472,31 @@ pub struct StartupSyncTracker {
     attempted: HashSet<String>,
 }
 
+#[derive(Debug, Default)]
+struct LanCancellationState {
+    cancelled: AtomicBool,
+    stream: Mutex<Option<TcpStream>>,
+}
+
 /// Cloneable cooperative cancellation shared with a UI/session owner.
 #[derive(Clone, Debug, Default)]
-pub struct LanCancellation(Arc<AtomicBool>);
+pub struct LanCancellation(Arc<LanCancellationState>);
 
 impl LanCancellation {
     /// Cancel candidate selection or the next stream boundary.
     pub fn cancel(&self) {
-        self.0.store(true, Ordering::Release);
+        self.0.cancelled.store(true, Ordering::Release);
+        if let Ok(mut tracked) = self.0.stream.lock() {
+            if let Some(stream) = tracked.take() {
+                let _ = stream.shutdown(Shutdown::Both);
+            }
+        }
     }
 
     /// Return whether the owner has requested cancellation.
     #[must_use]
     pub fn is_cancelled(&self) -> bool {
-        self.0.load(Ordering::Acquire)
+        self.0.cancelled.load(Ordering::Acquire)
     }
 
     fn check(&self) -> Result<(), LanError> {
@@ -322,6 +504,24 @@ impl LanCancellation {
             Err(LanError::Cancelled)
         } else {
             Ok(())
+        }
+    }
+
+    fn register_stream(&self, stream: &TcpStream) -> Result<(), LanError> {
+        self.check()?;
+        let clone = stream.try_clone().map_err(|_| LanError::Unreachable)?;
+        let mut tracked = self.0.stream.lock().map_err(|_| LanError::Internal)?;
+        if self.is_cancelled() {
+            let _ = clone.shutdown(Shutdown::Both);
+            return Err(LanError::Cancelled);
+        }
+        *tracked = Some(clone);
+        Ok(())
+    }
+
+    fn clear_stream(&self) {
+        if let Ok(mut tracked) = self.0.stream.lock() {
+            *tracked = None;
         }
     }
 }
@@ -431,7 +631,23 @@ impl LanTransport {
     fn connect(&self) -> Result<LanSession, LanError> {
         let started = Instant::now();
         let mut authentication_failed = false;
-        for endpoint in self.candidates.iter().take(MAX_CANDIDATE_ATTEMPTS) {
+        // A transient accept/handshake loss after an authority restart must
+        // not make a sole discovered route a one-shot operation. Split the
+        // existing absolute handshake deadline across two attempts; multiple
+        // distinct routes retain their full per-route deadline and priority.
+        let sole_candidate_retry = self.candidates.len() == 1;
+        let attempt_count = if sole_candidate_retry {
+            2
+        } else {
+            self.candidates.len()
+        };
+        let handshake_timeout = if sole_candidate_retry {
+            HANDSHAKE_TIMEOUT / 2
+        } else {
+            HANDSHAKE_TIMEOUT
+        };
+        for attempt in 0..attempt_count.min(MAX_CANDIDATE_ATTEMPTS) {
+            let endpoint = &self.candidates[attempt % self.candidates.len()];
             self.cancellation.check()?;
             let remaining = TOTAL_CONNECT_BUDGET.saturating_sub(started.elapsed());
             if remaining.is_zero() {
@@ -441,22 +657,26 @@ impl LanTransport {
             let Ok(stream) = TcpStream::connect_timeout(&endpoint.socket_addr(), timeout) else {
                 continue;
             };
+            self.cancellation.register_stream(&stream)?;
             if checked_peer(stream.peer_addr().map_err(|_| LanError::Unreachable)?).is_err() {
                 let _ = stream.shutdown(Shutdown::Both);
+                self.cancellation.clear_stream();
                 continue;
             }
             let handshake_deadline =
-                (started + TOTAL_CONNECT_BUDGET).min(Instant::now() + HANDSHAKE_TIMEOUT);
+                (started + TOTAL_CONNECT_BUDGET).min(Instant::now() + handshake_timeout);
             match LanSession::handshake(
                 stream,
                 &self.identity,
                 self.pinned_server,
                 handshake_deadline,
+                self.cancellation.clone(),
             ) {
                 Ok(session) => return Ok(session),
                 Err(LanError::Authentication) => authentication_failed = true,
                 Err(_) => {}
             }
+            self.cancellation.clear_stream();
         }
         if authentication_failed {
             Err(LanError::Authentication)
@@ -675,6 +895,7 @@ struct LanSession {
     transport: SecureTransport,
     protocol: ProtocolState,
     deadline: Instant,
+    cancellation: LanCancellation,
 }
 
 impl LanSession {
@@ -683,7 +904,9 @@ impl LanSession {
         identity: &NoiseKeypair,
         pinned: [u8; 32],
         handshake_deadline: Instant,
+        cancellation: LanCancellation,
     ) -> Result<Self, LanError> {
+        cancellation.check()?;
         configure_socket_deadline(&stream, handshake_deadline)?;
         stream
             .write_all(&Preface::new(PrefaceMode::Trusted).encode())
@@ -709,10 +932,12 @@ impl LanSession {
             transport,
             protocol,
             deadline: Instant::now() + SYNC_SESSION_TIMEOUT,
+            cancellation,
         })
     }
 
     fn send(&mut self, request_id: u32, message: &Message) -> Result<(), LanError> {
+        self.cancellation.check()?;
         configure_socket_deadline(
             &self.stream,
             self.deadline
@@ -731,6 +956,7 @@ impl LanSession {
     }
 
     fn receive(&mut self) -> Result<(u32, Message), LanError> {
+        self.cancellation.check()?;
         configure_socket_deadline(
             &self.stream,
             self.deadline
@@ -747,6 +973,12 @@ impl LanSession {
             .apply(Direction::Receive, decoded.request_id, &decoded.message)
             .map_err(|_| LanError::Protocol)?;
         Ok((decoded.request_id, decoded.message))
+    }
+}
+
+impl Drop for LanSession {
+    fn drop(&mut self) {
+        self.cancellation.clear_stream();
     }
 }
 

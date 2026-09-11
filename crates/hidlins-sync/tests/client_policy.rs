@@ -59,7 +59,7 @@ fn client_noise_read_is_bounded_by_the_absolute_handshake_deadline() {
     stalled.join().unwrap();
 }
 
-fn paired_client() -> LocalSyncConfig {
+fn client_pairing_state(active: bool) -> LocalSyncConfig {
     let master = password();
     let mut server = LocalSyncConfig::create("source", SyncRole::Server, &master).unwrap();
     let mut client = LocalSyncConfig::create("imported", SyncRole::Client, &master).unwrap();
@@ -99,8 +99,10 @@ fn paired_client() -> LocalSyncConfig {
             1_180,
         )
         .unwrap();
-    server.activate_client(&transaction, 1_001).unwrap();
-    client.activate_server(&transaction, 1_001).unwrap();
+    if active {
+        server.activate_client(&transaction, 1_001).unwrap();
+        client.activate_server(&transaction, 1_001).unwrap();
+    }
     client
 }
 
@@ -140,7 +142,7 @@ fn pair_and_import_installs_only_valid_complete_registered_kdbx() {
     let paths = HidlinsPaths::with_state_dir(directory.path().join("state"));
     let mut registry = VaultRegistry::with_paths(paths.clone());
     let target = directory.path().join("imported.kdbx");
-    let config = paired_client();
+    let config = client_pairing_state(true);
 
     import_paired_vault(
         &bytes,
@@ -160,12 +162,45 @@ fn pair_and_import_installs_only_valid_complete_registered_kdbx() {
 
 // LNS-CLIENT-004
 #[test]
-fn pair_and_import_failure_leaves_no_file_or_registration() {
+fn pair_and_import_rejects_provisional_trust_and_invalid_kdbx_without_side_effects() {
     let directory = TempDir::new().unwrap();
+    let source = Vault::create(
+        &directory.path().join("source.kdbx"),
+        &password(),
+        None,
+        KdfParams {
+            memory_kib: 1_024,
+            iterations: 1,
+            parallelism: 1,
+        },
+        NoRecoveryConfirmed::yes(),
+    )
+    .unwrap();
+    let valid_bytes = std::fs::read(source.path()).unwrap();
+    drop(source);
     let paths = HidlinsPaths::with_state_dir(directory.path().join("state"));
     let mut registry = VaultRegistry::with_paths(paths.clone());
     let target = directory.path().join("rejected.kdbx");
-    let config = paired_client();
+    let provisional = client_pairing_state(false);
+    assert!(matches!(
+        import_paired_vault(
+            &valid_bytes,
+            &target,
+            "rejected",
+            &password(),
+            None,
+            &provisional,
+            &mut registry,
+        ),
+        Err(ImportError::NotAuthorized)
+    ));
+    assert!(!target.exists());
+    assert!(VaultRegistry::load(paths.clone())
+        .unwrap()
+        .get("rejected")
+        .is_none());
+
+    let active = client_pairing_state(true);
     assert!(matches!(
         import_paired_vault(
             b"not a vault",
@@ -173,7 +208,7 @@ fn pair_and_import_failure_leaves_no_file_or_registration() {
             "rejected",
             &password(),
             None,
-            &config,
+            &active,
             &mut registry,
         ),
         Err(ImportError::InvalidVault)

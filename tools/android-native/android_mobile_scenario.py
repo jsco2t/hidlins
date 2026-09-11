@@ -474,6 +474,34 @@ def prepare_legacy_wifi_guest(serial: str) -> None:
         raise RuntimeError("Android emulator did not enter the Wi-Fi-only state")
 
 
+def require_peer_reachable(serial: str, address: str) -> None:
+    """Wait until an emulator's selected Wi-Fi route reaches its peer."""
+
+    deadline = time.monotonic() + 30
+    while time.monotonic() < deadline:
+        result = subprocess.run(
+            [
+                str(lan.ADB),
+                "-s",
+                serial,
+                "shell",
+                "ping",
+                "-c",
+                "1",
+                "-W",
+                "1",
+                address,
+            ],
+            stdout=subprocess.DEVNULL,
+            stderr=subprocess.DEVNULL,
+            check=False,
+        )
+        if result.returncode == 0:
+            return
+        time.sleep(0.25)
+    raise RuntimeError(f"{serial} did not establish its Wi-Fi route to the peer")
+
+
 def cleanup_guest(serial: str) -> None:
     subprocess.run(
         [str(lan.ADB), "-s", serial, "uninstall", "app.hidlins.test"],
@@ -612,14 +640,6 @@ def run_entry(
                 if legacy_wifi
                 else ()
             )
-            client_process = lan.boot(
-                avd,
-                CLIENT_SERIAL,
-                5554,
-                client_log,
-                client_network_args,
-            )
-            processes.append(client_process)
             authority_process = lan.boot(
                 authority_avd,
                 AUTHORITY_SERIAL,
@@ -628,6 +648,14 @@ def run_entry(
                 authority_network_args,
             )
             processes.append(authority_process)
+            client_process = lan.boot(
+                avd,
+                CLIENT_SERIAL,
+                5554,
+                client_log,
+                client_network_args,
+            )
+            processes.append(client_process)
             replacement_process: subprocess.Popen[str] | None = None
             if not legacy_wifi:
                 replacement_process = lan.boot(
@@ -677,6 +705,14 @@ def run_entry(
                 authority_address=authority_address,
                 prefix_length=prefix,
             )
+            require_peer_reachable(
+                CLIENT_SERIAL,
+                authority_address,
+            )
+            require_peer_reachable(
+                AUTHORITY_SERIAL,
+                client_address,
+            )
             if replacement_address is not None and replacement_prefix is not None:
                 evidence["observed_routes"]["replacement"] = {  # type: ignore[index]
                     "address": replacement_address,
@@ -692,6 +728,8 @@ def run_entry(
                     authority_address=replacement_address,
                     prefix_length=prefix,
                 )
+                require_peer_reachable(CLIENT_SERIAL, replacement_address)
+                require_peer_reachable(REPLACEMENT_SERIAL, client_address)
                 if len({client_address, authority_address, replacement_address}) != 3:
                     raise RuntimeError(
                         "Android scenario guests did not receive distinct DHCP routes"
@@ -799,6 +837,8 @@ def run_entry(
                     authority_address=replacement_address,
                     prefix_length=prefix,
                 )
+                require_peer_reachable(CLIENT_SERIAL, replacement_address)
+                require_peer_reachable(REPLACEMENT_SERIAL, restarted_client_address)
                 if replacement_address == authority_address:
                     raise RuntimeError("replacement authority reused the original DHCP route")
                 harness.activate_replacement(replacement_address)

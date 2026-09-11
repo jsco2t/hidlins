@@ -5,6 +5,36 @@ import XCTest
 
 @testable import Runner
 
+private final class ManualDiscoveryTask: LocalDiscoveryScheduledTask {
+  private let action: () -> Void
+  private(set) var isCanceled = false
+
+  init(action: @escaping () -> Void) {
+    self.action = action
+  }
+
+  func cancel() {
+    isCanceled = true
+  }
+
+  func fireEvenIfCanceled() {
+    action()
+  }
+}
+
+private final class ManualDiscoveryScheduler: LocalDiscoveryScheduling {
+  private(set) var tasks: [ManualDiscoveryTask] = []
+
+  func schedule(
+    afterMilliseconds _: Int,
+    action: @escaping () -> Void
+  ) -> LocalDiscoveryScheduledTask {
+    let task = ManualDiscoveryTask(action: action)
+    tasks.append(task)
+    return task
+  }
+}
+
 final class RunnerTests: XCTestCase {
   @MainActor
   func testBuiltAppLoadsRealBridgeAndCapturesInstalledResources() throws {
@@ -136,6 +166,150 @@ final class RunnerTests: XCTestCase {
     XCTAssertEqual(LocalDiscoveryService.routeHost("fe80::1%7"), "fe80::1")
     XCTAssertNil(LocalDiscoveryService.routeHost(""))
     XCTAssertNil(LocalDiscoveryService.routeHost(String(repeating: "a", count: 65)))
+  }
+
+  // LNS-IOS-012: canceled timeout work cannot cross a stop/restart generation boundary.
+  func testStoppedAttemptTimeoutCannotCompleteRestartedDiscovery() {
+    let scheduler = ManualDiscoveryScheduler()
+    var browsers: [NetServiceBrowser] = []
+    let service = LocalDiscoveryService(
+      scheduler: scheduler,
+      browserFactory: {
+        let browser = NetServiceBrowser()
+        browsers.append(browser)
+        return browser
+      },
+      browserSearch: { _, _ in },
+      browserStop: { _ in }
+    )
+    var firstResults: [Any?] = []
+    var secondResults: [Any?] = []
+
+    service.discover(kind: "trusted", timeoutMilliseconds: 1_000) {
+      firstResults.append($0)
+    }
+    service.stop()
+    service.discover(kind: "trusted", timeoutMilliseconds: 1_000) {
+      secondResults.append($0)
+    }
+    XCTAssertEqual(browsers.count, 2)
+    XCTAssertEqual(firstResults.count, 1)
+    XCTAssertTrue(scheduler.tasks[0].isCanceled)
+
+    scheduler.tasks[0].fireEvenIfCanceled()
+
+    XCTAssertTrue(secondResults.isEmpty, "attempt A's timeout must not complete attempt B")
+    scheduler.tasks[1].fireEvenIfCanceled()
+    XCTAssertEqual(secondResults.count, 1)
+    XCTAssertTrue(scheduler.tasks[1].isCanceled)
+    scheduler.tasks[1].fireEvenIfCanceled()
+    service.stop()
+    XCTAssertEqual(secondResults.count, 1, "active timeout completion must be exactly once")
+  }
+
+  // LNS-IOS-013: stale browser errors and state changes cannot mutate a restarted attempt.
+  func testStoppedAttemptDelegateCallbacksCannotMutateRestartedDiscovery() {
+    let scheduler = ManualDiscoveryScheduler()
+    var browsers: [NetServiceBrowser] = []
+    let service = LocalDiscoveryService(
+      scheduler: scheduler,
+      browserFactory: {
+        let browser = NetServiceBrowser()
+        browsers.append(browser)
+        return browser
+      },
+      browserSearch: { _, _ in },
+      browserStop: { _ in }
+    )
+    var firstResults: [Any?] = []
+    var secondResults: [Any?] = []
+
+    service.discover(kind: "trusted", timeoutMilliseconds: 1_000) {
+      firstResults.append($0)
+    }
+    let firstBrowser = browsers[0]
+    service.stop()
+    service.stop()
+    XCTAssertEqual(firstResults.count, 1, "repeated stop must not complete twice")
+    XCTAssertNil(firstBrowser.delegate)
+
+    service.discover(kind: "trusted", timeoutMilliseconds: 1_000) {
+      secondResults.append($0)
+    }
+    let secondBrowser = browsers[1]
+    let staleService = NetService(
+      domain: "local.",
+      type: "_hidlins-sync._tcp.",
+      name: "stale",
+      port: 42_873
+    )
+    service.netServiceBrowserWillSearch(secondBrowser)
+    XCTAssertEqual(service.permission, .granted)
+    service.netServiceBrowserWillSearch(firstBrowser)
+    service.netServiceBrowser(firstBrowser, didFind: staleService, moreComing: false)
+    service.netServiceBrowser(
+      firstBrowser,
+      didNotSearch: [NetService.errorCode: NSNumber(value: -1)]
+    )
+    scheduler.tasks[0].fireEvenIfCanceled()
+
+    XCTAssertEqual(service.permission, .granted)
+    XCTAssertTrue(secondResults.isEmpty)
+    XCTAssertFalse(scheduler.tasks[1].isCanceled)
+    XCTAssertNil(staleService.delegate)
+
+    service.netServiceBrowser(
+      secondBrowser,
+      didNotSearch: [NetService.errorCode: NSNumber(value: -1)]
+    )
+    XCTAssertEqual(secondResults.count, 1)
+    XCTAssertEqual(service.permission, .restricted)
+    XCTAssertTrue(scheduler.tasks[1].isCanceled)
+    XCTAssertNil(secondBrowser.delegate)
+
+    service.netServiceBrowser(
+      secondBrowser,
+      didNotSearch: [NetService.errorCode: NSNumber(value: -72_008)]
+    )
+    scheduler.tasks[1].fireEvenIfCanceled()
+    service.stop()
+    XCTAssertEqual(secondResults.count, 1, "active error completion must be exactly once")
+  }
+
+  // LNS-IOS-014: an overlapping start is rejected without taking browser or timer ownership.
+  func testRepeatedStartDoesNotReplaceActiveDiscoveryOwnership() {
+    let scheduler = ManualDiscoveryScheduler()
+    var browsers: [NetServiceBrowser] = []
+    let service = LocalDiscoveryService(
+      scheduler: scheduler,
+      browserFactory: {
+        let browser = NetServiceBrowser()
+        browsers.append(browser)
+        return browser
+      },
+      browserSearch: { _, _ in },
+      browserStop: { _ in }
+    )
+    var activeResults: [Any?] = []
+    var rejectedResults: [Any?] = []
+
+    service.discover(kind: "trusted", timeoutMilliseconds: 1_000) {
+      activeResults.append($0)
+    }
+    service.discover(kind: "pairing", timeoutMilliseconds: 1_000) {
+      rejectedResults.append($0)
+    }
+
+    XCTAssertEqual(browsers.count, 1)
+    XCTAssertEqual(scheduler.tasks.count, 1)
+    XCTAssertTrue(activeResults.isEmpty)
+    XCTAssertEqual(rejectedResults.count, 1)
+    XCTAssertTrue(String(describing: rejectedResults[0]).contains("invalid-discovery-request"))
+
+    service.stop()
+    service.stop()
+    XCTAssertEqual(activeResults.count, 1)
+    XCTAssertTrue(scheduler.tasks[0].isCanceled)
   }
 
   func testPrivacyManifestDeclaresNoCollectionTrackingOrTrackingDomains() throws {

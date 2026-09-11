@@ -12,7 +12,8 @@ use crate::{
     trust::{PeerRecord, PeerStatus, ProvisionalPairing, TrustError},
 };
 
-const SYNC_KEY: &str = "sync";
+/// Per-vault registry key containing the local-network sync configuration.
+pub const SYNC_KEY: &str = "sync";
 const LOCAL_SCHEMA_VERSION: u8 = 1;
 
 /// The only transport kind recognized by the local V1 schema.
@@ -112,6 +113,18 @@ impl LocalSyncConfig {
         }
         let config: Self = toml::Value::Table(table.clone()).try_into().ok()?;
         config.valid().then_some(config)
+    }
+
+    pub(crate) fn to_pending_toml(&self) -> Result<String, LocalConfigError> {
+        toml::to_string(self).map_err(|_| LocalConfigError::Malformed)
+    }
+
+    pub(crate) fn from_pending_toml(value: &str) -> Result<Self, LocalConfigError> {
+        let config: Self = toml::from_str(value).map_err(|_| LocalConfigError::Malformed)?;
+        config
+            .valid()
+            .then_some(config)
+            .ok_or(LocalConfigError::Malformed)
     }
 
     /// Persist with the registry's locked reload/update/atomic-save path.

@@ -47,7 +47,7 @@ vault exists are metadata assets even though they are not plaintext secrets.
 | Application codec | authenticated hostile bytes | typed protocol state | exact lengths/types/order, allocation bounds, replay/duplicate rejection |
 | Network worker | authenticated request | host vault owner | bounded queue, typed authorization, no direct mutable vault access |
 | Host vault owner | staged encrypted bytes | canonical live vault | expected-version CAS, KDBX identity/KDF validation, backup, atomic save |
-| Registry/disk | local files and crash boundaries | usable identity/trust | mode 0600, authenticated sealing, atomic writes, provisional records non-authorizing |
+| Registry/disk | local files and crash boundaries | usable identity/trust | mode 0600, authenticated sealing, atomic writes, provisional records non-authorizing, recoverable password/identity rewrap transactions |
 | Rust API/FFI | UI/native DTO and event values | core operations | typed narrow DTOs, secret-free errors, target compile-time server denial |
 | Native discovery | OS Bonjour/NSD callbacks | Rust candidate policy | bounded endpoint-only adapter, Rust revalidation, permission-state enum |
 | UI/CLI | human input/output | security action | secure password prompt, explicit SAS confirmation, no key/payload output |
@@ -144,6 +144,9 @@ atomic registry writes; `ZeroizeOnDrop` wrappers; best-effort `mlock` where
 applicable; core dumps disabled on long-running surfaces; maintained exact Snow
 patch zeroizing handshake, cipher, chaining-key, hash, ephemeral, static, and
 transport state; rewrap preserves identity while clearing plaintext buffers.
+Password changes stage both encrypted KDBX and sealed registry outputs, commit
+under vault-then-registry advisory locks, and recover from a durable non-secret
+phase marker without persisting either password or an unsealed identity.
 
 Residual risk: Rust moves, allocator copies, OS swap, suspend, crash snapshots,
 and platform debugging can retain bytes beyond language-level drop. The project

@@ -67,6 +67,12 @@ pub trait PairingAuthority: Send + Sync {
     /// Atomically activate the exact prepared client.
     fn activate(&self, transaction: &PairingTransaction) -> Result<(), PairingAuthorityError>;
 
+    /// Reload the exact unexpired transaction for an authenticated provisional or active peer.
+    fn recover(
+        &self,
+        peer: crate::identity::PublicIdentity,
+    ) -> Result<PairingTransaction, PairingAuthorityError>;
+
     /// Wake only the currently pending confirmation; future windows remain usable.
     fn cancel_pending(&self) {}
 
@@ -101,6 +107,12 @@ struct ListenerState {
 
 struct AuthorizationRegistry {
     permits: RwLock<BTreeMap<[u8; 32], AuthorizationPermit>>,
+    provisional: RwLock<BTreeSet<[u8; 32]>>,
+}
+
+enum TrustedAdmission {
+    Active(AuthorizationPermit),
+    Provisional,
 }
 
 impl AuthorizationRegistry {
@@ -111,14 +123,33 @@ impl AuthorizationRegistry {
                     .map(|key| (key, AuthorizationPermit::active()))
                     .collect(),
             ),
+            provisional: RwLock::new(BTreeSet::new()),
         }
     }
 
-    fn authorize(&self, peer: [u8; 32]) -> Option<AuthorizationPermit> {
-        self.permits.read().ok()?.get(&peer).cloned()
+    fn admit(&self, peer: [u8; 32]) -> Option<TrustedAdmission> {
+        if let Some(permit) = self.permits.read().ok()?.get(&peer).cloned() {
+            return Some(TrustedAdmission::Active(permit));
+        }
+        self.provisional
+            .read()
+            .ok()?
+            .contains(&peer)
+            .then_some(TrustedAdmission::Provisional)
+    }
+
+    fn prepare(&self, peer: [u8; 32]) {
+        self.provisional
+            .write()
+            .unwrap_or_else(std::sync::PoisonError::into_inner)
+            .insert(peer);
     }
 
     fn activate(&self, peer: [u8; 32]) {
+        self.provisional
+            .write()
+            .unwrap_or_else(std::sync::PoisonError::into_inner)
+            .remove(&peer);
         self.permits
             .write()
             .unwrap_or_else(std::sync::PoisonError::into_inner)
@@ -704,6 +735,15 @@ impl ServerController {
         }
     }
 
+    /// Replace identities admitted only to the pairing-recovery request path.
+    pub fn replace_pairing_recovery(&self, keys: impl IntoIterator<Item = [u8; 32]>) {
+        *self
+            .trusted
+            .provisional
+            .write()
+            .unwrap_or_else(std::sync::PoisonError::into_inner) = keys.into_iter().collect();
+    }
+
     /// Open the explicit bounded pairing admission and advertisement window.
     pub fn open_pairing(&self) -> Result<(), ServerRuntimeError> {
         self.pairing.open()
@@ -830,13 +870,28 @@ fn serve_connection(
         return;
     }
     let peer = transport.peer_static();
-    let Some(authorization) = trusted.authorize(peer) else {
+    let Some(admission) = trusted.admit(peer) else {
         return;
     };
     identify_connection(sockets, slot, ConnectionIdentity::Trusted(peer));
 
     let mut protocol = ProtocolState::new(SessionMode::Trusted, LocalRole::Server);
     protocol.authenticate();
+    let authorization = match admission {
+        TrustedAdmission::Active(authorization) => authorization,
+        TrustedAdmission::Provisional => {
+            serve_pairing_recovery(
+                &mut stream,
+                &mut transport,
+                &mut protocol,
+                pairing.authority.as_deref(),
+                trusted,
+                crate::identity::PublicIdentity::new(peer),
+                started + SYNC_SESSION_TIMEOUT,
+            );
+            return;
+        }
+    };
     let mut upload: Option<(u32, StagedUpload)> = None;
     let mut plain = vec![0_u8; u16::MAX as usize].into_boxed_slice();
     let session_deadline = started + SYNC_SESSION_TIMEOUT;
@@ -875,6 +930,24 @@ fn serve_connection(
                 },
             );
             return;
+        }
+        if matches!(decoded.message, Message::PairActivate { .. }) {
+            if serve_pairing_recovery_message(
+                &mut stream,
+                decoded.request_id,
+                &mut transport,
+                &mut protocol,
+                pairing.authority.as_deref(),
+                trusted,
+                crate::identity::PublicIdentity::new(peer),
+                &decoded.message,
+                session_deadline,
+            )
+            .is_err()
+            {
+                return;
+            }
+            continue;
         }
         let result = handle_message(
             decoded.request_id,
@@ -1032,6 +1105,7 @@ fn complete_pairing(
     {
         return Err(());
     }
+    trusted.prepare(peer.into_bytes());
     configure_socket_deadline(stream, deadline)?;
     if send_message(
         stream,
@@ -1068,6 +1142,66 @@ fn complete_pairing(
         &Message::PairActivated {
             transaction_id,
             transcript_digest,
+        },
+    )
+}
+
+#[allow(clippy::too_many_arguments)]
+fn serve_pairing_recovery(
+    stream: &mut TcpStream,
+    transport: &mut SecureTransport,
+    protocol: &mut ProtocolState,
+    authority: Option<&dyn PairingAuthority>,
+    trusted: &AuthorizationRegistry,
+    peer: crate::identity::PublicIdentity,
+    deadline: Instant,
+) {
+    let Ok((request_id, message)) = receive_message(stream, transport, protocol, deadline) else {
+        return;
+    };
+    let _ = serve_pairing_recovery_message(
+        stream, request_id, transport, protocol, authority, trusted, peer, &message, deadline,
+    );
+}
+
+#[allow(clippy::too_many_arguments)]
+fn serve_pairing_recovery_message(
+    stream: &mut TcpStream,
+    request_id: u32,
+    transport: &mut SecureTransport,
+    protocol: &mut ProtocolState,
+    authority: Option<&dyn PairingAuthority>,
+    trusted: &AuthorizationRegistry,
+    peer: crate::identity::PublicIdentity,
+    message: &Message,
+    deadline: Instant,
+) -> Result<(), ()> {
+    let Message::PairActivate {
+        transaction_id,
+        transcript_digest,
+    } = message
+    else {
+        return Err(());
+    };
+    let authority = authority.ok_or(())?;
+    let transaction = authority.recover(peer).map_err(|_| ())?;
+    if transaction.transaction_id().into_bytes() != *transaction_id
+        || transaction.transcript_digest().into_bytes() != *transcript_digest
+        || transaction.client_key() != peer
+    {
+        return Err(());
+    }
+    authority.activate(&transaction).map_err(|_| ())?;
+    trusted.activate(peer.into_bytes());
+    configure_socket_deadline(stream, deadline)?;
+    send_message(
+        stream,
+        transport,
+        protocol,
+        request_id,
+        &Message::PairActivated {
+            transaction_id: *transaction_id,
+            transcript_digest: *transcript_digest,
         },
     )
 }

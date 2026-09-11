@@ -1,0 +1,18 @@
+{
+  "schema_version": 1,
+  "work_id": "2026-09-10-local-sync-review-repairs",
+  "title": "Local Sync Review Repairs",
+  "created_at": "2026-09-10T15:31:01Z",
+  "approved_at": "2026-09-10T15:58:53Z",
+  "completed_at": "2026-09-11T01:34:56Z",
+  "archived_at": "2026-09-11T01:59:01Z",
+  "baseline_sha": "0725603cc9b746f3632a0e02f8f81a55930721b0",
+  "final_sha": "0725603cc9b746f3632a0e02f8f81a55930721b0",
+  "approved_plan_sha256": "7ee8a5119109bcd077aec1cbc2e2ab5a5fff47c6247d43e9d1415edbb9f74f7a",
+  "acceptance_rounds": 1,
+  "prior_completed_rounds": 0,
+  "task_count": 6,
+  "tasks_completed": 6,
+  "result": "DONE",
+  "final_evidence": "evidence/final.md"
+}

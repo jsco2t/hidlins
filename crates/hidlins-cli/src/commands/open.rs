@@ -1,9 +1,6 @@
 //! Common registered-vault unlock boundary with one pre-operation local sync attempt.
 
-use std::{
-    io::Write as _,
-    time::{Duration, Instant},
-};
+use std::{io::Write as _, time::Duration};
 
 use hidlins_core::{Keyfile, MasterPassword, RegisteredVault, Vault, VaultError, VaultRegistry};
 use hidlins_sync::{
@@ -80,15 +77,13 @@ fn trusted_candidates() -> Vec<hidlins_sync::address::LocalEndpoint> {
         return Vec::new();
     };
     let mut cache = CandidateCache::new();
-    let deadline = Instant::now() + Duration::from_millis(500);
-    loop {
-        if discovery::poll_into(&mut browser, &mut cache, Instant::now()).is_err() {
-            return Vec::new();
-        }
-        let found = cache.candidates(ServiceKind::Trusted);
-        if !found.is_empty() || Instant::now() >= deadline {
-            return found;
-        }
-        std::thread::sleep(Duration::from_millis(20));
-    }
+    discovery::collect_candidates(
+        &mut browser,
+        &mut cache,
+        ServiceKind::Trusted,
+        Duration::from_millis(500),
+        Duration::from_millis(20),
+        || false,
+    )
+    .unwrap_or_default()
 }

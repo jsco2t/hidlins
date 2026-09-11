@@ -30,11 +30,13 @@ final class LocalDiscoveryController {
     private final MainActivity activity;
     private final NsdManager manager;
     private final Handler handler = new Handler(Looper.getMainLooper());
+    private final DiscoveryAttemptTracker attempts = new DiscoveryAttemptTracker();
     private NsdManager.DiscoveryListener listener;
     private final LinkedHashMap<String, Map<String, Object>> candidates = new LinkedHashMap<>();
     private MethodChannel.Result pending;
     private String pendingKind;
     private int pendingTimeout;
+    private long activeAttempt;
     private WifiManager.MulticastLock multicastLock;
 
     LocalDiscoveryController(MainActivity activity) {
@@ -55,25 +57,28 @@ final class LocalDiscoveryController {
         pending = result;
         pendingKind = kind;
         pendingTimeout = timeoutMilliseconds;
+        activeAttempt = attempts.begin();
         if (!hasRuntimePermission()) {
             activity.getSharedPreferences(PREFS, Context.MODE_PRIVATE)
                     .edit().putBoolean(ASKED, true).apply();
             activity.requestPermissions(requiredPermissions(), REQUEST_LOCAL_NETWORK);
             return;
         }
-        startDiscovery();
+        startDiscovery(activeAttempt);
     }
 
     void onPermissionResult(int requestCode, int[] grantResults) {
-        if (requestCode != REQUEST_LOCAL_NETWORK || pending == null) return;
+        if (requestCode != REQUEST_LOCAL_NETWORK || pending == null
+                || !attempts.isActive(activeAttempt)) return;
         boolean granted = grantResults.length > 0;
         for (int result : grantResults) granted &= result == PackageManager.PERMISSION_GRANTED;
-        if (granted) startDiscovery();
-        else finish("denied");
+        if (granted) startDiscovery(activeAttempt);
+        else finish(activeAttempt, "denied");
     }
 
     @SuppressWarnings("deprecation")
-    private void startDiscovery() {
+    private void startDiscovery(long attempt) {
+        if (!attempts.isActive(attempt) || pending == null) return;
         candidates.clear();
         acquireMulticastLock();
         final String serviceType = "pairing".equals(pendingKind)
@@ -82,13 +87,17 @@ final class LocalDiscoveryController {
             @Override public void onDiscoveryStarted(String type) { }
 
             @Override public void onServiceFound(NsdServiceInfo service) {
-                if (!serviceType.equals(service.getServiceType()) || candidates.size() >= MAX_CANDIDATES) {
+                if (!isCurrent(attempt, this)
+                        || !serviceType.equals(service.getServiceType())
+                        || candidates.size() >= MAX_CANDIDATES) {
                     return;
                 }
+                NsdManager.DiscoveryListener discoveryListener = this;
                 manager.resolveService(service, new NsdManager.ResolveListener() {
                     @Override public void onResolveFailed(NsdServiceInfo ignored, int code) { }
 
                     @Override public void onServiceResolved(NsdServiceInfo resolved) {
+                        if (!isCurrent(attempt, discoveryListener)) return;
                         InetAddress host = resolved.getHost();
                         int port = resolved.getPort();
                         if (host == null || port < 1 || port > 65_535
@@ -119,20 +128,20 @@ final class LocalDiscoveryController {
             @Override public void onDiscoveryStopped(String type) { }
 
             @Override public void onStartDiscoveryFailed(String type, int code) {
-                finish("restricted");
+                if (isCurrent(attempt, this)) finish(attempt, "restricted");
             }
 
             @Override public void onStopDiscoveryFailed(String type, int code) {
-                finish("restricted");
+                if (isCurrent(attempt, this)) finish(attempt, "restricted");
             }
         };
         try {
             manager.discoverServices(serviceType, NsdManager.PROTOCOL_DNS_SD, listener);
-            handler.postDelayed(() -> finish("granted"), pendingTimeout);
+            handler.postDelayed(() -> finish(attempt, "granted"), pendingTimeout);
         } catch (SecurityException error) {
-            finish("denied");
+            finish(attempt, "denied");
         } catch (RuntimeException error) {
-            finish("restricted");
+            finish(attempt, "restricted");
         }
     }
 
@@ -148,6 +157,8 @@ final class LocalDiscoveryController {
     }
 
     void stop() {
+        attempts.invalidate();
+        activeAttempt = 0;
         handler.removeCallbacksAndMessages(null);
         if (listener != null) {
             try {
@@ -165,7 +176,13 @@ final class LocalDiscoveryController {
         }
     }
 
-    private void finish(String permission) {
+    private boolean isCurrent(long attempt, NsdManager.DiscoveryListener source) {
+        return attempts.isActive(attempt) && listener == source;
+    }
+
+    private void finish(long attempt, String permission) {
+        if (!attempts.complete(attempt)) return;
+        activeAttempt = 0;
         handler.removeCallbacksAndMessages(null);
         if (listener != null) {
             try {

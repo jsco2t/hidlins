@@ -3654,6 +3654,7 @@ impl App {
     fn do_quit(&mut self) {
         self.server_requested = false;
         self.stop_server_runtime();
+        self.pairing.cancel();
         self.should_quit = true;
     }
 
@@ -4239,6 +4240,8 @@ mod tests {
     //! fields are `pub(crate)` (an integration test could not reach them) — the
     //! same white-box rationale as Phase 1's T-IT-9.
 
+    use std::sync::atomic::{AtomicBool, Ordering};
+    use std::sync::{Arc, Barrier};
     use std::time::Duration;
 
     use crossterm::event::{
@@ -5028,6 +5031,23 @@ mod tests {
         assert!(app.vault().is_none());
     }
 
+    #[test]
+    fn manual_lock_joins_pairing_worker_and_releases_worker_capture() {
+        // LNS-TUI-014: the real lock action crosses the PairingRuntime owner.
+        let (_dir, mut app) = single_vault_app();
+        unlock(&mut app, PASSWORD);
+        let entered = Arc::new(Barrier::new(2));
+        let dropped = Arc::new(AtomicBool::new(false));
+        app.pairing
+            .install_cancellation_probe(Arc::clone(&entered), Arc::clone(&dropped));
+        entered.wait();
+
+        app.handle_event(&key_ctrl('l'));
+
+        assert!(matches!(app.phase, Phase::LockScreen));
+        assert!(dropped.load(Ordering::Acquire));
+    }
+
     // T-IT-3: lock-now is a no-op while still locked (no vault to drop).
     #[test]
     fn lock_now_is_noop_when_locked() {
@@ -5162,6 +5182,22 @@ mod tests {
         let (_dir, mut app) = single_vault_app();
         app.handle_event(&key_ctrl('q'));
         assert!(app.should_quit);
+    }
+
+    #[test]
+    fn quit_joins_pairing_worker_and_releases_worker_capture() {
+        // LNS-TUI-015: the real quit action synchronously tears down pairing.
+        let (_dir, mut app) = single_vault_app();
+        let entered = Arc::new(Barrier::new(2));
+        let dropped = Arc::new(AtomicBool::new(false));
+        app.pairing
+            .install_cancellation_probe(Arc::clone(&entered), Arc::clone(&dropped));
+        entered.wait();
+
+        app.handle_event(&key_ctrl('q'));
+
+        assert!(app.should_quit);
+        assert!(dropped.load(Ordering::Acquire));
     }
 
     #[test]
@@ -7508,7 +7544,6 @@ mod tests {
     use crate::screens::settings;
     use crate::sync_runtime::SyncEngine;
     use hidlins_sync::{EntryDelta, SyncError, SyncOutcome};
-    use std::sync::Arc;
 
     /// A fake engine returning a fixed `AlreadyInSync` (enough to exercise the
     /// App-side start/teardown; outcome handling is tested directly via

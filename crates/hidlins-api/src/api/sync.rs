@@ -192,6 +192,20 @@ impl hidlins_sync::server::PairingAuthority for ApiPairingAuthority {
         .map_err(|()| PairingAuthorityError::Persistence)
     }
 
+    fn recover(
+        &self,
+        peer: PublicIdentity,
+    ) -> Result<hidlins_sync::pairing::PairingTransaction, PairingAuthorityError> {
+        self.with_ready_state(|state| {
+            let now = epoch_seconds()?;
+            let config = current_local_config(state).map_err(|_| ())?;
+            config
+                .recover_pairing_transaction(peer, now)
+                .map_err(|_| ())
+        })
+        .map_err(|()| PairingAuthorityError::Persistence)
+    }
+
     fn shutdown(&self) {
         self.cancelled.store(true, Ordering::Release);
         self.cancel_pending();
@@ -316,7 +330,6 @@ impl AppSession {
     pub fn poll_local_discovery(&self) -> Result<DiscoveryStatusDto, HidlinsApiError> {
         #[cfg(feature = "desktop")]
         {
-            let deadline = std::time::Instant::now() + std::time::Duration::from_millis(1_200);
             let mut port = self
                 .discovery_port
                 .lock()
@@ -332,27 +345,19 @@ impl AppSession {
             let browser = port.as_mut().ok_or_else(|| HidlinsApiError::Internal {
                 context: "discovery browser did not initialize".to_string(),
             })?;
-            loop {
-                let now = std::time::Instant::now();
-                let found = {
-                    let mut state = self.lock_state();
-                    hidlins_sync::discovery::poll_into(
-                        browser.as_mut(),
-                        &mut state.discovery_cache,
-                        now,
-                    )
-                    .map_err(map_discovery_error)?;
-                    state.discovery_permission = DiscoveryPermission::Granted;
-                    !state
-                        .discovery_cache
-                        .candidates(ServiceKind::Trusted)
-                        .is_empty()
-                };
-                if found || now >= deadline {
-                    break;
-                }
-                std::thread::sleep(std::time::Duration::from_millis(25));
-            }
+            let mut cache = self.lock_state().discovery_cache.clone();
+            hidlins_sync::discovery::collect_candidates(
+                browser.as_mut(),
+                &mut cache,
+                ServiceKind::Trusted,
+                std::time::Duration::from_millis(1_200),
+                std::time::Duration::from_millis(25),
+                || false,
+            )
+            .map_err(map_discovery_error)?;
+            let mut state = self.lock_state();
+            state.discovery_cache = cache;
+            state.discovery_permission = DiscoveryPermission::Granted;
         }
         Ok(self.local_discovery_status())
     }
@@ -661,7 +666,7 @@ impl AppSession {
             return Ok(None);
         }
 
-        let mut pending = self
+        let pending = self
             .pairing_api
             .clients
             .lock()
@@ -673,13 +678,39 @@ impl AppSession {
         if !accepted {
             return Ok(None);
         }
+        self.confirm_client_pairing(pending, peer_display_name)
+    }
+
+    fn confirm_client_pairing(
+        &self,
+        mut pending: PendingClientPairing,
+        peer_display_name: String,
+    ) -> Result<Option<VaultSummary>, HidlinsApiError> {
         let now = epoch_seconds().map_err(|()| HidlinsApiError::Internal {
             context: "system clock unavailable".to_string(),
         })?;
-        pending
-            .session
-            .confirm(&mut pending.config, peer_display_name, now)
-            .map_err(|error| HidlinsApiError::from(hidlins_sync::SyncError::from(error)))?;
+        let _transaction = match &pending.target {
+            PendingPairingTarget::Existing { vault_name } => pending
+                .session
+                .confirm(&mut pending.config, peer_display_name, now, |prepared| {
+                    let mut state = self.lock_state();
+                    if state.dead || !state.is_unlocked() {
+                        return Err(hidlins_sync::config::local::LocalConfigError::Malformed);
+                    }
+                    prepared.persist(&mut state.registry, vault_name)
+                })
+                .map_err(|error| HidlinsApiError::from(hidlins_sync::SyncError::from(error)))?,
+            PendingPairingTarget::Import { vault_name, .. } => {
+                let state_dir = self.lock_state().registry.paths().state_dir().to_path_buf();
+                let store = hidlins_sync::client::PendingPairingStore::new(&state_dir, vault_name);
+                pending
+                    .session
+                    .confirm(&mut pending.config, peer_display_name, now, |prepared| {
+                        store.save(prepared)
+                    })
+                    .map_err(|error| HidlinsApiError::from(hidlins_sync::SyncError::from(error)))?
+            }
+        };
 
         match pending.target {
             PendingPairingTarget::Existing { vault_name } => {
@@ -720,6 +751,12 @@ impl AppSession {
                     &mut state.registry,
                 )
                 .map_err(|_| HidlinsApiError::InvalidFormat)?;
+                hidlins_sync::client::PendingPairingStore::new(
+                    state.registry.paths().state_dir(),
+                    &vault_name,
+                )
+                .clear()
+                .map_err(|_| HidlinsApiError::LocalSyncConfiguration)?;
                 Ok(Some(VaultSummary {
                     name: vault_name,
                     path: target.display().to_string(),
@@ -1092,6 +1129,11 @@ fn start_server_runtime(
         pairing_authority,
     )
     .map_err(|_| HidlinsApiError::SyncOffline)?;
+    controller.replace_pairing_recovery(
+        config
+            .provisional()
+            .map(|record| record.peer_key().into_bytes()),
+    );
     state.server_runtime = Some(SessionServerRuntime {
         controller,
         processor,
@@ -1222,5 +1264,79 @@ fn map_discovery_error(error: hidlins_sync::discovery::DiscoveryError) -> Hidlin
                 context: "local discovery failed".to_string(),
             }
         }
+    }
+}
+
+#[cfg(all(test, feature = "desktop"))]
+mod tests {
+    use std::collections::VecDeque;
+    use std::net::{IpAddr, Ipv4Addr};
+    use std::time::Duration;
+
+    use hidlins_core::HidlinsPaths;
+    use hidlins_sync::discovery::{
+        DiscoveryBatch, DiscoveryError, DiscoveryEvent, DiscoveryPermission, DiscoveryPort,
+        RawDiscoveryRecord, RawEndpoint, ServiceKind,
+    };
+
+    use super::*;
+
+    struct BatchPort(VecDeque<DiscoveryBatch>);
+
+    impl DiscoveryPort for BatchPort {
+        fn poll(&mut self) -> Result<DiscoveryBatch, DiscoveryError> {
+            self.0.pop_front().map_or_else(
+                || DiscoveryBatch::new(DiscoveryPermission::Granted, Vec::new()),
+                Ok,
+            )
+        }
+
+        fn shutdown(&mut self) -> Result<(), DiscoveryError> {
+            self.0.clear();
+            Ok(())
+        }
+    }
+
+    fn batch(label: &str, last_octet: u8) -> DiscoveryBatch {
+        let kind = ServiceKind::Trusted;
+        let record = RawDiscoveryRecord::try_from_untrusted(
+            kind.service_type().to_string(),
+            format!("{label}.{}", kind.service_type()),
+            48_101,
+            vec![("v".to_string(), b"1".to_vec())],
+            vec![RawEndpoint::new(
+                IpAddr::V4(Ipv4Addr::new(192, 168, 1, last_octet)),
+                0,
+            )],
+            Duration::from_secs(120),
+        )
+        .unwrap();
+        DiscoveryBatch::new(
+            DiscoveryPermission::Granted,
+            vec![DiscoveryEvent::Resolved(record)],
+        )
+        .unwrap()
+    }
+
+    #[test]
+    fn api_discovery_collects_later_batch_after_first_candidate() {
+        // LNS-DISCOVERY-006: exercise temporal accumulation through the API's
+        // production discovery poll rather than presenting both routes at once.
+        let directory = tempfile::tempdir().unwrap();
+        let session =
+            AppSession::for_test(HidlinsPaths::with_state_dir(directory.path().join("state")))
+                .unwrap();
+        *session.discovery_port.lock().unwrap() = Some(Box::new(BatchPort(VecDeque::from([
+            batch("00000000000000000000000001", 10),
+            batch("00000000000000000000000002", 20),
+        ]))));
+
+        let status = session.poll_local_discovery().unwrap();
+
+        assert_eq!(
+            status.candidates.len(),
+            2,
+            "a first untrusted route must not end the temporal discovery attempt"
+        );
     }
 }

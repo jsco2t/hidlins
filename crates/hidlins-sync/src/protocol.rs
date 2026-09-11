@@ -819,6 +819,9 @@ impl ProtocolState {
         request_id: u32,
         message: &Message,
     ) -> Result<(), ProtocolError> {
+        if let Some(result) = self.apply_trusted_pairing(sender, request_id, message) {
+            return result;
+        }
         match (sender, message) {
             (LocalRole::Client, Message::HeadRequest) => {
                 if self.pending_heads.len() >= MAX_PENDING_HOST_OPERATIONS {
@@ -895,6 +898,55 @@ impl ProtocolState {
             }
             (LocalRole::Server, Message::Error { .. }) => self.finish_error(request_id),
             _ => Err(ProtocolError::InvalidState),
+        }
+    }
+
+    fn apply_trusted_pairing(
+        &mut self,
+        sender: LocalRole,
+        request_id: u32,
+        message: &Message,
+    ) -> Option<Result<(), ProtocolError>> {
+        match (sender, message) {
+            (
+                LocalRole::Client,
+                Message::PairActivate {
+                    transaction_id,
+                    transcript_digest,
+                },
+            ) => Some(if self.active.is_none() {
+                self.start_request(request_id).map(|()| {
+                    self.active = Some(ActiveOperation::Pair {
+                        request_id,
+                        transaction_id: *transaction_id,
+                        transcript_digest: *transcript_digest,
+                        phase: PairPhase::Activated,
+                    });
+                })
+            } else {
+                Err(ProtocolError::InvalidState)
+            }),
+            (
+                LocalRole::Server,
+                Message::PairActivated {
+                    transaction_id,
+                    transcript_digest,
+                },
+            ) => Some(
+                if pair_matches(
+                    self.active.as_ref(),
+                    request_id,
+                    transaction_id,
+                    transcript_digest,
+                    PairPhase::Activated,
+                ) {
+                    self.active = None;
+                    Ok(())
+                } else {
+                    Err(ProtocolError::InvalidState)
+                },
+            ),
+            _ => None,
         }
     }
 

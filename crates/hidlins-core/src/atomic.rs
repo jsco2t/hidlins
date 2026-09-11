@@ -161,9 +161,54 @@ where
 /// This makes renames inside the directory durable across power loss.
 /// On APFS / macOS this may be a no-op, but we invoke it unconditionally
 /// for POSIX portability and clarity (design §4.5 in implementation-plan).
-fn sync_parent_dir(parent: &Path) -> io::Result<()> {
+pub(crate) fn sync_parent_dir(parent: &Path) -> io::Result<()> {
     let dir = File::open(parent)?;
     dir.sync_all()
+}
+
+/// Replace `target` with an already-fsynced sibling stage and fsync the
+/// containing directory. Both paths must have the same parent; callers use
+/// this only for internally derived transaction artifacts.
+pub(crate) fn install_staged_file(stage: &Path, target: &Path) -> Result<(), VaultError> {
+    let stage_parent = stage.parent();
+    let target_parent = target.parent();
+    if stage_parent.is_none() || stage_parent != target_parent {
+        return Err(VaultError::PasswordRotationRecoveryFailed {
+            reason: "transaction stage is not a sibling of its target",
+        });
+    }
+    std::fs::rename(stage, target).map_err(|source| VaultError::Io {
+        source,
+        path: target.to_path_buf(),
+    })?;
+    sync_parent_dir(target_parent.expect("checked parent above")).map_err(|source| VaultError::Io {
+        source,
+        path: target_parent.expect("checked parent above").to_path_buf(),
+    })
+}
+
+/// Remove an artifact and fsync its containing directory. A missing artifact
+/// is already removed and therefore succeeds.
+pub(crate) fn remove_file_durable(path: &Path) -> Result<(), VaultError> {
+    match std::fs::remove_file(path) {
+        Ok(()) => {}
+        Err(source) if source.kind() == io::ErrorKind::NotFound => return Ok(()),
+        Err(source) => {
+            return Err(VaultError::Io {
+                source,
+                path: path.to_path_buf(),
+            })
+        }
+    }
+    let parent = path
+        .parent()
+        .ok_or(VaultError::PasswordRotationRecoveryFailed {
+            reason: "transaction artifact has no parent directory",
+        })?;
+    sync_parent_dir(parent).map_err(|source| VaultError::Io {
+        source,
+        path: parent.to_path_buf(),
+    })
 }
 
 fn new_temp_file(parent: &Path) -> Result<NamedTempFile, VaultError> {

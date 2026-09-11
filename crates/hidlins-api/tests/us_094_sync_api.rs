@@ -572,7 +572,7 @@ fn api_pairing_uses_opaque_handles_and_activates_both_trust_stores() {
 }
 
 #[test]
-fn pair_and_import_installs_only_after_pairing_and_kdbx_validation() {
+fn pair_and_import_stays_absent_until_bilateral_pairing_then_registers_valid_kdbx() {
     let server_env = common::TestEnv::new();
     let server_path = common::create_test_vault(&server_env, "imported", "pass");
     common::register_vault(&server_env, "imported", &server_path);
@@ -606,6 +606,18 @@ fn pair_and_import_installs_only_after_pairing_and_kdbx_validation() {
             vec![endpoint],
         )
         .expect("begin import pairing");
+    let target = client_env.paths_clone().state_dir().join("imported.kdbx");
+    assert!(
+        !target.exists(),
+        "beginning pairing must not install a vault"
+    );
+    assert!(
+        hidlins_core::VaultRegistry::load(client_env.paths_clone())
+            .expect("client registry before confirmation")
+            .get("imported")
+            .is_none(),
+        "beginning pairing must not register provisional trust"
+    );
     let server_prompt = loop {
         if let SyncEvent::PairingRequested(prompt) = event_rx
             .recv_timeout(Duration::from_secs(2))
@@ -621,6 +633,17 @@ fn pair_and_import_installs_only_after_pairing_and_kdbx_validation() {
             "new client".to_string(),
         )
         .expect("server confirms");
+    assert!(
+        !target.exists(),
+        "server-only confirmation must not install a vault"
+    );
+    assert!(
+        hidlins_core::VaultRegistry::load(client_env.paths_clone())
+            .expect("client registry after server confirmation")
+            .get("imported")
+            .is_none(),
+        "server-only confirmation must not expose a registration"
+    );
 
     let importing = Arc::clone(&client);
     let handle = std::thread::spawn(move || {

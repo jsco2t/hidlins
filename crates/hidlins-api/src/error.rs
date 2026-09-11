@@ -99,6 +99,9 @@ impl From<VaultError> for HidlinsApiError {
                 path: path.display().to_string(),
             },
             VaultError::RegistryChanged => Self::RegistryChanged,
+            VaultError::PasswordRotationRecoveryFailed { reason } => Self::Internal {
+                context: format!("password rotation recovery failed: {reason}"),
+            },
             VaultError::InvalidFormat { .. } => Self::InvalidFormat,
             VaultError::RegistryMalformed { .. } => Self::RegistryMalformed,
             VaultError::HomeUnresolvable => Self::Io {

@@ -91,7 +91,9 @@ impl ProvisionalPairing {
                 .is_some_and(|lifetime| lifetime > 0 && lifetime <= PAIRING_WINDOW.as_secs())
     }
 
-    pub(crate) fn peer_key(&self) -> PublicIdentity {
+    /// Return the authenticated peer admitted only for bounded pairing recovery.
+    #[must_use]
+    pub const fn peer_key(&self) -> PublicIdentity {
         self.peer.public_key
     }
 }

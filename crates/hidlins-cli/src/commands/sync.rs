@@ -12,7 +12,7 @@ use std::{
 use hidlins_core::{HidlinsPaths, Keyfile, MasterPassword, Vault, VaultError, VaultRegistry};
 use hidlins_sync::{
     address::LocalEndpoint,
-    client::{self, ClientPairingSession},
+    client::{self, ClientPairingSession, PendingPairingStore},
     config::local::LocalSyncConfig,
     discovery::{self, CandidateCache, ServiceKind},
     identity::{PublicIdentity, SyncRole},
@@ -105,7 +105,34 @@ fn run_pair(cli: &Cli, args: &SyncPairArgs) -> Result<(), CliExit> {
         None => LocalSyncConfig::configure(&mut registry, &name, SyncRole::Client, &master)
             .map_err(|error| CliExit::from(hidlins_sync::SyncError::from(error)))?,
     };
-    let routes = candidates(args.address.as_deref(), args.port, ServiceKind::Pairing)?;
+    let recovering = config.provisional().is_some();
+    let routes = candidates(
+        args.address.as_deref(),
+        args.port,
+        if recovering {
+            ServiceKind::Trusted
+        } else {
+            ServiceKind::Pairing
+        },
+    )?;
+    if recovering {
+        client::recover_pairing(
+            &mut config,
+            &name,
+            &master,
+            routes,
+            epoch_seconds()?,
+            |active| active.persist(&mut registry, &name),
+        )
+        .map_err(|error| CliExit::from(hidlins_sync::SyncError::from(error)))?;
+        return success(
+            cli,
+            &PairView {
+                status: "paired",
+                vault: &name,
+            },
+        );
+    }
     let identity = config
         .identity()
         .unlock(&name, SyncRole::Client, &master)
@@ -114,8 +141,11 @@ fn run_pair(cli: &Cli, args: &SyncPairArgs) -> Result<(), CliExit> {
         .map_err(|error| CliExit::from(hidlins_sync::SyncError::from(error)))?;
     let endpoint = session.endpoint();
     confirm_sas(&session.sas().to_string())?;
+    let now = epoch_seconds()?;
     session
-        .confirm(&mut config, args.name.clone(), epoch_seconds()?)
+        .confirm(&mut config, args.name.clone(), now, |prepared| {
+            prepared.persist(&mut registry, &name)
+        })
         .map_err(|error| CliExit::from(hidlins_sync::SyncError::from(error)))?;
     config.set_routing_hint(Some(endpoint));
     config
@@ -139,23 +169,58 @@ fn run_import(cli: &Cli, args: &SyncImportArgs) -> Result<(), CliExit> {
             args.id
         )));
     }
-    let target = args.path.clone().unwrap_or_else(|| {
-        registry
-            .paths()
-            .state_dir()
-            .join(format!("{}.kdbx", args.id))
-    });
-    if target.exists() {
-        return Err(CliExit::UserError(format!(
-            "path already exists: {}",
-            target.display()
-        )));
-    }
+    let target = import_target(&registry, args)?;
     let master = prompt_master(&args.id)?;
     let keyfile = args.keyfile.clone().map(Keyfile::Path);
-    let mut config = LocalSyncConfig::create(&args.id, SyncRole::Client, &master)
+    let pending_store = PendingPairingStore::new(registry.paths().state_dir(), &args.id);
+    let pending = pending_store
+        .load()
         .map_err(|error| CliExit::from(hidlins_sync::SyncError::from(error)))?;
-    let routes = candidates(args.address.as_deref(), args.port, ServiceKind::Pairing)?;
+    let mut config = match pending {
+        Some(config) => config,
+        None => LocalSyncConfig::create(&args.id, SyncRole::Client, &master)
+            .map_err(|error| CliExit::from(hidlins_sync::SyncError::from(error)))?,
+    };
+    let recovering = config.provisional().is_some();
+    let routes = candidates(
+        args.address.as_deref(),
+        args.port,
+        if recovering {
+            ServiceKind::Trusted
+        } else {
+            ServiceKind::Pairing
+        },
+    )?;
+    if recovering {
+        client::recover_pairing(
+            &mut config,
+            &args.id,
+            &master,
+            routes.clone(),
+            epoch_seconds()?,
+            |active| pending_store.save(active),
+        )
+        .map_err(|error| CliExit::from(hidlins_sync::SyncError::from(error)))?;
+    }
+    if config.is_active_client() {
+        complete_import(
+            args,
+            &master,
+            keyfile.as_ref(),
+            config,
+            &routes,
+            &mut registry,
+            &pending_store,
+        )?;
+        return success(
+            cli,
+            &ImportView {
+                status: "imported",
+                vault: &args.id,
+                path: target.display().to_string(),
+            },
+        );
+    }
     let identity = config
         .identity()
         .unlock(&args.id, SyncRole::Client, &master)
@@ -165,16 +230,55 @@ fn run_import(cli: &Cli, args: &SyncImportArgs) -> Result<(), CliExit> {
     let endpoint = session.endpoint();
     confirm_sas(&session.sas().to_string())?;
     session
-        .confirm(&mut config, args.name.clone(), epoch_seconds()?)
+        .confirm(
+            &mut config,
+            args.name.clone(),
+            epoch_seconds()?,
+            |prepared| pending_store.save(prepared),
+        )
         .map_err(|error| CliExit::from(hidlins_sync::SyncError::from(error)))?;
     config.set_routing_hint(Some(endpoint));
+    complete_import(
+        args,
+        &master,
+        keyfile.as_ref(),
+        config,
+        &routes,
+        &mut registry,
+        &pending_store,
+    )?;
+    success(
+        cli,
+        &ImportView {
+            status: "imported",
+            vault: &args.id,
+            path: target.display().to_string(),
+        },
+    )
+}
+
+fn complete_import(
+    args: &SyncImportArgs,
+    master: &MasterPassword,
+    keyfile: Option<&Keyfile>,
+    mut config: LocalSyncConfig,
+    routes: &[LocalEndpoint],
+    registry: &mut VaultRegistry,
+    pending_store: &PendingPairingStore,
+) -> Result<(), CliExit> {
+    let target = args.path.clone().unwrap_or_else(|| {
+        registry
+            .paths()
+            .state_dir()
+            .join(format!("{}.kdbx", args.id))
+    });
     // The authority sends PairActivated before its pairing worker has fully
     // released the connection slot. Retry only this immediate, idempotent
     // encrypted fetch within a small fixed bound.
     let mut fetched = None;
     let mut last_error = hidlins_sync::client::LanError::Unreachable;
     for _ in 0..3 {
-        match client::fetch_paired_vault(&args.id, &master, &config, routes.clone()) {
+        match client::fetch_paired_vault(&args.id, master, &config, routes.iter().copied()) {
             Ok(value) => {
                 fetched = Some(value);
                 break;
@@ -189,23 +293,32 @@ fn run_import(cli: &Cli, args: &SyncImportArgs) -> Result<(), CliExit> {
         fetched.ok_or_else(|| CliExit::from(hidlins_sync::SyncError::from(last_error)))?;
     config.set_sync_versions(Some(version), Some(version));
     client::import_paired_vault(
-        &bytes,
-        &target,
-        &args.id,
-        &master,
-        keyfile.as_ref(),
-        &config,
-        &mut registry,
+        &bytes, &target, &args.id, master, keyfile, &config, registry,
     )
     .map_err(|error| CliExit::UserError(error.to_string()))?;
-    success(
-        cli,
-        &ImportView {
-            status: "imported",
-            vault: &args.id,
-            path: target.display().to_string(),
-        },
-    )
+    pending_store
+        .clear()
+        .map_err(|error| CliExit::from(hidlins_sync::SyncError::from(error)))?;
+    Ok(())
+}
+
+fn import_target(
+    registry: &VaultRegistry,
+    args: &SyncImportArgs,
+) -> Result<std::path::PathBuf, CliExit> {
+    let target = args.path.clone().unwrap_or_else(|| {
+        registry
+            .paths()
+            .state_dir()
+            .join(format!("{}.kdbx", args.id))
+    });
+    if target.exists() {
+        return Err(CliExit::UserError(format!(
+            "path already exists: {}",
+            target.display()
+        )));
+    }
+    Ok(target)
 }
 
 fn run_serve(cli: &Cli, args: &SyncServeArgs) -> Result<(), CliExit> {
@@ -254,6 +367,11 @@ fn run_serve(cli: &Cli, args: &SyncServeArgs) -> Result<(), CliExit> {
         Some(authority),
     )
     .map_err(|error| CliExit::Internal(error.to_string()))?;
+    controller.replace_pairing_recovery(
+        config
+            .provisional()
+            .map(|record| record.peer_key().into_bytes()),
+    );
     if args.pairing_window {
         controller
             .open_pairing()
@@ -453,20 +571,17 @@ fn candidates(
         )
     })?;
     let mut cache = CandidateCache::new();
-    let deadline = Instant::now() + DISCOVERY_WAIT;
-    loop {
-        discovery::poll_into(&mut browser, &mut cache, Instant::now())
-            .map_err(|_| CliExit::UserError("local discovery failed".into()))?;
-        let found = cache.candidates(kind);
-        if !found.is_empty() {
-            return Ok(found);
-        }
-        if Instant::now() >= deadline {
-            return Err(CliExit::UserError(
-                "no local sync server was discovered".into(),
-            ));
-        }
-        std::thread::sleep(POLL);
+    let found =
+        discovery::collect_candidates(&mut browser, &mut cache, kind, DISCOVERY_WAIT, POLL, || {
+            false
+        })
+        .map_err(|_| CliExit::UserError("local discovery failed".into()))?;
+    if found.is_empty() {
+        Err(CliExit::UserError(
+            "no local sync server was discovered".into(),
+        ))
+    } else {
+        Ok(found)
     }
 }
 
@@ -746,6 +861,21 @@ impl PairingAuthority for CliPairingAuthority {
             config.activate_client(transaction, now)
         })
         .map_err(|_| PairingAuthorityError::Persistence)
+    }
+    fn recover(
+        &self,
+        peer: PublicIdentity,
+    ) -> Result<hidlins_sync::pairing::PairingTransaction, PairingAuthorityError> {
+        let registry = VaultRegistry::load(self.paths.clone())
+            .map_err(|_| PairingAuthorityError::Persistence)?;
+        let config = registry
+            .get(&self.vault)
+            .and_then(LocalSyncConfig::from_vault_entry)
+            .ok_or(PairingAuthorityError::Persistence)?;
+        let now = epoch_seconds().map_err(|_| PairingAuthorityError::Persistence)?;
+        config
+            .recover_pairing_transaction(peer, now)
+            .map_err(|_| PairingAuthorityError::Persistence)
     }
     fn shutdown(&self) {
         self.stopped.store(true, Ordering::Release);

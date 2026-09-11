@@ -6,16 +6,23 @@ use std::{
         Arc, Condvar, Mutex,
     },
     thread,
-    time::Duration,
+    time::{Duration, Instant},
 };
 
-use hidlins_core::{KdfParams, MasterPassword, NoRecoveryConfirmed, Vault};
+use hidlins_core::{
+    HidlinsPaths, KdfParams, MasterPassword, NoRecoveryConfirmed, RegisteredVault, Vault,
+    VaultRegistry,
+};
 use hidlins_sync::{
     address::LocalEndpoint,
-    client::{ClientPairingSession, LanError, LanTransport},
-    discovery::ServiceKind,
+    client::{recover_pairing, ClientPairingSession, LanCancellation, LanError, LanTransport},
+    config::local::{LocalConfigError, LocalSyncConfig},
+    discovery::{
+        collect_candidates, CandidateCache, DiscoveryBatch, DiscoveryEvent, DiscoveryPermission,
+        RawDiscoveryRecord, RawEndpoint, ServiceKind, SimulatedDiscoveryPort,
+    },
     framing::{Preface, PrefaceMode},
-    identity::PublicIdentity,
+    identity::{PublicIdentity, SyncRole},
     noise::{HandshakeSession, NoiseKeypair, SecureTransport, SessionMode},
     pairing::{ConfirmedPairing, PairingTransaction, SasCode},
     protocol::RemoteVersion,
@@ -61,6 +68,24 @@ fn unused_loopback() -> LocalEndpoint {
     let port = listener.local_addr().unwrap().port();
     drop(listener);
     LocalEndpoint::new(IpAddr::V4(Ipv4Addr::LOCALHOST), port, 0).unwrap()
+}
+
+fn discovery_batch(label: &str, endpoint: LocalEndpoint) -> DiscoveryBatch {
+    let kind = ServiceKind::Trusted;
+    let record = RawDiscoveryRecord::try_from_untrusted(
+        kind.service_type().to_string(),
+        format!("{label}.{}", kind.service_type()),
+        endpoint.port(),
+        vec![("v".to_string(), b"1".to_vec())],
+        vec![RawEndpoint::new(endpoint.ip(), endpoint.scope_id())],
+        Duration::from_secs(120),
+    )
+    .unwrap();
+    DiscoveryBatch::new(
+        DiscoveryPermission::Granted,
+        vec![DiscoveryEvent::Resolved(record)],
+    )
+    .unwrap()
 }
 
 fn write_frame(stream: &mut TcpStream, bytes: &[u8]) {
@@ -211,6 +236,10 @@ impl PairingAuthority for BlockingPairingAuthority {
         Ok(())
     }
 
+    fn recover(&self, _peer: PublicIdentity) -> Result<PairingTransaction, PairingAuthorityError> {
+        Err(PairingAuthorityError::Canceled)
+    }
+
     fn cancel_pending(&self) {
         let (cancelled, wake) = &self.cancellation;
         *cancelled.lock().unwrap() = true;
@@ -220,6 +249,72 @@ impl PairingAuthority for BlockingPairingAuthority {
     fn shutdown(&self) {
         self.cancel_pending();
     }
+}
+
+struct PersistingPairingAuthority {
+    config: Mutex<LocalSyncConfig>,
+}
+
+impl PairingAuthority for PersistingPairingAuthority {
+    fn confirm(
+        &self,
+        _peer: PublicIdentity,
+        _sas: SasCode,
+        _timeout: Duration,
+    ) -> Result<String, PairingAuthorityError> {
+        Ok("Client".to_string())
+    }
+
+    fn prepare(
+        &self,
+        transaction: &PairingTransaction,
+        confirmation: &ConfirmedPairing,
+        display_name: String,
+    ) -> Result<(), PairingAuthorityError> {
+        self.config
+            .lock()
+            .unwrap()
+            .prepare_client(transaction, confirmation, display_name, 1_000, 1_180)
+            .map_err(|_| PairingAuthorityError::Persistence)
+    }
+
+    fn activate(&self, transaction: &PairingTransaction) -> Result<(), PairingAuthorityError> {
+        self.config
+            .lock()
+            .unwrap()
+            .activate_client(transaction, 1_001)
+            .map_err(|_| PairingAuthorityError::Persistence)
+    }
+
+    fn recover(&self, peer: PublicIdentity) -> Result<PairingTransaction, PairingAuthorityError> {
+        self.config
+            .lock()
+            .unwrap()
+            .recover_pairing_transaction(peer, 1_001)
+            .map_err(|_| PairingAuthorityError::Persistence)
+    }
+
+    fn shutdown(&self) {}
+}
+
+fn registered_client_config(
+    directory: &TempDir,
+    master: &MasterPassword,
+) -> (HidlinsPaths, VaultRegistry, LocalSyncConfig) {
+    let paths = HidlinsPaths::with_state_dir(directory.path().join("client-state"));
+    let mut registry = VaultRegistry::with_paths(paths.clone());
+    registry
+        .register_and_save(RegisteredVault {
+            name: "personal".to_string(),
+            path: directory.path().join("personal.kdbx"),
+            created_at: "2026-09-10T00:00:00Z".to_string(),
+            keyfile_path: None,
+            extra: toml::Table::new(),
+        })
+        .unwrap();
+    let config =
+        LocalSyncConfig::configure(&mut registry, "personal", SyncRole::Client, master).unwrap();
+    (paths, registry, config)
 }
 
 // LNS-SERVER-001
@@ -668,6 +763,252 @@ fn runtime_admits_one_pairing_candidate_and_close_cancels_it() {
     server.stop();
 }
 
+// LNS-PAIR-004
+#[test]
+fn production_pairing_persists_final_client_state_after_success() {
+    let directory = TempDir::new().unwrap();
+    let master = password();
+    let (client_paths, mut client_registry, mut client_config) =
+        registered_client_config(&directory, &master);
+    let client_identity = client_config
+        .identity()
+        .unlock("personal", SyncRole::Client, &master)
+        .unwrap();
+    let server_config = LocalSyncConfig::create("personal", SyncRole::Server, &master).unwrap();
+    let server_identity = Arc::new(
+        server_config
+            .identity()
+            .unlock("personal", SyncRole::Server, &master)
+            .unwrap(),
+    );
+    let authority = Arc::new(PersistingPairingAuthority {
+        config: Mutex::new(server_config),
+    });
+    let (queue, _processor) = HostQueue::new();
+    let mut server = ServerController::start_with_pairing_authority(
+        unused_loopback(),
+        server_identity,
+        [],
+        queue,
+        Some(authority),
+    )
+    .unwrap();
+    server.open_pairing().unwrap();
+
+    let session = ClientPairingSession::begin(&client_identity, [server.endpoint()]).unwrap();
+    session
+        .confirm(&mut client_config, "Server".to_string(), 1_000, |config| {
+            config.persist(&mut client_registry, "personal")
+        })
+        .unwrap();
+
+    let reloaded = VaultRegistry::load(client_paths).unwrap();
+    let reloaded = LocalSyncConfig::from_vault_entry(reloaded.get("personal").unwrap()).unwrap();
+    assert!(
+        reloaded.is_active_client(),
+        "a successful production pairing must persist active client trust"
+    );
+    assert!(
+        reloaded.provisional().is_none(),
+        "a successful production pairing must clear provisional state"
+    );
+    server.stop();
+}
+
+// LNS-PAIR-005
+#[test]
+fn core_recovery_protocol_promotes_persisted_provisional_state_over_authenticated_ik() {
+    let directory = TempDir::new().unwrap();
+    let master = password();
+    let (client_paths, mut client_registry, mut client_config) =
+        registered_client_config(&directory, &master);
+    let client_identity = client_config
+        .identity()
+        .unlock("personal", SyncRole::Client, &master)
+        .unwrap();
+    let server_config = LocalSyncConfig::create("personal", SyncRole::Server, &master).unwrap();
+    let server_identity = Arc::new(
+        server_config
+            .identity()
+            .unlock("personal", SyncRole::Server, &master)
+            .unwrap(),
+    );
+    let authority = Arc::new(PersistingPairingAuthority {
+        config: Mutex::new(server_config),
+    });
+    let (queue, _processor) = HostQueue::new();
+    let mut server = ServerController::start_with_pairing_authority(
+        unused_loopback(),
+        server_identity,
+        [],
+        queue,
+        Some(authority.clone()),
+    )
+    .unwrap();
+    server.open_pairing().unwrap();
+    let endpoint = server.endpoint();
+
+    let session = ClientPairingSession::begin(&client_identity, [endpoint]).unwrap();
+    let result = session.confirm(
+        &mut client_config,
+        "Server".to_string(),
+        1_000,
+        |prepared| {
+            prepared.persist(&mut client_registry, "personal")?;
+            Err(LocalConfigError::Malformed)
+        },
+    );
+    assert_eq!(result, Err(LanError::Protocol));
+
+    let reloaded_registry = VaultRegistry::load(client_paths.clone()).unwrap();
+    let mut reloaded = LocalSyncConfig::from_vault_entry(
+        reloaded_registry.get("personal").expect("registered vault"),
+    )
+    .unwrap();
+    assert!(reloaded.provisional().is_some());
+    assert!(!reloaded.is_active_client());
+
+    let mut recovery_registry = VaultRegistry::load(client_paths).unwrap();
+    recover_pairing(
+        &mut reloaded,
+        "personal",
+        &master,
+        [endpoint],
+        1_001,
+        |active| active.persist(&mut recovery_registry, "personal"),
+    )
+    .unwrap();
+    assert!(reloaded.is_active_client());
+    assert!(authority
+        .config
+        .lock()
+        .unwrap()
+        .authorizes(client_config.identity().public_key()));
+    server.stop();
+}
+
+// LNS-PAIR-006
+#[test]
+fn core_recovery_protocol_is_idempotent_after_server_activation_and_lost_ack() {
+    let directory = TempDir::new().unwrap();
+    let master = password();
+    let (client_paths, mut client_registry, mut client_config) =
+        registered_client_config(&directory, &master);
+    let client_identity = client_config
+        .identity()
+        .unlock("personal", SyncRole::Client, &master)
+        .unwrap();
+    let server_config = LocalSyncConfig::create("personal", SyncRole::Server, &master).unwrap();
+    let server_identity = Arc::new(
+        server_config
+            .identity()
+            .unlock("personal", SyncRole::Server, &master)
+            .unwrap(),
+    );
+    let authority = Arc::new(PersistingPairingAuthority {
+        config: Mutex::new(server_config),
+    });
+    let (queue, _processor) = HostQueue::new();
+    let mut server = ServerController::start_with_pairing_authority(
+        unused_loopback(),
+        server_identity,
+        [],
+        queue,
+        Some(authority),
+    )
+    .unwrap();
+    server.open_pairing().unwrap();
+    let endpoint = server.endpoint();
+
+    let session = ClientPairingSession::begin(&client_identity, [endpoint]).unwrap();
+    let mut persists = 0;
+    let result = session.confirm(&mut client_config, "Server".to_string(), 1_000, |state| {
+        persists += 1;
+        if persists == 1 {
+            state.persist(&mut client_registry, "personal")
+        } else {
+            Err(LocalConfigError::Malformed)
+        }
+    });
+    assert_eq!(result, Err(LanError::Protocol));
+
+    for fail_persistence in [true, false] {
+        let mut recovery_registry = VaultRegistry::load(client_paths.clone()).unwrap();
+        let mut recovered = LocalSyncConfig::from_vault_entry(
+            recovery_registry.get("personal").expect("registered vault"),
+        )
+        .unwrap();
+        assert!(recovered.provisional().is_some());
+        let result = recover_pairing(
+            &mut recovered,
+            "personal",
+            &master,
+            [endpoint],
+            1_001,
+            |active| {
+                if fail_persistence {
+                    Err(LocalConfigError::Malformed)
+                } else {
+                    active.persist(&mut recovery_registry, "personal")
+                }
+            },
+        );
+        if fail_persistence {
+            assert_eq!(result, Err(LanError::Protocol));
+        } else {
+            result.unwrap();
+        }
+    }
+
+    let registry = VaultRegistry::load(client_paths).unwrap();
+    let config = LocalSyncConfig::from_vault_entry(registry.get("personal").unwrap()).unwrap();
+    assert!(config.is_active_client());
+    server.stop();
+}
+
+// LNS-PAIR-007
+#[test]
+fn pairing_cancellation_interrupts_an_established_handshake() {
+    let listener = TcpListener::bind((Ipv4Addr::LOCALHOST, 0)).unwrap();
+    let endpoint = LocalEndpoint::new(
+        IpAddr::V4(Ipv4Addr::LOCALHOST),
+        listener.local_addr().unwrap().port(),
+        0,
+    )
+    .unwrap();
+    let (accepted_sender, accepted_receiver) = std::sync::mpsc::channel();
+    let server = thread::spawn(move || {
+        let (mut stream, _) = listener.accept().unwrap();
+        accepted_sender.send(()).unwrap();
+        let mut bytes = Vec::new();
+        let _ = stream.read_to_end(&mut bytes);
+    });
+
+    let cancellation = LanCancellation::default();
+    let worker_cancellation = cancellation.clone();
+    let (result_sender, result_receiver) = std::sync::mpsc::channel();
+    let client = thread::spawn(move || {
+        let identity = NoiseKeypair::generate().unwrap();
+        let result = ClientPairingSession::begin_with_cancellation(
+            &identity,
+            [endpoint],
+            worker_cancellation,
+        );
+        result_sender.send(result.map(drop)).unwrap();
+    });
+
+    accepted_receiver
+        .recv_timeout(Duration::from_secs(1))
+        .expect("pairing socket established");
+    cancellation.cancel();
+    assert!(result_receiver
+        .recv_timeout(Duration::from_secs(1))
+        .expect("socket shutdown interrupts the handshake")
+        .is_err());
+    client.join().unwrap();
+    server.join().unwrap();
+}
+
 // LNS-PAIR-002, LNS-SEC-007
 // LNS-REVIEW-005
 #[test]
@@ -1023,11 +1364,26 @@ fn client_falls_back_from_forged_route_but_never_accepts_a_wrong_pin() {
 
     let fallback_identity = NoiseKeypair::generate().unwrap();
     server.replace_trusted([client_public, fallback_identity.public_key()]);
+    let mut port = SimulatedDiscoveryPort::new(vec![
+        discovery_batch("00000000000000000000000001", spoof.endpoint()),
+        discovery_batch("00000000000000000000000002", server.endpoint()),
+        DiscoveryBatch::new(DiscoveryPermission::Granted, Vec::new()).unwrap(),
+    ]);
+    let mut cache = CandidateCache::new();
+    let discovered = collect_candidates(
+        &mut port,
+        &mut cache,
+        ServiceKind::Trusted,
+        Duration::from_secs(1),
+        Duration::from_millis(100),
+        || false,
+    )
+    .unwrap();
     let mut fallback = LanTransport::new(
         fallback_identity,
         server_identity.public_key(),
         Some(spoof.endpoint()),
-        [server.endpoint()],
+        discovered,
     )
     .unwrap();
     assert!(fallback.head().unwrap().is_some());
@@ -1046,4 +1402,97 @@ fn client_falls_back_from_forged_route_but_never_accepts_a_wrong_pin() {
     server.stop();
     running.store(false, Ordering::Release);
     host_thread.join().unwrap();
+}
+
+// LNS-CLIENT-005
+#[test]
+fn client_retries_one_discovered_authority_after_a_transient_handshake_failure() {
+    let directory = TempDir::new().unwrap();
+    let vault = create_vault(&directory, "retry-authority");
+    let master = password();
+    let (queue, mut processor) = HostQueue::new();
+    let running = Arc::new(AtomicBool::new(true));
+    let thread_running = Arc::clone(&running);
+    let host_thread = thread::spawn(move || {
+        let mut vault = vault;
+        let mut host = AuthoritativeVault::new(&mut vault, &master, None);
+        while thread_running.load(Ordering::Acquire) {
+            if !processor.process_one(&mut host).unwrap_or(false) {
+                thread::yield_now();
+            }
+        }
+    });
+
+    let server_identity = Arc::new(NoiseKeypair::generate().unwrap());
+    let client_identity = NoiseKeypair::generate().unwrap();
+    let mut server = ServerController::start(
+        unused_loopback(),
+        Arc::clone(&server_identity),
+        [client_identity.public_key()],
+        queue,
+    )
+    .unwrap();
+
+    // The proxy rejects the first complete TCP connection, matching the
+    // transient post-restart handshake loss observed on the Android shared
+    // Wi-Fi emulator. A second connection to the same discovered route is
+    // forwarded unchanged to the real authenticated production server.
+    let proxy = TcpListener::bind((Ipv4Addr::LOCALHOST, 0)).unwrap();
+    let proxy_endpoint = LocalEndpoint::new(
+        IpAddr::V4(Ipv4Addr::LOCALHOST),
+        proxy.local_addr().unwrap().port(),
+        0,
+    )
+    .unwrap();
+    let server_endpoint = server.endpoint();
+    let proxy_thread = thread::spawn(move || {
+        let (first, _) = proxy.accept().unwrap();
+        drop(first);
+        proxy.set_nonblocking(true).unwrap();
+        let deadline = Instant::now() + Duration::from_secs(2);
+        let mut downstream = loop {
+            match proxy.accept() {
+                Ok((stream, _)) => break Some(stream),
+                Err(error) if error.kind() == std::io::ErrorKind::WouldBlock => {
+                    if Instant::now() >= deadline {
+                        break None;
+                    }
+                    thread::sleep(Duration::from_millis(10));
+                }
+                Err(error) => panic!("proxy accept failed: {error}"),
+            }
+        };
+        let Some(mut downstream) = downstream.take() else {
+            return;
+        };
+        downstream.set_nonblocking(false).unwrap();
+        let mut upstream = TcpStream::connect(server_endpoint.socket_addr()).unwrap();
+        let mut downstream_reader = downstream.try_clone().unwrap();
+        let mut upstream_writer = upstream.try_clone().unwrap();
+        let request = thread::spawn(move || {
+            std::io::copy(&mut downstream_reader, &mut upstream_writer).unwrap();
+            upstream_writer.shutdown(std::net::Shutdown::Write).unwrap();
+        });
+        std::io::copy(&mut upstream, &mut downstream).unwrap();
+        request.join().unwrap();
+    });
+
+    let mut client = LanTransport::new(
+        client_identity,
+        server_identity.public_key(),
+        None,
+        [proxy_endpoint],
+    )
+    .unwrap();
+    let result = client.head();
+    drop(client);
+    proxy_thread.join().unwrap();
+    server.stop();
+    running.store(false, Ordering::Release);
+    host_thread.join().unwrap();
+
+    assert!(
+        result.is_ok(),
+        "one transient handshake must not exhaust a multi-attempt operation budget: {result:?}"
+    );
 }

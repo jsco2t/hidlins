@@ -524,6 +524,55 @@ pub fn poll_into(
     port.poll()?.apply(cache, now)
 }
 
+/// Quiet period used to collect records that arrive in adjacent backend batches.
+pub const CANDIDATE_SETTLE_TIME: Duration = Duration::from_millis(100);
+
+/// Collect one bounded, temporally complete set of untrusted routing candidates.
+///
+/// A first result starts a short quiet-period timer instead of ending discovery.
+/// Each changed candidate set resets that timer, while `total_wait` remains the
+/// hard upper bound. Callers still authenticate every returned route against the
+/// configured Noise identity.
+pub fn collect_candidates(
+    port: &mut (impl DiscoveryPort + ?Sized),
+    cache: &mut CandidateCache,
+    kind: ServiceKind,
+    total_wait: Duration,
+    poll_interval: Duration,
+    mut cancelled: impl FnMut() -> bool,
+) -> Result<Vec<LocalEndpoint>, DiscoveryError> {
+    let started = Instant::now();
+    let deadline = started.checked_add(total_wait).unwrap_or(started);
+    let mut observed = Vec::new();
+    let mut settle_deadline = None;
+
+    loop {
+        if cancelled() {
+            return Ok(observed);
+        }
+        let now = Instant::now();
+        poll_into(port, cache, now)?;
+        let current = cache
+            .candidates(kind)
+            .into_iter()
+            .take(crate::protocol::MAX_CANDIDATE_ATTEMPTS)
+            .collect::<Vec<_>>();
+        if current != observed {
+            observed = current;
+            settle_deadline =
+                (!observed.is_empty()).then(|| now + CANDIDATE_SETTLE_TIME.min(total_wait));
+        }
+
+        let now = Instant::now();
+        if now >= deadline || settle_deadline.is_some_and(|settle| now >= settle) {
+            return Ok(observed);
+        }
+        let wake_at = settle_deadline.map_or(deadline, |settle| settle.min(deadline));
+        let remaining = wake_at.saturating_duration_since(now);
+        std::thread::sleep(poll_interval.min(remaining));
+    }
+}
+
 /// Deterministic native-port stand-in for security and lifecycle tests.
 #[cfg(any(test, feature = "test-helpers"))]
 pub struct SimulatedDiscoveryPort {

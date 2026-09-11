@@ -132,6 +132,25 @@ public final class HidlinsAndroidTest {
         assertFalse(payload.toString().contains("sas"));
     }
 
+    // LNS-ANDROID-012: stopped discovery callbacks cannot acquire a restarted attempt.
+    @Test
+    public void discoveryAttemptGenerationRejectsStoppedAndDuplicateCallbacks() {
+        DiscoveryAttemptTracker attempts = new DiscoveryAttemptTracker();
+        long first = attempts.begin();
+        assertTrue(attempts.isActive(first));
+
+        attempts.invalidate();
+        long second = attempts.begin();
+        assertFalse(attempts.isActive(first));
+        assertTrue(attempts.isActive(second));
+        assertFalse(attempts.complete(first));
+        assertTrue(attempts.isActive(second));
+
+        assertTrue(attempts.complete(second));
+        assertFalse(attempts.complete(second));
+        assertFalse(attempts.isActive(second));
+    }
+
     @Test
     public void scenarioRegistrarAcceptsOnlyBoundedPortAndKnownServiceKind() {
         assertTrue(ScenarioNsdRegistrarActivity.validPort(1));

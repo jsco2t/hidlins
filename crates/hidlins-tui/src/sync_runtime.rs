@@ -99,19 +99,15 @@ impl SyncEngine for RealSyncEngine {
         let mut candidates = Vec::new();
         if let Ok(mut browser) = discovery::desktop::DesktopBrowser::start() {
             let mut cache = CandidateCache::new();
-            let deadline = std::time::Instant::now() + std::time::Duration::from_millis(500);
-            loop {
-                if discovery::poll_into(&mut browser, &mut cache, std::time::Instant::now())
-                    .is_err()
-                {
-                    break;
-                }
-                candidates = cache.candidates(ServiceKind::Trusted);
-                if !candidates.is_empty() || std::time::Instant::now() >= deadline {
-                    break;
-                }
-                std::thread::sleep(std::time::Duration::from_millis(20));
-            }
+            candidates = discovery::collect_candidates(
+                &mut browser,
+                &mut cache,
+                ServiceKind::Trusted,
+                std::time::Duration::from_millis(500),
+                std::time::Duration::from_millis(20),
+                || false,
+            )
+            .unwrap_or_default();
         }
         client::sync_vault(
             vault,

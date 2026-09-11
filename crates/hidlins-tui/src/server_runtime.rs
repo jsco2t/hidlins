@@ -91,6 +91,19 @@ impl PairingAuthority for TuiPairingAuthority {
         Ok(())
     }
 
+    fn recover(&self, peer: PublicIdentity) -> Result<PairingTransaction, PairingAuthorityError> {
+        let registry = VaultRegistry::load(self.paths.clone())
+            .map_err(|_| PairingAuthorityError::Persistence)?;
+        let config = registry
+            .get(&self.vault_name)
+            .and_then(LocalSyncConfig::from_vault_entry)
+            .ok_or(PairingAuthorityError::Persistence)?;
+        let now = epoch_seconds().ok_or(PairingAuthorityError::Persistence)?;
+        config
+            .recover_pairing_transaction(peer, now)
+            .map_err(|_| PairingAuthorityError::Persistence)
+    }
+
     fn shutdown(&self) {
         self.cancel_pending();
     }
@@ -151,6 +164,11 @@ impl ServerRuntime {
             Some(pairing_authority),
         )
         .map_err(|_| "Could not start the local sync listener.".to_string())?;
+        controller.replace_pairing_recovery(
+            config
+                .provisional()
+                .map(|record| record.peer_key().into_bytes()),
+        );
         Ok(Self {
             controller,
             processor,

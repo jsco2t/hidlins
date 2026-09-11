@@ -8,6 +8,7 @@ import ipaddress
 import pathlib
 import re
 import unittest
+from unittest import mock
 
 
 MODULE_PATH = pathlib.Path(__file__).with_name("mobile_scenario.py")
@@ -28,6 +29,17 @@ def load_lan_module():
     spec = importlib.util.spec_from_file_location("lan_discovery", LAN_MODULE_PATH)
     if spec is None or spec.loader is None:
         raise RuntimeError("could not load Android LAN discovery harness")
+    module = importlib.util.module_from_spec(spec)
+    spec.loader.exec_module(module)
+    return module
+
+
+def load_android_scenario_module():
+    spec = importlib.util.spec_from_file_location(
+        "android_mobile_scenario", ANDROID_SCENARIO_PATH
+    )
+    if spec is None or spec.loader is None:
+        raise RuntimeError("could not load Android mobile scenario harness")
     module = importlib.util.module_from_spec(spec)
     spec.loader.exec_module(module)
     return module
@@ -182,6 +194,25 @@ class MobileScenarioHarnessTest(unittest.TestCase):
         with self.assertRaises(ValueError):
             module.registrar_start_arguments(port=37371, kind="other")
 
+    def test_android_peer_route_readiness_retries_until_live(self) -> None:
+        module = load_android_scenario_module()
+        failed = module.subprocess.CompletedProcess([], 1)
+        connected = module.subprocess.CompletedProcess([], 0)
+        with mock.patch.object(
+            module.subprocess,
+            "run",
+            side_effect=(failed, connected),
+        ) as run, mock.patch.object(module.time, "sleep") as sleep:
+            module.require_peer_reachable("emulator-5554", "10.0.2.18")
+
+        self.assertEqual(run.call_count, 2)
+        sleep.assert_called_once_with(0.25)
+        command = run.call_args.args[0]
+        self.assertEqual(
+            command[-6:],
+            ["ping", "-c", "1", "-W", "1", "10.0.2.18"],
+        )
+
     def test_android_registrar_is_confined_to_instrumentation_source_set(self) -> None:
         root = MODULE_PATH.parents[2]
         registrar = (
@@ -232,6 +263,21 @@ class MobileScenarioHarnessTest(unittest.TestCase):
         self.assertIn('"-wifi-client-port"', source)
         self.assertIn('"-network-user-mode-options"', source)
         self.assertIn("prepare_legacy_wifi_guest", source)
+        initial_client_boot = source.index("client_process = lan.boot")
+        initial_authority_boot = source.index("authority_process = lan.boot")
+        self.assertLess(
+            initial_authority_boot,
+            initial_client_boot,
+            "the explicit Wi-Fi server must be listening before its client boots",
+        )
+        topology_check = source.index("mobile.require_android_lan_topology")
+        peer_route_check = source.index(
+            "require_peer_reachable(\n                CLIENT_SERIAL",
+            topology_check,
+        )
+        initial_harness = source.index("harness = AndroidAuthorityHarness")
+        self.assertLess(topology_check, peer_route_check)
+        self.assertLess(peer_route_check, initial_harness)
         self.assertRegex(
             source,
             re.compile(

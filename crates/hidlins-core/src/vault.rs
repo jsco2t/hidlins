@@ -12,6 +12,11 @@ use crate::locking::{acquire_exclusive, acquire_shared};
 use crate::unlock::{build_database_key, build_database_key_from_material, KeyfileMaterial};
 use crate::{ExclusiveLock, Keyfile, MasterPassword, SharedLock, VaultError};
 
+pub(crate) struct StagedPasswordChange {
+    pub(crate) path: PathBuf,
+    new_key: keepass::DatabaseKey,
+}
+
 /// KDF settings for newly-created KDBX4 vaults.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub struct KdfParams {
@@ -193,6 +198,27 @@ impl Vault {
         save_database(&self.path, &mut self.database, new_key.clone())?;
         self.key = new_key;
         Ok(())
+    }
+
+    pub(crate) fn stage_master_password_change(
+        &mut self,
+        current: &MasterPassword,
+        new: &MasterPassword,
+        stage_path: PathBuf,
+    ) -> Result<StagedPasswordChange, VaultError> {
+        let current_key = build_database_key_from_material(current, &self.keyfile_material)?;
+        open_database(&self.path, current_key)?;
+
+        let new_key = build_database_key_from_material(new, &self.keyfile_material)?;
+        save_database(&stage_path, &mut self.database, new_key.clone())?;
+        Ok(StagedPasswordChange {
+            path: stage_path,
+            new_key,
+        })
+    }
+
+    pub(crate) fn finish_staged_password_change(&mut self, staged: StagedPasswordChange) {
+        self.key = staged.new_key;
     }
 
     /// Return the on-disk vault path.

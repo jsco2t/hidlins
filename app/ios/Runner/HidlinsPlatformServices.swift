@@ -113,12 +113,70 @@ enum LocalDiscoveryPayload {
 
 /// Bonjour is only a discovery mechanism. This adapter returns bounded numeric
 /// routes; Rust independently normalizes and applies the local-only policy.
+protocol LocalDiscoveryScheduledTask {
+  func cancel()
+}
+
+protocol LocalDiscoveryScheduling {
+  @discardableResult
+  func schedule(afterMilliseconds: Int, action: @escaping () -> Void) -> LocalDiscoveryScheduledTask
+}
+
+private final class MainQueueDiscoveryTask: LocalDiscoveryScheduledTask {
+  private let workItem: DispatchWorkItem
+
+  init(workItem: DispatchWorkItem) {
+    self.workItem = workItem
+  }
+
+  func cancel() {
+    workItem.cancel()
+  }
+}
+
+private struct MainQueueDiscoveryScheduler: LocalDiscoveryScheduling {
+  func schedule(
+    afterMilliseconds: Int,
+    action: @escaping () -> Void
+  ) -> LocalDiscoveryScheduledTask {
+    let workItem = DispatchWorkItem(block: action)
+    DispatchQueue.main.asyncAfter(
+      deadline: .now() + .milliseconds(afterMilliseconds),
+      execute: workItem
+    )
+    return MainQueueDiscoveryTask(workItem: workItem)
+  }
+}
+
 final class LocalDiscoveryService: NSObject, NetServiceBrowserDelegate, NetServiceDelegate {
   private var browser: NetServiceBrowser?
   private var services: [NetService] = []
   private var candidates: [[String: Any]] = []
   private var completion: FlutterResult?
+  private var activeGeneration: UInt64?
+  private var nextGeneration: UInt64 = 0
+  private var timeoutTask: LocalDiscoveryScheduledTask?
+  private var serviceGenerations: [ObjectIdentifier: UInt64] = [:]
   private(set) var permission: LocalDiscoveryPermission = .notDetermined
+  private let scheduler: LocalDiscoveryScheduling
+  private let browserFactory: () -> NetServiceBrowser
+  private let browserSearch: (NetServiceBrowser, String) -> Void
+  private let browserStop: (NetServiceBrowser) -> Void
+
+  init(
+    scheduler: LocalDiscoveryScheduling = MainQueueDiscoveryScheduler(),
+    browserFactory: @escaping () -> NetServiceBrowser = NetServiceBrowser.init,
+    browserSearch: @escaping (NetServiceBrowser, String) -> Void = { browser, type in
+      browser.searchForServices(ofType: type, inDomain: "local.")
+    },
+    browserStop: @escaping (NetServiceBrowser) -> Void = { $0.stop() }
+  ) {
+    self.scheduler = scheduler
+    self.browserFactory = browserFactory
+    self.browserSearch = browserSearch
+    self.browserStop = browserStop
+    super.init()
+  }
 
   func status() -> [String: Any] {
     LocalDiscoveryPayload.make(permission: permission, candidates: [])
@@ -132,24 +190,37 @@ final class LocalDiscoveryService: NSObject, NetServiceBrowserDelegate, NetServi
       result(PlatformEnvelope.failure(code: "invalid-discovery-request"))
       return
     }
+    nextGeneration &+= 1
+    let generation = nextGeneration
+    activeGeneration = generation
     completion = result
     candidates = []
     services = []
-    let browser = NetServiceBrowser()
+    let browser = browserFactory()
     browser.delegate = self
     self.browser = browser
     let type = kind == "pairing" ? "_hidlins-pair._tcp." : "_hidlins-sync._tcp."
-    browser.searchForServices(ofType: type, inDomain: "local.")
-    DispatchQueue.main.asyncAfter(deadline: .now() + .milliseconds(timeoutMilliseconds)) {
-      [weak self] in self?.finish()
+    timeoutTask = scheduler.schedule(afterMilliseconds: timeoutMilliseconds) {
+      [weak self] in self?.finish(generation: generation)
     }
+    browserSearch(browser, type)
   }
 
   func stop() {
-    browser?.stop()
+    activeGeneration = nil
+    timeoutTask?.cancel()
+    timeoutTask = nil
+    if let browser {
+      browser.delegate = nil
+      browserStop(browser)
+    }
     browser = nil
-    services.forEach { $0.stop() }
+    services.forEach {
+      $0.delegate = nil
+      $0.stop()
+    }
     services = []
+    serviceGenerations = [:]
     candidates = []
     if let completion {
       self.completion = nil
@@ -158,6 +229,7 @@ final class LocalDiscoveryService: NSObject, NetServiceBrowserDelegate, NetServi
   }
 
   func netServiceBrowserWillSearch(_ browser: NetServiceBrowser) {
+    guard browser === self.browser, activeGeneration != nil else { return }
     permission = .granted
   }
 
@@ -165,9 +237,10 @@ final class LocalDiscoveryService: NSObject, NetServiceBrowserDelegate, NetServi
     _ browser: NetServiceBrowser,
     didNotSearch errorDict: [String: NSNumber]
   ) {
+    guard browser === self.browser, let generation = activeGeneration else { return }
     let code = errorDict[NetService.errorCode]?.intValue
     permission = code == -72_008 ? .denied : .restricted
-    finish()
+    finish(generation: generation)
   }
 
   func netServiceBrowser(
@@ -175,13 +248,18 @@ final class LocalDiscoveryService: NSObject, NetServiceBrowserDelegate, NetServi
     didFind service: NetService,
     moreComing: Bool
   ) {
+    guard browser === self.browser, let generation = activeGeneration else { return }
     guard services.count < LocalDiscoveryPayload.maximumCandidates else { return }
     services.append(service)
+    serviceGenerations[ObjectIdentifier(service)] = generation
     service.delegate = self
     service.resolve(withTimeout: 1)
   }
 
   func netServiceDidResolveAddress(_ sender: NetService) {
+    guard let generation = activeGeneration,
+          serviceGenerations[ObjectIdentifier(sender)] == generation
+    else { return }
     guard let addresses = sender.addresses else { return }
     for data in addresses {
       guard candidates.count < LocalDiscoveryPayload.maximumCandidates,
@@ -196,13 +274,23 @@ final class LocalDiscoveryService: NSObject, NetServiceBrowserDelegate, NetServi
     }
   }
 
-  private func finish() {
-    guard let completion else { return }
+  private func finish(generation: UInt64) {
+    guard activeGeneration == generation, let completion else { return }
+    activeGeneration = nil
     self.completion = nil
-    browser?.stop()
+    timeoutTask?.cancel()
+    timeoutTask = nil
+    if let browser {
+      browser.delegate = nil
+      browserStop(browser)
+    }
     browser = nil
-    services.forEach { $0.stop() }
+    services.forEach {
+      $0.delegate = nil
+      $0.stop()
+    }
     services = []
+    serviceGenerations = [:]
     completion(
       PlatformEnvelope.success(
         LocalDiscoveryPayload.make(permission: permission, candidates: candidates)
