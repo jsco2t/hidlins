@@ -414,7 +414,10 @@ class _EntryEditDialogState extends ConsumerState<EntryEditDialog> {
                   cf.protected ? Icons.lock : Icons.lock_open,
                   size: 18,
                 ),
-                onPressed: () => setState(() => cf.protected = !cf.protected),
+                onPressed: () => setState(() {
+                  cf.protected = !cf.protected;
+                  _dirty = true;
+                }),
                 visualDensity: VisualDensity.compact,
               ),
             ),
@@ -452,6 +455,7 @@ class _EntryEditDialogState extends ConsumerState<EntryEditDialog> {
               if (!mounted) return;
               setState(() {
                 _passwordCtrl.text = value;
+                _secretReentry.remove(_passwordCtrl);
                 _dirty = true;
               });
               Navigator.of(generatorContext).pop();

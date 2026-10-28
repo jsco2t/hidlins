@@ -89,6 +89,55 @@ void main() {
       expect(find.text('Discard changes?'), findsOneWidget);
     });
 
+    testWidgets('protection-only edits prompt before discarding changes', (
+      tester,
+    ) async {
+      final harness = TestHarness()
+        ..session.currentLockState = LockEvent.unlocked
+        ..secrets.revealResultsByField['api-token'] = 'existing-token';
+      addTearDown(harness.dispose);
+      await tester.pumpFeatureWithHarness(
+        Scaffold(
+          body: Builder(
+            builder: (context) => ElevatedButton(
+              onPressed: () => Navigator.of(context).push(
+                MaterialPageRoute<void>(
+                  builder: (_) => EntryEditDialog(detail: _detail()),
+                ),
+              ),
+              child: const Text('Open'),
+            ),
+          ),
+        ),
+        harness,
+      );
+      await tester.pumpAndSettle();
+      await tester.tap(find.text('Open'));
+      await tester.pumpAndSettle();
+
+      final protection = find.byTooltip('Protected');
+      await tester.ensureVisible(protection);
+      await tester.tap(protection);
+      await tester.pumpAndSettle();
+      await tester.pageBack();
+      await tester.pumpAndSettle();
+
+      expect(find.text('Discard changes?'), findsOneWidget);
+      expect(harness.entries.updateEntryCalled, isFalse);
+      await tester.tap(find.text('Cancel'));
+      await tester.pumpAndSettle();
+      expect(find.byType(EntryEditDialog), findsOneWidget);
+      await tester.tap(find.widgetWithText(FilledButton, 'Save'));
+      await tester.pumpAndSettle();
+
+      expect(harness.entries.updateEntryCalled, isTrue);
+      final field = harness.entries.lastEdit!.customFields!.single;
+      expect(field.name, 'api-token');
+      expect(field.value, 'existing-token');
+      expect(field.protected, isFalse);
+      expect(find.byType(EntryEditDialog), findsNothing);
+    });
+
     testWidgets('edit mode loads existing detail', (tester) async {
       final detail = EntryDetail(
         uuid: 'existing',
@@ -506,6 +555,65 @@ void main() {
       );
       expect(harness.entries.updateEntryCalled, isFalse);
     });
+
+    for (final hasCustomFields in [false, true]) {
+      testWidgets(
+        'generated password permits retry after failure; custom fields=$hasCustomFields',
+        (tester) async {
+          final harness = TestHarness()
+            ..session.currentLockState = LockEvent.unlocked
+            ..entries.updateError = Exception('write failed')
+            ..secrets.revealResultsByField['api-token'] = 'existing-token';
+          addTearDown(harness.dispose);
+          await tester.pumpFeatureWithHarness(
+            EntryEditDialog(detail: _detail(fields: hasCustomFields)),
+            harness,
+          );
+          await tester.pumpAndSettle();
+          final passwordField = find.widgetWithText(TextFormField, 'Password');
+          await tester.enterText(passwordField, 'first-attempt');
+          final password = tester
+              .widget<TextFormField>(passwordField)
+              .controller!;
+          final save = find.widgetWithText(FilledButton, 'Save');
+          await tester.tap(save);
+          await tester.pumpAndSettle();
+          expect(harness.entries.lastEdit?.password, 'first-attempt');
+          expect(password.text, isEmpty);
+          expect(tester.widget<FilledButton>(save).onPressed, isNull);
+          harness.entries.updateError = null;
+          harness.entries.updateEntryCalled = false;
+
+          await tester.tap(find.byTooltip('Generate'));
+          await tester.pumpAndSettle();
+          await tester.tap(find.text('Use'));
+          await tester.pumpAndSettle();
+          expect(password.text, harness.generator.passwordResult.value);
+          expect(harness.entries.updateEntryCalled, isFalse);
+          if (hasCustomFields) {
+            expect(tester.widget<FilledButton>(save).onPressed, isNull);
+            final customValue = find.widgetWithText(TextFormField, 'Value');
+            await tester.ensureVisible(customValue);
+            await tester.enterText(customValue, 'replacement-token');
+            await tester.pump();
+          }
+          expect(tester.widget<FilledButton>(save).onPressed, isNotNull);
+          await tester.tap(save);
+          await tester.pumpAndSettle();
+
+          expect(harness.entries.updateEntryCalled, isTrue);
+          expect(
+            harness.entries.lastEdit?.password,
+            harness.generator.passwordResult.value,
+          );
+          if (hasCustomFields) {
+            final field = harness.entries.lastEdit!.customFields!.single;
+            expect(field.value, 'replacement-token');
+            expect(field.protected, isTrue);
+          }
+        },
+      );
+    }
 
     testWidgets('create editor cannot save with failed status or after sync', (
       tester,
