@@ -1,0 +1,10 @@
+{
+  "standard_commands": [
+    "make check-makefile",
+    "make check-rust"
+  ],
+  "final_commands": [
+    "make check-makefile",
+    "make verify"
+  ]
+}
