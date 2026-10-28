@@ -271,5 +271,10 @@
     "placeholders": {
       "backupPath": { "type": "String" }
     }
-  }
+  },
+  "entryEditReloadAfterSync": "The vault changed during sync. Close and reopen this editor before saving.",
+  "entryEditReenterSecrets": "Saving failed. Re-enter secret values before retrying.",
+  "actionRetry": "Retry",
+  "actionRemove": "Remove",
+  "syncOfflineNotice": "Sync is unavailable. You can keep using this vault offline."
 }

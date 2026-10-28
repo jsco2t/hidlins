@@ -43,6 +43,9 @@ void main() {
               ),
             ];
 
+            harness.session.currentLockState = scene == _AlphaScene.lock
+                ? LockEvent.locked
+                : LockEvent.unlocked;
             await expectGolden(
               tester,
               ProviderScope(overrides: harness.overrides, child: _scene(scene)),
@@ -60,7 +63,7 @@ void main() {
     testWidgets('branded first run light compact', (tester) async {
       await expectGolden(
         tester,
-        FirstRunPage(onChoice: (_) {}),
+        Scaffold(body: FirstRunPage(onChoice: (_) {})),
         name: 'first_run_light_compact',
         size: goldenSizeCompact,
       );
@@ -91,7 +94,9 @@ void main() {
       ),
     ]) {
       testWidgets(variant.$1, (tester) async {
-        final harness = TestHarness()..sync.status = variant.$2;
+        final harness = TestHarness()
+          ..session.currentLockState = LockEvent.unlocked
+          ..sync.status = variant.$2;
         addTearDown(harness.dispose);
         await expectGolden(
           tester,

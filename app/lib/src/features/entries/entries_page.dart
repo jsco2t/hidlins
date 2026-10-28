@@ -52,8 +52,9 @@ class _EntriesPageState extends ConsumerState<EntriesPage> {
   @override
   Widget build(BuildContext context) {
     final treeAsync = ref.watch(vaultTreeProvider);
-    final syncInFlight =
-        ref.watch(syncControllerProvider).valueOrNull?.inFlight ?? false;
+    final syncState = ref.watch(syncControllerProvider);
+    final syncInFlight = syncState.valueOrNull?.inFlight ?? false;
+    final mutationsEnabled = syncState.asData != null && !syncInFlight;
     final l10n = AppLocalizations.of(context)!;
     final width = MediaQuery.sizeOf(context).width;
     final isExpanded = width >= HidlinsBreakpoints.medium;
@@ -77,9 +78,9 @@ class _EntriesPageState extends ConsumerState<EntriesPage> {
             onEntrySelected: _selectEntry,
             onCopyUsername: (uuid) => _copyField(uuid, CopyField.username),
             onCopyPassword: (uuid) => _copyField(uuid, CopyField.password),
-            onEditEntry: syncInFlight ? null : _editEntry,
-            onDeleteEntry: syncInFlight ? null : _deleteEntry,
-            onNewEntry: syncInFlight ? null : _newEntry,
+            onEditEntry: mutationsEnabled ? _editEntry : null,
+            onDeleteEntry: mutationsEnabled ? _deleteEntry : null,
+            onNewEntry: mutationsEnabled ? _newEntry : null,
           );
         } else if (selectedEntryUuid != null) {
           content = _CompactDetail(
@@ -92,8 +93,8 @@ class _EntriesPageState extends ConsumerState<EntriesPage> {
             onEntrySelected: _selectEntry,
             onCopyUsername: (uuid) => _copyField(uuid, CopyField.username),
             onCopyPassword: (uuid) => _copyField(uuid, CopyField.password),
-            onEditEntry: syncInFlight ? null : _editEntry,
-            onDeleteEntry: syncInFlight ? null : _deleteEntry,
+            onEditEntry: mutationsEnabled ? _editEntry : null,
+            onDeleteEntry: mutationsEnabled ? _deleteEntry : null,
           );
         }
 
@@ -143,7 +144,9 @@ class _EntriesPageState extends ConsumerState<EntriesPage> {
       ScaffoldMessenger.of(context)
           .showSnackBar(SnackBar(content: Text(l10n.copiedSnackbar(30))));
     } on Exception {
-      // ignore
+      if (!mounted) return;
+      ScaffoldMessenger.of(context)
+          .showSnackBar(SnackBar(content: Text(l10n.errorCopyFailed)));
     }
   }
 
@@ -152,8 +155,13 @@ class _EntriesPageState extends ConsumerState<EntriesPage> {
   }
 
   Future<void> _newEntry([String? groupUuid]) async {
+    if (!_canMutate()) return;
+    final revision = ref
+        .read(syncControllerProvider)
+        .valueOrNull!
+        .terminalRevision;
     final tree = await ref.read(vaultTreeProvider.future);
-    if (!mounted) return;
+    if (!mounted || !_canMutate(revision)) return;
     await Navigator.of(context).push<void>(
       MaterialPageRoute(
         builder: (_) => EntryEditDialog(
@@ -164,14 +172,32 @@ class _EntriesPageState extends ConsumerState<EntriesPage> {
   }
 
   Future<void> _editEntry(String uuid) async {
+    if (!_canMutate()) return;
+    final revision = ref
+        .read(syncControllerProvider)
+        .valueOrNull!
+        .terminalRevision;
     final detail = await ref.read(entryRepositoryProvider).entryDetail(uuid);
-    if (!mounted) return;
-    await Navigator.of(context).push<void>(
+    if (!mounted || !_canMutate(revision)) return;
+    final changed = await Navigator.of(context).push<bool>(
       MaterialPageRoute(builder: (_) => EntryEditDialog(detail: detail)),
     );
+    if (mounted && changed == true) ref.invalidate(entryDetailProvider(uuid));
+  }
+
+  bool _canMutate([int? revision]) {
+    final sync = ref.read(syncControllerProvider).asData?.value;
+    return sync != null &&
+        !sync.inFlight &&
+        (revision == null || revision == sync.terminalRevision);
   }
 
   Future<void> _deleteEntry(String uuid) async {
+    if (!_canMutate()) return;
+    final revision = ref
+        .read(syncControllerProvider)
+        .valueOrNull!
+        .terminalRevision;
     final l10n = AppLocalizations.of(context)!;
     final confirmed = await showDialog<bool>(
       context: context,
@@ -190,7 +216,7 @@ class _EntriesPageState extends ConsumerState<EntriesPage> {
         ],
       ),
     );
-    if (confirmed == true) {
+    if (confirmed == true && mounted && _canMutate(revision)) {
       await ref.read(entryRepositoryProvider).deleteEntry(uuid);
       if (mounted && ref.read(selectedEntryProvider) == uuid) {
         _selectEntry(null);

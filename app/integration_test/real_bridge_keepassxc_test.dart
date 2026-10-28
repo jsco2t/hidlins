@@ -13,6 +13,8 @@ import 'package:app/src/bridge/frb_generated.dart';
 const _master = 'keepassxc-integration-master-marker';
 const _originalSecret = 'keepassxc-original-secret-marker';
 const _externalSecret = 'keepassxc-external-secret-marker';
+const _protectedOriginal = 'keepassxc-protected-original-marker';
+const _protectedUpdated = 'keepassxc-protected-updated-marker';
 
 Future<int> _keepassxcAdd(String vaultPath) async {
   final process = await Process.start('keepassxc-cli', [
@@ -87,9 +89,35 @@ void main() {
                 value: 'flutter-bridge',
                 protected: false,
               ),
+              CustomFieldInputDto(
+                name: 'recovery',
+                value: _protectedOriginal,
+                protected: true,
+              ),
             ],
           ),
         );
+        await session.updateEntry(
+          uuid: original,
+          edit: const EntryEditDto(
+            customFields: [
+              CustomFieldInputDto(
+                name: 'origin',
+                value: 'flutter-bridge',
+                protected: false,
+              ),
+              CustomFieldInputDto(
+                name: 'recovery',
+                value: _protectedUpdated,
+                protected: true,
+              ),
+            ],
+          ),
+        );
+        final historyBeforeExternalSave = await session.entryHistory(
+          uuid: original,
+        );
+        expect(historyBeforeExternalSave, isNotEmpty);
         await session.shutdown();
 
         expect(
@@ -110,6 +138,31 @@ void main() {
         expect(originalDetail.url, 'https://interop.invalid');
         expect(originalDetail.notes, 'must survive a KeePassXC save');
         expect(originalDetail.tags, ['interop']);
+        expect(
+          originalDetail.customFields,
+          unorderedEquals(const [
+            CustomFieldDto(name: 'origin', isProtected: false),
+            CustomFieldDto(name: 'recovery', isProtected: true),
+          ]),
+        );
+        expect(
+          await session.revealField(
+            uuid: original,
+            field: const RevealField.customField('origin'),
+          ),
+          'flutter-bridge',
+        );
+        expect(
+          await session.revealField(
+            uuid: original,
+            field: const RevealField.customField('recovery'),
+          ),
+          _protectedUpdated,
+        );
+        expect(
+          await session.entryHistory(uuid: original),
+          historyBeforeExternalSave,
+        );
         expect(
           await session.revealField(
             uuid: original,

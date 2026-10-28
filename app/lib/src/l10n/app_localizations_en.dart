@@ -714,4 +714,22 @@ class AppLocalizationsEn extends AppLocalizations {
   String syncConflictMessage(String backupPath) {
     return 'Both sides were preserved. Review the backup at $backupPath before retrying.';
   }
+
+  @override
+  String get entryEditReloadAfterSync =>
+      'The vault changed during sync. Close and reopen this editor before saving.';
+
+  @override
+  String get entryEditReenterSecrets =>
+      'Saving failed. Re-enter secret values before retrying.';
+
+  @override
+  String get actionRetry => 'Retry';
+
+  @override
+  String get actionRemove => 'Remove';
+
+  @override
+  String get syncOfflineNotice =>
+      'Sync is unavailable. You can keep using this vault offline.';
 }

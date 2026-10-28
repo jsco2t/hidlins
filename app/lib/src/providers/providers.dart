@@ -36,6 +36,9 @@ final entryDetailProvider = FutureProvider.family<EntryDetail, String>((
   uuid,
 ) {
   final repo = ref.watch(entryRepositoryProvider);
+  ref.listen(syncEventsProvider, (_, next) {
+    if (next.valueOrNull is SyncEvent_Done) ref.invalidateSelf();
+  });
   return repo.entryDetail(uuid);
 });
 

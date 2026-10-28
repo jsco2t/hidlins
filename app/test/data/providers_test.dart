@@ -11,6 +11,42 @@ import 'package:app/src/providers/providers.dart';
 import '../fakes/fake_repositories.dart';
 
 void main() {
+  test('entry details refetch after sync completes', () async {
+    final entries = FakeEntryRepository();
+    final sync = FakeSyncRepository();
+    final container = ProviderContainer(
+      overrides: [
+        entryRepositoryProvider.overrideWithValue(entries),
+        syncRepositoryProvider.overrideWithValue(sync),
+      ],
+    );
+    addTearDown(container.dispose);
+    addTearDown(sync.dispose);
+    final sub = container.listen(entryDetailProvider('entry-1'), (_, _) {});
+    addTearDown(sub.close);
+    await container.read(entryDetailProvider('entry-1').future);
+    entries.details['entry-1'] = const EntryDetail(
+      uuid: 'entry-1',
+      title: 'Remote revision',
+      username: '',
+      hasPassword: false,
+      url: '',
+      notes: '',
+      kind: EntryKindDto.secureNote,
+      tags: [],
+      customFields: [],
+      attachments: [],
+    );
+    sync.syncController.add(
+      const SyncEvent.done(bridge.SyncOutcomeDto.pushed(isFirstSeed: false)),
+    );
+    await Future<void>.delayed(Duration.zero);
+    expect(
+      (await container.read(entryDetailProvider('entry-1').future)).title,
+      'Remote revision',
+    );
+  });
+
   group('vaultTreeProvider', () {
     test('refetches after sync-done event', () async {
       final entryRepo = FakeEntryRepository();

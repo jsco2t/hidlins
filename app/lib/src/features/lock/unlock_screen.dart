@@ -47,6 +47,10 @@ class _UnlockScreenState extends ConsumerState<UnlockScreen> {
     final l10n = AppLocalizations.of(context)!;
     final password = _passwordController.text;
     if (password.isEmpty || _selectedVault == null) return;
+    final name = _selectedVault!;
+    final repo = ref.read(sessionRepositoryProvider);
+    final keyfiles = ref.read(keyfileAccessCapabilityProvider);
+    _passwordController.clear();
 
     setState(() {
       _state = _UnlockState.unlocking;
@@ -58,18 +62,16 @@ class _UnlockScreenState extends ConsumerState<UnlockScreen> {
     final reference = _keyfileReference;
     try {
       if (reference != null) {
-        final resolved = await ref
-            .read(keyfileAccessCapabilityProvider)
-            .resolve(reference);
+        final resolved = await keyfiles.resolve(reference);
+        if (!mounted) return;
         if (resolved case PlatformSuccess<String>(:final value)) {
           keyfile = KeyfileRef.path(value);
         } else {
           throw const _KeyfileAccessException();
         }
       }
-      final repo = ref.read(sessionRepositoryProvider);
-      await repo.unlock(_selectedVault!, password, keyfile: keyfile);
-      _passwordController.clear();
+      await repo.unlock(name, password, keyfile: keyfile);
+      if (!mounted) return;
       // Local use is available as soon as unlock returns. Discovery and the
       // once-per-process automatic attempt continue independently; offline or
       // permission failures are delivered through the sync event stream and
@@ -97,7 +99,7 @@ class _UnlockScreenState extends ConsumerState<UnlockScreen> {
       });
     } finally {
       if (reference != null) {
-        await ref.read(keyfileAccessCapabilityProvider).release(reference);
+        await keyfiles.release(reference);
       }
     }
   }

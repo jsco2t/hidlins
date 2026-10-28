@@ -18,8 +18,11 @@ void main() {
     testWidgets('pairs with bilateral SAS and exposes no server on mobile', (
       tester,
     ) async {
-      final harness = await tester.pumpFeature(
+      final harness = TestHarness()
+        ..session.currentLockState = LockEvent.unlocked;
+      await tester.pumpFeatureWithHarness(
         const SyncPage(desktopOverride: false),
+        harness,
       );
       addTearDown(harness.dispose);
       await tester.pumpAndSettle();
@@ -47,8 +50,11 @@ void main() {
     testWidgets('desktop server controls are explicit and pairing is bounded', (
       tester,
     ) async {
-      final harness = await tester.pumpFeature(
+      final harness = TestHarness()
+        ..session.currentLockState = LockEvent.unlocked;
+      await tester.pumpFeatureWithHarness(
         const SyncPage(desktopOverride: true),
+        harness,
       );
       addTearDown(harness.dispose);
       await tester.pumpAndSettle();
@@ -73,7 +79,8 @@ void main() {
     testWidgets('permission denial keeps mobile offline and links settings', (
       tester,
     ) async {
-      final harness = TestHarness();
+      final harness = TestHarness()
+        ..session.currentLockState = LockEvent.unlocked;
       harness.sync.discoverError = const PlatformOperationFailure(
         capability: 'local network',
         state: 'denied',
@@ -101,7 +108,8 @@ void main() {
     });
 
     testWidgets('peer rename and revocation remain reachable', (tester) async {
-      final harness = TestHarness();
+      final harness = TestHarness()
+        ..session.currentLockState = LockEvent.unlocked;
       harness.sync.status = const SyncStatusDto(
         configured: true,
         inFlight: false,
@@ -140,7 +148,8 @@ void main() {
       tester.view.devicePixelRatio = 1;
       addTearDown(tester.view.resetDevicePixelRatio);
       addTearDown(tester.view.resetPhysicalSize);
-      final harness = TestHarness();
+      final harness = TestHarness()
+        ..session.currentLockState = LockEvent.unlocked;
       harness.sync.status = const SyncStatusDto(
         configured: true,
         inFlight: false,
@@ -176,7 +185,8 @@ void main() {
     testWidgets('renders progress and every successful outcome', (
       tester,
     ) async {
-      final harness = TestHarness();
+      final harness = TestHarness()
+        ..session.currentLockState = LockEvent.unlocked;
       harness.sync.status = const SyncStatusDto(
         configured: true,
         inFlight: false,
@@ -231,7 +241,8 @@ void main() {
       addTearDown(tester.view.resetPhysicalSize);
       addTearDown(tester.view.resetDevicePixelRatio);
 
-      final harness = TestHarness();
+      final harness = TestHarness()
+        ..session.currentLockState = LockEvent.unlocked;
       harness.sync.status = const SyncStatusDto(
         configured: true,
         inFlight: true,
@@ -261,7 +272,8 @@ void main() {
     testWidgets('shows unresolvable conflict in a non-dismissible dialog', (
       tester,
     ) async {
-      final harness = TestHarness();
+      final harness = TestHarness()
+        ..session.currentLockState = LockEvent.unlocked;
       harness.sync.status = const SyncStatusDto(
         configured: true,
         inFlight: false,
@@ -291,7 +303,8 @@ void main() {
     testWidgets('renders reachable, authentication, and generic failures', (
       tester,
     ) async {
-      final harness = TestHarness();
+      final harness = TestHarness()
+        ..session.currentLockState = LockEvent.unlocked;
       harness.sync.status = const SyncStatusDto(
         configured: true,
         inFlight: false,

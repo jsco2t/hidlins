@@ -13,6 +13,7 @@ import 'features/search/search_page.dart';
 import 'features/settings/settings_page.dart';
 import 'features/sync/sync_controller.dart';
 import 'features/sync/sync_page.dart';
+import 'features/sync/sync_event_listener.dart';
 import 'providers/lock_state_provider.dart';
 import 'providers/providers.dart';
 import 'ui/adaptive_scaffold.dart';
@@ -174,25 +175,29 @@ class _ShellWrapper extends ConsumerWidget {
         onCopyPassword: () => unawaited(_copySelectedPassword(context, ref)),
         onGenerator: () => context.go('/generator'),
         onDismiss: () => unawaited(Navigator.of(context).maybePop()),
-        child: AdaptiveScaffold(
-          selectedIndex: index,
-          onDestinationSelected: (i) {
-            final path = _locationForIndex(i);
-            context.go(path);
-          },
-          body: child,
-          initialListPaneWidth: prefs?.listPaneWidth,
-          onListPaneWidthChanged: (width) {
-            unawaited(ref.read(prefsProvider.notifier).setListPaneWidth(width));
-          },
+        child: SyncEventListener(
+          child: AdaptiveScaffold(
+            selectedIndex: index,
+            onDestinationSelected: (i) {
+              final path = _locationForIndex(i);
+              context.go(path);
+            },
+            body: child,
+            initialListPaneWidth: prefs?.listPaneWidth,
+            onListPaneWidthChanged: (width) {
+              unawaited(
+                ref.read(prefsProvider.notifier).setListPaneWidth(width),
+              );
+            },
+          ),
         ),
       ),
     );
   }
 
   Future<void> _newEntry(BuildContext context, WidgetRef ref) async {
-    final syncState = await ref.read(syncControllerProvider.future);
-    if (syncState.inFlight) {
+    final syncState = ref.read(syncControllerProvider).asData?.value;
+    if (syncState == null || syncState.inFlight) {
       if (context.mounted) {
         ScaffoldMessenger.of(context).showSnackBar(
           SnackBar(
@@ -204,6 +209,12 @@ class _ShellWrapper extends ConsumerWidget {
     }
     final tree = await ref.read(vaultTreeProvider.future);
     if (!context.mounted) return;
+    final current = ref.read(syncControllerProvider).asData?.value;
+    if (current == null ||
+        current.inFlight ||
+        current.terminalRevision != syncState.terminalRevision) {
+      return;
+    }
     await Navigator.of(context).push<void>(
       MaterialPageRoute(
         builder: (_) => EntryEditDialog(groupUuid: tree.root.uuid),

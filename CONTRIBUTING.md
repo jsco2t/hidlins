@@ -17,6 +17,17 @@ Authoritative source documents (read these for scope):
 
 ## Workspace layout
 
+For Linux Flutter development on Debian/Ubuntu, run `make app-linux-toolchain`
+to install native compiler, CMake, Ninja and GTK3 development prerequisites.
+This explicit setup target uses apt and may require sudo/network access.
+`make app-linux-prereqs` checks the tools without installing anything; CI uses
+the same setup target. Rust and Flutter package builds remain offline.
+
+Use `make app-test APP_TEST_FLAGS='test/features/entry_edit_test.dart'` for a
+focused test run; the default `make app-test` still runs the complete suite.
+Regenerate ARB localizations with `make app-l10n`. Golden updates require Linux
+and explicit `HIDLINS_UPDATE_GOLDENS=1`; inspect every changed raster.
+
 ```
 hidlins/
 ├── Cargo.toml                # workspace manifest, resolver = "2"
@@ -369,10 +380,18 @@ both caches.
 every build; pub compares `hosted-hashes/` against `pubspec.lock` and **never
 re-hashes the extracted tree**, so a modified file inside a vendored package
 would execute with every pub gate green. The pub equivalent is project-owned:
-`tools/dev/pub-vendor.SHA256SUMS` records every file in both caches' `hosted/`
+`tools/dev/pub-vendor.SHA256SUMS` records every reviewed Git-tracked file in both caches' `hosted/`
 + `hosted-hashes/` trees (written by `make pub-vendor`, via
 `tools/dev/pub-vendor-hash.sh generate`), and `make pub-vendor-check` verifies
-it by regenerate-and-diff, so modification, addition, and removal all fail.
+it by regenerate-and-diff, so modification and removal fail. A separate Git
+query rejects untracked, nonignored additions. Ignored package-local execution
+artifacts (such as untracked .dart_tool/ files) are excluded; tracked files
+remain protected even if an ignore rule matches them. Symlinks are always
+rejected, including inside ignored directories. Generation includes intentional
+new files and excludes removed files, but verification requires staging those
+input additions/removals as part of the reviewed dependency change.
+The make target pub-vendor-hash-test exercises these rules in disposable Git
+fixtures and runs automatically as a prerequisite of pub-vendor-check.
 Committing `hosted-hashes/` (which we do — excluding it made every fresh clone
 report a content-hash mismatch for every package while still exiting 0)
 additionally preserves pub's own lockfile/cache consistency check. Note also

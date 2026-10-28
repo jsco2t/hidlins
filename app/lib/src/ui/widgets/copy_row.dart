@@ -65,7 +65,7 @@ class _CopyRowState extends State<CopyRow> {
               ignoring: !showCopyAction,
               child: AnimatedOpacity(
                 opacity: showCopyAction ? 1.0 : 0.0,
-                duration: const Duration(milliseconds: 150),
+                duration: HidlinsMotion.resolve(context, HidlinsMotion.fast),
                 child: Semantics(
                   label: widget.copyTooltip,
                   button: true,

@@ -24,6 +24,7 @@ SHELL          := bash
 CARGO          := cargo
 CARGO_FLAGS    := --workspace --offline --locked
 CLIPPY_FLAGS   := --workspace --all-targets --offline --locked -- -D warnings
+APP_TEST_FLAGS ?=
 
 # Every Rust compilation launched through make inherits fatal warnings. Use
 # `override` so a caller-provided RUSTFLAGS/RUSTDOCFLAGS value is preserved and
@@ -50,7 +51,7 @@ UNAME_S        := $(shell uname -s)
         vendor vendor-patches deny audit doc clean completions completions-check run-tui \
         snapshots-check \
         api-gen api-gen-check app-build-linux app-build-macos app-brand-generate app-brand-check app-analyze app-fmt app-fmt-check \
-        app-test app-test-performance app-test-integration app-test-integration-performance app-goldens-update app-test-bridge app-deps app-run boundary-check pub-vendor pub-vendor-check pub-production-check \
+        app-test app-test-performance app-test-integration app-test-integration-performance app-goldens-update app-test-bridge app-deps app-run boundary-check pub-vendor pub-vendor-check pub-vendor-hash-test pub-production-check \
         flutter-version-check telemetry-check app-check check-macos test-merge-properties
 
 help:  ## Show this help.
@@ -67,6 +68,17 @@ toolchain:  ## Install all dev tooling (Rust toolchain, keepassxc-cli, cargo-den
 	# Invoked directly (not via `sh`) so its bash shebang is honoured —
 	# the script uses `set -o pipefail`, which POSIX `sh`/dash lacks.
 	tools/dev/install-toolchain.sh
+
+app-linux-toolchain:  ## Install native Flutter build prerequisites on Debian/Ubuntu (explicit setup; needs network).
+	bash tools/dev/install-linux-app-toolchain.sh --install
+
+app-linux-prereqs:  ## Check Linux native build prerequisites without installing anything.
+	bash tools/dev/install-linux-app-toolchain.sh --check
+
+app-l10n: app-deps  ## Regenerate Dart localizations from the app's ARB source.
+	cd app && flutter gen-l10n
+
+.PHONY: app-linux-toolchain app-linux-prereqs app-l10n
 
 fuzz-toolchain:  ## Install exact cargo-fuzz and pinned nightly (development/testing only).
 	tools/dev/install-fuzz-toolchain.sh
@@ -255,16 +267,17 @@ app-test: app-deps  ## Run Flutter widget/unit tests.
 		echo "error: no Flutter tests found (app/test/*_test.dart). Add at least a probe test." >&2; \
 		exit 1; \
 	fi
-	cd app && flutter test --no-pub
+	cd app && flutter test --no-pub $(APP_TEST_FLAGS)
 
 app-test-performance: app-deps  ## Run deterministic 5,000-entry Flutter list/search sanity checks.
 	cd app && flutter test --no-pub test/performance/desktop_performance_test.dart
 
 app-goldens-update: app-deps  ## Regenerate Flutter golden files (requires HIDLINS_UPDATE_GOLDENS=1).
+	@if [ "$(UNAME_S)" != "Linux" ]; then echo "error: regenerate committed goldens on Linux." >&2; exit 1; fi
 	@if [ "$${HIDLINS_UPDATE_GOLDENS}" != "1" ]; then \
 		echo "error: set HIDLINS_UPDATE_GOLDENS=1 to confirm golden regeneration." >&2; \
 		echo "       Review the diff before committing." >&2; exit 1; fi
-	cd app && flutter test --update-goldens --no-pub
+	cd app && flutter test --update-goldens --no-pub $(APP_TEST_FLAGS)
 
 # The cdylib the smoke test loads. `flutter test` runs on the host VM, so
 # this is always the host target dir; only the extension is platform-bound.
@@ -327,7 +340,10 @@ pub-vendor:  ## Re-vendor pub dependencies into app/vendor-pub/. REQUIRES NETWOR
 	@echo "Vendored pub cache updated. Commit app/vendor-pub/ (incl. hosted-hashes/),"
 	@echo "app/pubspec.lock, and tools/dev/pub-vendor.SHA256SUMS."
 
-pub-vendor-check:  ## Verify both vendored pub caches are up to date and unmodified (CI gate).
+pub-vendor-hash-test:  ## Exercise pub integrity checks with isolated Git fixtures.
+	python3 -B tools/dev/test_pub_vendor_hash.py
+
+pub-vendor-check: pub-vendor-hash-test  ## Verify both vendored pub caches are up to date and unmodified (CI gate).
 	@# Byte-level integrity first: every file in both committed pub caches
 	@# must match the manifest `make pub-vendor` wrote. pub's own
 	@# content-hash check only compares the lockfile against the *archive*

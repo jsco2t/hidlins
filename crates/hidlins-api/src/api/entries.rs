@@ -78,8 +78,11 @@ impl AppSession {
     pub fn create_entry(
         &self,
         group: String,
-        mut draft: EntryDraftDto,
+        draft: EntryDraftDto,
     ) -> Result<String, HidlinsApiError> {
+        // Own and wipe the complete input on every exit, including validation
+        // and save failures before the successful persistence path.
+        let draft = zeroize::Zeroizing::new(draft);
         let group_uuid = parse_uuid(&group)?;
 
         let builder = match draft.kind {
@@ -126,17 +129,13 @@ impl AppSession {
         let new_uuid = vault.add_entry(group_uuid, entry_draft)?;
         vault.save()?;
 
-        zeroize::Zeroize::zeroize(&mut draft);
         drop(state);
 
         Ok(new_uuid.hyphenated().to_string())
     }
 
-    pub fn update_entry(
-        &self,
-        uuid: String,
-        mut edit: EntryEditDto,
-    ) -> Result<(), HidlinsApiError> {
+    pub fn update_entry(&self, uuid: String, edit: EntryEditDto) -> Result<(), HidlinsApiError> {
+        let edit = zeroize::Zeroizing::new(edit);
         let id = parse_uuid(&uuid)?;
 
         let mut state = self.lock_state();
@@ -215,7 +214,6 @@ impl AppSession {
 
         vault.save()?;
 
-        zeroize::Zeroize::zeroize(&mut edit);
         drop(state);
         self.invalidate_totp(&id);
         Ok(())

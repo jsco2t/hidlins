@@ -8,6 +8,20 @@ import '../../helpers/test_helpers.dart';
 
 void main() {
   group('CopyRow', () {
+    testWidgets('copy fade respects reduced motion', (tester) async {
+      await tester.pumpApp(
+        MediaQuery(
+          data: const MediaQueryData(disableAnimations: true),
+          child: CopyRow(label: 'Username', value: 'alice', onCopy: () {}),
+        ),
+        platform: TargetPlatform.linux,
+      );
+      expect(
+        tester.widget<AnimatedOpacity>(find.byType(AnimatedOpacity)).duration,
+        Duration.zero,
+      );
+    });
+
     testWidgets('displays label and value', (tester) async {
       await tester.pumpApp(
         CopyRow(label: 'Username', value: 'alice', onCopy: () {}),
