@@ -701,7 +701,9 @@ ncsa-boundary-precheck:
 
 ncsa-boundary-check: ncsa-boundary-precheck  ## Prove NCSA/libFuzzer remains development/test-only and outside every application artifact.
 	python3 tools/dev/ncsa-boundary-check.py self-test
-	$(CARGO) deny --manifest-path fuzz/Cargo.toml --all-features --offline --locked check licenses --config fuzz/deny.toml
+	# Select the isolated workspace and policy through the working directory;
+	# cargo-deny versions differ on where they accept an explicit --config.
+	cd fuzz && $(CARGO) deny --all-features --offline --locked check licenses
 
 s3-removal-check:  ## Reject reintroduction of the retired cloud-object sync surface.
 	python3 tools/dev/s3-removal-check.py
