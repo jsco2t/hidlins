@@ -80,6 +80,17 @@ app-l10n: app-deps  ## Regenerate Dart localizations from the app's ARB source.
 
 .PHONY: app-linux-toolchain app-linux-prereqs app-l10n
 
+.PHONY: ci-flutter-version android-ndk-toolchain ci-toolchain-check
+
+ci-flutter-version:  ## Export the exact repository Flutter pin to GitHub step outputs.
+	python3 tools/dev/ci-toolchain.py flutter-version
+
+android-ndk-toolchain:  ## Install the exact Android NDK from the artifact contract (requires network).
+	python3 tools/dev/ci-toolchain.py android-ndk
+
+ci-toolchain-check:  ## Test CI SDK selection and NDK version checks with disposable fixtures.
+	python3 -B tools/dev/test_ci_toolchains.py
+
 fuzz-toolchain:  ## Install exact cargo-fuzz and pinned nightly (development/testing only).
 	tools/dev/install-fuzz-toolchain.sh
 
@@ -583,7 +594,7 @@ lint-fix:  ## Apply clippy auto-fixes where safe.
 # contributors without the Flutter/frb toolchain can still build Rust-only
 # changes"). Note api-gen-check REWRITES the generated files as a side effect,
 # which is another reason it does not belong in the quick loop.
-check: build-policy-check fmt-check lint build test check-macos check-feature-gates  ## warning policy + fmt-check + lint + build + test + cross/feature-gate checks (Rust-only; no Flutter needed).
+check: ci-toolchain-check build-policy-check fmt-check lint build test check-macos check-feature-gates  ## warning policy + fmt-check + lint + build + test + cross/feature-gate checks (Rust-only; no Flutter needed).
 
 # pub-vendor-check runs right after app-deps, BEFORE anything executes
 # vendored Dart (flutter test, build_runner): tampered cache bytes should

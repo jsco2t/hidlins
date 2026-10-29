@@ -32,7 +32,7 @@ readonly X86_64_CC="$NDK_BIN/x86_64-linux-android${API_LEVEL}-clang"
 
 [[ -x "$AARCH64_CC" && -x "$X86_64_CC" && -x "$NDK_BIN/llvm-ar" ]] || die \
   "NDK $NDK_VERSION is missing under $NDK_ROOT"
-grep -q "Pkg.BaseRevision = $NDK_VERSION" "$NDK_ROOT/source.properties" || die \
+grep -Eq "^Pkg[.]Revision[[:space:]]*=[[:space:]]*${NDK_VERSION//./\\.}[[:space:]]*$" "$NDK_ROOT/source.properties" || die \
   "NDK source.properties does not match required $NDK_VERSION"
 
 export CARGO_TARGET_AARCH64_LINUX_ANDROID_LINKER="$AARCH64_CC"

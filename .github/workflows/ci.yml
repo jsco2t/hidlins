@@ -68,7 +68,7 @@ jobs:
         run: make fuzz-toolchain
 
       - name: Format check
-        run: make fmt-check
+        run: make ci-toolchain-check fmt-check
 
       - name: Lint
         run: make lint
@@ -170,14 +170,18 @@ jobs:
       - name: Install pinned toolchain
         run: rustup show
 
+      - name: Read pinned Flutter version
+        id: flutter-version
+        run: make ci-flutter-version
+
       - name: Install Flutter SDK
         uses: subosito/flutter-action@1a449444c387b1966244ae4d4f8c696479add0b2 # v2.23.0
         with:
-          flutter-version-file: .flutter-version
+          flutter-version: ${{ steps.flutter-version.outputs.version }}
           channel: stable
 
       - name: Install exact Flutter NDK
-        run: sdkmanager "ndk;28.2.13676358"
+        run: make android-ndk-toolchain
 
       - name: Disable telemetry (NFR-013)
         run: tools/dev/telemetry-check.sh --write
@@ -205,6 +209,10 @@ jobs:
       - name: Install pinned toolchain
         run: rustup show
 
+      - name: Read pinned Flutter version
+        id: flutter-version
+        run: make ci-flutter-version
+
       - name: Install Flutter SDK
         # Pinned to a full commit SHA: this is a THIRD-PARTY action running in
         # a job with the repository checked out, and a mutable tag would let
@@ -215,7 +223,7 @@ jobs:
         # actions/checkout stay tag-pinned by existing convention.)
         uses: subosito/flutter-action@1a449444c387b1966244ae4d4f8c696479add0b2 # v2.23.0
         with:
-          flutter-version-file: .flutter-version
+          flutter-version: ${{ steps.flutter-version.outputs.version }}
           channel: stable
 
       - name: Install build dependencies
@@ -301,15 +309,22 @@ jobs:
       - name: Install pinned toolchain
         run: rustup show
 
+      - name: Read pinned Flutter version
+        id: flutter-version
+        run: make ci-flutter-version
+
       - name: Install Flutter SDK
         uses: subosito/flutter-action@1a449444c387b1966244ae4d4f8c696479add0b2 # v2.23.0
         with:
-          flutter-version-file: .flutter-version
+          flutter-version: ${{ steps.flutter-version.outputs.version }}
           channel: stable
 
       - name: Enable Linux emulator acceleration
         if: runner.os == 'Linux'
         run: sudo chmod 0666 /dev/kvm
+
+      - name: Install exact Flutter NDK
+        run: make android-ndk-toolchain
 
       - name: Disable telemetry (NFR-013)
         run: tools/dev/telemetry-check.sh --write
