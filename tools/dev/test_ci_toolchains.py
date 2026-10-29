@@ -26,7 +26,9 @@ class CiToolchainTests(unittest.TestCase):
     def setUp(self):
         temporary = tempfile.TemporaryDirectory(prefix='hidlins-ci-toolchains-')
         self.addCleanup(temporary.cleanup)
-        self.temp = Path(temporary.name)
+        # macOS temporary directories can be reached through /var symlinks;
+        # compare the same canonical SDK paths that provisioning exports.
+        self.temp = Path(temporary.name).resolve()
         self.bin = self.temp / 'bin'
         self.bin.mkdir()
         for name in ('make', 'python3', 'bash', 'uname', 'dirname', 'grep'):
