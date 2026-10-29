@@ -405,9 +405,7 @@ fn convert_event(event: ServiceEvent) -> Result<Option<DiscoveryEvent>, Discover
 
 #[cfg(test)]
 mod tests {
-    use super::{
-        allowed_interface_endpoints, service_info, DesktopAdvertiser, DesktopBrowser, ServiceDaemon,
-    };
+    use super::{service_info, DesktopAdvertiser, DesktopBrowser, ServiceDaemon};
     use crate::{
         address::LocalEndpoint,
         discovery::{
@@ -435,24 +433,10 @@ mod tests {
     #[test]
     fn real_desktop_publisher_and_browser_interoperate() {
         // LNS-DISC-006: exercise the actual mdns-sd daemon boundary, not only
-        // record construction and simulated discovery events.
-        let endpoint = allowed_interface_endpoints(48_173)
-            .expect("enumerate an allowed desktop interface")
-            .into_iter()
-            .next()
-            .expect("at least one allowed desktop interface");
-        assert_advertisement_resolves(endpoint);
-    }
-
-    #[test]
-    fn desktop_browser_resolves_loopback_advertisement() {
-        // Hosted runners can have no private LAN address, leaving loopback
-        // as the only policy-approved route. Exercise that route explicitly.
-        let endpoint = LocalEndpoint::new("127.0.0.1".parse().unwrap(), 48_174, 0).unwrap();
-        assert_advertisement_resolves(endpoint);
-    }
-
-    fn assert_advertisement_resolves(endpoint: LocalEndpoint) {
+        // record construction and simulated discovery events. A runner's
+        // private LAN interface need not support multicast; use loopback for
+        // this real packet exchange so it is independent of the host's LAN.
+        let endpoint = LocalEndpoint::new("127.0.0.1".parse().unwrap(), 48_173, 0).unwrap();
         // Avoid competing with system Bonjour/mDNSResponder on port 5353.
         // Both real daemons still exchange multicast DNS packets through the
         // production adapter paths; only their transport port is isolated.

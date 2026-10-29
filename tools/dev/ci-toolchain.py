@@ -38,6 +38,10 @@ def flutter_bootstrap():
     subprocess.run(['bash', str(ROOT / 'tools/dev/telemetry-check.sh'), '--write'],
                    env=environment, check=True)
     subprocess.run(['flutter', '--version'], env=environment, check=True)
+    # Binary SDK archives can have a valid tool snapshot but package paths
+    # from their build machine. This validates/rebuilds PubDependencies before
+    # an app command can lazily repair them in the application's cache.
+    subprocess.run(['flutter', 'precache', '--universal'], env=environment, check=True)
 
 
 def android_ndk():

@@ -82,12 +82,16 @@ class CiToolchainTests(unittest.TestCase):
     def test_flutter_sdk_bootstrap_is_outside_reviewed_pub_cache(self):
         self.env['HOME'] = str(self.temp / 'home')
         self.executable(self.bin / 'flutter',
-                        'printf "%s\\n" "$PUB_CACHE" >> "$TEST_TOOL_LOG"\n')
+                        'printf "%s|%s\\n" "$PUB_CACHE" "$*" >> "$TEST_TOOL_LOG"\n')
         result = self.run_command(['make', '--no-print-directory', 'flutter-sdk-prepare'])
         self.assertEqual(result.returncode, 0, result.stdout + result.stderr)
-        caches = Path(self.env['TEST_TOOL_LOG']).read_text().splitlines()
-        self.assertEqual(len(caches), 2)  # Telemetry setup is the first SDK invocation.
-        self.assertEqual(caches[0], caches[1])
+        calls = [line.split('|', 1) for line in
+                 Path(self.env['TEST_TOOL_LOG']).read_text().splitlines()]
+        # --version alone never validates the SDK's shipped package paths.
+        # Its lazy PubDependencies cache update must precede app commands too.
+        self.assertIn('precache --universal', [args for _, args in calls])
+        caches = [cache for cache, _ in calls]
+        self.assertEqual(len(set(caches)), 1)
         cache = Path(caches[0]).resolve()
         self.assertFalse(cache.is_relative_to(ROOT))
         self.assertEqual(cache.name, (ROOT / '.flutter-version').read_text().strip())
@@ -103,6 +107,7 @@ class CiToolchainTests(unittest.TestCase):
             ('org.jetbrains.kotlin', 'kotlin-gradle-plugins-bom', '2.2.20', 'module'),
             ('org.jetbrains.kotlin', 'kotlin-gradle-plugins-bom', '2.2.20', 'pom'),
             ('org.jetbrains.kotlinx', 'kotlinx-coroutines-bom', '1.8.0', 'pom'),
+            ('com.google.guava', 'guava-parent', '33.3.1-jre', 'pom'),
         )
         for group, name, version, extension in artifacts:
             with self.subTest(artifact=(name, version, extension)):
