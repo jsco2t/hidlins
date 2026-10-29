@@ -10,6 +10,7 @@ import shutil
 import subprocess
 import tempfile
 import unittest
+import xml.etree.ElementTree as ET
 
 ROOT = Path(__file__).resolve().parents[2]
 WORKFLOW = ROOT / '.github/workflows/ci.yml'
@@ -31,7 +32,7 @@ class CiToolchainTests(unittest.TestCase):
         self.temp = Path(temporary.name).resolve()
         self.bin = self.temp / 'bin'
         self.bin.mkdir()
-        for name in ('make', 'python3', 'bash', 'uname', 'dirname', 'grep'):
+        for name in ('make', 'python3', 'bash', 'uname', 'dirname', 'grep', 'mkdir', 'sed', 'rm'):
             (self.bin / name).symlink_to(shutil.which(name))
         self.sdk = self.temp / 'Android SDK'
         self.ndk = self.sdk / 'ndk' / CONTRACT['ndk_version']
@@ -67,6 +68,50 @@ class CiToolchainTests(unittest.TestCase):
         self.assertEqual(result.returncode, 0, result.stdout + result.stderr)
         self.assertEqual(output.read_text(), 'previous=value\nversion=' +
                          (ROOT / '.flutter-version').read_text().strip() + '\n')
+
+    def test_every_flutter_job_bootstraps_sdk_tools_before_app_commands(self):
+        for name in ('flutter-app', 'android-rust', 'android-emulator'):
+            with self.subTest(job=name):
+                job = job_text(name)
+                self.assertIn('run: make flutter-sdk-prepare', job)
+                self.assertLess(job.index('uses: subosito/flutter-action@'),
+                                job.index('run: make flutter-sdk-prepare'))
+                self.assertLess(job.index('run: make flutter-sdk-prepare'),
+                                job.index('- name: Disable telemetry'))
+
+    def test_flutter_sdk_bootstrap_is_outside_reviewed_pub_cache(self):
+        self.env['HOME'] = str(self.temp / 'home')
+        self.executable(self.bin / 'flutter',
+                        'printf "%s\\n" "$PUB_CACHE" >> "$TEST_TOOL_LOG"\n')
+        result = self.run_command(['make', '--no-print-directory', 'flutter-sdk-prepare'])
+        self.assertEqual(result.returncode, 0, result.stdout + result.stderr)
+        caches = Path(self.env['TEST_TOOL_LOG']).read_text().splitlines()
+        self.assertEqual(len(caches), 2)  # Telemetry setup is the first SDK invocation.
+        self.assertEqual(caches[0], caches[1])
+        cache = Path(caches[0]).resolve()
+        self.assertFalse(cache.is_relative_to(ROOT))
+        self.assertEqual(cache.name, (ROOT / '.flutter-version').read_text().strip())
+
+    def test_pinned_flutter_gradle_metadata_is_strictly_verified(self):
+        metadata = ET.parse(ROOT / 'app/android/gradle/verification-metadata.xml')
+        ns = {'v': 'https://schema.gradle.org/dependency-verification'}
+        self.assertEqual(metadata.findtext('v:configuration/v:verify-metadata', namespaces=ns),
+                         'true')
+        # Flutter 3.47.2's included Gradle build resolves these BOMs before
+        # selecting the plugin classpath. Keep its metadata inside verification.
+        artifacts = (
+            ('org.jetbrains.kotlin', 'kotlin-gradle-plugins-bom', '2.2.20', 'module'),
+            ('org.jetbrains.kotlin', 'kotlin-gradle-plugins-bom', '2.2.20', 'pom'),
+            ('org.jetbrains.kotlinx', 'kotlinx-coroutines-bom', '1.8.0', 'pom'),
+        )
+        for group, name, version, extension in artifacts:
+            with self.subTest(artifact=(name, version, extension)):
+                path = (f'v:components/v:component[@group="{group}"]'
+                        f'[@name="{name}"][@version="{version}"]/'
+                        f'v:artifact[@name="{name}-{version}.{extension}"]/v:sha256')
+                checksum = metadata.find(path, ns)
+                self.assertIsNotNone(checksum, f'missing verified metadata: {path}')
+                self.assertRegex(checksum.get('value', ''), r'^[0-9a-f]{64}$')
 
     def test_ndk_ci_setup_finds_sdkmanager_outside_path_and_pins_build_root(self):
         self.executable(self.sdk / 'cmdline-tools/latest/bin/sdkmanager',

@@ -80,10 +80,13 @@ app-l10n: app-deps  ## Regenerate Dart localizations from the app's ARB source.
 
 .PHONY: app-linux-toolchain app-linux-prereqs app-l10n
 
-.PHONY: ci-flutter-version android-ndk-toolchain ci-toolchain-check
+.PHONY: ci-flutter-version flutter-sdk-prepare android-ndk-toolchain ci-toolchain-check
 
 ci-flutter-version:  ## Export the exact repository Flutter pin to GitHub step outputs.
 	python3 tools/dev/ci-toolchain.py flutter-version
+
+flutter-sdk-prepare:  ## Bootstrap Flutter SDK tools outside the reviewed app cache (requires network).
+	python3 tools/dev/ci-toolchain.py flutter-bootstrap
 
 android-ndk-toolchain:  ## Install the exact Android NDK from the artifact contract (requires network).
 	python3 tools/dev/ci-toolchain.py android-ndk

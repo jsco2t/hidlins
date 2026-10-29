@@ -180,6 +180,9 @@ jobs:
           flutter-version: ${{ steps.flutter-version.outputs.version }}
           channel: stable
 
+      - name: Bootstrap Flutter SDK tools
+        run: make flutter-sdk-prepare
+
       - name: Install exact Flutter NDK
         run: make android-ndk-toolchain
 
@@ -225,6 +228,9 @@ jobs:
         with:
           flutter-version: ${{ steps.flutter-version.outputs.version }}
           channel: stable
+
+      - name: Bootstrap Flutter SDK tools
+        run: make flutter-sdk-prepare
 
       - name: Install build dependencies
         if: runner.os == 'Linux'
@@ -318,6 +324,9 @@ jobs:
         with:
           flutter-version: ${{ steps.flutter-version.outputs.version }}
           channel: stable
+
+      - name: Bootstrap Flutter SDK tools
+        run: make flutter-sdk-prepare
 
       - name: Enable Linux emulator acceleration
         if: runner.os == 'Linux'

@@ -17,12 +17,27 @@ def append_environment(name, key, value):
             output.write(f'{key}={value}\n')
 
 
-def flutter_version():
+def read_flutter_version():
     version = (ROOT / '.flutter-version').read_text().strip()
     if not re.fullmatch(r'\d+\.\d+\.\d+', version):
         raise ValueError('.flutter-version must contain an exact stable SDK version')
+    return version
+
+
+def flutter_version():
+    version = read_flutter_version()
     append_environment('GITHUB_OUTPUT', 'version', version)
     print(version)
+
+
+def flutter_bootstrap():
+    # A fresh SDK resolves flutter_tools before running any Flutter command.
+    # Keep that SDK-owned graph out of the reviewed application pub cache.
+    cache = Path.home() / '.cache/hidlins/flutter-tools' / read_flutter_version()
+    environment = dict(os.environ, PUB_CACHE=str(cache))
+    subprocess.run(['bash', str(ROOT / 'tools/dev/telemetry-check.sh'), '--write'],
+                   env=environment, check=True)
+    subprocess.run(['flutter', '--version'], env=environment, check=True)
 
 
 def android_ndk():
@@ -43,11 +58,13 @@ def android_ndk():
 
 if __name__ == '__main__':
     parser = argparse.ArgumentParser(description=__doc__)
-    parser.add_argument('operation', choices=['flutter-version', 'android-ndk'])
+    parser.add_argument('operation', choices=['flutter-version', 'flutter-bootstrap', 'android-ndk'])
     arguments = parser.parse_args()
     try:
         if arguments.operation == 'flutter-version':
             flutter_version()
+        elif arguments.operation == 'flutter-bootstrap':
+            flutter_bootstrap()
         else:
             android_ndk()
     except (OSError, ValueError, subprocess.CalledProcessError) as error:
