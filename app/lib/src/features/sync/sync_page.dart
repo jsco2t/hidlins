@@ -9,6 +9,7 @@ import '../../data/models.dart';
 import '../../l10n/app_localizations.dart';
 import '../../ui/tokens.dart';
 import 'sync_controller.dart';
+import 'sync_event_listener.dart';
 
 class SyncPage extends ConsumerStatefulWidget {
   const SyncPage({super.key, this.desktopOverride});
@@ -22,7 +23,6 @@ class SyncPage extends ConsumerStatefulWidget {
 class _SyncPageState extends ConsumerState<SyncPage> {
   final _manualEndpoint = TextEditingController();
   late final SyncController _controller;
-  String? _shownConflict;
   String? _shownPairing;
 
   bool get _isDesktop =>
@@ -49,10 +49,7 @@ class _SyncPageState extends ConsumerState<SyncPage> {
   @override
   Widget build(BuildContext context) {
     ref.listen(syncControllerProvider, (previous, next) {
-      final previousValue = previous?.valueOrNull;
       final value = next.valueOrNull;
-      final failure = value?.failure;
-      final outcome = value?.lastOutcome;
       final prompt = value?.prompt;
       if (prompt != null && _shownPairing != prompt.transactionHandle) {
         _shownPairing = prompt.transactionHandle;
@@ -60,27 +57,11 @@ class _SyncPageState extends ConsumerState<SyncPage> {
           if (mounted) unawaited(_showPairing(prompt));
         });
       }
-      if (failure case SyncConflict(:final backupPath)) {
-        if (_shownConflict != backupPath) {
-          _shownConflict = backupPath;
-          WidgetsBinding.instance.addPostFrameCallback((_) {
-            if (mounted) unawaited(_showConflict(backupPath));
-          });
-        }
-      } else if (previousValue?.inFlight == true &&
-          value?.inFlight == false &&
-          outcome != null) {
-        WidgetsBinding.instance.addPostFrameCallback((_) {
-          if (!mounted) return;
-          ScaffoldMessenger.of(context)
-              .showSnackBar(SnackBar(content: Text(_outcomeMessage(outcome))));
-        });
-      }
     });
 
     final value = ref.watch(syncControllerProvider);
     final l10n = AppLocalizations.of(context)!;
-    return Scaffold(
+    final content = Scaffold(
       body: SafeArea(
         child: value.when(
           loading: () => const Center(child: CircularProgressIndicator()),
@@ -109,6 +90,9 @@ class _SyncPageState extends ConsumerState<SyncPage> {
         ),
       ),
     );
+    return SyncEventListener.isPresent(context)
+        ? content
+        : SyncEventListener(child: content);
   }
 
   Future<void> _withPermissionRationale(Future<void> Function() action) async {
@@ -193,42 +177,6 @@ class _SyncPageState extends ConsumerState<SyncPage> {
         .read(syncControllerProvider.notifier)
         .confirmPairing(accepted: accepted == true, peerName: name);
     _shownPairing = null;
-  }
-
-  String _outcomeMessage(SyncOutcomeDto outcome) {
-    final l10n = AppLocalizations.of(context)!;
-    return switch (outcome) {
-      SyncOutcomeDto.alreadyInSync => l10n.syncOutcomeAlreadyCurrent,
-      SyncOutcomeDto.pushed => l10n.syncOutcomePushed,
-      SyncOutcomeDto.fastReplaced => l10n.syncOutcomeFastReplaced,
-      SyncOutcomeDto.merged => l10n.syncOutcomeMerged,
-      SyncOutcomeDto.unknown => l10n.syncStatusSuccess,
-    };
-  }
-
-  Future<void> _showConflict(String backupPath) async {
-    final l10n = AppLocalizations.of(context)!;
-    await showDialog<void>(
-      context: context,
-      barrierDismissible: false,
-      builder: (context) => PopScope(
-        canPop: false,
-        child: AlertDialog(
-          title: Text(l10n.syncConflictTitle),
-          content: Text(l10n.syncConflictMessage(backupPath)),
-          actions: [
-            FilledButton(
-              onPressed: () {
-                ref.read(syncControllerProvider.notifier).clearFailure();
-                _shownConflict = null;
-                Navigator.of(context).pop();
-              },
-              child: Text(l10n.actionClose),
-            ),
-          ],
-        ),
-      ),
-    );
   }
 }
 

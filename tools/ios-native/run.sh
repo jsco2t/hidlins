@@ -20,7 +20,7 @@ run_simulator_tests() {
   trap 'rm -rf "$derived_data_dir"' RETURN
   echo "iOS simulator: $simulator_destination"
   prepare_simulator_config
-  xcodebuild test -quiet \
+  xcodebuild test \
     -workspace "$ios_dir/Runner.xcworkspace" \
     -scheme Runner \
     -destination "$simulator_destination" \
@@ -37,7 +37,7 @@ run_device_tests() {
   IFS=$'\t' read -r device_id device_name device_os <<<"$device_line"
   : "${IOS_DEVELOPMENT_TEAM:?set IOS_DEVELOPMENT_TEAM to the Apple development team used for the connected device}"
   echo "iOS physical device: $device_name, iOS $device_os, id $device_id"
-  xcodebuild test -quiet \
+  xcodebuild test \
     -workspace "$ios_dir/Runner.xcworkspace" \
     -scheme Runner \
     -destination "id=$device_id" \

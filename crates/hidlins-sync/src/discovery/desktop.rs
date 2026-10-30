@@ -94,6 +94,10 @@ impl DesktopBrowser {
     /// Start browsing both normal and pairing service types.
     pub fn start() -> Result<Self, DiscoveryError> {
         let daemon = ServiceDaemon::new().map_err(|_| DiscoveryError::Backend)?;
+        Self::with_daemon(daemon)
+    }
+
+    fn with_daemon(daemon: ServiceDaemon) -> Result<Self, DiscoveryError> {
         let Ok(trusted) = daemon.browse(TRUSTED_SERVICE_TYPE) else {
             let _ = daemon.shutdown();
             return Err(DiscoveryError::Backend);
@@ -170,6 +174,14 @@ impl DesktopAdvertiser {
     /// Start the normal trusted-service advertisement with fresh entropy.
     pub fn start(endpoint: LocalEndpoint, now: Instant) -> Result<Self, DiscoveryError> {
         let daemon = ServiceDaemon::new().map_err(|_| DiscoveryError::Backend)?;
+        Self::with_daemon(daemon, endpoint, now)
+    }
+
+    fn with_daemon(
+        daemon: ServiceDaemon,
+        endpoint: LocalEndpoint,
+        now: Instant,
+    ) -> Result<Self, DiscoveryError> {
         let policy = AdvertisementSet::start(endpoint.port())?;
         let mut advertiser = Self {
             daemon,
@@ -393,14 +405,14 @@ fn convert_event(event: ServiceEvent) -> Result<Option<DiscoveryEvent>, Discover
 
 #[cfg(test)]
 mod tests {
-    use super::{allowed_interface_endpoints, service_info, DesktopAdvertiser, DesktopBrowser};
+    use super::{service_info, DesktopAdvertiser, DesktopBrowser, ServiceDaemon};
     use crate::{
         address::LocalEndpoint,
         discovery::{
             AdvertisementSet, DiscoveryEvent, DiscoveryPort, PROTOCOL_TXT, TRUSTED_SERVICE_TYPE,
         },
     };
-    use std::{thread, time::Duration, time::Instant};
+    use std::{net::UdpSocket, thread, time::Duration, time::Instant};
 
     #[test]
     fn service_info_contains_only_ephemeral_v1_metadata_and_auto_addresses() {
@@ -421,15 +433,26 @@ mod tests {
     #[test]
     fn real_desktop_publisher_and_browser_interoperate() {
         // LNS-DISC-006: exercise the actual mdns-sd daemon boundary, not only
-        // record construction and simulated discovery events.
-        let endpoint = allowed_interface_endpoints(48_173)
-            .expect("enumerate an allowed desktop interface")
-            .into_iter()
-            .next()
-            .expect("at least one allowed desktop interface");
-        let mut browser = DesktopBrowser::start().expect("start real desktop browser");
-        let mut advertiser =
-            DesktopAdvertiser::start(endpoint, Instant::now()).expect("start real publisher");
+        // record construction and simulated discovery events. A runner's
+        // private LAN interface need not support multicast; use loopback for
+        // this real packet exchange so it is independent of the host's LAN.
+        let endpoint = LocalEndpoint::new("127.0.0.1".parse().unwrap(), 48_173, 0).unwrap();
+        // Avoid competing with system Bonjour/mDNSResponder on port 5353.
+        // Both real daemons still exchange multicast DNS packets through the
+        // production adapter paths; only their transport port is isolated.
+        let reservation = UdpSocket::bind(("127.0.0.1", 0)).expect("reserve a test port");
+        let port = reservation.local_addr().unwrap().port();
+        drop(reservation);
+        let mut browser = DesktopBrowser::with_daemon(
+            ServiceDaemon::new_with_port(port).expect("start browser daemon"),
+        )
+        .expect("start real desktop browser");
+        let mut advertiser = DesktopAdvertiser::with_daemon(
+            ServiceDaemon::new_with_port(port).expect("start publisher daemon"),
+            endpoint,
+            Instant::now(),
+        )
+        .expect("start real publisher");
         let deadline = Instant::now() + Duration::from_secs(10);
         let mut resolved = false;
         while Instant::now() < deadline {

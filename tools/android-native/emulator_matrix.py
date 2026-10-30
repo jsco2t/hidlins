@@ -9,7 +9,9 @@ import platform
 from pathlib import Path
 
 MATRIX = Path(__file__).with_name("emulator-matrix.json")
-SUPPORTED_APIS = {29, 36}
+NATIVE_APIS = {29, 36}
+SHARED_LAN_APIS = {30, 36}
+SUPPORTED_APIS = NATIVE_APIS | SHARED_LAN_APIS
 SUPPORTED_ABIS = {"arm64-v8a", "x86_64"}
 HOST_ABI = {"arm64": "arm64-v8a", "aarch64": "arm64-v8a", "x86_64": "x86_64"}
 
@@ -19,6 +21,8 @@ def validate(data: object) -> list[dict[str, object]]:
         raise SystemExit("Android emulator matrix has an unsupported schema")
     if data.get("minimum_api") != 29 or data.get("current_api") != 36:
         raise SystemExit("Android emulator matrix must cover API 29 and current API 36")
+    if data.get("shared_lan_minimum_api") != 30:
+        raise SystemExit("Android shared-LAN matrix must cover API 30 and current API 36")
     entries = data.get("entries")
     if not isinstance(entries, list):
         raise SystemExit("Android emulator matrix entries must be a list")
@@ -40,6 +44,8 @@ def validate(data: object) -> list[dict[str, object]]:
             raise SystemExit(f"host architecture {host_arch} cannot execute {abi}")
         if form_factor not in {"phone", "tablet"}:
             raise SystemExit(f"unsupported Android form factor: {form_factor}")
+        if form_factor != ("tablet" if api == 36 else "phone"):
+            raise SystemExit(f"Android API {api} has the wrong required form factor")
         if not isinstance(avd, str) or not avd.startswith("hidlins-") or avd in avds:
             raise SystemExit(f"invalid or duplicate Hidlins AVD name: {avd}")
         expected_suffix = f"android-{api};default;{abi}"
@@ -68,16 +74,22 @@ def normalized_host(value: str) -> str:
     raise SystemExit(f"unsupported Android emulator host architecture: {value}")
 
 
+def client_entries(host: str, apis: set[int]) -> list[dict[str, object]]:
+    normalized = normalized_host(host)
+    selected = [entry for entry in load()
+                if entry["host_arch"] == normalized and entry["api"] in apis]
+    if {entry["api"] for entry in selected} != apis or len(selected) != len(apis):
+        raise SystemExit(f"Android matrix has no complete API {sorted(apis)} selection for {normalized}")
+    return selected
+
+
 def scenario_entries(kind: str, host: str) -> list[dict[str, object]]:
-    """Return a distinct authority-side AVD matching each client image."""
+    """Return distinct authority AVDs for the supported shared-LAN clients."""
 
     if kind not in {"authority", "replacement"}:
         raise SystemExit(f"unsupported Android scenario AVD kind: {kind}")
-    normalized = normalized_host(host)
     suffix = "-authority" if kind == "authority" else "-authority-replacement"
-    selected = [entry.copy() for entry in load() if entry["host_arch"] == normalized]
-    if len(selected) != 2:
-        raise SystemExit(f"Android matrix has no complete two-API selection for {normalized}")
+    selected = [entry.copy() for entry in client_entries(host, SHARED_LAN_APIS)]
     for entry in selected:
         entry["avd"] = f'{entry["avd"]}{suffix}'
     return selected
@@ -86,18 +98,19 @@ def scenario_entries(kind: str, host: str) -> list[dict[str, object]]:
 def main() -> None:
     parser = argparse.ArgumentParser()
     parser.add_argument(
-        "command", choices=("check", "select", "authority", "replacement")
+        "command", choices=("check", "select", "lan", "clients", "authority", "replacement")
     )
     parser.add_argument("--host", default=platform.machine())
     args = parser.parse_args()
-    entries = load()
+    load()
     if args.command == "check":
-        print("  OK: Android matrix covers API 29/current, both ABIs, phone, and tablet")
+        print("  OK: Android native/UI covers API 29/36; shared LAN covers API 30/36; both ABIs and form factors")
         return
     host = normalized_host(args.host)
-    selected = [entry for entry in entries if entry["host_arch"] == host]
-    if len(selected) != 2:
-        raise SystemExit(f"Android matrix has no complete two-API selection for {host}")
+    apis = SUPPORTED_APIS if args.command == "clients" else (
+        SHARED_LAN_APIS if args.command == "lan" else NATIVE_APIS
+    )
+    selected = client_entries(host, apis)
     if args.command in {"authority", "replacement"}:
         for entry in scenario_entries(args.command, host):
             print(

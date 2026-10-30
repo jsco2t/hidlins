@@ -5,6 +5,7 @@ repo_root="$(cd "$(dirname "${BASH_SOURCE[0]}")/../.." && pwd)"
 app_dir="$repo_root/app"
 device_json="$(mktemp "${TMPDIR:-/tmp}/hidlins-ios-devices.XXXXXX")"
 matrix="$(mktemp "${TMPDIR:-/tmp}/hidlins-ios-matrix.XXXXXX")"
+test_timeout="${HIDLINS_IOS_TEST_TIMEOUT_SECONDS:-900}"
 trap 'rm -f "$device_json" "$matrix"' EXIT
 
 xcrun simctl list --json devices available >"$device_json"
@@ -30,11 +31,13 @@ while IFS=$'\t' read -r udid name runtime; do
   xcrun simctl bootstatus "$udid" -b
   (
     cd "$app_dir"
-    flutter test --no-pub -d "$udid" integration_test/ios_simulator_ui_test.dart
+    python3 "$repo_root/tools/android-native/run_with_timeout.py" "$test_timeout" \
+      flutter test --no-pub --verbose -d "$udid" integration_test/ios_simulator_ui_test.dart
   )
   (
     cd "$app_dir"
-    flutter test --no-pub -d "$udid" integration_test/ios_real_bridge_test.dart
+    python3 "$repo_root/tools/android-native/run_with_timeout.py" "$test_timeout" \
+      flutter test --no-pub --verbose -d "$udid" integration_test/ios_real_bridge_test.dart
   )
   if [[ "${HIDLINS_MOBILE_SYNC_SCENARIOS:-0}" == 1 ]]; then
     python3 "$repo_root/tools/local-sync-tests/mobile_scenario.py" ios \

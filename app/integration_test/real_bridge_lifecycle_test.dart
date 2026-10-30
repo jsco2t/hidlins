@@ -14,6 +14,8 @@ import 'package:app/src/platform/rust_library.dart';
 const _master = 'integration-master-marker';
 const _rotatedMaster = 'integration-rotated-marker';
 const _entrySecret = 'integration-entry-secret-marker';
+const _customSecret = 'integration-protected-custom-marker';
+const _updatedCustomSecret = 'integration-updated-protected-custom-marker';
 
 void main() {
   setUpAll(() async {
@@ -71,6 +73,11 @@ void main() {
               value: 'desktop',
               protected: false,
             ),
+            CustomFieldInputDto(
+              name: 'recovery',
+              value: _customSecret,
+              protected: true,
+            ),
           ],
         ),
       );
@@ -111,7 +118,47 @@ void main() {
         edit: const EntryEditDto(title: 'Bridge credential updated'),
       );
 
+      // A title-only update preserves existing custom fields. The editor's
+      // explicit replacement payload must preserve their protection flags too.
+      expect(
+        await session.revealField(
+          uuid: credential,
+          field: const RevealField.customField('recovery'),
+        ),
+        _customSecret,
+      );
+      await session.updateEntry(
+        uuid: credential,
+        edit: const EntryEditDto(
+          customFields: [
+            CustomFieldInputDto(
+              name: 'account',
+              value: 'desktop-updated',
+              protected: false,
+            ),
+            CustomFieldInputDto(
+              name: 'recovery',
+              value: _updatedCustomSecret,
+              protected: true,
+            ),
+          ],
+        ),
+      );
+      final historyBeforeReopen = await session.entryHistory(uuid: credential);
+      expect(historyBeforeReopen.length, greaterThanOrEqualTo(2));
+      expect(
+        historyBeforeReopen.map((entry) => entry.title),
+        contains('Bridge credential'),
+      );
+
       final credentialDetail = await session.entryDetail(uuid: credential);
+      expect(
+        credentialDetail.customFields,
+        unorderedEquals(const [
+          CustomFieldDto(name: 'account', isProtected: false),
+          CustomFieldDto(name: 'recovery', isProtected: true),
+        ]),
+      );
       expect(credentialDetail.title, 'Bridge credential updated');
       expect(credentialDetail.hasPassword, isTrue);
       expect(
@@ -153,6 +200,32 @@ void main() {
         masterPassword: _rotatedMaster,
       );
       expect(reopened.entries, hasLength(3));
+      expect(
+        (await session.entryDetail(uuid: credential)).customFields,
+        unorderedEquals(credentialDetail.customFields),
+      );
+      expect(
+        await session.revealField(
+          uuid: credential,
+          field: const RevealField.customField('account'),
+        ),
+        'desktop-updated',
+      );
+      expect(
+        await session.revealField(
+          uuid: credential,
+          field: const RevealField.customField('recovery'),
+        ),
+        _updatedCustomSecret,
+      );
+      expect(
+        await session.revealField(
+          uuid: credential,
+          field: const RevealField.password(),
+        ),
+        _entrySecret,
+      );
+      expect(await session.entryHistory(uuid: credential), historyBeforeReopen);
     } finally {
       await session.shutdown();
       fixture.deleteSync(recursive: true);
@@ -284,6 +357,9 @@ void main() {
           candidates: [endpoint],
         );
         await client.unlock(name: 'local-shared', masterPassword: _master);
+        // Startup sync is explicitly scheduled after discovery and unlock, as
+        // UnlockScreen does; unlocking itself only opens the offline vault.
+        await client.startStartupSync();
         expect(
           await startupSync.future.timeout(const Duration(seconds: 15)),
           isA<SyncEvent_Done>(),

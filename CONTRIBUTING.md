@@ -17,6 +17,17 @@ Authoritative source documents (read these for scope):
 
 ## Workspace layout
 
+For Linux Flutter development on Debian/Ubuntu, run `make app-linux-toolchain`
+to install native compiler, CMake, Ninja and GTK3 development prerequisites.
+This explicit setup target uses apt and may require sudo/network access.
+`make app-linux-prereqs` checks the tools without installing anything; CI uses
+the same setup target. Rust and Flutter package builds remain offline.
+
+Use `make app-test APP_TEST_FLAGS='test/features/entry_edit_test.dart'` for a
+focused test run; the default `make app-test` still runs the complete suite.
+Regenerate ARB localizations with `make app-l10n`. Golden updates require Linux
+and explicit `HIDLINS_UPDATE_GOLDENS=1`; inspect every changed raster.
+
 ```
 hidlins/
 ├── Cargo.toml                # workspace manifest, resolver = "2"
@@ -130,8 +141,18 @@ automated acceptance map, optional human-observation register, and disposition
 of all 45 July Flutter tasks are documented in
 [`docs/flutter-alpha-release.md`](docs/flutter-alpha-release.md) and its checked
 machine-readable companion. Android CI uses `make android-emulator-provision`
-followed by the same local-sync emulator targets used locally. The isolated,
-expensive `make test-local-sync-mobile-scenarios HIDLINS_ANDROID_STRICT=1`
+followed by the same local-sync emulator targets used locally. The hosted
+Linux/KVM runtime job covers API 29/36 native, UI, and real-bridge checks
+and API 30/36 shared-LAN synchronization on x86_64 devices; hosted
+macOS cannot run ARM64 Android emulators because nested virtualization is
+unavailable. Both Android ABIs remain build/artifact gates. Run the same
+acceptance targets on an ARM64 workstation for ARM64 runtime verification.
+`make android-emulator-matrix` prints both selections and their authority AVDs.
+The API 29 default image cannot provide the shared-LAN backend: its native/UI
+coverage remains required, while cross-device sync uses API 30 and API 36.
+The product minimum remains API 29; API 29 cross-device LAN acceptance is not
+claimed by this emulator gate.
+The isolated, expensive `make test-local-sync-mobile-scenarios HIDLINS_ANDROID_STRICT=1`
 target drives real iPhone, iPad, Android phone, and Android tablet applications
 against a separate release CLI authority; use its platform-specific `-ios` and
 `-android` targets while iterating.
@@ -166,11 +187,19 @@ non-distributable. Root policy and every product graph continue to reject NCSA;
 closure, packaging hooks, negative controls, and produced artifacts.
 
 The following are **forbidden**, including via transitive deps:
-`GPL-*`, `LGPL-*`, `AGPL-*`, `SSPL-*`, `Commons Clause`,
+`GPL-*`, `LGPL-*`, `AGPL-*`, **`EPL-1.0`, `EPL-2.0` (Eclipse Public License,
+including JUnit)**, `SSPL-*`, `Commons Clause`,
 **including GPL-with-linking-exception** (the ambiguity isn't worth it —
 e.g., `libgit2` remains banned).
 
-`cargo deny check licenses` enforces this.
+JUnit and EPL-licensed dependencies have no development, testing, build-tool,
+runner, adapter, BOM, or metadata-only exception. Do not add verification hashes
+to admit them; remove the dependency path while preserving test coverage.
+
+`make deny` enforces the Rust license allowlist. `make ci-toolchain-check`
+guards the explicit EPL ban and ensures neither Rust policy admits it.
+`make android-dependency-check` enforces JUnit exclusion and its negative controls;
+see [the Android dependency policy](app/android/gradle/README.md).
 
 **Clarification — linked vs. invoked test drivers:** GPL software
 **linked or loaded** into the build (linked as a C library, loaded via
@@ -369,10 +398,18 @@ both caches.
 every build; pub compares `hosted-hashes/` against `pubspec.lock` and **never
 re-hashes the extracted tree**, so a modified file inside a vendored package
 would execute with every pub gate green. The pub equivalent is project-owned:
-`tools/dev/pub-vendor.SHA256SUMS` records every file in both caches' `hosted/`
+`tools/dev/pub-vendor.SHA256SUMS` records every reviewed Git-tracked file in both caches' `hosted/`
 + `hosted-hashes/` trees (written by `make pub-vendor`, via
 `tools/dev/pub-vendor-hash.sh generate`), and `make pub-vendor-check` verifies
-it by regenerate-and-diff, so modification, addition, and removal all fail.
+it by regenerate-and-diff, so modification and removal fail. A separate Git
+query rejects untracked, nonignored additions. Ignored package-local execution
+artifacts (such as untracked .dart_tool/ files) are excluded; tracked files
+remain protected even if an ignore rule matches them. Symlinks are always
+rejected, including inside ignored directories. Generation includes intentional
+new files and excludes removed files, but verification requires staging those
+input additions/removals as part of the reviewed dependency change.
+The make target pub-vendor-hash-test exercises these rules in disposable Git
+fixtures and runs automatically as a prerequisite of pub-vendor-check.
 Committing `hosted-hashes/` (which we do — excluding it made every fresh clone
 report a content-hash mismatch for every package while still exiting 0)
 additionally preserves pub's own lockfile/cache consistency check. Note also

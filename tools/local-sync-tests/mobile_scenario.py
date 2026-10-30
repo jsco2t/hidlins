@@ -31,7 +31,7 @@ AUTHORITY_VAULT = "authority"
 AUTHORITY_ENTRY = "authority-origin"
 CLIENT_ENTRY = "mobile-origin"
 SAS_PATTERN = re.compile(r"\b[0-9A-HJKMNP-TV-Z]{3}-[0-9A-HJKMNP-TV-Z]{3}\b")
-SCRATCH_PATTERN = re.compile(r"/[^\s]*hidlins-mobile-sync\.[^\s/]*(?:/[^\s]*)?")
+SCRATCH_PATTERN = re.compile(r"/[^\s]*hidlins-(?:android-)?mobile-sync\.[^\s/]*(?:/[^\s]*)?")
 DISCOVERY_PATTERN = re.compile(
     r"HIDLINS_DISCOVERY_CANDIDATE=([^:\s]+):(\d+):(\d+)"
 )
@@ -537,7 +537,11 @@ def run_flutter(
     )
     target = "integration_test/mobile_local_sync_scenario_test.dart"
     if platform == "ios":
-        command = ["flutter", "test", "--no-pub", "-d", device, *defines, target]
+        # Keep the parsed success marker independent of CI reporter defaults.
+        command = [
+            "flutter", "test", "--no-pub", "--reporter=expanded",
+            "-d", device, *defines, target,
+        ]
     else:
         command = [
             "flutter",
@@ -551,14 +555,27 @@ def run_flutter(
             "--android-project-arg=target-platform=android-arm64,android-x64",
             *defines,
         ]
-    result = subprocess.run(
-        command,
-        cwd=repo / "app",
-        text=True,
-        capture_output=True,
-        timeout=420,
-        check=False,
-    )
+    try:
+        result = subprocess.run(
+            command,
+            cwd=repo / "app",
+            text=True,
+            capture_output=True,
+            timeout=420,
+            check=False,
+        )
+    except subprocess.TimeoutExpired as error:
+        # TimeoutExpired can carry bytes even when text=True. Preserve the
+        # last stage without publishing command arguments or secret values.
+        partial = "".join(
+            part.decode("utf-8", errors="replace") if isinstance(part, bytes) else (part or "")
+            for part in (error.stdout, error.stderr)
+        )
+        output = redact_text(partial, [MASTER_PASSWORD, token])
+        raise RuntimeError(
+            f"Flutter {platform} phase {phase} timed out after {error.timeout:g} seconds:\n"
+            f"{output[-6000:]}"
+        ) from None
     output = redact_text(result.stdout + result.stderr, [MASTER_PASSWORD, token])
     if result.returncode != 0 or not flutter_output_passed(output):
         raise RuntimeError(f"Flutter {platform} phase {phase} failed:\n{output[-6000:]}")
@@ -675,10 +692,17 @@ def run_scenario(args: argparse.Namespace) -> int:
             evidence["cleanup_failure"] = redact_text(str(error), [MASTER_PASSWORD])
         shutil.rmtree(scratch_path, ignore_errors=True)
         evidence["duration_seconds"] = round(time.time() - started, 3)
+        sensitive = [MASTER_PASSWORD] + ([] if control is None else [control.token])
+        for field in ("failure", "cleanup_failure"):
+            if field in evidence:
+                evidence[field] = redact_text(str(evidence[field]), sensitive)
         log_path.write_text(redact_text("\n".join(logs + harness.service_stderr), [MASTER_PASSWORD]), encoding="utf-8")
         evidence_path.write_text(json.dumps(evidence, indent=2, sort_keys=True) + "\n", encoding="utf-8")
         print(f"mobile local-sync scenario: platform={args.platform} result={evidence['result']}")
         print(f"evidence={evidence_path}")
+        for field in ("failure", "cleanup_failure"):
+            if field in evidence:
+                print(f"{field}: {evidence[field]}", file=sys.stderr)
         signal.signal(signal.SIGINT, previous_sigint)
         signal.signal(signal.SIGTERM, previous_sigterm)
     if evidence["result"] != "PASS" and exit_code == 0:

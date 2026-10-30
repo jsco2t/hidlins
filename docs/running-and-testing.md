@@ -280,7 +280,7 @@ requirements.
 
 ## Android emulator and optional physical device observations
 
-Provision the repository's host-native API 29 phone and API 36 tablet client,
+Provision the repository's API 29/36 native/UI and API 30/36 shared-LAN client,
 authority, and replacement-authority AVDs:
 
 ```sh
@@ -365,15 +365,16 @@ make verify
   the compiled bridge.
 - `make interop-app` checks application KDBX interoperability.
 - `make test-local-sync-mobile-scenarios` is the isolated, expensive macOS gate
-  that drives an iPhone, iPad, Android API 29 phone, and Android API 36 tablet
+  that drives an iPhone, iPad, Android API 30 phone, and Android API 36 tablet
   against a separate release CLI authority. Android uses platform NSD and a
   direct emulator-Wi-Fi Noise/data path, including discovery after a distinct
   replacement-authority DHCP address. Per-device JSON and redacted logs are
-  stored under `build/verification/mobile-local-sync/`. API 29's legacy
-  explicit Wi-Fi link otherwise presents synthetic cellular and Wi-Fi as
-  duplicate same-subnet paths, so the runner disables cellular data to model a
-  Wi-Fi-only device; it does not inject a route or choose the NSD address. API
-  36 retains platform-default network state on shared emulator Wi-Fi.
+  stored under `build/verification/mobile-local-sync/`. API 29 remains covered
+  by native/UI/bridge gates. Its legacy image cannot provide shared-LAN peer
+  connectivity, so the emulator gate does not claim API 29 cross-device sync.
+  API 30 and API 36 use the explicitly selected shared Wi-Fi backend with
+  platform-default cellular state; no routes or DHCP leases are supplied.
+
 - `make verify` is the broad repository gate.
 
 Human SAS perception, physical OS permission presentation, representative

@@ -49,6 +49,71 @@ void main() {
   ];
 
   group('EntryList', () {
+    for (final selected in [false, true]) {
+      testWidgets('wide row actions obey selection visibility $selected', (
+        tester,
+      ) async {
+        String? copied;
+        await tester.pumpFeature(
+          EntryList(
+            entries: [entries.first],
+            selectedUuid: selected ? 'entry-1' : null,
+            onEntrySelected: (_) {},
+            onCopyUsername: (uuid) => copied = uuid,
+            onCopyPassword: (uuid) => copied = uuid,
+          ),
+        );
+        await tester.pumpAndSettle();
+        final action = find.byIcon(Icons.copy);
+        expect(action.hitTestable(), selected ? findsOneWidget : findsNothing);
+        expect(
+          find.bySemanticsLabel('Password'),
+          selected ? findsOneWidget : findsNothing,
+        );
+        if (selected) {
+          await tester.tap(action);
+          expect(copied, 'entry-1');
+        } else {
+          for (var i = 0; i < 6; i++) {
+            await tester.sendKeyEvent(LogicalKeyboardKey.tab);
+            final focused = FocusManager.instance.primaryFocus?.context;
+            var focusedButton = false;
+            focused?.visitAncestorElements((element) {
+              if (element.widget is IconButton) focusedButton = true;
+              return true;
+            });
+            expect(
+              focusedButton,
+              isFalse,
+              reason: 'Hidden quick actions must not receive keyboard focus',
+            );
+          }
+        }
+      });
+    }
+
+    testWidgets('narrow list retains titles without reserving quick actions', (
+      tester,
+    ) async {
+      await tester.pumpFeature(
+        Align(
+          child: SizedBox(
+            width: 320,
+            child: EntryList(
+              entries: [entries.first],
+              selectedUuid: 'entry-1',
+              onEntrySelected: (_) {},
+              onCopyUsername: (_) {},
+              onCopyPassword: (_) {},
+            ),
+          ),
+        ),
+      );
+      await tester.pumpAndSettle();
+      expect(find.text('GitHub'), findsOneWidget);
+      expect(find.byType(IconButton), findsNothing);
+    });
+
     testWidgets('renders entry titles and usernames', (tester) async {
       await tester.pumpFeature(
         EntryList(

@@ -5,6 +5,7 @@ import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:material_ui/material_ui.dart';
 
 import 'data/models.dart';
+import 'features/sync/sync_controller.dart';
 import 'l10n/app_localizations.dart';
 import 'l10n/hidlins_localizations.dart';
 import 'providers/activity_provider.dart';
@@ -101,6 +102,7 @@ class _AppContentState extends ConsumerState<_AppContent> {
   Widget build(BuildContext context) {
     final router = ref.watch(routerProvider);
     ref.watch(vaultCacheInvalidationProvider);
+    ref.watch(syncControllerProvider);
     return ActivityCapture(
       onActivity: () {
         ref.read(activityThrottleProvider.notifier).reportActivity();
@@ -116,7 +118,9 @@ class _AppContentState extends ConsumerState<_AppContent> {
         title: 'Hidlins',
         theme: hidlinsLightTheme(),
         darkTheme: hidlinsDarkTheme(),
-        themeMode: ThemeMode.system,
+        themeMode: resolveThemeMode(
+          ref.watch(prefsProvider).asData?.value.themeMode,
+        ),
         routerConfig: router,
         localizationsDelegates: hidlinsLocalizationsDelegates,
         supportedLocales: AppLocalizations.supportedLocales,

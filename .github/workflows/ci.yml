@@ -68,7 +68,7 @@ jobs:
         run: make fuzz-toolchain
 
       - name: Format check
-        run: make fmt-check
+        run: make ci-toolchain-check fmt-check
 
       - name: Lint
         run: make lint
@@ -170,14 +170,21 @@ jobs:
       - name: Install pinned toolchain
         run: rustup show
 
+      - name: Read pinned Flutter version
+        id: flutter-version
+        run: make ci-flutter-version
+
       - name: Install Flutter SDK
         uses: subosito/flutter-action@1a449444c387b1966244ae4d4f8c696479add0b2 # v2.23.0
         with:
-          flutter-version-file: .flutter-version
+          flutter-version: ${{ steps.flutter-version.outputs.version }}
           channel: stable
 
+      - name: Bootstrap Flutter SDK tools
+        run: make flutter-sdk-prepare
+
       - name: Install exact Flutter NDK
-        run: sdkmanager "ndk;28.2.13676358"
+        run: make android-ndk-toolchain
 
       - name: Disable telemetry (NFR-013)
         run: tools/dev/telemetry-check.sh --write
@@ -197,13 +204,18 @@ jobs:
     strategy:
       fail-fast: false
       matrix:
-        os: [ubuntu-latest, macos-latest]
+        # Keep desktop bootstrap on a fixed host during the ubuntu-latest migration.
+        os: [ubuntu-24.04, macos-latest]
 
     steps:
       - uses: actions/checkout@v4
 
       - name: Install pinned toolchain
         run: rustup show
+
+      - name: Read pinned Flutter version
+        id: flutter-version
+        run: make ci-flutter-version
 
       - name: Install Flutter SDK
         # Pinned to a full commit SHA: this is a THIRD-PARTY action running in
@@ -215,14 +227,15 @@ jobs:
         # actions/checkout stay tag-pinned by existing convention.)
         uses: subosito/flutter-action@1a449444c387b1966244ae4d4f8c696479add0b2 # v2.23.0
         with:
-          flutter-version-file: .flutter-version
+          flutter-version: ${{ steps.flutter-version.outputs.version }}
           channel: stable
+
+      - name: Bootstrap Flutter SDK tools
+        run: make flutter-sdk-prepare
 
       - name: Install build dependencies
         if: runner.os == 'Linux'
-        run: |
-          sudo apt-get update
-          sudo apt-get install -y ninja-build clang libgtk-3-dev keepassxc
+        run: make app-linux-toolchain
 
       - name: Install KeePassXC CLI (macOS)
         if: runner.os == 'macOS'
@@ -286,16 +299,17 @@ jobs:
       - name: Acceptance evidence contract
         run: make acceptance-evidence-check
 
-  # Host-native Android acceptance. macos-15 is the standard Apple Silicon
-  # image; ubuntu-24.04 is x86_64. The declarative matrix refuses to run an ABI
-  # that does not match the host and covers API 29 phone + API 36 tablet on each.
+  # Hosted macOS has no nested virtualization (HV_UNSUPPORTED). Runtime CI
+  # covers API 29/36 native+UI and API 30/36 shared-LAN sync on Linux/KVM.
+  # The API 29 image cannot use the shared-LAN backend. Both ABIs are still
+  # built and inspected above; ARM64 runtime checks remain local targets.
   android-emulator:
     name: android-emulator (${{ matrix.os }})
     runs-on: ${{ matrix.os }}
     strategy:
       fail-fast: false
       matrix:
-        os: [ubuntu-24.04, macos-15]
+        os: [ubuntu-24.04]
 
     steps:
       - uses: actions/checkout@v4
@@ -303,15 +317,25 @@ jobs:
       - name: Install pinned toolchain
         run: rustup show
 
+      - name: Read pinned Flutter version
+        id: flutter-version
+        run: make ci-flutter-version
+
       - name: Install Flutter SDK
         uses: subosito/flutter-action@1a449444c387b1966244ae4d4f8c696479add0b2 # v2.23.0
         with:
-          flutter-version-file: .flutter-version
+          flutter-version: ${{ steps.flutter-version.outputs.version }}
           channel: stable
+
+      - name: Bootstrap Flutter SDK tools
+        run: make flutter-sdk-prepare
 
       - name: Enable Linux emulator acceleration
         if: runner.os == 'Linux'
         run: sudo chmod 0666 /dev/kvm
+
+      - name: Install exact Flutter NDK
+        run: make android-ndk-toolchain
 
       - name: Disable telemetry (NFR-013)
         run: tools/dev/telemetry-check.sh --write
@@ -319,5 +343,5 @@ jobs:
       - name: Provision host-native Android matrix
         run: make android-emulator-provision
 
-      - name: API 29/current native, UI, lifecycle, and CLI-authority matrix
+      - name: API 29/36 native and UI; API 30/36 shared-LAN CLI authority
         run: make test-local-sync-mobile-scenarios-android HIDLINS_ANDROID_STRICT=1

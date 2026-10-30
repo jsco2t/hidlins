@@ -24,6 +24,7 @@ SHELL          := bash
 CARGO          := cargo
 CARGO_FLAGS    := --workspace --offline --locked
 CLIPPY_FLAGS   := --workspace --all-targets --offline --locked -- -D warnings
+APP_TEST_FLAGS ?=
 
 # Every Rust compilation launched through make inherits fatal warnings. Use
 # `override` so a caller-provided RUSTFLAGS/RUSTDOCFLAGS value is preserved and
@@ -50,7 +51,7 @@ UNAME_S        := $(shell uname -s)
         vendor vendor-patches deny audit doc clean completions completions-check run-tui \
         snapshots-check \
         api-gen api-gen-check app-build-linux app-build-macos app-brand-generate app-brand-check app-analyze app-fmt app-fmt-check \
-        app-test app-test-performance app-test-integration app-test-integration-performance app-goldens-update app-test-bridge app-deps app-run boundary-check pub-vendor pub-vendor-check pub-production-check \
+        app-test app-test-performance app-test-integration app-test-integration-performance app-goldens-update app-test-bridge app-deps app-run boundary-check pub-vendor pub-vendor-check pub-vendor-hash-test pub-production-check \
         flutter-version-check telemetry-check app-check check-macos test-merge-properties
 
 help:  ## Show this help.
@@ -67,6 +68,31 @@ toolchain:  ## Install all dev tooling (Rust toolchain, keepassxc-cli, cargo-den
 	# Invoked directly (not via `sh`) so its bash shebang is honoured —
 	# the script uses `set -o pipefail`, which POSIX `sh`/dash lacks.
 	tools/dev/install-toolchain.sh
+
+app-linux-toolchain:  ## Install native Flutter build prerequisites on Debian/Ubuntu (explicit setup; needs network).
+	bash tools/dev/install-linux-app-toolchain.sh --install
+
+app-linux-prereqs:  ## Check Linux native build prerequisites without installing anything.
+	bash tools/dev/install-linux-app-toolchain.sh --check
+
+app-l10n: app-deps  ## Regenerate Dart localizations from the app's ARB source.
+	cd app && flutter gen-l10n
+
+.PHONY: app-linux-toolchain app-linux-prereqs app-l10n
+
+.PHONY: ci-flutter-version flutter-sdk-prepare android-ndk-toolchain ci-toolchain-check
+
+ci-flutter-version:  ## Export the exact repository Flutter pin to GitHub step outputs.
+	python3 tools/dev/ci-toolchain.py flutter-version
+
+flutter-sdk-prepare:  ## Bootstrap Flutter SDK tools outside the reviewed app cache (requires network).
+	python3 tools/dev/ci-toolchain.py flutter-bootstrap
+
+android-ndk-toolchain:  ## Install the exact Android NDK from the artifact contract (requires network).
+	python3 tools/dev/ci-toolchain.py android-ndk
+
+ci-toolchain-check:  ## Test CI SDK selection and NDK version checks with disposable fixtures.
+	python3 -B tools/dev/test_ci_toolchains.py
 
 fuzz-toolchain:  ## Install exact cargo-fuzz and pinned nightly (development/testing only).
 	tools/dev/install-fuzz-toolchain.sh
@@ -122,6 +148,10 @@ run-tui:  ## Launch the interactive terminal UI (hidlins-tui).
 # `flutter build` / `flutter test` / build_runner is ALSO offline-bound and
 # fails loudly instead of silently reaching pub.dev (T2.4's stated guarantee).
 export PUB_CACHE := $(CURDIR)/app/vendor-pub
+export GRADLE_USER_HOME := $(CURDIR)/.gradle/android
+# SDK command-line tools and emulator releases can choose different defaults.
+# Share one explicit AVD home across provisioning and every scenario process.
+export ANDROID_AVD_HOME ?= $(or $(ANDROID_EMULATOR_HOME),$(ANDROID_USER_HOME),$(HOME)/.android)/avd
 
 FRB_RUST_OUT   := crates/hidlins-api/src/frb_generated.rs
 FRB_DART_OUT   := app/lib/src/bridge/
@@ -205,7 +235,15 @@ build-android: ncsa-boundary-precheck  ## Build/stage release Rust libraries for
 android-artifacts-check:  ## Reject stale, wrong-profile, wrong-ABI, misaligned, or modified staged Android libraries.
 	python3 tools/android-native/artifacts.py check
 
-app-android-config-check: app-deps  ## Verify Flutter 3.47.2 built-in Kotlin/old-DSL pins and reject legacy KGP application.
+.PHONY: android-gradle-prepare android-dependency-check
+
+android-gradle-prepare:  ## Install the JUnit-free policy before Android Gradle/plugin resolution.
+	bash tools/android-native/gradle-env.sh
+
+android-dependency-check: android-gradle-prepare  ## Verify JUnit exclusion with real offline Gradle fixtures and device-test contracts.
+	python3 tools/android-native/test_dependency_policy.py
+
+app-android-config-check: app-deps android-dependency-check  ## Verify Flutter 3.47.2 built-in Kotlin/old-DSL pins and reject legacy KGP application.
 	python3 tools/android-native/config_check.py self-test
 	python3 tools/android-native/config_check.py check
 	python3 tools/android-native/plugin_registrant.py self-test
@@ -222,8 +260,19 @@ android-harness-check: ios-harness-check  ## Validate Android API/ABI/form-facto
 	python3 tools/android-native/emulator_matrix.py check
 	python3 tools/android-native/harness_test.py
 
-android-emulator-provision: android-harness-check  ## Install the host-native API 29/current Android CI/local AVD pair.
+android-emulator-provision: android-harness-check  ## Provision API 29/36 native/UI and API 30/36 shared-LAN AVDs.
 	tools/android-native/provision_emulators.sh
+
+.PHONY: android-emulator-matrix
+android-emulator-matrix:  ## Show native/UI and shared-LAN client/authority selections.
+	@echo "Native and UI clients (API 29/36):"
+	python3 tools/android-native/emulator_matrix.py select
+	@echo "Shared-LAN clients (API 30/36):"
+	python3 tools/android-native/emulator_matrix.py lan
+	@echo "Shared-LAN authorities:"
+	python3 tools/android-native/emulator_matrix.py authority
+	@echo "Shared-LAN replacement authorities:"
+	python3 tools/android-native/emulator_matrix.py replacement
 
 android-scenario-boundary-check: app-build-android  ## Prove emulator-only authority/NSD registration is confined to test artifacts.
 	tools/android-native/gradle.sh -Ptarget-platform=android-arm64,android-x64 :app:assembleDebugAndroidTest
@@ -255,23 +304,26 @@ app-test: app-deps  ## Run Flutter widget/unit tests.
 		echo "error: no Flutter tests found (app/test/*_test.dart). Add at least a probe test." >&2; \
 		exit 1; \
 	fi
-	cd app && flutter test --no-pub
+	cd app && flutter test --no-pub $(APP_TEST_FLAGS)
 
 app-test-performance: app-deps  ## Run deterministic 5,000-entry Flutter list/search sanity checks.
 	cd app && flutter test --no-pub test/performance/desktop_performance_test.dart
 
 app-goldens-update: app-deps  ## Regenerate Flutter golden files (requires HIDLINS_UPDATE_GOLDENS=1).
+	@if [ "$(UNAME_S)" != "Linux" ]; then echo "error: regenerate committed goldens on Linux." >&2; exit 1; fi
 	@if [ "$${HIDLINS_UPDATE_GOLDENS}" != "1" ]; then \
 		echo "error: set HIDLINS_UPDATE_GOLDENS=1 to confirm golden regeneration." >&2; \
 		echo "       Review the diff before committing." >&2; exit 1; fi
-	cd app && flutter test --update-goldens --no-pub
+	cd app && flutter test --update-goldens --no-pub $(APP_TEST_FLAGS)
 
 # The cdylib the smoke test loads. `flutter test` runs on the host VM, so
 # this is always the host target dir; only the extension is platform-bound.
 ifeq ($(UNAME_S),Darwin)
 HIDLINS_API_LIB := $(CURDIR)/target/debug/libhidlins_api.dylib
+HIDLINS_API_RELEASE_LIB := $(CURDIR)/target/release/libhidlins_api.dylib
 else
 HIDLINS_API_LIB := $(CURDIR)/target/debug/libhidlins_api.so
+HIDLINS_API_RELEASE_LIB := $(CURDIR)/target/release/libhidlins_api.so
 endif
 
 # The bridge smoke tests live in app/test_bridge/ (not app/test/) so plain
@@ -290,15 +342,15 @@ app-test-integration: app-deps  ## Run real native-bridge desktop lifecycle and 
 	cd app && HIDLINS_API_LIB=$(HIDLINS_API_LIB) HIDLINS_CLI_BIN=$(CURDIR)/target/debug/hidlins flutter test --no-pub test_bridge/real_bridge_process_coexistence_integration_test.dart
 	HIDLINS_CLI_BIN=$(CURDIR)/target/debug/hidlins $(CARGO) test -p hidlins-tui --features process-interop-tests --lib app::tests::tui_session_and_cli_process_share_the_advisory_lock -- --exact
 
-app-test-integration-performance: app-deps  ## Measure 5,000-entry list/search through the compiled native bridge.
+app-test-integration-performance: app-deps ncsa-boundary-precheck  ## Measure 5,000-entry list/search through the optimized native bridge.
 	$(CARGO) build -p hidlins-api --bin api-test-driver --features test-fixtures --offline --locked
-	$(CARGO) build -p hidlins-api --offline --locked
+	$(CARGO) build -p hidlins-api --release --offline --locked
 	@set -e; fixture="$$(mktemp -d)"; log="$$(mktemp)"; \
 	trap 'rm -rf "$$fixture"; rm -f "$$log"' EXIT; \
 	printf '%s\n' 'performance-integration-master-marker' | \
 		target/debug/api-test-driver create-search-corpus "$$fixture" performance 5000; \
 	cd app; \
-	HIDLINS_API_LIB=$(HIDLINS_API_LIB) \
+	HIDLINS_API_LIB=$(HIDLINS_API_RELEASE_LIB) \
 	HIDLINS_PERF_STATE_DIR="$$fixture" \
 	HIDLINS_FLUTTER_VERSION="$$(cat ../.flutter-version)" \
 	HIDLINS_GIT_REVISION="$$(git -C .. rev-parse HEAD)" \
@@ -306,7 +358,7 @@ app-test-integration-performance: app-deps  ## Measure 5,000-entry list/search t
 	status=$${PIPESTATUS[0]}; test "$$status" -eq 0; \
 	grep -Eo 'HIDLINS_PERF_JSON:\{.*\}' "$$log"
 
-app-deps:  ## Install pub dependencies (offline from the vendored cache).
+app-deps: android-gradle-prepare  ## Install pub dependencies (offline from the vendored cache).
 	@log="$$(mktemp)"; trap 'rm -f "$$log"' EXIT; \
 	cd app && flutter pub get --offline --enforce-lockfile 2>&1 | tee "$$log"; \
 	status=$${PIPESTATUS[0]}; \
@@ -327,7 +379,10 @@ pub-vendor:  ## Re-vendor pub dependencies into app/vendor-pub/. REQUIRES NETWOR
 	@echo "Vendored pub cache updated. Commit app/vendor-pub/ (incl. hosted-hashes/),"
 	@echo "app/pubspec.lock, and tools/dev/pub-vendor.SHA256SUMS."
 
-pub-vendor-check:  ## Verify both vendored pub caches are up to date and unmodified (CI gate).
+pub-vendor-hash-test:  ## Exercise pub integrity checks with isolated Git fixtures.
+	python3 -B tools/dev/test_pub_vendor_hash.py
+
+pub-vendor-check: pub-vendor-hash-test  ## Verify both vendored pub caches are up to date and unmodified (CI gate).
 	@# Byte-level integrity first: every file in both committed pub caches
 	@# must match the manifest `make pub-vendor` wrote. pub's own
 	@# content-hash check only compares the lockfile against the *archive*
@@ -488,6 +543,12 @@ test-local-sync-android-lan-discovery: android-emulator-provision android-scenar
 test-local-sync-mobile-scenarios-ios: release test-local-sync-mobile-harness  ## Run expensive iPhone/iPad client scenarios against a CLI authority.
 	HIDLINS_MOBILE_SYNC_SCENARIOS=1 $(MAKE) --no-print-directory app-test-ios-integration
 
+# Provision AVDs separately, matching app-test-android-emulator. This focused
+# gate avoids repeating native/UI journeys when diagnosing real LAN scenarios.
+.PHONY: test-local-sync-android-lan-scenarios
+test-local-sync-android-lan-scenarios: app-build-android test-local-sync-mobile-harness  ## Run only strict Android shared-LAN CLI-authority scenarios on provisioned AVDs.
+	HIDLINS_ANDROID_STRICT=1 python3 tools/android-native/android_mobile_scenario.py
+
 test-local-sync-mobile-scenarios-android: release android-emulator-provision android-scenario-boundary-check test-local-sync-mobile-harness  ## Run expensive Android client scenarios against a CLI authority.
 	HIDLINS_MOBILE_SYNC_SCENARIOS=1 $(MAKE) --no-print-directory app-test-android-emulator
 
@@ -567,7 +628,7 @@ lint-fix:  ## Apply clippy auto-fixes where safe.
 # contributors without the Flutter/frb toolchain can still build Rust-only
 # changes"). Note api-gen-check REWRITES the generated files as a side effect,
 # which is another reason it does not belong in the quick loop.
-check: build-policy-check fmt-check lint build test check-macos check-feature-gates  ## warning policy + fmt-check + lint + build + test + cross/feature-gate checks (Rust-only; no Flutter needed).
+check: ci-toolchain-check build-policy-check fmt-check lint build test check-macos check-feature-gates  ## warning policy + fmt-check + lint + build + test + cross/feature-gate checks (Rust-only; no Flutter needed).
 
 # pub-vendor-check runs right after app-deps, BEFORE anything executes
 # vendored Dart (flutter test, build_runner): tampered cache bytes should
@@ -674,7 +735,9 @@ ncsa-boundary-precheck:
 
 ncsa-boundary-check: ncsa-boundary-precheck  ## Prove NCSA/libFuzzer remains development/test-only and outside every application artifact.
 	python3 tools/dev/ncsa-boundary-check.py self-test
-	$(CARGO) deny --manifest-path fuzz/Cargo.toml --all-features --offline --locked check licenses --config fuzz/deny.toml
+	# Select the isolated workspace and policy through the working directory;
+	# cargo-deny versions differ on where they accept an explicit --config.
+	cd fuzz && $(CARGO) deny --all-features --offline --locked check licenses
 
 s3-removal-check:  ## Reject reintroduction of the retired cloud-object sync surface.
 	python3 tools/dev/s3-removal-check.py

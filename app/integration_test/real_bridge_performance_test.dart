@@ -73,7 +73,7 @@ void main() {
         'abi': Abi.current().toString(),
         'flutter': _requiredEnv('HIDLINS_FLUTTER_VERSION'),
         'revision': _requiredEnv('HIDLINS_GIT_REVISION'),
-        'profile': 'debug-native-cdylib',
+        'profile': 'release-native-cdylib',
       };
       // Stable prefix lets the Make target and CI retain machine-readable
       // evidence without treating the rest of Flutter's reporter as JSON.

@@ -1425,6 +1425,36 @@ abstract class AppLocalizations {
   /// In en, this message translates to:
   /// **'Both sides were preserved. Review the backup at {backupPath} before retrying.'**
   String syncConflictMessage(String backupPath);
+
+  /// No description provided for @entryEditReloadAfterSync.
+  ///
+  /// In en, this message translates to:
+  /// **'The vault changed during sync. Close and reopen this editor before saving.'**
+  String get entryEditReloadAfterSync;
+
+  /// No description provided for @entryEditReenterSecrets.
+  ///
+  /// In en, this message translates to:
+  /// **'Saving failed. Re-enter secret values before retrying.'**
+  String get entryEditReenterSecrets;
+
+  /// No description provided for @actionRetry.
+  ///
+  /// In en, this message translates to:
+  /// **'Retry'**
+  String get actionRetry;
+
+  /// No description provided for @actionRemove.
+  ///
+  /// In en, this message translates to:
+  /// **'Remove'**
+  String get actionRemove;
+
+  /// No description provided for @syncOfflineNotice.
+  ///
+  /// In en, this message translates to:
+  /// **'Sync is unavailable. You can keep using this vault offline.'**
+  String get syncOfflineNotice;
 }
 
 class _AppLocalizationsDelegate

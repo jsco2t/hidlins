@@ -1,5 +1,7 @@
 # This policy applies only to the isolated fuzz workspace. Production builds
 # use ../deny.toml, which intentionally does not allow NCSA at all.
+# EPL-1.0 and EPL-2.0 (Eclipse Public License / JUnit) are explicitly forbidden
+# here too, including for development/testing. The sole exception remains NCSA.
 [graph]
 all-features = true
 targets = [

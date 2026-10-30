@@ -2,6 +2,7 @@
 set -euo pipefail
 
 readonly ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/../.." && pwd)"
+source "$ROOT/tools/android-native/gradle-env.sh"
 cd "$ROOT/app"
 
 # Flutter's generated Gradle integration performs the application packaging;

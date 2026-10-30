@@ -1,3 +1,5 @@
+import 'dart:async';
+
 import 'package:material_ui/material_ui.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:flutter_test/flutter_test.dart';
@@ -16,8 +18,157 @@ import 'package:app/src/platform/platform_result.dart';
 import 'package:app/src/platform/vault_import.dart';
 
 import '../helpers/feature_test_helpers.dart';
+import '../fakes/fake_repositories.dart';
+
+import 'package:app/src/providers/providers.dart';
+import 'package:app/src/ui/theme.dart';
 
 void main() {
+  for (final disposeDuringResolve in [false, true]) {
+    testWidgets(
+      'create clears before keyfile resolution; dispose=$disposeDuringResolve',
+      (tester) async {
+        final harness = TestHarness();
+        final keys = DelayedKeyfileAccess();
+        final createGate = harness.session.createVaultCompleter =
+            Completer<void>();
+        addTearDown(harness.dispose);
+        addTearDown(() {
+          if (!keys.resolveGate.isCompleted) {
+            keys.resolveGate.complete(const PlatformSuccess('/keyfile'));
+          }
+          if (!createGate.isCompleted) createGate.complete();
+        });
+        await tester.pumpWidget(
+          ProviderScope(
+            overrides: [
+              sessionRepositoryProvider.overrideWithValue(harness.session),
+              keyfileAccessCapabilityProvider.overrideWithValue(keys),
+            ],
+            child: MaterialApp(
+              theme: hidlinsLightTheme(),
+              localizationsDelegates: hidlinsLocalizationsDelegates,
+              supportedLocales: AppLocalizations.supportedLocales,
+              home: const CreateVaultDialog(),
+            ),
+          ),
+        );
+        await tester.pumpAndSettle();
+        await tester.tap(find.text('Select keyfile'));
+        await tester.pumpAndSettle();
+        await tester.enterText(
+          find.widgetWithText(TextFormField, 'Vault name'),
+          'new-vault',
+        );
+        await tester.enterText(
+          find.widgetWithText(TextFormField, 'Master password'),
+          'create-canary',
+        );
+        await tester.enterText(
+          find.widgetWithText(TextFormField, 'Confirm password'),
+          'create-canary',
+        );
+        final password = tester
+            .widget<TextFormField>(
+              find.widgetWithText(TextFormField, 'Master password'),
+            )
+            .controller!;
+        final confirmation = tester
+            .widget<TextFormField>(
+              find.widgetWithText(TextFormField, 'Confirm password'),
+            )
+            .controller!;
+        final consent = find.widgetWithText(
+          TextFormField,
+          'Type CONFIRM to acknowledge',
+        );
+        await tester.ensureVisible(consent);
+        await tester.enterText(consent, 'CONFIRM');
+        final create = find.widgetWithText(FilledButton, 'Create');
+        await tester.ensureVisible(create);
+        await tester.tap(create);
+        await tester.pump();
+        expect(password.text, isEmpty);
+        expect(confirmation.text, isEmpty);
+        if (disposeDuringResolve) {
+          await tester.pumpWidget(const SizedBox.shrink());
+        }
+        keys.resolveGate.complete(const PlatformSuccess('/keyfile'));
+        await tester.pump();
+        if (!disposeDuringResolve) {
+          expect(harness.session.lastCreatePassword, 'create-canary');
+          harness.session.createVaultError = const PathAlreadyExists(
+            '/vaults/new-vault.kdbx',
+          );
+        }
+        createGate.complete();
+        await tester.pumpAndSettle();
+        expect(keys.releaseCalls, 1);
+        expect(tester.takeException(), isNull);
+        if (disposeDuringResolve) {
+          expect(harness.session.createVaultCalled, isFalse);
+        } else {
+          expect(password.text, isEmpty);
+          expect(confirmation.text, isEmpty);
+          expect(find.textContaining('create-canary'), findsNothing);
+          await tester.enterText(
+            find.widgetWithText(TextFormField, 'Master password'),
+            'retry-canary',
+          );
+        }
+      },
+    );
+  }
+
+  for (final disposeDuringChange in [false, true]) {
+    testWidgets(
+      'change clears before delayed failure; dispose=$disposeDuringChange',
+      (tester) async {
+        final harness = TestHarness();
+        final gate = harness.session.changePasswordCompleter =
+            Completer<void>();
+        harness.session.changePasswordError = const BadCredentials();
+        addTearDown(harness.dispose);
+        addTearDown(() {
+          if (!gate.isCompleted) {
+            gate.complete();
+          }
+        });
+        await tester.pumpFeatureWithHarness(
+          const ChangePasswordDialog(),
+          harness,
+        );
+        await tester.pumpAndSettle();
+        final fields = <String, String>{
+          'Current password': 'old-canary',
+          'New password': 'new-canary',
+          'Confirm new password': 'new-canary',
+        };
+        final controllers = <TextEditingController>[];
+        for (final entry in fields.entries) {
+          final field = find.widgetWithText(TextFormField, entry.key);
+          await tester.enterText(field, entry.value);
+          controllers.add(tester.widget<TextFormField>(field).controller!);
+        }
+        await tester.tap(find.text('Confirm'));
+        await tester.pump();
+        expect(controllers.map((c) => c.text), everyElement(isEmpty));
+        expect(harness.session.lastCurrentPassword, 'old-canary');
+        expect(harness.session.lastNewPassword, 'new-canary');
+        if (disposeDuringChange) {
+          await tester.pumpWidget(const SizedBox.shrink());
+        }
+        gate.complete();
+        await tester.pumpAndSettle();
+        expect(tester.takeException(), isNull);
+        if (!disposeDuringChange) {
+          expect(controllers.map((c) => c.text), everyElement(isEmpty));
+          expect(find.text('Wrong password or keyfile'), findsOneWidget);
+        }
+      },
+    );
+  }
+
   testWidgets('local create resolves and releases an optional keyfile', (
     tester,
   ) async {

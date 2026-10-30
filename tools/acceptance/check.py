@@ -69,6 +69,14 @@ def check(data: dict[str, object]) -> None:
     ):
         fail("Android build-model record does not match the approved Flutter 3.47.2 contract")
 
+    coverage = data.get('android_runtime_coverage')
+    if coverage != {'native_ui_apis': [29, 36], 'shared_lan_apis': [30, 36]}:
+        fail('Android runtime coverage must retain native/UI API29/36 and shared-LAN API30/36')
+    emulator = load(ROOT / 'tools/android-native/emulator-matrix.json')
+    if (emulator.get('minimum_api'), emulator.get('shared_lan_minimum_api'),
+            emulator.get('current_api')) != (29, 30, 36):
+        fail('Android runtime coverage disagrees with the emulator matrix')
+
     targets = make_targets()
     artifacts = data.get("artifacts")
     if not isinstance(artifacts, list):
@@ -212,6 +220,15 @@ class NegativeControls(unittest.TestCase):
         data = self.fixture()
         data["july_task_audit"].pop()
         with self.assertRaisesRegex(ValueError, "classify exactly"):
+            check(data)
+
+    def test_runtime_record_cannot_claim_legacy_shared_lan_coverage(self) -> None:
+        data = self.fixture()
+        data['android_runtime_coverage'] = {
+            'native_ui_apis': [29, 36],
+            'shared_lan_apis': [29, 36],
+        }
+        with self.assertRaisesRegex(ValueError, 'Android runtime coverage'):
             check(data)
 
 

@@ -1,3 +1,5 @@
+import 'dart:io';
+
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:flutter_test/flutter_test.dart';
 import 'package:material_ui/material_ui.dart';
@@ -27,6 +29,8 @@ void main() {
     ('dark', Brightness.dark),
   ];
 
+  // Only reference PNG comparisons depend on the Linux renderer. Fixture
+  // contract tests exercise the shared scene helper on every host platform.
   group('24-screen desktop alpha matrix', () {
     for (final scene in _AlphaScene.values) {
       for (final (themeName, brightness) in themes) {
@@ -43,6 +47,9 @@ void main() {
               ),
             ];
 
+            harness.session.currentLockState = scene == _AlphaScene.lock
+                ? LockEvent.locked
+                : LockEvent.unlocked;
             await expectGolden(
               tester,
               ProviderScope(overrides: harness.overrides, child: _scene(scene)),
@@ -54,13 +61,13 @@ void main() {
         }
       }
     }
-  });
+  }, skip: !Platform.isLinux);
 
   group('additional brand and sync states', () {
     testWidgets('branded first run light compact', (tester) async {
       await expectGolden(
         tester,
-        FirstRunPage(onChoice: (_) {}),
+        Scaffold(body: FirstRunPage(onChoice: (_) {})),
         name: 'first_run_light_compact',
         size: goldenSizeCompact,
       );
@@ -91,7 +98,9 @@ void main() {
       ),
     ]) {
       testWidgets(variant.$1, (tester) async {
-        final harness = TestHarness()..sync.status = variant.$2;
+        final harness = TestHarness()
+          ..session.currentLockState = LockEvent.unlocked
+          ..sync.status = variant.$2;
         addTearDown(harness.dispose);
         await expectGolden(
           tester,
@@ -103,7 +112,7 @@ void main() {
         );
       });
     }
-  });
+  }, skip: !Platform.isLinux);
 }
 
 Widget _scene(_AlphaScene scene) {

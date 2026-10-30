@@ -175,6 +175,12 @@ class _CreateVaultDialogState extends ConsumerState<CreateVaultDialog> {
 
   Future<void> _create() async {
     if (!_formKey.currentState!.validate()) return;
+    final masterPassword = _passwordCtrl.text;
+    final name = _nameCtrl.text;
+    final repo = ref.read(sessionRepositoryProvider);
+    final keyfiles = ref.read(keyfileAccessCapabilityProvider);
+    _passwordCtrl.clear();
+    _confirmCtrl.clear();
 
     setState(() {
       _saving = true;
@@ -185,24 +191,23 @@ class _CreateVaultDialogState extends ConsumerState<CreateVaultDialog> {
     final reference = _keyfileReference;
     try {
       if (reference != null) {
-        final resolved = await ref
-            .read(keyfileAccessCapabilityProvider)
-            .resolve(reference);
+        final resolved = await keyfiles.resolve(reference);
+        if (!mounted) return;
         if (resolved case PlatformSuccess<String>(:final value)) {
           keyfile = KeyfileRef.path(value);
         } else {
           throw const _KeyfileAccessException();
         }
       }
-      final repo = ref.read(sessionRepositoryProvider);
       await repo.createVault(
-        name: _nameCtrl.text,
-        masterPassword: _passwordCtrl.text,
+        name: name,
+        masterPassword: masterPassword,
         keyfile: keyfile,
         confirmedNoRecovery: true,
       );
       if (mounted) Navigator.of(context).pop(true);
     } on AppFailure catch (e) {
+      if (!mounted) return;
       setState(() {
         _saving = false;
         _error = switch (e) {
@@ -212,13 +217,14 @@ class _CreateVaultDialogState extends ConsumerState<CreateVaultDialog> {
         };
       });
     } on Exception {
+      if (!mounted) return;
       setState(() {
         _saving = false;
         _error = AppLocalizations.of(context)!.errorGeneric;
       });
     } finally {
       if (reference != null) {
-        await ref.read(keyfileAccessCapabilityProvider).release(reference);
+        await keyfiles.release(reference);
       }
     }
   }

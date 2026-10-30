@@ -2,6 +2,7 @@
 set -euo pipefail
 
 readonly ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/../.." && pwd)"
+source "$ROOT/tools/android-native/gradle-env.sh"
 if [[ -z "${ANDROID_HOME:-}" && -z "${ANDROID_SDK_ROOT:-}" ]]; then
   case "$(uname -s)" in
     Darwin) export ANDROID_HOME="${HOME:?}/Library/Android/sdk" ;;
@@ -25,7 +26,16 @@ mkdir -p "$WRAPPER_TEMP/gradle/wrapper"
 cp "$WRAPPER_SOURCE" "$WRAPPER_TEMP/gradle/wrapper/gradle-wrapper.jar"
 cp "$ROOT/app/android/gradle/wrapper/gradle-wrapper.properties" \
   "$WRAPPER_TEMP/gradle/wrapper/gradle-wrapper.properties"
+default_project=1
+for argument in "$@"; do
+  case "$argument" in
+    -p|--project-dir|--project-dir=*|-p?*) default_project=0; break ;;
+  esac
+done
+if [[ "$default_project" == 1 ]]; then
+  set -- -p "$ROOT/app/android" "$@"
+fi
 cd "$WRAPPER_TEMP"
 exec "$JAVA_HOME/bin/java" -classpath gradle/wrapper/gradle-wrapper.jar \
-  org.gradle.wrapper.GradleWrapperMain -p "$ROOT/app/android" \
+  org.gradle.wrapper.GradleWrapperMain \
   --no-daemon --stacktrace "$@"

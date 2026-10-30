@@ -55,7 +55,9 @@ class _GroupTile extends StatelessWidget {
 
   @override
   Widget build(BuildContext context) {
-    final isSelected = selectedGroupUuid == node.uuid;
+    final isSelected = isRoot
+        ? selectedGroupUuid == null
+        : selectedGroupUuid == node.uuid;
     final colorScheme = Theme.of(context).colorScheme;
     final label = isRoot
         ? AppLocalizations.of(context)!.groupAllEntries
@@ -65,72 +67,72 @@ class _GroupTile extends StatelessWidget {
       crossAxisAlignment: CrossAxisAlignment.stretch,
       mainAxisSize: MainAxisSize.min,
       children: [
-        Semantics(
-          button: true,
-          selected: isSelected,
-          label: label,
-          child: MenuAnchor(
-            menuChildren: [
-              if (onNewEntry != null)
-                MenuItemButton(
-                  onPressed: () => onNewEntry!(node.uuid),
-                  leadingIcon: const Icon(Icons.add),
-                  child: Text(AppLocalizations.of(context)!.entryCreateTitle),
-                ),
-            ],
-            builder: (context, controller, child) => GestureDetector(
-              onSecondaryTapDown: (_) {
-                onGroupSelected(isRoot && isSelected ? null : node.uuid);
-                controller.open();
-              },
-              child: child,
-            ),
-            child: Material(
-              color: isSelected
-                  ? colorScheme.secondaryContainer
-                  : Colors.transparent,
-              child: InkWell(
-                onTap: () =>
-                    onGroupSelected(isRoot && isSelected ? null : node.uuid),
-                child: ConstrainedBox(
-                  constraints: const BoxConstraints(minHeight: 44),
-                  child: Padding(
-                    padding: EdgeInsets.only(
-                      left: HidlinsSpacing.md + (depth * HidlinsSpacing.md),
-                      right: HidlinsSpacing.md,
-                      top: HidlinsSpacing.sm,
-                      bottom: HidlinsSpacing.sm,
-                    ),
-                    child: Row(
-                      children: [
-                        Icon(
-                          isRoot ? Icons.folder_special : Icons.folder,
-                          size: 20,
-                          color: isSelected
-                              ? colorScheme.onSecondaryContainer
-                              : colorScheme.onSurfaceVariant,
-                        ),
-                        const SizedBox(width: HidlinsSpacing.sm),
-                        Expanded(
-                          child: Text(
-                            label,
-                            style: Theme.of(context).textTheme.bodyMedium
-                                ?.copyWith(
-                                  fontWeight: isSelected
-                                      ? FontWeight.w600
-                                      : null,
-                                  color: isSelected
-                                      ? colorScheme.onSecondaryContainer
-                                      : null,
-                                ),
+        MergeSemantics(
+          child: Semantics(
+            button: true,
+            selected: isSelected,
+            child: MenuAnchor(
+              menuChildren: [
+                if (onNewEntry != null)
+                  MenuItemButton(
+                    onPressed: () => onNewEntry!(node.uuid),
+                    leadingIcon: const Icon(Icons.add),
+                    child: Text(AppLocalizations.of(context)!.entryCreateTitle),
+                  ),
+              ],
+              builder: (context, controller, child) => GestureDetector(
+                onSecondaryTapDown: (_) {
+                  onGroupSelected(isRoot ? null : node.uuid);
+                  controller.open();
+                },
+                child: child,
+              ),
+              child: Material(
+                color: isSelected
+                    ? colorScheme.secondaryContainer
+                    : Colors.transparent,
+                child: InkWell(
+                  onTap: () => onGroupSelected(isRoot ? null : node.uuid),
+                  child: ConstrainedBox(
+                    constraints: const BoxConstraints(minHeight: 44),
+                    child: Padding(
+                      padding: EdgeInsets.only(
+                        left: HidlinsSpacing.md + (depth * HidlinsSpacing.md),
+                        right: HidlinsSpacing.md,
+                        top: HidlinsSpacing.sm,
+                        bottom: HidlinsSpacing.sm,
+                      ),
+                      child: Row(
+                        children: [
+                          Icon(
+                            isRoot ? Icons.folder_special : Icons.folder,
+                            size: 20,
+                            color: isSelected
+                                ? colorScheme.onSecondaryContainer
+                                : colorScheme.onSurfaceVariant,
                           ),
-                        ),
-                        Text(
-                          '${node.entryCount}',
-                          style: Theme.of(context).textTheme.labelSmall
-                              ?.copyWith(color: colorScheme.onSurfaceVariant),
-                        ),
-                      ],
+                          const SizedBox(width: HidlinsSpacing.sm),
+                          Expanded(
+                            child: Text(
+                              label,
+                              style: Theme.of(context).textTheme.bodyMedium
+                                  ?.copyWith(
+                                    fontWeight: isSelected
+                                        ? FontWeight.w600
+                                        : null,
+                                    color: isSelected
+                                        ? colorScheme.onSecondaryContainer
+                                        : null,
+                                  ),
+                            ),
+                          ),
+                          Text(
+                            '${node.entryCount}',
+                            style: Theme.of(context).textTheme.labelSmall
+                                ?.copyWith(color: colorScheme.onSurfaceVariant),
+                          ),
+                        ],
+                      ),
                     ),
                   ),
                 ),

@@ -3,9 +3,103 @@
 
 from __future__ import annotations
 
+import json
+import os
+from pathlib import Path
+import signal
+import re
+import subprocess
+import tempfile
 import unittest
 
 import select_simulators
+
+ROOT = Path(__file__).resolve().parents[2]
+
+
+class IntegrationHarnessTests(unittest.TestCase):
+    def test_implicit_engine_registers_sdk_plugins(self) -> None:
+        source = (ROOT / 'app/ios/Runner/AppDelegate.swift').read_text()
+        callback = source[source.index('func didInitializeImplicitFlutterEngine'):]
+        self.assertIn('GeneratedPluginRegistrant.register(with: engineBridge.pluginRegistry)', callback)
+
+    def test_sdk_registrant_is_exposed_to_swift_and_compiled_with_the_app(self) -> None:
+        bridge = (ROOT / 'app/ios/Runner/Runner-Bridging-Header.h').read_text()
+        self.assertIn('#import "GeneratedPluginRegistrant.h"', bridge)
+        project = (ROOT / 'app/ios/Runner.xcodeproj/project.pbxproj').read_text()
+        implementation = re.search(
+            r'([A-F0-9]{24}) /\* GeneratedPluginRegistrant.m \*/ = '
+            r'\{isa = PBXFileReference;[^\n]*path = GeneratedPluginRegistrant.m;', project)
+        self.assertIsNotNone(implementation)
+        build_file = re.search(
+            r'([A-F0-9]{24}) /\* GeneratedPluginRegistrant.m in Sources \*/ = '
+            r'\{isa = PBXBuildFile; fileRef = ' + implementation.group(1), project)
+        self.assertIsNotNone(build_file)
+        app_sources = re.search(
+            r'isa = PBXSourcesBuildPhase;[^}]*files = \(([^)]*AppDelegate.swift in Sources[^)]*)\)',
+            project)
+        self.assertIsNotNone(app_sources)
+        self.assertIn(build_file.group(1), app_sources.group(1))
+
+    def test_native_test_failure_preserves_the_assertion_diagnostic(self) -> None:
+        with tempfile.TemporaryDirectory(prefix='hidlins-ios-native-log-') as temporary:
+            root = Path(temporary)
+            flutter = root / 'flutter'
+            flutter.write_text('#!/bin/bash\nexit 0\n')
+            xcodebuild = root / 'xcodebuild'
+            xcodebuild.write_text('''#!/bin/bash
+for argument in "$@"; do
+  if [[ "$argument" == -quiet ]]; then exit 65; fi
+done
+echo 'XCTAssertNotEqual failed: clipboard expiry assertion at RunnerTests.swift'
+exit 65
+''')
+            for executable in (flutter, xcodebuild):
+                executable.chmod(0o755)
+            env = dict(os.environ, PATH=str(root) + os.pathsep + os.environ['PATH'])
+            result = subprocess.run(
+                ['bash', str(ROOT / 'tools/ios-native/run.sh'), 'simulator'],
+                env=env, capture_output=True, text=True, timeout=5)
+            self.assertEqual(result.returncode, 65, result.stdout + result.stderr)
+            self.assertIn('clipboard expiry assertion at RunnerTests.swift',
+                          result.stdout + result.stderr)
+
+    def test_hung_flutter_child_fails_and_shuts_down_owned_simulator(self) -> None:
+        with tempfile.TemporaryDirectory(prefix='hidlins-ios-integration-') as temporary:
+            root = Path(temporary)
+            devices = {'devices': {}}
+            for runtime, kind in (('26-5', 'iPhone'), ('26-4', 'iPad')):
+                devices['devices']['com.apple.CoreSimulator.SimRuntime.iOS-' + runtime] = [
+                    {'udid': kind, 'name': kind, 'isAvailable': True, 'state': 'Shutdown'}]
+            fixture = root / 'devices.json'
+            fixture.write_text(json.dumps(devices))
+            xcrun = root / 'xcrun'
+            xcrun.write_text('''#!/bin/bash
+printf '%s\\n' "$*" >> "$TEST_LOG"
+case "$2" in
+  list) cat "$TEST_DEVICES" ;;
+  spawn) exit 1 ;;
+esac
+''')
+            flutter = root / 'flutter'
+            flutter.write_text('#!/bin/bash\nexec sleep 60\n')
+            for executable in (xcrun, flutter):
+                executable.chmod(0o755)
+            env = dict(os.environ, PATH=str(root) + os.pathsep + os.environ['PATH'],
+                       TEST_LOG=str(root / 'commands'), TEST_DEVICES=str(fixture),
+                       HIDLINS_IOS_TEST_TIMEOUT_SECONDS='0.1')
+            process = subprocess.Popen(['bash', str(ROOT / 'tools/ios-native/integration.sh')],
+                                       env=env, text=True, stdout=subprocess.PIPE,
+                                       stderr=subprocess.PIPE, start_new_session=True)
+            try:
+                output, error = process.communicate(timeout=3)
+            except subprocess.TimeoutExpired:
+                os.killpg(process.pid, signal.SIGKILL)
+                process.communicate()
+                self.fail('iOS integration harness did not enforce the child timeout')
+            self.assertEqual(process.returncode, 124, output + error)
+            self.assertIn('timeout', output)
+            self.assertIn('simctl shutdown iPhone', (root / 'commands').read_text())
 
 
 class SimulatorSelectionTests(unittest.TestCase):

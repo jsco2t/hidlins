@@ -4,9 +4,12 @@
 from __future__ import annotations
 
 import importlib.util
+import contextlib
+import io
 import ipaddress
 import pathlib
 import re
+import tempfile
 import unittest
 from unittest import mock
 
@@ -46,6 +49,210 @@ def load_android_scenario_module():
 
 
 class MobileScenarioHarnessTest(unittest.TestCase):
+    def test_scenario_boot_wakes_and_dismisses_keyguard(self) -> None:
+        module = load_lan_module()
+        process = mock.Mock()
+        process.poll.return_value = None
+        booted = module.subprocess.CompletedProcess([], 0, stdout='1\n')
+        with mock.patch.object(module.subprocess, 'Popen', return_value=process) as launch, \
+                mock.patch.object(module.subprocess, 'run', return_value=booted), \
+                mock.patch.object(module, 'adb') as adb:
+            self.assertIs(module.boot('fixture', 'emulator-fixture', 5554, io.StringIO()), process)
+        command = launch.call_args.args[0]
+        self.assertIn('-gpu', command)
+        self.assertEqual(command[command.index('-gpu') + 1], 'swiftshader')
+        adb.assert_has_calls([
+            mock.call('emulator-fixture', 'shell', 'input', 'keyevent', 'KEYCODE_WAKEUP'),
+            mock.call('emulator-fixture', 'shell', 'wm', 'dismiss-keyguard'),
+        ])
+
+    def test_ios_scenario_selects_the_reporter_its_result_parser_requires(self) -> None:
+        module = load_module()
+
+        def flutter(command, **kwargs):
+            # Flutter's GitHub reporter is selected by the CI environment;
+            # unlike expanded output, its successful summary has no "All".
+            summary = ('00:01 +1: All tests passed!' if '--reporter=expanded' in command
+                       else '🎉 1 test passed.')
+            return module.subprocess.CompletedProcess(command, 0, stdout=summary, stderr='')
+
+        with mock.patch.object(module.subprocess, 'run', side_effect=flutter):
+            output = module.run_flutter(MODULE_PATH.parents[2], 'ios', 'fixture',
+                                        'pair', 37373, 37374, 'test-token')
+        self.assertTrue(module.flutter_output_passed(output))
+
+    def test_flutter_timeout_reports_redacted_partial_output(self) -> None:
+        module = load_module()
+        token = 'timeout-control-secret-canary'
+        # Redact before taking the tail, even across the truncation boundary.
+        ending = '\nlast-stage=restart-compile'
+        stderr = '\ncompiler-stalled'
+        padding = 6000 - 5 - len(ending) - len(stderr)
+        partial = (module.MASTER_PASSWORD + token + 'x' * padding + ending).encode()
+        error = module.subprocess.TimeoutExpired(
+            ['flutter'], 420, output=partial, stderr=stderr.encode())
+        with mock.patch.object(module.subprocess, 'run', side_effect=error):
+            with self.assertRaisesRegex(RuntimeError, 'Flutter ios phase restart timed out') as failure:
+                module.run_flutter(MODULE_PATH.parents[2], 'ios', 'fixture',
+                                   'restart', 37373, 37374, token)
+        detail = str(failure.exception)
+        self.assertIn('last-stage=restart-compile', detail)
+        self.assertIn('compiler-stalled', detail)
+        self.assertNotIn(module.MASTER_PASSWORD, detail)
+        self.assertNotIn(token, detail)
+        self.assertNotIn(token[-5:], detail)
+
+    def test_ios_scenario_reports_redacted_authority_failure(self) -> None:
+        module = load_module()
+        with tempfile.TemporaryDirectory(prefix='hidlins-ios-diagnostic-') as scratch:
+            root = pathlib.Path(scratch)
+            artifact = root / 'artifact'
+            artifact.write_bytes(b'fixture')
+            args = module.argparse.Namespace(
+                platform='ios', cli=str(artifact), device_name='iPhone fixture',
+                device='fixture', runtime='fixture', results_dir=str(root), artifact=str(artifact))
+            harness = mock.Mock(service_stderr=[])
+            token = 'test-control-token-canary'
+            control = mock.Mock(token=token, server_address=('127.0.0.1', 37374),
+                                failures=module.queue.Queue())
+            output = io.StringIO()
+            with mock.patch.object(module, 'AuthorityHarness', return_value=harness), \
+                    mock.patch.object(module, 'git_revision', return_value='fixture'), \
+                    mock.patch.object(module, 'reserve_port', return_value=37373), \
+                    mock.patch.object(module, 'ControlServer', return_value=control), \
+                    mock.patch.object(module.secrets, 'token_hex', return_value=token), \
+                    mock.patch.object(module.threading, 'Thread'), \
+                    mock.patch.object(module, 'run_flutter', side_effect=RuntimeError(
+                        'fixture authority failure ' + module.MASTER_PASSWORD + ' ' + token)), \
+                    contextlib.redirect_stdout(output), contextlib.redirect_stderr(output):
+                status = module.run_scenario(args)
+            self.assertEqual(status, 1)
+            self.assertIn('fixture authority failure', output.getvalue())
+            self.assertNotIn(module.MASTER_PASSWORD, output.getvalue())
+            self.assertNotIn(token, output.getvalue())
+            harness.stop.assert_called_once_with(force=True)
+
+    def test_android_scenario_reports_redacted_boot_failure_before_cleanup(self) -> None:
+        module = load_android_scenario_module()
+        with tempfile.TemporaryDirectory(prefix='hidlins-scenario-diagnostic-') as scratch:
+            root = pathlib.Path(scratch)
+            artifact = root / 'artifact'
+            artifact.write_bytes(b'fixture')
+            output = io.StringIO()
+
+            def failed_boot(avd, serial, port, log, extra_args=()):
+                diagnostic = '\nfixture engine initialization failed'
+                # Force a canary across the output-tail boundary: redact the
+                # complete value before truncation, including partial tails.
+                log.write(module.mobile.MASTER_PASSWORD +
+                          'x' * (2000 - len(diagnostic) - 5) + diagnostic)
+                log.flush()
+                raise RuntimeError('fixture boot failure ' + module.mobile.MASTER_PASSWORD)
+
+            row = ('hidlins-fixture', '29', 'x86_64', 'phone', 'fixture-image')
+            with mock.patch.object(module.lan, 'boot', side_effect=failed_boot), \
+                    mock.patch.object(module, 'cleanup_guest'), \
+                    mock.patch.object(module.mobile, 'reserve_port', return_value=37373), \
+                    mock.patch.object(module.mobile, 'git_revision', return_value='fixture'), \
+                    contextlib.redirect_stdout(output), contextlib.redirect_stderr(output):
+                passed = module.run_entry(
+                    row, authority_row=row, replacement_row=row, binary=artifact,
+                    test_apk=artifact, shipping_apk=artifact, emulator_version='37.2.13',
+                    results_dir=root)
+            self.assertFalse(passed)
+            self.assertIn('fixture boot failure', output.getvalue())
+            self.assertIn('fixture engine initialization failed', output.getvalue())
+            self.assertNotIn(module.mobile.MASTER_PASSWORD, output.getvalue())
+            evidence = module.json.loads((root / 'android-hidlins-fixture.json').read_text())
+            self.assertNotIn(module.mobile.MASTER_PASSWORD[-5:],
+                             evidence['boot_diagnostics']['authority.log'])
+
+    def test_shared_lan_bootstrap_uses_three_distinct_dhcp_managed_guests(self) -> None:
+        module = load_android_scenario_module()
+        with tempfile.TemporaryDirectory(prefix='hidlins-wifi-bootstrap-') as scratch:
+            root = pathlib.Path(scratch)
+            artifact = root / 'artifact'
+            artifact.write_bytes(b'fixture')
+            starts = []
+            processes = []
+
+            def boot(avd, serial, port, log, extra_args=()):
+                starts.append((avd, serial, extra_args))
+                process = mock.Mock()
+                processes.append(process)
+                return process
+
+            row = ('hidlins-client', '30', 'x86_64', 'phone', 'fixture-image')
+            authority = ('hidlins-authority', *row[1:])
+            replacement = ('hidlins-replacement', *row[1:])
+            with mock.patch.object(module.lan, 'boot', side_effect=boot), \
+                    mock.patch.object(module, 'runtime_identity', side_effect=RuntimeError('stop before OS checks')), \
+                    mock.patch.object(module, 'cleanup_guest') as cleanup, \
+                    mock.patch.object(module.mobile, 'reserve_port', return_value=37373), \
+                    mock.patch.object(module.mobile, 'git_revision', return_value='fixture'), \
+                    contextlib.redirect_stdout(io.StringIO()), \
+                    contextlib.redirect_stderr(io.StringIO()):
+                module.run_entry(
+                    row, authority_row=authority, replacement_row=replacement, binary=artifact,
+                    test_apk=artifact, shipping_apk=artifact, emulator_version='37.2.13',
+                    results_dir=root)
+            # API30 ships both drivers but defaults to isolated legacy Wi-Fi.
+            # Select the shared backend; DHCP and routing remain Android-owned.
+            self.assertEqual([(avd, serial) for avd, serial, _ in starts], [
+                ('hidlins-authority', module.AUTHORITY_SERIAL),
+                ('hidlins-client', module.CLIENT_SERIAL),
+                ('hidlins-replacement', module.REPLACEMENT_SERIAL),
+            ])
+            total_memory = 0
+            for _, _, args in starts:
+                self.assertIn('-lowram', args)
+                paired = [arg for arg in args if arg != '-lowram']
+                options = dict(zip(paired[::2], paired[1::2]))
+                self.assertEqual(options.get('-feature'), 'VirtioWifi,WiFiPacketStream')
+                # Without an explicit limit, modern images expand to 4 GiB
+                # per guest and exhaust a 16 GiB CI/developer host.
+                self.assertIn('-memory', options)
+                memory = int(options['-memory'])
+                self.assertGreater(memory, 0)
+                self.assertLessEqual(memory, 2048)
+                total_memory += memory
+                self.assertEqual(set(options), {'-feature', '-memory'})
+            self.assertLessEqual(total_memory, 6144)
+            for process in processes:
+                process.wait.assert_called_once_with(timeout=15)
+            cleanup.assert_has_calls([
+                mock.call(module.CLIENT_SERIAL), mock.call(module.AUTHORITY_SERIAL),
+                mock.call(module.REPLACEMENT_SERIAL),
+            ])
+
+    def test_android_full_scenario_selects_the_explicit_lan_matrix(self) -> None:
+        module = load_android_scenario_module()
+
+        def matrix(command, **kwargs):
+            apis = (30, 36) if command[-1] == 'lan' else (29, 36)
+            output = ''.join(f'fixture-{api}\t{api}\tx86_64\tphone\timage\n' for api in apis)
+            return module.subprocess.CompletedProcess(command, 0, stdout=output)
+
+        with mock.patch.object(module.subprocess, 'run', side_effect=matrix):
+            self.assertEqual([row[1] for row in module.selected_matrix()], ['30', '36'])
+
+    def test_emulator_version_probe_works_without_desktop_audio_libraries(self) -> None:
+        module = load_lan_module()
+        with tempfile.TemporaryDirectory(prefix='hidlins-headless-emulator-') as scratch:
+            emulator = pathlib.Path(scratch) / 'emulator'
+            emulator.write_text('''#!/bin/sh
+case "$*" in
+  '-no-window -no-audio -version') echo 'Android emulator version 37.2.13.0 (fixture)' ;;
+  *) echo 'libpulse.so.0: cannot open shared object file' >&2; exit 127 ;;
+esac
+''')
+            emulator.chmod(0o755)
+            with mock.patch.object(module, 'EMULATOR', emulator):
+                self.assertEqual(module.emulator_version(), '37.2.13')
+                emulator.write_text('#!/bin/sh\necho unknown-version\n')
+                with self.assertRaisesRegex(RuntimeError, 'could not be determined'):
+                    module.emulator_version()
+
     def test_platform_routes_are_explicit_and_local_only(self) -> None:
         module = load_module()
         self.assertEqual(module.platform_route("ios"), "127.0.0.1")
@@ -57,12 +264,14 @@ class MobileScenarioHarnessTest(unittest.TestCase):
         module = load_module()
         raw = (
             "Pairing SAS: ABC-123 integration-master-marker "
-            "/private/tmp/hidlins-mobile-sync.secret/vaults.toml"
+            "/private/tmp/hidlins-mobile-sync.secret/vaults.toml "
+            "/tmp/hidlins-android-mobile-sync.secret/vaults.toml"
         )
         redacted = module.redact_text(raw, ["integration-master-marker"])
         self.assertNotIn("ABC-123", redacted)
         self.assertNotIn("integration-master-marker", redacted)
         self.assertNotIn("hidlins-mobile-sync.secret", redacted)
+        self.assertNotIn("hidlins-android-mobile-sync", redacted)
         self.assertIn("<redacted-sas>", redacted)
 
     def test_public_sync_endpoint_is_rejected(self) -> None:
@@ -194,24 +403,59 @@ class MobileScenarioHarnessTest(unittest.TestCase):
         with self.assertRaises(ValueError):
             module.registrar_start_arguments(port=37371, kind="other")
 
-    def test_android_peer_route_readiness_retries_until_live(self) -> None:
+    def test_android_peer_route_readiness_uses_wifi_without_requiring_icmp(self) -> None:
         module = load_android_scenario_module()
-        failed = module.subprocess.CompletedProcess([], 1)
-        connected = module.subprocess.CompletedProcess([], 0)
+        failed = module.subprocess.CompletedProcess([], 2, stdout='', stderr='unreachable')
+        connected = module.subprocess.CompletedProcess(
+            [], 0, stdout='10.0.2.18 dev wlan0 table 1005 src 10.0.2.16 uid 2000\n    cache\n')
         with mock.patch.object(
-            module.subprocess,
-            "run",
-            side_effect=(failed, connected),
+            module.subprocess, "run",
+            side_effect=(module.subprocess.TimeoutExpired("adb", 5), failed, connected),
         ) as run, mock.patch.object(module.time, "sleep") as sleep:
-            module.require_peer_reachable("emulator-5554", "10.0.2.18")
+            module.require_wifi_route("emulator-5554", "10.0.2.18", "10.0.2.16")
 
-        self.assertEqual(run.call_count, 2)
-        sleep.assert_called_once_with(0.25)
-        command = run.call_args.args[0]
-        self.assertEqual(
-            command[-6:],
-            ["ping", "-c", "1", "-W", "1", "10.0.2.18"],
-        )
+        self.assertEqual(run.call_count, 3)
+        self.assertEqual(sleep.call_args_list, [mock.call(0.25), mock.call(0.25)])
+        self.assertEqual(run.call_args.args[0][-5:],
+                         ["ip", "-4", "route", "get", "10.0.2.18"])
+        self.assertIs(run.call_args.kwargs['capture_output'], True)
+
+    def test_android_peer_route_rejects_cellular_and_malformed_routes(self) -> None:
+        module = load_android_scenario_module()
+        for route in (
+            '10.0.2.18 dev rmnet_data0 src 10.0.2.15',
+            '10.0.2.18 dev wlan01 src 10.0.2.16',
+            'unreachable 10.0.2.18 dev wlan0',
+            '10.0.2.19 dev wlan0 src 10.0.2.16',
+            '10.0.2.18 dev wlan0',
+            '10.0.2.18 dev wlan0 src 10.0.2.15',
+            '',
+        ):
+            with self.subTest(route=route), \
+                    mock.patch.object(module.subprocess, 'run', return_value=
+                                      module.subprocess.CompletedProcess([], 0, stdout=route)), \
+                    mock.patch.object(module.time, 'monotonic', side_effect=(0, 0, 31)), \
+                    mock.patch.object(module.time, 'sleep'), \
+                    self.assertRaisesRegex(RuntimeError, 'Wi-Fi route'):
+                module.require_wifi_route('emulator-5554', '10.0.2.18', '10.0.2.16')
+
+    def test_android_route_failure_reports_only_bounded_network_fields(self) -> None:
+        module = load_android_scenario_module()
+        for output, expected in (
+            ('local 10.0.2.16 dev lo src 10.0.2.16 uid SECRET-CANARY',
+             'kind=local, interface=lo, source=10.0.2.16'),
+            ('10.0.2.16 dev SECRET-CANARY src SECRET-CANARY',
+             'kind=unicast, interface=other, source=unknown'),
+        ):
+            response = module.subprocess.CompletedProcess([], 0, stdout=output)
+            with self.subTest(output=output), \
+                    mock.patch.object(module.subprocess, 'run', return_value=response), \
+                    mock.patch.object(module.time, 'monotonic', side_effect=(0, 0, 31)), \
+                    mock.patch.object(module.time, 'sleep'), \
+                    self.assertRaises(RuntimeError) as failed:
+                module.require_wifi_route('emulator-5556', '10.0.2.16', '10.0.2.17')
+            self.assertIn(expected, str(failed.exception))
+            self.assertNotIn('SECRET-CANARY', str(failed.exception))
 
     def test_android_registrar_is_confined_to_instrumentation_source_set(self) -> None:
         root = MODULE_PATH.parents[2]
@@ -259,45 +503,16 @@ class MobileScenarioHarnessTest(unittest.TestCase):
         self.assertIn('switch_service("trusted")', source)
         self.assertIn("replace_authority", source)
         self.assertIn('selected_scenario_avds("replacement")', source)
-        self.assertIn('"-wifi-server-port"', source)
-        self.assertIn('"-wifi-client-port"', source)
-        self.assertIn('"-network-user-mode-options"', source)
-        self.assertIn("prepare_legacy_wifi_guest", source)
         initial_client_boot = source.index("client_process = lan.boot")
         initial_authority_boot = source.index("authority_process = lan.boot")
-        self.assertLess(
-            initial_authority_boot,
-            initial_client_boot,
-            "the explicit Wi-Fi server must be listening before its client boots",
-        )
+        initial_replacement_boot = source.index("replacement_process = lan.boot")
+        self.assertLess(initial_authority_boot, initial_client_boot)
+        self.assertLess(initial_client_boot, initial_replacement_boot)
         topology_check = source.index("mobile.require_android_lan_topology")
-        peer_route_check = source.index(
-            "require_peer_reachable(\n                CLIENT_SERIAL",
-            topology_check,
-        )
-        initial_harness = source.index("harness = AndroidAuthorityHarness")
-        self.assertLess(topology_check, peer_route_check)
-        self.assertLess(peer_route_check, initial_harness)
-        self.assertRegex(
-            source,
-            re.compile(
-                r"if legacy_wifi:.*?prepare_legacy_wifi_guest\(CLIENT_SERIAL\).*?"
-                r"prepare_legacy_wifi_guest\(AUTHORITY_SERIAL\)",
-                re.DOTALL,
-            ),
-        )
-        self.assertIn("cleanup_guest(CLIENT_SERIAL)", source)
-        self.assertIn("restarted_client_process = lan.boot", source)
+        self.assertLess(topology_check, source.index("require_wifi_route(CLIENT_SERIAL", topology_check))
+        self.assertLess(source.index("require_wifi_route(CLIENT_SERIAL", topology_check),
+                        source.index("harness = AndroidAuthorityHarness"))
         self.assertIn("prepare_client_permissions", source)
-        self.assertRegex(
-            source,
-            re.compile(
-                r"client_network_args\s*=.*?-wifi-client-port.*?"
-                r"authority_network_args\s*=.*?-wifi-server-port.*?"
-                r"replacement_network_args\s*=.*?-wifi-server-port",
-                re.DOTALL,
-            ),
-        )
         self.assertNotIn("HIDLINS_SCENARIO_SYNC_HOST", source)
         self.assertNotIn("HIDLINS_SCENARIO_SYNC_PORT", source)
         self.assertNotIn('"forward"', source)

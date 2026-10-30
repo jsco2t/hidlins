@@ -12,6 +12,8 @@ import '../../ui/widgets/copy_row.dart';
 import '../../ui/widgets/section_card.dart';
 import '../../ui/widgets/secret_text.dart';
 import '../entries/totp_block.dart';
+import 'entry_edit.dart';
+import '../sync/sync_controller.dart';
 
 typedef FilePickerCallback = Future<String?> Function();
 
@@ -24,6 +26,9 @@ class EntryDetailPane extends ConsumerWidget {
   @override
   Widget build(BuildContext context, WidgetRef ref) {
     final detailAsync = ref.watch(entryDetailProvider(uuid));
+    final sync = ref.watch(syncControllerProvider).asData?.value;
+    final mutationsEnabled =
+        sync != null && !sync.inFlight && !detailAsync.isLoading;
     final l10n = AppLocalizations.of(context)!;
     final colorScheme = Theme.of(context).colorScheme;
 
@@ -35,8 +40,12 @@ class EntryDetailPane extends ConsumerWidget {
           style: TextStyle(color: colorScheme.error),
         ),
       ),
-      data: (detail) =>
-          _DetailContent(detail: detail, uuid: uuid, onPickFile: onPickFile),
+      data: (detail) => _DetailContent(
+        detail: detail,
+        uuid: uuid,
+        onPickFile: onPickFile,
+        mutationsEnabled: mutationsEnabled,
+      ),
     );
   }
 }
@@ -46,11 +55,13 @@ class _DetailContent extends ConsumerStatefulWidget {
     required this.detail,
     required this.uuid,
     this.onPickFile,
+    required this.mutationsEnabled,
   });
 
   final EntryDetail detail;
   final String uuid;
   final FilePickerCallback? onPickFile;
+  final bool mutationsEnabled;
 
   @override
   ConsumerState<_DetailContent> createState() => _DetailContentState();
@@ -89,6 +100,11 @@ class _DetailContentState extends ConsumerState<_DetailContent> {
                   ).isBefore(DateTime.now()),
                 ),
               ),
+            IconButton(
+              icon: const Icon(Icons.edit_outlined),
+              tooltip: l10n.actionEdit,
+              onPressed: widget.mutationsEnabled ? _openEdit : null,
+            ),
           ],
         ),
         const SizedBox(height: HidlinsSpacing.md),
@@ -217,6 +233,7 @@ class _DetailContentState extends ConsumerState<_DetailContent> {
           uuid: widget.uuid,
           attachments: detail.attachments,
           onPickFile: widget.onPickFile,
+          mutationsEnabled: widget.mutationsEnabled,
         ),
 
         // Timestamps
@@ -254,6 +271,27 @@ class _DetailContentState extends ConsumerState<_DetailContent> {
     }
   }
 
+  Future<void> _openEdit() async {
+    final sync = ref.read(syncControllerProvider).asData?.value;
+    if (!widget.mutationsEnabled || sync == null || sync.inFlight) return;
+    final detail = await ref
+        .read(entryRepositoryProvider)
+        .entryDetail(widget.uuid);
+    if (!mounted || !widget.mutationsEnabled) return;
+    final current = ref.read(syncControllerProvider).asData?.value;
+    if (current == null ||
+        current.inFlight ||
+        current.terminalRevision != sync.terminalRevision) {
+      return;
+    }
+    final changed = await Navigator.of(context).push<bool>(
+      MaterialPageRoute(builder: (_) => EntryEditDialog(detail: detail)),
+    );
+    if (mounted && changed == true) {
+      ref.invalidate(entryDetailProvider(widget.uuid));
+    }
+  }
+
   Future<void> _copy(CopyField field) async {
     final l10n = AppLocalizations.of(context)!;
     try {
@@ -270,7 +308,7 @@ class _DetailContentState extends ConsumerState<_DetailContent> {
   }
 }
 
-class _CustomFieldRow extends ConsumerWidget {
+class _CustomFieldRow extends ConsumerStatefulWidget {
   const _CustomFieldRow({
     required this.name,
     required this.isProtected,
@@ -282,7 +320,17 @@ class _CustomFieldRow extends ConsumerWidget {
   final String uuid;
 
   @override
-  Widget build(BuildContext context, WidgetRef ref) {
+  ConsumerState<_CustomFieldRow> createState() => _CustomFieldRowState();
+}
+
+class _CustomFieldRowState extends ConsumerState<_CustomFieldRow> {
+  final _secretKey = GlobalKey<SecretTextState>();
+
+  @override
+  Widget build(BuildContext context) {
+    final name = widget.name;
+    final uuid = widget.uuid;
+    final isProtected = widget.isProtected;
     final l10n = AppLocalizations.of(context)!;
     return Padding(
       padding: const EdgeInsets.symmetric(vertical: HidlinsSpacing.xs),
@@ -302,6 +350,7 @@ class _CustomFieldRow extends ConsumerWidget {
                 const SizedBox(height: 2),
                 if (isProtected)
                   SecretText(
+                    key: _secretKey,
                     onReveal: () async {
                       try {
                         final repo = ref.read(secretsRepositoryProvider);
@@ -310,6 +359,10 @@ class _CustomFieldRow extends ConsumerWidget {
                           RevealFieldCustom(name),
                         );
                       } on Exception {
+                        if (!mounted) return null;
+                        ScaffoldMessenger.of(context).showSnackBar(
+                          SnackBar(content: Text(l10n.errorRevealFailed)),
+                        );
                         return null;
                       }
                     },
@@ -327,6 +380,27 @@ class _CustomFieldRow extends ConsumerWidget {
               ],
             ),
           ),
+          if (isProtected)
+            IconButton(
+              icon: Icon(
+                _secretKey.currentState?.isRevealed == true
+                    ? Icons.visibility_off
+                    : Icons.visibility,
+              ),
+              tooltip: _secretKey.currentState?.isRevealed == true
+                  ? l10n.actionHide
+                  : l10n.actionReveal,
+              onPressed: () async {
+                final secret = _secretKey.currentState;
+                if (secret == null) return;
+                if (secret.isRevealed) {
+                  secret.hide();
+                } else {
+                  await secret.reveal();
+                }
+                if (mounted) setState(() {});
+              },
+            ),
           IconButton(
             icon: const Icon(Icons.copy, size: 18),
             tooltip: l10n.actionCopy,
@@ -357,11 +431,13 @@ class _AttachmentSection extends ConsumerStatefulWidget {
     required this.uuid,
     required this.attachments,
     this.onPickFile,
+    required this.mutationsEnabled,
   });
 
   final String uuid;
   final List<AttachmentMeta> attachments;
   final FilePickerCallback? onPickFile;
+  final bool mutationsEnabled;
 
   @override
   ConsumerState<_AttachmentSection> createState() => _AttachmentSectionState();
@@ -404,7 +480,9 @@ class _AttachmentSectionState extends ConsumerState<_AttachmentSection> {
                   IconButton(
                     icon: const Icon(Icons.close, size: 18),
                     tooltip: l10n.actionDetach,
-                    onPressed: () async => _confirmDetach(a.name),
+                    onPressed: widget.mutationsEnabled
+                        ? () async => _confirmDetach(a.name)
+                        : null,
                   ),
                 ],
               ),
@@ -424,7 +502,7 @@ class _AttachmentSectionState extends ConsumerState<_AttachmentSection> {
           Padding(
             padding: const EdgeInsets.only(top: HidlinsSpacing.sm),
             child: TextButton.icon(
-              onPressed: _attach,
+              onPressed: widget.mutationsEnabled ? _attach : null,
               icon: const Icon(Icons.add, size: 18),
               label: Text(l10n.actionAttach),
             ),
@@ -435,11 +513,17 @@ class _AttachmentSectionState extends ConsumerState<_AttachmentSection> {
   }
 
   Future<void> _attach() async {
+    if (!_canMutate()) return;
+    final revision = ref
+        .read(syncControllerProvider)
+        .asData!
+        .value
+        .terminalRevision;
     final picker = widget.onPickFile;
     if (picker == null) return;
 
     final path = await picker();
-    if (path == null || !mounted) return;
+    if (path == null || !mounted || !_canMutate(revision)) return;
 
     try {
       final repo = ref.read(entryRepositoryProvider);
@@ -498,6 +582,12 @@ class _AttachmentSectionState extends ConsumerState<_AttachmentSection> {
   }
 
   Future<void> _confirmDetach(String key) async {
+    if (!_canMutate()) return;
+    final revision = ref
+        .read(syncControllerProvider)
+        .asData!
+        .value
+        .terminalRevision;
     final l10n = AppLocalizations.of(context)!;
     final confirmed = await showDialog<bool>(
       context: context,
@@ -516,7 +606,7 @@ class _AttachmentSectionState extends ConsumerState<_AttachmentSection> {
         ],
       ),
     );
-    if (confirmed != true || !mounted) return;
+    if (confirmed != true || !mounted || !_canMutate(revision)) return;
 
     try {
       final repo = ref.read(entryRepositoryProvider);
@@ -527,6 +617,14 @@ class _AttachmentSectionState extends ConsumerState<_AttachmentSection> {
         _error = AppLocalizations.of(context)!.errorGeneric;
       });
     }
+  }
+
+  bool _canMutate([int? revision]) {
+    final sync = ref.read(syncControllerProvider).asData?.value;
+    return widget.mutationsEnabled &&
+        sync != null &&
+        !sync.inFlight &&
+        (revision == null || revision == sync.terminalRevision);
   }
 }
 

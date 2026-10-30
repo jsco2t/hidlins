@@ -4,6 +4,33 @@ import 'dart:ui' show VoidCallback;
 import 'package:app/src/data/failures.dart';
 import 'package:app/src/data/models.dart';
 import 'package:app/src/data/repositories.dart';
+import 'package:app/src/platform/keyfile_access.dart';
+import 'package:app/src/platform/platform_result.dart';
+
+class DelayedKeyfileAccess implements KeyfileAccessCapability {
+  final resolveGate = Completer<PlatformResult<String>>();
+  int releaseCalls = 0;
+  static const reference = KeyfileReference(
+    reference: 'delayed-key',
+    displayName: 'keyfile.key',
+  );
+
+  @override
+  Future<PlatformResult<KeyfileReference>> pickReference() async =>
+      const PlatformSuccess(reference);
+
+  @override
+  Future<PlatformResult<String>> resolve(KeyfileReference reference) =>
+      resolveGate.future;
+
+  @override
+  Future<PlatformResult<PlatformUnit>> release(
+    KeyfileReference reference,
+  ) async {
+    releaseCalls++;
+    return const PlatformSuccess(platformUnit);
+  }
+}
 
 class FakeSessionRepository implements SessionRepository {
   final StreamController<LockEvent> lockController =
@@ -18,6 +45,7 @@ class FakeSessionRepository implements SessionRepository {
   String? lastUnlockName;
   String? lastUnlockPassword;
   AppFailure? unlockError;
+  Completer<void>? unlockCompleter;
   VaultTree? unlockResult;
   bool lockNowCalled = false;
   bool shutdownCalled = false;
@@ -27,6 +55,8 @@ class FakeSessionRepository implements SessionRepository {
   String? lastCreateName;
   bool? lastConfirmedNoRecovery;
   AppFailure? createVaultError;
+  Completer<void>? createVaultCompleter;
+  String? lastCreatePassword;
   bool registerExistingVaultCalled = false;
   String? lastRegisteredVaultPath;
 
@@ -36,6 +66,9 @@ class FakeSessionRepository implements SessionRepository {
 
   bool changePasswordCalled = false;
   AppFailure? changePasswordError;
+  Completer<void>? changePasswordCompleter;
+  String? lastCurrentPassword;
+  String? lastNewPassword;
 
   @override
   Future<VaultTree> unlock(
@@ -46,6 +79,7 @@ class FakeSessionRepository implements SessionRepository {
     unlockCalled = true;
     lastUnlockName = name;
     lastUnlockPassword = masterPassword;
+    await unlockCompleter?.future;
     if (unlockError != null) throw unlockError!;
     emitLockState(LockEvent.unlocked);
     return unlockResult ?? _defaultTree;
@@ -113,7 +147,9 @@ class FakeSessionRepository implements SessionRepository {
   }) async {
     createVaultCalled = true;
     lastCreateName = name;
+    lastCreatePassword = masterPassword;
     lastConfirmedNoRecovery = confirmedNoRecovery;
+    await createVaultCompleter?.future;
     if (createVaultError != null) throw createVaultError!;
     final vault = VaultSummary(
       name: name,
@@ -154,6 +190,9 @@ class FakeSessionRepository implements SessionRepository {
   @override
   Future<void> changeMasterPassword(String current, String newPassword) async {
     changePasswordCalled = true;
+    lastCurrentPassword = current;
+    lastNewPassword = newPassword;
+    await changePasswordCompleter?.future;
     if (changePasswordError != null) throw changePasswordError!;
   }
 
@@ -163,6 +202,7 @@ class FakeSessionRepository implements SessionRepository {
 }
 
 class FakeEntryRepository implements EntryRepository {
+  Completer<EntryDetail>? detailCompleter;
   VaultTree tree = _defaultTree;
   final Map<String, EntryDetail> details = {};
   final Map<String, List<HistorySummary>> histories = {};
@@ -175,6 +215,8 @@ class FakeEntryRepository implements EntryRepository {
   bool updateEntryCalled = false;
   String? lastUpdateUuid;
   EntryEditDto? lastEdit;
+  Completer<void>? updateCompleter;
+  Object? updateError;
 
   bool deleteEntryCalled = false;
   String? lastDeleteUuid;
@@ -213,6 +255,7 @@ class FakeEntryRepository implements EntryRepository {
 
   @override
   Future<EntryDetail> entryDetail(String uuid) async {
+    if (detailCompleter case final pending?) return pending.future;
     return details[uuid] ?? _defaultDetail(uuid);
   }
 
@@ -230,6 +273,8 @@ class FakeEntryRepository implements EntryRepository {
     updateEntryCalled = true;
     lastUpdateUuid = uuid;
     lastEdit = edit;
+    await updateCompleter?.future;
+    if (updateError case final error?) throw error;
     onMutation?.call();
   }
 
@@ -337,17 +382,27 @@ class FakeSecretsRepository implements SecretsRepository {
   String? lastRevealUuid;
   RevealField? lastRevealField;
   String revealResult = 'revealed-secret';
+  final Map<String, String> revealResultsByField = {};
+  Completer<String>? revealCompleter;
+  Object? revealError;
+  int revealCallCount = 0;
 
   bool copyCalled = false;
   String? lastCopyUuid;
   CopyField? lastCopyField;
+  Object? copyError;
 
   @override
   Future<String> revealField(String uuid, RevealField field) async {
     revealCalled = true;
+    revealCallCount++;
     lastRevealUuid = uuid;
     lastRevealField = field;
-    return revealResult;
+    if (revealError case final error?) throw error;
+    if (revealCompleter case final pending?) return pending.future;
+    return field is RevealFieldCustom
+        ? revealResultsByField[field.name] ?? revealResult
+        : revealResult;
   }
 
   @override
@@ -355,6 +410,7 @@ class FakeSecretsRepository implements SecretsRepository {
     copyCalled = true;
     lastCopyUuid = uuid;
     lastCopyField = field;
+    if (copyError case final error?) throw error;
   }
 }
 
@@ -411,6 +467,8 @@ class FakeGeneratorRepository implements GeneratorRepository {
 }
 
 class FakeSyncRepository implements SyncRepository {
+  Completer<SyncStatusDto>? statusCompleter;
+  Object? statusError;
   SyncStatusDto status = const SyncStatusDto(
     configured: false,
     inFlight: false,
@@ -450,7 +508,10 @@ class FakeSyncRepository implements SyncRepository {
       StreamController<SyncEvent>.broadcast();
 
   @override
-  Future<SyncStatusDto> syncStatus() async => status;
+  Future<SyncStatusDto> syncStatus() async {
+    if (statusError case final error?) throw error;
+    return statusCompleter == null ? status : statusCompleter!.future;
+  }
 
   @override
   Future<void> configureLocalSync(LocalSyncRole role) async {

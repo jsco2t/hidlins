@@ -88,10 +88,10 @@ fn discovery_batch(label: &str, endpoint: LocalEndpoint) -> DiscoveryBatch {
     .unwrap()
 }
 
-fn write_frame(stream: &mut TcpStream, bytes: &[u8]) {
+fn write_frame(stream: &mut TcpStream, bytes: &[u8]) -> std::io::Result<()> {
     let length = u16::try_from(bytes.len()).unwrap();
-    stream.write_all(&length.to_be_bytes()).unwrap();
-    stream.write_all(bytes).unwrap();
+    stream.write_all(&length.to_be_bytes())?;
+    stream.write_all(bytes)
 }
 
 fn read_frame(stream: &mut TcpStream) -> std::io::Result<Vec<u8>> {
@@ -120,7 +120,7 @@ fn trusted_connection(
     let length = handshake
         .write_handshake(&[], &mut output)
         .map_err(|_| ())?;
-    write_frame(&mut stream, &output[..length]);
+    write_frame(&mut stream, &output[..length]).map_err(|_| ())?;
     let response = read_frame(&mut stream).map_err(|_| ())?;
     handshake
         .read_handshake(&response, &mut output)
@@ -131,6 +131,22 @@ fn trusted_connection(
     Ok((stream, transport, protocol))
 }
 
+fn try_send_application(
+    stream: &mut TcpStream,
+    transport: &mut SecureTransport,
+    protocol: &mut ProtocolState,
+    request_id: u32,
+    message: &Message,
+) -> std::io::Result<()> {
+    protocol
+        .apply(Direction::Send, request_id, message)
+        .unwrap();
+    let plain = message.encode(request_id).unwrap();
+    let mut encrypted = vec![0_u8; plain.len() + 16];
+    let length = transport.write_message(&plain, &mut encrypted).unwrap();
+    write_frame(stream, &encrypted[..length])
+}
+
 fn send_application(
     stream: &mut TcpStream,
     transport: &mut SecureTransport,
@@ -138,13 +154,7 @@ fn send_application(
     request_id: u32,
     message: &Message,
 ) {
-    protocol
-        .apply(Direction::Send, request_id, message)
-        .unwrap();
-    let plain = message.encode(request_id).unwrap();
-    let mut encrypted = vec![0_u8; plain.len() + 16];
-    let length = transport.write_message(&plain, &mut encrypted).unwrap();
-    write_frame(stream, &encrypted[..length]);
+    try_send_application(stream, transport, protocol, request_id, message).unwrap();
 }
 
 fn receive_application(
@@ -575,18 +585,20 @@ fn real_loopback_noise_allows_active_key_and_silently_rejects_other_keys() {
         &rejected_identity,
         server_identity.public_key(),
     );
-    let (mut stream, mut transport, mut protocol) = rejected.unwrap();
-    send_application(
-        &mut stream,
-        &mut transport,
-        &mut protocol,
-        1,
-        &Message::HeadRequest,
-    );
-    assert!(read_frame(&mut stream).is_err());
+    // Rejection may close during the handshake, the request write, or read.
+    // None may deliver an application response to the untrusted identity.
+    if let Ok((mut stream, mut transport, mut protocol)) = rejected {
+        let sent = try_send_application(
+            &mut stream,
+            &mut transport,
+            &mut protocol,
+            1,
+            &Message::HeadRequest,
+        );
+        assert!(sent.is_err() || read_frame(&mut stream).is_err());
+    }
 
     server.replace_trusted([]);
-    drop(stream);
     server.stop();
     assert!(server.advertisements().is_empty());
     host_running.store(false, Ordering::Release);
@@ -630,14 +642,14 @@ fn trust_replacement_closes_only_removed_live_peers() {
         trusted_connection(server.endpoint(), &retained, server_identity.public_key()).unwrap();
 
     server.replace_trusted([retained.public_key()]);
-    send_application(
+    let sent = try_send_application(
         &mut removed_stream,
         &mut removed_transport,
         &mut removed_protocol,
         1,
         &Message::HeadRequest,
     );
-    assert!(read_frame(&mut removed_stream).is_err());
+    assert!(sent.is_err() || read_frame(&mut removed_stream).is_err());
 
     send_application(
         &mut retained_stream,
@@ -1034,7 +1046,7 @@ fn three_failed_xx_handshakes_close_pairing_before_a_fourth_attempt() {
         stream
             .write_all(&Preface::new(PrefaceMode::Pairing).encode())
             .unwrap();
-        write_frame(&mut stream, b"not a Noise handshake");
+        write_frame(&mut stream, b"not a Noise handshake").unwrap();
         assert!(read_frame(&mut stream).is_err());
     }
 

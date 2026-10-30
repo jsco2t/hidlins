@@ -152,6 +152,7 @@ class _EntryRowState extends State<_EntryRow> {
   Widget build(BuildContext context) {
     final colorScheme = Theme.of(context).colorScheme;
     final l10n = AppLocalizations.of(context)!;
+    final showActions = _hovered || widget.isSelected;
 
     return Semantics(
       button: true,
@@ -263,36 +264,55 @@ class _EntryRowState extends State<_EntryRow> {
                       // for the entry title; compact/touch users reach the same
                       // actions from the detail surface and context menu.
                       if (constraints.maxWidth >= HidlinsBreakpoints.compact)
-                        AnimatedOpacity(
-                          opacity: _hovered ? 1.0 : 0.0,
-                          duration: HidlinsMotion.resolve(
-                            context,
-                            HidlinsMotion.fast,
-                          ),
-                          child: Row(
-                            mainAxisSize: MainAxisSize.min,
-                            children: [
-                              if (widget.entry.username.isNotEmpty)
-                                Tooltip(
-                                  message: l10n.entryDetailUsername,
-                                  child: IconButton(
-                                    icon: const Icon(
-                                      Icons.person_outline,
-                                      size: 18,
-                                    ),
-                                    onPressed: widget.onCopyUsername,
-                                    visualDensity: VisualDensity.compact,
-                                  ),
+                        IgnorePointer(
+                          ignoring: !showActions,
+                          child: ExcludeFocus(
+                            excluding: !showActions,
+                            child: ExcludeSemantics(
+                              excluding: !showActions,
+                              child: AnimatedOpacity(
+                                opacity: showActions ? 1.0 : 0.0,
+                                duration: HidlinsMotion.resolve(
+                                  context,
+                                  HidlinsMotion.fast,
                                 ),
-                              Tooltip(
-                                message: l10n.entryDetailPassword,
-                                child: IconButton(
-                                  icon: const Icon(Icons.copy, size: 18),
-                                  onPressed: widget.onCopyPassword,
-                                  visualDensity: VisualDensity.compact,
+                                child: Row(
+                                  mainAxisSize: MainAxisSize.min,
+                                  children: [
+                                    if (widget.entry.username.isNotEmpty)
+                                      Semantics(
+                                        container: true,
+                                        label: l10n.entryDetailUsername,
+                                        button: true,
+                                        onTap: widget.onCopyUsername,
+                                        excludeSemantics: true,
+                                        child: IconButton(
+                                          tooltip: l10n.entryDetailUsername,
+                                          icon: const Icon(
+                                            Icons.person_outline,
+                                            size: 18,
+                                          ),
+                                          onPressed: widget.onCopyUsername,
+                                          visualDensity: VisualDensity.compact,
+                                        ),
+                                      ),
+                                    Semantics(
+                                      container: true,
+                                      label: l10n.entryDetailPassword,
+                                      button: true,
+                                      onTap: widget.onCopyPassword,
+                                      excludeSemantics: true,
+                                      child: IconButton(
+                                        tooltip: l10n.entryDetailPassword,
+                                        icon: const Icon(Icons.copy, size: 18),
+                                        onPressed: widget.onCopyPassword,
+                                        visualDensity: VisualDensity.compact,
+                                      ),
+                                    ),
+                                  ],
                                 ),
                               ),
-                            ],
+                            ),
                           ),
                         ),
                     ],

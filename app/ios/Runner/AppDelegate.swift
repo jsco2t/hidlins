@@ -11,6 +11,7 @@ import UIKit
   }
 
   func didInitializeImplicitFlutterEngine(_ engineBridge: FlutterImplicitEngineBridge) {
+    GeneratedPluginRegistrant.register(with: engineBridge.pluginRegistry)
     // The Rust bridge is FFI-only and linked by CocoaPods/Cargokit, so it has
     // no GeneratedPluginRegistrant entry. Register Hidlins' fixed native
     // mechanism channels against the implicit engine explicitly.

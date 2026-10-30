@@ -87,7 +87,7 @@ def selected_avd(command: str) -> tuple[str, str, str]:
 
 
 def emulator_version() -> str:
-    output = run([str(EMULATOR), "-version"]).stdout
+    output = run([str(EMULATOR), "-no-window", "-no-audio", "-version"]).stdout
     match = re.search(r"Android emulator version (\d+\.\d+\.\d+)", output)
     if match is None:
         raise RuntimeError("Android Emulator version could not be determined")
@@ -124,6 +124,8 @@ def boot(
             "-no-snapshot",
             "-wipe-data",
             "-no-boot-anim",
+            "-gpu",
+            "swiftshader",
             *extra_args,
         ],
         stdout=log,
@@ -141,6 +143,8 @@ def boot(
             check=False,
         )
         if status.returncode == 0 and status.stdout.strip() == "1":
+            adb(serial, "shell", "input", "keyevent", "KEYCODE_WAKEUP")
+            adb(serial, "shell", "wm", "dismiss-keyguard")
             return process
         time.sleep(1)
     raise RuntimeError(f"Android emulator did not boot: {avd}")

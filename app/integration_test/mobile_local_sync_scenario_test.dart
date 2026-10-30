@@ -13,6 +13,8 @@ import 'package:app/src/data/models.dart'
     show DiscoveryKind, LocalDiscoveryPermission, LocalDiscoveryStatus;
 import 'package:app/src/platform/rust_library.dart';
 
+import 'support/restart_registry.dart';
+
 const _phase = String.fromEnvironment('HIDLINS_SCENARIO_PHASE');
 const _controlHost = String.fromEnvironment('HIDLINS_SCENARIO_CONTROL_HOST');
 const _controlPort = int.fromEnvironment('HIDLINS_SCENARIO_CONTROL_PORT');
@@ -86,12 +88,7 @@ Future<void> _restoreRestartSnapshot(Directory state) async {
     flush: true,
   );
   final original = utf8.decode(base64Decode(payload['registry'] as String));
-  final replacement = 'path = "${vault.path}"';
-  final restored = original.replaceFirst(
-    RegExp(r'^path = ".*"$', multiLine: true),
-    replacement,
-  );
-  expect(restored, isNot(original));
+  final restored = relocateRestartRegistry(original, vault.path);
   await File('${state.path}/vaults.toml').writeAsString(restored, flush: true);
 }
 

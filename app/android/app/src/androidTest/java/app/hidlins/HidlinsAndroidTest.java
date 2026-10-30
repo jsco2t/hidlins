@@ -1,11 +1,13 @@
 package app.hidlins;
 
-import static org.junit.Assert.assertArrayEquals;
-import static org.junit.Assert.assertEquals;
-import static org.junit.Assert.assertFalse;
-import static org.junit.Assert.assertNotNull;
-import static org.junit.Assert.assertTrue;
+import static app.hidlins.DeviceAssertions.assertArrayEquals;
+import static app.hidlins.DeviceAssertions.assertEquals;
+import static app.hidlins.DeviceAssertions.assertFalse;
+import static app.hidlins.DeviceAssertions.assertNotNull;
+import static app.hidlins.DeviceAssertions.assertTrue;
 
+import android.app.Instrumentation;
+import android.os.Bundle;
 import android.content.ClipData;
 import android.content.ClipboardManager;
 import android.content.Context;
@@ -25,11 +27,70 @@ import java.util.HashMap;
 import java.util.List;
 import java.util.Map;
 import io.flutter.plugin.common.MethodChannel;
-import org.junit.Test;
 
 /** Device tests for Hidlins' Android security and storage mechanisms. */
-public final class HidlinsAndroidTest {
-    @Test
+public final class HidlinsAndroidTest extends Instrumentation {
+    private int completed;
+    private int failures;
+
+    @Override
+    public void onCreate(Bundle arguments) {
+        super.onCreate(arguments);
+        start();
+    }
+
+    @Override
+    public void onStart() {
+        runCase("secureWindowAndSnapshotCoverAreInstalled", this::secureWindowAndSnapshotCoverAreInstalled);
+        runCase("clipboardClearIsOwnershipCheckedAndSensitive", this::clipboardClearIsOwnershipCheckedAndSensitive);
+        runCase("vaultImportIsAtomicAndAppOwned", this::vaultImportIsAtomicAndAppOwned);
+        runCase("missingAndInvalidKeyfileReferencesFailClosed", this::missingAndInvalidKeyfileReferencesFailClosed);
+        runCase("appBackupIsDisabled", this::appBackupIsDisabled);
+        runCase("shippingApplicationCanReachConfiguredSyncStorage", this::shippingApplicationCanReachConfiguredSyncStorage);
+        runCase("localDiscoveryPayloadIsBoundedAndContainsOnlyRoutes", this::localDiscoveryPayloadIsBoundedAndContainsOnlyRoutes);
+        runCase("discoveryAttemptGenerationRejectsStoppedAndDuplicateCallbacks", this::discoveryAttemptGenerationRejectsStoppedAndDuplicateCallbacks);
+        runCase("scenarioRegistrarAcceptsOnlyBoundedPortAndKnownServiceKind", this::scenarioRegistrarAcceptsOnlyBoundedPortAndKnownServiceKind);
+        runCase("pickerCancellationAndActivityDestructionCompletePendingResults", this::pickerCancellationAndActivityDestructionCompletePendingResults);
+        runCase("vaultImportReportsProviderPermissionDenial", this::vaultImportReportsProviderPermissionDenial);
+        Bundle result = new Bundle();
+        result.putString("stream", "HIDLINS_DEVICE_TESTS " + completed + " passed, " + failures + " failed\n");
+        finish(failures == 0 && completed == 11 ? -1 : 0, result);
+    }
+
+    private void runCase(String name, DeviceCase test) {
+        try {
+            test.run();
+            completed += 1;
+            report("PASS " + name);
+        } catch (Exception | AssertionError error) {
+            failures += 1;
+            // Never print assertion operands: tests exercise secret buffers.
+            report("FAIL " + name + " (" + error.getClass().getSimpleName() + ", "
+                    + DeviceAssertions.failureLocation(error) + ")");
+        } finally {
+            MainActivity activity = MainActivity.currentForTest();
+            if (activity != null && !activity.isFinishing()) {
+                try {
+                    runOnMain(activity::finish);
+                } catch (AssertionError error) {
+                    failures += 1;
+                    report("FAIL " + name + " cleanup");
+                }
+            }
+        }
+    }
+
+    private void report(String message) {
+        Bundle status = new Bundle();
+        status.putString("stream", message + "\n");
+        sendStatus(0, status);
+    }
+
+    @FunctionalInterface
+    private interface DeviceCase {
+        void run() throws Exception;
+    }
+
     public void secureWindowAndSnapshotCoverAreInstalled() {
         MainActivity activity = launchActivity();
         assertTrue((activity.getWindow().getAttributes().flags
@@ -43,7 +104,6 @@ public final class HidlinsAndroidTest {
         runOnMain(activity::finish);
     }
 
-    @Test
     public void clipboardClearIsOwnershipCheckedAndSensitive() {
         Context context = context();
         MainActivity activity = launchActivity();
@@ -72,7 +132,6 @@ public final class HidlinsAndroidTest {
         runOnMain(activity::finish);
     }
 
-    @Test
     public void vaultImportIsAtomicAndAppOwned() throws Exception {
         Context context = context();
         File root = new File(context.getCacheDir(), "instrumented-import");
@@ -86,7 +145,6 @@ public final class HidlinsAndroidTest {
         assertEquals(0, leftovers.length);
     }
 
-    @Test
     public void missingAndInvalidKeyfileReferencesFailClosed() {
         Context context = context();
         KeyfileReferenceStore store = new KeyfileReferenceStore(context);
@@ -95,14 +153,12 @@ public final class HidlinsAndroidTest {
                 store.save(Uri.parse("http://invalid"), "bad.key").status());
     }
 
-    @Test
     public void appBackupIsDisabled() throws Exception {
         Context context = context();
         int flags = context.getPackageManager().getApplicationInfo(context.getPackageName(), 0).flags;
         assertFalse((flags & android.content.pm.ApplicationInfo.FLAG_ALLOW_BACKUP) != 0);
     }
 
-    @Test
     public void shippingApplicationCanReachConfiguredSyncStorage() {
         Context context = context();
         assertEquals(
@@ -112,7 +168,6 @@ public final class HidlinsAndroidTest {
                         context.getPackageName()));
     }
 
-    @Test
     public void localDiscoveryPayloadIsBoundedAndContainsOnlyRoutes() {
         List<Map<String, Object>> routes = new ArrayList<>();
         for (int index = 0; index < 20; index += 1) {
@@ -133,7 +188,6 @@ public final class HidlinsAndroidTest {
     }
 
     // LNS-ANDROID-012: stopped discovery callbacks cannot acquire a restarted attempt.
-    @Test
     public void discoveryAttemptGenerationRejectsStoppedAndDuplicateCallbacks() {
         DiscoveryAttemptTracker attempts = new DiscoveryAttemptTracker();
         long first = attempts.begin();
@@ -151,7 +205,6 @@ public final class HidlinsAndroidTest {
         assertFalse(attempts.isActive(second));
     }
 
-    @Test
     public void scenarioRegistrarAcceptsOnlyBoundedPortAndKnownServiceKind() {
         assertTrue(ScenarioNsdRegistrarActivity.validPort(1));
         assertTrue(ScenarioNsdRegistrarActivity.validPort(65_535));
@@ -166,7 +219,6 @@ public final class HidlinsAndroidTest {
         assertEquals(null, ScenarioNsdRegistrarActivity.serviceType("other"));
     }
 
-    @Test
     public void pickerCancellationAndActivityDestructionCompletePendingResults() {
         MainActivity activity = launchActivity();
         HidlinsPlatformServices services =
@@ -185,7 +237,6 @@ public final class HidlinsAndroidTest {
         runOnMain(activity::finish);
     }
 
-    @Test
     public void vaultImportReportsProviderPermissionDenial() {
         MainActivity activity = launchActivity();
         HidlinsPlatformServices services =
@@ -200,26 +251,23 @@ public final class HidlinsAndroidTest {
         runOnMain(activity::finish);
     }
 
-    private static Context context() {
-        try {
-            Class<?> registry = Class.forName(
-                    "androidx.test.platform.app.InstrumentationRegistry");
-            Object value = registry.getMethod("getInstrumentation").invoke(null);
-            assertTrue(value instanceof android.app.Instrumentation);
-            Context context = ((android.app.Instrumentation) value).getTargetContext();
-            assertNotNull(context);
-            return context;
-        } catch (ReflectiveOperationException error) {
-            throw new AssertionError("Android instrumentation registry is unavailable", error);
-        }
+    private Context context() {
+        Context target = getTargetContext();
+        assertNotNull(target);
+        return target;
     }
 
-    private static MainActivity awaitActivity() throws AssertionError {
-        for (int attempt = 0; attempt < 250; attempt += 1) {
-            MainActivity activity = MainActivity.currentForTest();
-            if (activity != null && !activity.isFinishing() && activity.hasWindowFocus()) {
-                return activity;
-            }
+    private MainActivity launchActivity() {
+        Context target = context();
+        MainActivity activity = (MainActivity) startActivitySync(
+                new Intent(target, MainActivity.class)
+                        .addFlags(Intent.FLAG_ACTIVITY_NEW_TASK));
+        waitForIdleSync();
+        // Clipboard access requires a focused window, not merely onCreate.
+        // Always wait for the activity returned by this launch, never a stale
+        // process-wide reference from the preceding case.
+        for (int attempt = 0; attempt < 1500; attempt += 1) {
+            if (activity.hasWindowFocus()) return activity;
             try {
                 Thread.sleep(20);
             } catch (InterruptedException error) {
@@ -227,27 +275,27 @@ public final class HidlinsAndroidTest {
                 throw new AssertionError("activity wait interrupted", error);
             }
         }
-        throw new AssertionError("activity did not start");
-    }
-
-    private static MainActivity launchActivity() {
-        Context target = context();
-        target.startActivity(new Intent(target, MainActivity.class)
-                .addFlags(Intent.FLAG_ACTIVITY_NEW_TASK));
-        return awaitActivity();
+        throw new AssertionError("activity did not gain focus");
     }
 
     private static void runOnMain(Runnable action) {
         CountDownLatch completed = new CountDownLatch(1);
+        java.util.concurrent.atomic.AtomicReference<Throwable> failure =
+                new java.util.concurrent.atomic.AtomicReference<>();
         new android.os.Handler(android.os.Looper.getMainLooper()).post(() -> {
             try {
                 action.run();
+            } catch (Throwable error) {
+                failure.set(error);
             } finally {
                 completed.countDown();
             }
         });
         try {
             assertTrue(completed.await(2, TimeUnit.SECONDS));
+            if (failure.get() != null) {
+                throw new AssertionError("main-thread action failed", failure.get());
+            }
         } catch (InterruptedException error) {
             Thread.currentThread().interrupt();
             throw new AssertionError("main-thread action interrupted", error);

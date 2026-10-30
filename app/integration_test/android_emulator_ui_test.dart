@@ -5,6 +5,7 @@ import 'package:material_ui/material_ui.dart';
 import 'package:app/src/app.dart';
 import 'package:app/src/data/models.dart';
 import 'package:app/src/features/entries/entry_list.dart';
+import 'package:app/src/ui/tokens.dart';
 
 import '../test/helpers/feature_test_helpers.dart';
 
@@ -24,7 +25,7 @@ void main() {
 
     final logicalWidth =
         tester.view.physicalSize.width / tester.view.devicePixelRatio;
-    if (logicalWidth < 600) {
+    if (logicalWidth < HidlinsBreakpoints.compact) {
       expect(find.byType(NavigationBar), findsOneWidget);
     } else {
       expect(find.byType(NavigationRail), findsOneWidget);
@@ -46,7 +47,7 @@ void main() {
     await tester.tap(find.text('GitHub'));
     await tester.pumpAndSettle();
     expect(find.text('Development account'), findsOneWidget);
-    if (logicalWidth < 600) {
+    if (logicalWidth < HidlinsBreakpoints.medium) {
       await tester.binding.handlePopRoute();
       await tester.pumpAndSettle();
       expect(find.text('Development account'), findsNothing);

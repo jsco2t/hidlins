@@ -14,14 +14,24 @@ targets. The supported application floor is API 29. Shipping APKs contain only
   real Rust bridge, local discovery permission, foreground local-network sync,
   background/resume, and process-recreation checks.
 - `make test-local-sync-mobile-scenarios-android HIDLINS_ANDROID_STRICT=1`
-  runs the expensive API 29 phone/API 36 tablet application scenarios against a
+  runs API 29/36 native/UI gates and the expensive API 30 phone/API 36 tablet
+  shared-LAN application scenarios against a
   separate release-mode CLI authority through shipping Android NSD discovery.
 
+After provisioning with `make android-emulator-provision`,
+`make test-local-sync-android-lan-scenarios` reruns only the strict shared-LAN
+scenarios while building and inspecting the application and test artifacts.
+
+All headless runtime guests explicitly use the emulator's bundled SwiftShader
+renderer. This keeps graphics selection consistent on developer and CI hosts.
+
 The emulator matrix is declared in
-`tools/android-native/emulator-matrix.json`: API 29 phone and API 36 tablet for
-both supported ABIs. A host executes its native ABI pair—Apple Silicon runs the
-two `arm64-v8a` entries and Linux x86_64 CI runs the two `x86_64` entries. The
-matrix validator rejects missing API, ABI, or form-factor coverage.
+`tools/android-native/emulator-matrix.json`: native/UI clients use API 29 phone
+and API 36 tablet; shared-LAN clients use API 30 phone and API 36 tablet. Each
+selection covers both supported ABIs. A host executes its native ABI pair;
+`make android-emulator-matrix` prints the exact clients and sidecar names. The
+validator rejects missing API, ABI, or form-factor coverage. Hosted runtime CI
+runs x86_64 on Linux/KVM; physical ARM64 workstations use the same targets.
 
 The local-sync scenario adds API/ABI-matched authority and replacement AVDs.
 The real `hidlins sync serve` process runs inside the authority guest. An
@@ -30,11 +40,16 @@ port and service kind; Android selects the network address. The shipping client
 resolves that service through `LocalDiscoveryController`, Flutter, and Rust
 private-address validation, then connects directly to the CLI for Noise XX/IK
 and sync traffic. No endpoint, `10.0.2.2` data route, ADB forwarding, proxy, or
-synthetic discovery result is supplied to the client. API 29 uses the official
-emulator Wi-Fi peer link with synthetic cellular data disabled so Android sees
-the same single active LAN path as a Wi-Fi-only device; API 36 uses shared
-emulator Wi-Fi with its platform-default network state. Neither setup injects a
-route or selects an address for NSD.
+synthetic discovery result is supplied to the client. API 30 and API 36 use
+shared emulator Wi-Fi with platform-default cellular state. The runner explicitly
+selects `VirtioWifi,WiFiPacketStream` because API 30 otherwise defaults to the
+isolated legacy backend. Each scenario guest has an explicit 1536 MiB RAM
+budget using `-lowram -memory 1536`, so three guests fit on CI and developer
+hosts without automatic 4 GiB-per-guest expansion. The API 29 default image cannot provide this shared
+LAN; forcing the modern
+backend leaves it without a Wi-Fi address. API 29 remains a required native/UI
+and bridge gate and remains the application minimum, but its cross-device LAN
+acceptance is not claimed by this emulator gate.
 
 Passing runs emit redacted logs and machine-readable manifests under
 `build/verification/android/`. Each manifest records the AVD, API, ABI, form

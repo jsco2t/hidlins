@@ -34,6 +34,8 @@ feature-depth = 1
 
 # ---------------------------------------------------------------------------
 # Licenses — permissive only. GPL/LGPL/AGPL/SSPL/Commons-Clause are forbidden.
+# Explicitly forbidden: EPL-1.0 and EPL-2.0 (Eclipse Public License / JUnit),
+# including development, testing, build-tool, and metadata-only dependencies.
 # ---------------------------------------------------------------------------
 [licenses]
 version = 2
@@ -50,8 +52,8 @@ allow = [
     "Unlicense",
     "CC0-1.0",
 ]
-# Anything not in `allow` is rejected. Explicit deny lists are redundant with
-# this stance but kept for clarity in CI logs:
+# Anything not in `allow` is rejected, including EPL-1.0 and EPL-2.0.
+# No Eclipse Public License exception is permitted. ci-toolchain-check guards this.
 exceptions = []
 
 # NOTE: a `[[licenses.clarify]]` for `ring` was needed historically (older
