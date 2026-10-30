@@ -140,8 +140,10 @@ MODE=core
         matrix = json.loads((ROOT / 'tools/android-native/emulator-matrix.json').read_text())
         host = 'arm64' if platform.machine() in ('arm64', 'aarch64') else platform.machine()
         entries = [entry for entry in matrix['entries'] if entry['host_arch'] == host]
-        expected = {entry['avd'] + suffix for entry in entries
-                    for suffix in ('', '-authority', '-authority-replacement')}
+        expected = {entry['avd'] for entry in entries}
+        expected.update(entry['avd'] + suffix for entry in entries
+                        if entry['api'] >= matrix['shared_lan_minimum_api']
+                        for suffix in ('-authority', '-authority-replacement'))
         for entry in entries:
             (self.sdk / entry['system_image'].replace(';', '/')).mkdir(parents=True)
         self.executable(self.sdk / 'cmdline-tools/latest/bin/avdmanager', '''
@@ -185,7 +187,7 @@ done
         second = self.run_command(command)
         self.assertEqual(second.returncode, 0, second.stdout + second.stderr)
         self.assertIn('already installed', second.stdout)
-        self.assertEqual(len(Path(self.env['TEST_AVD_CREATIONS']).read_text().splitlines()), 6)
+        self.assertEqual(len(Path(self.env['TEST_AVD_CREATIONS']).read_text().splitlines()), len(expected))
         for variable, home in (
             ('ANDROID_USER_HOME', self.temp / 'user preferences'),
             ('ANDROID_EMULATOR_HOME', self.temp / 'emulator preferences'),

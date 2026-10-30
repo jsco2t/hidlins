@@ -299,8 +299,9 @@ jobs:
         run: make acceptance-evidence-check
 
   # Hosted macOS has no nested virtualization (HV_UNSUPPORTED). Runtime CI
-  # covers API 29 phone + API 36 tablet on Linux/KVM. Both ABIs are still built
-  # and inspected above; the full ARM64 runtime matrix remains a local target.
+  # covers API 29/36 native+UI and API 30/36 shared-LAN sync on Linux/KVM.
+  # The API 29 image cannot use the shared-LAN backend. Both ABIs are still
+  # built and inspected above; ARM64 runtime checks remain local targets.
   android-emulator:
     name: android-emulator (${{ matrix.os }})
     runs-on: ${{ matrix.os }}
@@ -341,5 +342,5 @@ jobs:
       - name: Provision host-native Android matrix
         run: make android-emulator-provision
 
-      - name: API 29/current native, UI, lifecycle, and CLI-authority matrix
+      - name: API 29/36 native and UI; API 30/36 shared-LAN CLI authority
         run: make test-local-sync-mobile-scenarios-android HIDLINS_ANDROID_STRICT=1

@@ -2,6 +2,7 @@
   "schema_version": 1,
   "minimum_api": 29,
   "current_api": 36,
+  "shared_lan_minimum_api": 30,
   "entries": [
     {
       "api": 29,
@@ -10,6 +11,14 @@
       "form_factor": "phone",
       "avd": "hidlins-api29",
       "system_image": "system-images;android-29;default;arm64-v8a"
+    },
+    {
+      "api": 30,
+      "abi": "arm64-v8a",
+      "host_arch": "arm64",
+      "form_factor": "phone",
+      "avd": "hidlins-api30",
+      "system_image": "system-images;android-30;default;arm64-v8a"
     },
     {
       "api": 36,
@@ -26,6 +35,14 @@
       "form_factor": "phone",
       "avd": "hidlins-api29-x86_64",
       "system_image": "system-images;android-29;default;x86_64"
+    },
+    {
+      "api": 30,
+      "abi": "x86_64",
+      "host_arch": "x86_64",
+      "form_factor": "phone",
+      "avd": "hidlins-api30-x86_64",
+      "system_image": "system-images;android-30;default;x86_64"
     },
     {
       "api": 36,

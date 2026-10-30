@@ -142,10 +142,16 @@ of all 45 July Flutter tasks are documented in
 [`docs/flutter-alpha-release.md`](docs/flutter-alpha-release.md) and its checked
 machine-readable companion. Android CI uses `make android-emulator-provision`
 followed by the same local-sync emulator targets used locally. The hosted
-Linux/KVM runtime job covers API 29 and current x86_64 devices; hosted
+Linux/KVM runtime job covers API 29/36 native, UI, and real-bridge checks
+and API 30/36 shared-LAN synchronization on x86_64 devices; hosted
 macOS cannot run ARM64 Android emulators because nested virtualization is
 unavailable. Both Android ABIs remain build/artifact gates. Run the same
 acceptance targets on an ARM64 workstation for ARM64 runtime verification.
+`make android-emulator-matrix` prints both selections and their authority AVDs.
+The API 29 default image cannot provide the shared-LAN backend: its native/UI
+coverage remains required, while cross-device sync uses API 30 and API 36.
+The product minimum remains API 29; API 29 cross-device LAN acceptance is not
+claimed by this emulator gate.
 The isolated, expensive `make test-local-sync-mobile-scenarios HIDLINS_ANDROID_STRICT=1`
 target drives real iPhone, iPad, Android phone, and Android tablet applications
 against a separate release CLI authority; use its platform-specific `-ios` and

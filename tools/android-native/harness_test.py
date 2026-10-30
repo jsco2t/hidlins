@@ -5,6 +5,7 @@ from __future__ import annotations
 
 import copy
 import pathlib
+import subprocess
 import sys
 import unittest
 
@@ -22,11 +23,36 @@ class EmulatorMatrixTests(unittest.TestCase):
             "schema_version": 1,
             "minimum_api": 29,
             "current_api": 36,
+            "shared_lan_minimum_api": 30,
             "entries": copy.deepcopy(self.entries),
         }
 
     def test_complete_matrix_is_accepted(self) -> None:
-        self.assertEqual(len(emulator_matrix.validate(self.matrix())), 4)
+        self.assertEqual(len(emulator_matrix.validate(self.matrix())), 6)
+
+    def test_native_matrix_keeps_api29_while_lan_uses_api30_and_current(self) -> None:
+        for host in ("arm64", "x86_64"):
+            for command, expected in (("select", [29, 36]), ("lan", [30, 36])):
+                with self.subTest(host=host, command=command):
+                    result = subprocess.run(
+                        [sys.executable, str(pathlib.Path(emulator_matrix.__file__)),
+                         command, '--host', host], capture_output=True, text=True)
+                    self.assertEqual(result.returncode, 0, result.stderr)
+                    rows = [line.split('\t') for line in result.stdout.splitlines()]
+                    self.assertEqual([int(row[1]) for row in rows], expected)
+                    self.assertEqual([row[3] for row in rows], ['phone', 'tablet'])
+
+    def test_missing_lan_minimum_is_rejected(self) -> None:
+        data = self.matrix()
+        data['entries'] = [entry for entry in self.entries if entry['api'] != 30]
+        with self.assertRaises(SystemExit):
+            emulator_matrix.validate(data)
+
+    def test_legacy_api_cannot_be_admitted_as_the_shared_lan_minimum(self) -> None:
+        data = self.matrix()
+        data['shared_lan_minimum_api'] = 29
+        with self.assertRaises(SystemExit):
+            emulator_matrix.validate(data)
 
     def test_missing_abi_is_rejected(self) -> None:
         data = self.matrix()
@@ -50,16 +76,16 @@ class EmulatorMatrixTests(unittest.TestCase):
     def test_every_client_uses_distinct_matching_authority_and_replacement_avds(self) -> None:
         authorities = emulator_matrix.scenario_entries("authority", "arm64")
         replacements = emulator_matrix.scenario_entries("replacement", "arm64")
-        self.assertEqual([entry["api"] for entry in authorities], [29, 36])
-        self.assertEqual([entry["api"] for entry in replacements], [29, 36])
+        self.assertEqual([entry["api"] for entry in authorities], [30, 36])
+        self.assertEqual([entry["api"] for entry in replacements], [30, 36])
         self.assertEqual(
             [entry["avd"] for entry in authorities],
-            ["hidlins-api29-authority", "hidlins-api36-tablet-authority"],
+            ["hidlins-api30-authority", "hidlins-api36-tablet-authority"],
         )
         self.assertEqual(
             [entry["avd"] for entry in replacements],
             [
-                "hidlins-api29-authority-replacement",
+                "hidlins-api30-authority-replacement",
                 "hidlins-api36-tablet-authority-replacement",
             ],
         )

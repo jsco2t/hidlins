@@ -1,6 +1,6 @@
 # Local-network sync simulator verification and optional observations
 
-Status: **AUTOMATED ACCEPTANCE COMPLETE.** The repository-owned scenario
+Status: **AUTOMATED ACCEPTANCE SUITES.** The repository-owned scenario
 harness runs real iPhone, iPad, Android phone, and Android tablet applications
 against a separate release-mode Hidlins CLI authority. The optional observations
 at the end of this document are confidence checks only. They do not block
@@ -9,7 +9,7 @@ development completion or release acceptance.
 Run every command from the repository root on macOS. The aggregate gate needs
 Xcode with at least two installed iOS Simulator runtimes, Flutter 3.47.2, the
 pinned Rust toolchain, and the Android SDK. Android needs the repository's API
-29 and API 36 system images; the provisioning target installs them when absent.
+29, API 30, and API 36 system images; the provisioning target installs them when absent.
 Use only synthetic secrets. The harness creates disposable KDBX vaults and
 removes its private scratch directory after each scenario.
 
@@ -23,8 +23,9 @@ make test-local-sync-mobile-scenarios HIDLINS_ANDROID_STRICT=1
 ```
 
 The target builds `target/release/hidlins`, dynamically selects an iPhone and
-iPad spanning two installed iOS runtimes, and runs the host-native API 29 phone
-and API 36 tablet Android matrices. Each Android row has an API/ABI-matched
+iPad spanning two installed iOS runtimes, and runs API 29/36 native/UI checks
+plus API 30 phone/API 36 tablet shared-LAN scenarios. Each shared-LAN row has
+an API/ABI-matched
 client, authority, and replacement-authority AVD. No human pairing, password
 entry, edit, restart, or cleanup is required.
 
@@ -148,13 +149,14 @@ Provision and inspect the host-native matrix:
 
 ```sh
 make android-emulator-provision
-python3 tools/android-native/emulator_matrix.py select
+make android-emulator-matrix
 ```
 
-Apple Silicon selects `hidlins-api29` and `hidlins-api36-tablet`; an x86_64
-host selects `hidlins-api29-x86_64` and
-`hidlins-api36-x86_64-tablet`. The `authority` and `replacement` selector
-commands print the matching sidecar AVD names. The automated runner requires no
+The native/UI selection retains API 29 phone and API 36 tablet. The shared-LAN
+selection uses API 30 phone and API 36 tablet, with matching distinct authority
+and replacement guests. The product minimum remains API 29; its legacy default
+image cannot provide shared-LAN peer connectivity, so this gate does not claim
+API 29 cross-device LAN acceptance. The automated runner requires no
 pre-connected ADB device and always uses clean snapshots.
 
 The authoritative way to start and drive every AVD is the isolated target:
@@ -165,53 +167,23 @@ make test-local-sync-mobile-scenarios-android HIDLINS_ANDROID_STRICT=1
 
 It invokes `tools/android-native/android_mobile_scenario.py`, which owns the
 ports, Wi-Fi topology, runtime permissions, application/registrar installation,
-scenario, evidence, and teardown. To inspect the exact runner directly:
+scenario, evidence, and teardown. Use Make so every Flutter build inherits the
+repository's Gradle license policy and verification environment.
+
+For manual API 30 topology diagnosis, use the client, authority, and replacement
+names printed by `make android-emulator-matrix`, with ports 5554, 5556, and 5558.
+For example, on a physical Apple-Silicon workstation, run each command in a
+separate terminal:
 
 ```sh
-HIDLINS_ANDROID_STRICT=1 python3 tools/android-native/android_mobile_scenario.py
+"$ANDROID_SDK_ROOT/emulator/emulator" -avd hidlins-api30 -port 5554 -no-audio -no-snapshot -wipe-data -no-boot-anim
+"$ANDROID_SDK_ROOT/emulator/emulator" -avd hidlins-api30-authority -port 5556 -no-audio -no-snapshot -wipe-data -no-boot-anim
+"$ANDROID_SDK_ROOT/emulator/emulator" -avd hidlins-api30-authority-replacement -port 5558 -no-audio -no-snapshot -wipe-data -no-boot-anim
 ```
 
-For a manual Apple-Silicon API 29 topology diagnosis, start the client and
-authority on the same emulator Wi-Fi peer link in separate terminals:
-
-```sh
-ANDROID_SDK_ROOT="${ANDROID_SDK_ROOT:-$HOME/Library/Android/sdk}"
-WIFI_LINK_PORT=47771
-"$ANDROID_SDK_ROOT/emulator/emulator" \
-  -avd hidlins-api29 -port 5554 -no-audio -no-snapshot -wipe-data \
-  -no-boot-anim -wifi-client-port "$WIFI_LINK_PORT" \
-  -network-user-mode-options dhcpstart=10.0.2.16
-```
-
-```sh
-ANDROID_SDK_ROOT="${ANDROID_SDK_ROOT:-$HOME/Library/Android/sdk}"
-WIFI_LINK_PORT=47771
-"$ANDROID_SDK_ROOT/emulator/emulator" \
-  -avd hidlins-api29-authority -port 5556 -no-audio -no-snapshot \
-  -wipe-data -no-boot-anim -wifi-server-port "$WIFI_LINK_PORT" \
-  -network-user-mode-options dhcpstart=10.0.2.17
-```
-
-After both API 29 guests finish booting, remove the emulator-only duplicate
-cellular path. The legacy peer link otherwise places synthetic cellular and
-Wi-Fi interfaces in the same subnet, which is unlike an ordinary device and
-can make API 29's system NSD daemon select the wrong interface:
-
-```sh
-"$ANDROID_SDK_ROOT/platform-tools/adb" -s emulator-5554 shell svc data disable
-"$ANDROID_SDK_ROOT/platform-tools/adb" -s emulator-5556 shell svc data disable
-```
-
-This creates a Wi-Fi-only device condition; it does not add a route, forward a
-port, provide an endpoint, or choose an address for the registrar/client. The
-automated acceptance runner performs and verifies this preparation itself.
-
-For API 36, Android Emulator's shared Wi-Fi supports all three guests. Start
-`hidlins-api36-tablet`, `hidlins-api36-tablet-authority`, and
-`hidlins-api36-tablet-authority-replacement` with ports 5554, 5556, and 5558
-respectively, using the same clean flags but no `-wifi-*-port` or DHCP option.
-On x86_64, use the names printed by the three selector commands. These manual
-commands are diagnostic only; they do not install the test registrar or execute
+Use the matching API 36 or x86_64 names for those selections. No legacy Wi-Fi
+forwarding or manual DHCP option is needed. These commands are diagnostic only;
+they do not install the test registrar or execute
 acceptance. Build, install, and launch the development application on serial
 5554 with:
 

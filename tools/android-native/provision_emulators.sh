@@ -33,7 +33,7 @@ for tool in "$SDKMANAGER" "$AVDMANAGER"; do
   fi
 done
 
-python3 "$ROOT/tools/android-native/emulator_matrix.py" select >"$MATRIX"
+python3 "$ROOT/tools/android-native/emulator_matrix.py" clients >"$MATRIX"
 python3 "$ROOT/tools/android-native/emulator_matrix.py" authority >"$AUTHORITY"
 python3 "$ROOT/tools/android-native/emulator_matrix.py" replacement >"$REPLACEMENT"
 

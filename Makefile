@@ -260,8 +260,19 @@ android-harness-check: ios-harness-check  ## Validate Android API/ABI/form-facto
 	python3 tools/android-native/emulator_matrix.py check
 	python3 tools/android-native/harness_test.py
 
-android-emulator-provision: android-harness-check  ## Install the host-native API 29/current Android CI/local AVD pair.
+android-emulator-provision: android-harness-check  ## Provision API 29/36 native/UI and API 30/36 shared-LAN AVDs.
 	tools/android-native/provision_emulators.sh
+
+.PHONY: android-emulator-matrix
+android-emulator-matrix:  ## Show native/UI and shared-LAN client/authority selections.
+	@echo "Native and UI clients (API 29/36):"
+	python3 tools/android-native/emulator_matrix.py select
+	@echo "Shared-LAN clients (API 30/36):"
+	python3 tools/android-native/emulator_matrix.py lan
+	@echo "Shared-LAN authorities:"
+	python3 tools/android-native/emulator_matrix.py authority
+	@echo "Shared-LAN replacement authorities:"
+	python3 tools/android-native/emulator_matrix.py replacement
 
 android-scenario-boundary-check: app-build-android  ## Prove emulator-only authority/NSD registration is confined to test artifacts.
 	tools/android-native/gradle.sh -Ptarget-platform=android-arm64,android-x64 :app:assembleDebugAndroidTest

@@ -428,7 +428,7 @@ class AndroidAuthorityHarness:
 
 def selected_matrix() -> list[tuple[str, str, str, str, str]]:
     output = subprocess.run(
-        [sys.executable, str(ROOT / "tools/android-native/emulator_matrix.py"), "select"],
+        [sys.executable, str(ROOT / "tools/android-native/emulator_matrix.py"), "lan"],
         text=True,
         capture_output=True,
         check=True,
@@ -455,48 +455,6 @@ def runtime_identity(serial: str, expected_avd: str, api: str, abi: str) -> None
     actual_avd = lan.adb(serial, "emu", "avd", "name").stdout.splitlines()[0].strip()
     if (actual_avd, actual_api, actual_abi) != (expected_avd, api, abi):
         raise RuntimeError("Android scenario runtime identity mismatch")
-
-
-def _legacy_wifi_arguments(role: str, port: int) -> tuple[str, ...]:
-    # API29 consumes one DHCP lease for cellular and the next for Wi-Fi.
-    # Reserve both so a guest's radio cannot claim another guest's Wi-Fi IP.
-    starts = {"client": 16, "authority": 18, "replacement": 20}
-    start = starts[role]
-    direction = "client" if role == "client" else "server"
-    return (
-        f"-wifi-{direction}-port",
-        str(port),
-        "-network-user-mode-options",
-        f"dhcpstart=10.0.2.{start}",
-    )
-
-
-def prepare_legacy_wifi_guest(serial: str) -> None:
-    """Make the API 29 emulator's explicit Wi-Fi link the sole data network.
-
-    The legacy emulator link assigns its synthetic cellular and Wi-Fi adapters
-    addresses in the same subnet. A physical Wi-Fi-only device has no such
-    ambiguous duplicate path, and API 29 cannot bind an NSD registration to a
-    specific Network. Disabling only the emulator's cellular data keeps route
-    selection with Android while preserving the genuine multicast Wi-Fi LAN.
-    """
-
-    # API 29's svc command ignores the telephony service's boolean result.
-    # A successful shell exit during modem startup need not have disabled data.
-    deadline = time.monotonic() + 30
-    mobile_data = "not-observed"
-    while time.monotonic() < deadline:
-        lan.adb(serial, "shell", "svc", "data", "disable")
-        mobile_data = lan.adb(
-            serial, "shell", "settings", "get", "global", "mobile_data"
-        ).stdout.strip()
-        if mobile_data == "0":
-            return
-        time.sleep(0.25)
-    observed = mobile_data if mobile_data in {"0", "1", "null", "not-observed"} else "unexpected"
-    raise RuntimeError(
-        f"Android emulator did not enter the Wi-Fi-only state (mobile_data={observed})"
-    )
 
 
 def _route_observation(fields: list[str]) -> str:
@@ -668,115 +626,46 @@ def run_entry(
         ).open("w", encoding="utf-8") as authority_log, (
             scratch / "replacement.log"
         ).open("w", encoding="utf-8") as replacement_log:
-            legacy_wifi = int(api) < 31
-            wifi_link_port = mobile.reserve_port()
-            client_network_args = (
-                _legacy_wifi_arguments("client", wifi_link_port) if legacy_wifi else ()
-            )
-            authority_network_args = (
-                _legacy_wifi_arguments("authority", wifi_link_port) if legacy_wifi else ()
-            )
-            replacement_network_args = (
-                _legacy_wifi_arguments("replacement", wifi_link_port) if legacy_wifi else ()
-            )
             authority_process = lan.boot(
-                authority_avd,
-                AUTHORITY_SERIAL,
-                5556,
-                authority_log,
-                authority_network_args,
+                authority_avd, AUTHORITY_SERIAL, 5556, authority_log
             )
             processes.append(authority_process)
-            client_process = lan.boot(
-                avd,
-                CLIENT_SERIAL,
-                5554,
-                client_log,
-                client_network_args,
-            )
+            client_process = lan.boot(avd, CLIENT_SERIAL, 5554, client_log)
             processes.append(client_process)
-            replacement_process: subprocess.Popen[str] | None = None
-            if not legacy_wifi:
-                replacement_process = lan.boot(
-                    replacement_avd,
-                    REPLACEMENT_SERIAL,
-                    5558,
-                    replacement_log,
-                )
-                processes.append(replacement_process)
-            runtime_identity(CLIENT_SERIAL, avd, api, abi)
-            runtime_identity(
-                AUTHORITY_SERIAL, authority_avd, authority_api, authority_abi
+            replacement_process = lan.boot(
+                replacement_avd, REPLACEMENT_SERIAL, 5558, replacement_log
             )
-            if legacy_wifi:
-                prepare_legacy_wifi_guest(CLIENT_SERIAL)
-                prepare_legacy_wifi_guest(AUTHORITY_SERIAL)
+            processes.append(replacement_process)
+            runtime_identity(CLIENT_SERIAL, avd, api, abi)
+            runtime_identity(AUTHORITY_SERIAL, authority_avd, authority_api, authority_abi)
+            runtime_identity(REPLACEMENT_SERIAL, replacement_avd, replacement_api, replacement_abi)
             client_address, prefix = lan.wlan_address(CLIENT_SERIAL)
             restarted_client_address = client_address
             authority_address, authority_prefix = lan.wlan_address(AUTHORITY_SERIAL)
-            replacement_address: str | None = None
-            replacement_prefix: int | None = None
-            if replacement_process is not None:
-                runtime_identity(
-                    REPLACEMENT_SERIAL,
-                    replacement_avd,
-                    replacement_api,
-                    replacement_abi,
-                )
-                replacement_address, replacement_prefix = lan.wlan_address(
-                    REPLACEMENT_SERIAL
-                )
+            replacement_address, replacement_prefix = lan.wlan_address(REPLACEMENT_SERIAL)
             evidence["observed_routes"] = {
                 "client": {"address": client_address, "prefix": prefix},
-                "authority": {
-                    "address": authority_address,
-                    "prefix": authority_prefix,
-                },
-                "replacement": None,
+                "authority": {"address": authority_address, "prefix": authority_prefix},
+                "replacement": {"address": replacement_address, "prefix": replacement_prefix},
             }
-            if authority_prefix != prefix:
-                raise RuntimeError("Android client and authority wlan0 prefixes differ")
-            mobile.require_android_lan_topology(
-                emulator_version=emulator_version,
-                client_serial=CLIENT_SERIAL,
-                authority_serial=AUTHORITY_SERIAL,
-                client_address=client_address,
-                authority_address=authority_address,
-                prefix_length=prefix,
-            )
-            require_wifi_route(
-                CLIENT_SERIAL,
-                authority_address,
-                client_address,
-            )
-            require_wifi_route(
-                AUTHORITY_SERIAL,
-                client_address,
-                authority_address,
-            )
-            if replacement_address is not None and replacement_prefix is not None:
-                evidence["observed_routes"]["replacement"] = {  # type: ignore[index]
-                    "address": replacement_address,
-                    "prefix": replacement_prefix,
-                }
-                if replacement_prefix != prefix:
-                    raise RuntimeError("Android replacement wlan0 prefix differs")
+            if authority_prefix != prefix or replacement_prefix != prefix:
+                raise RuntimeError("Android scenario wlan0 prefixes differ")
+            if len({client_address, authority_address, replacement_address}) != 3:
+                raise RuntimeError("Android scenario guests did not receive distinct DHCP routes")
+            for serial, address in (
+                (AUTHORITY_SERIAL, authority_address),
+                (REPLACEMENT_SERIAL, replacement_address),
+            ):
                 mobile.require_android_lan_topology(
                     emulator_version=emulator_version,
                     client_serial=CLIENT_SERIAL,
-                    authority_serial=REPLACEMENT_SERIAL,
+                    authority_serial=serial,
                     client_address=client_address,
-                    authority_address=replacement_address,
+                    authority_address=address,
                     prefix_length=prefix,
                 )
-                require_wifi_route(
-                    CLIENT_SERIAL, replacement_address, client_address
-                )
-                require_wifi_route(REPLACEMENT_SERIAL, client_address, replacement_address)
-                if len({client_address, authority_address, replacement_address}) != 3:
-                    raise RuntimeError(
-                        "Android scenario guests did not receive distinct DHCP routes"
-                    )
+                require_wifi_route(CLIENT_SERIAL, address, client_address)
+                require_wifi_route(serial, client_address, address)
 
             harness = AndroidAuthorityHarness(
                 binary=binary,
@@ -815,83 +704,7 @@ def run_entry(
             if not control.failures.empty():
                 raise RuntimeError(control.failures.get_nowait())
 
-            if legacy_wifi:
-                harness.export_authority_state()
-                cleanup_guest(AUTHORITY_SERIAL)
-                cleanup_guest(CLIENT_SERIAL)
-                try:
-                    authority_process.wait(timeout=15)
-                except subprocess.TimeoutExpired:
-                    authority_process.terminate()
-                    authority_process.wait(timeout=5)
-                try:
-                    client_process.wait(timeout=15)
-                except subprocess.TimeoutExpired:
-                    client_process.terminate()
-                    client_process.wait(timeout=5)
-                replacement_process = lan.boot(
-                    replacement_avd,
-                    REPLACEMENT_SERIAL,
-                    5558,
-                    replacement_log,
-                    replacement_network_args,
-                )
-                processes.append(replacement_process)
-                restarted_client_process = lan.boot(
-                    avd,
-                    CLIENT_SERIAL,
-                    5554,
-                    client_log,
-                    client_network_args,
-                )
-                processes.append(restarted_client_process)
-                runtime_identity(
-                    REPLACEMENT_SERIAL,
-                    replacement_avd,
-                    replacement_api,
-                    replacement_abi,
-                )
-                runtime_identity(CLIENT_SERIAL, avd, api, abi)
-                prepare_legacy_wifi_guest(REPLACEMENT_SERIAL)
-                prepare_legacy_wifi_guest(CLIENT_SERIAL)
-                restarted_client_address, restarted_prefix = lan.wlan_address(
-                    CLIENT_SERIAL
-                )
-                replacement_address, replacement_prefix = lan.wlan_address(
-                    REPLACEMENT_SERIAL
-                )
-                evidence["observed_routes"]["replacement"] = {  # type: ignore[index]
-                    "address": replacement_address,
-                    "prefix": replacement_prefix,
-                }
-                evidence["observed_routes"]["client_restart"] = {  # type: ignore[index]
-                    "address": restarted_client_address,
-                    "prefix": restarted_prefix,
-                }
-                if replacement_prefix != prefix:
-                    raise RuntimeError("Android replacement wlan0 prefix differs")
-                if restarted_prefix != prefix:
-                    raise RuntimeError("Android restarted client wlan0 prefix differs")
-                mobile.require_android_lan_topology(
-                    emulator_version=emulator_version,
-                    client_serial=CLIENT_SERIAL,
-                    authority_serial=REPLACEMENT_SERIAL,
-                    client_address=restarted_client_address,
-                    authority_address=replacement_address,
-                    prefix_length=prefix,
-                )
-                require_wifi_route(
-                    CLIENT_SERIAL, replacement_address, restarted_client_address
-                )
-                require_wifi_route(
-                    REPLACEMENT_SERIAL, restarted_client_address, replacement_address
-                )
-                if replacement_address == authority_address:
-                    raise RuntimeError("replacement authority reused the original DHCP route")
-                harness.activate_replacement(replacement_address)
-            else:
-                harness.replace_authority()
-            assert replacement_address is not None
+            harness.replace_authority()
             prepare_client_permissions(CLIENT_SERIAL, shipping_apk)
             restart_log = mobile.run_flutter(
                 ROOT,
@@ -929,8 +742,8 @@ def run_entry(
             ]
             evidence["emulator_version"] = emulator_version
             evidence["network_conditions"] = {
-                "legacy_explicit_wifi": legacy_wifi,
-                "cellular_data": "disabled" if legacy_wifi else "platform-default",
+                "legacy_explicit_wifi": False,
+                "cellular_data": "platform-default",
                 "route_injected": False,
             }
             evidence["client"] = {

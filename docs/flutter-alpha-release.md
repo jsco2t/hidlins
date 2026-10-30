@@ -50,8 +50,12 @@ build-model drift, or any unclassified one of the 45 July tasks.
 
 Platform-specific suites are documented in
 `app/ios/VERIFICATION.md` and `app/android/VERIFICATION.md`. CI runs desktop
-builds on their native hosts, iOS on macOS, and the Android API 29/current
-phone/tablet matrix on host-native ARM64 and x86_64 runners. Local-network
+builds on their native hosts and iOS on macOS. Hosted Linux/KVM runs Android
+API 29/36 native, UI, and bridge checks plus API 30/36 shared-LAN scenarios.
+Both Android ABIs remain packaging gates; runtime checks on physical ARM64
+workstations use the same Make targets. Hosted macOS lacks nested virtualization.
+The API 29 legacy image cannot use the shared-LAN backend, so API 29
+cross-device LAN acceptance is not claimed by the emulator gate. Local-network
 security, discovery, and loopback integration suites gate synchronization.
 The isolated `make test-local-sync-mobile-scenarios HIDLINS_ANDROID_STRICT=1`
 gate supplements them with real iPhone, iPad, Android phone, and Android tablet
