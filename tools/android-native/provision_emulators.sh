@@ -6,6 +6,8 @@ readonly SDK_ROOT="${ANDROID_SDK_ROOT:-${ANDROID_HOME:-${HOME:?}/Library/Android
 readonly SDKMANAGER="${SDKMANAGER:-$SDK_ROOT/cmdline-tools/latest/bin/sdkmanager}"
 readonly AVDMANAGER="${AVDMANAGER:-$SDK_ROOT/cmdline-tools/latest/bin/avdmanager}"
 readonly EMULATOR="$SDK_ROOT/emulator/emulator"
+export ANDROID_AVD_HOME="${ANDROID_AVD_HOME:-${ANDROID_EMULATOR_HOME:-${ANDROID_USER_HOME:-${HOME:?}/.android}}/avd}"
+mkdir -p "$ANDROID_AVD_HOME"
 readonly MATRIX="$(mktemp "${TMPDIR:-/tmp}/hidlins-android-provision.XXXXXX")"
 readonly AUTHORITY="$(mktemp "${TMPDIR:-/tmp}/hidlins-android-authority.XXXXXX")"
 readonly REPLACEMENT="$(mktemp "${TMPDIR:-/tmp}/hidlins-android-replacement.XXXXXX")"
@@ -45,17 +47,17 @@ avds_installed=1
 while IFS=$'\t' read -r avd _ _ _ system_image; do
   image_path="${system_image//;/\/}"
   [[ -d "$SDK_ROOT/$image_path" ]] || packages_installed=0
-  "$EMULATOR" -list-avds 2>/dev/null | grep -Fxq "$avd" || avds_installed=0
+  "$EMULATOR" -list-avds 2>/dev/null | grep -Fx "$avd" >/dev/null || avds_installed=0
 done <"$MATRIX"
 while IFS=$'\t' read -r avd _ _ _ system_image; do
   image_path="${system_image//;/\/}"
   [[ -d "$SDK_ROOT/$image_path" ]] || packages_installed=0
-  "$EMULATOR" -list-avds 2>/dev/null | grep -Fxq "$avd" || avds_installed=0
+  "$EMULATOR" -list-avds 2>/dev/null | grep -Fx "$avd" >/dev/null || avds_installed=0
 done <"$AUTHORITY"
 while IFS=$'\t' read -r avd _ _ _ system_image; do
   image_path="${system_image//;/\/}"
   [[ -d "$SDK_ROOT/$image_path" ]] || packages_installed=0
-  "$EMULATOR" -list-avds 2>/dev/null | grep -Fxq "$avd" || avds_installed=0
+  "$EMULATOR" -list-avds 2>/dev/null | grep -Fx "$avd" >/dev/null || avds_installed=0
 done <"$REPLACEMENT"
 if [[ "$packages_installed" == 1 && "$avds_installed" == 1 ]]; then
   echo "Android SDK packages and required AVDs are already installed"
@@ -76,8 +78,15 @@ if [[ "$packages_installed" != 1 ]]; then
   "$SDKMANAGER" "${packages[@]}"
 fi
 
+require_visible_avd() {
+  if ! "$EMULATOR" -list-avds | grep -Fx "$1" >/dev/null; then
+    echo "error: avdmanager succeeded but emulator cannot find AVD: $1 (ANDROID_AVD_HOME=$ANDROID_AVD_HOME)" >&2
+    exit 1
+  fi
+}
+
 while IFS=$'\t' read -r avd _ _ form_factor system_image; do
-  if [[ -x "$EMULATOR" ]] && "$EMULATOR" -list-avds | grep -Fxq "$avd"; then
+  if [[ -x "$EMULATOR" ]] && "$EMULATOR" -list-avds | grep -Fx "$avd" >/dev/null; then
     echo "Android AVD already installed: $avd"
     continue
   fi
@@ -85,11 +94,12 @@ while IFS=$'\t' read -r avd _ _ form_factor system_image; do
   if [[ "$form_factor" == "tablet" ]]; then device="pixel_c"; fi
   printf 'no\n' | "$AVDMANAGER" create avd --force --name "$avd" \
     --package "$system_image" --device "$device"
+  require_visible_avd "$avd"
   echo "Android AVD installed: $avd ($system_image, $device)"
 done <"$MATRIX"
 
 while IFS=$'\t' read -r avd _ _ form_factor system_image; do
-  if [[ -x "$EMULATOR" ]] && "$EMULATOR" -list-avds | grep -Fxq "$avd"; then
+  if [[ -x "$EMULATOR" ]] && "$EMULATOR" -list-avds | grep -Fx "$avd" >/dev/null; then
     echo "Android authority AVD already installed: $avd"
     continue
   fi
@@ -97,11 +107,12 @@ while IFS=$'\t' read -r avd _ _ form_factor system_image; do
   if [[ "$form_factor" == "tablet" ]]; then device="pixel_c"; fi
   printf 'no\n' | "$AVDMANAGER" create avd --force --name "$avd" \
     --package "$system_image" --device "$device"
+  require_visible_avd "$avd"
   echo "Android authority AVD installed: $avd ($system_image, $device)"
 done <"$AUTHORITY"
 
 while IFS=$'\t' read -r avd _ _ form_factor system_image; do
-  if [[ -x "$EMULATOR" ]] && "$EMULATOR" -list-avds | grep -Fxq "$avd"; then
+  if [[ -x "$EMULATOR" ]] && "$EMULATOR" -list-avds | grep -Fx "$avd" >/dev/null; then
     echo "Android replacement authority AVD already installed: $avd"
     continue
   fi
@@ -109,5 +120,6 @@ while IFS=$'\t' read -r avd _ _ form_factor system_image; do
   if [[ "$form_factor" == "tablet" ]]; then device="pixel_c"; fi
   printf 'no\n' | "$AVDMANAGER" create avd --force --name "$avd" \
     --package "$system_image" --device "$device"
+  require_visible_avd "$avd"
   echo "Android replacement authority AVD installed: $avd ($system_image, $device)"
 done <"$REPLACEMENT"

@@ -3,6 +3,7 @@ set -euo pipefail
 
 readonly ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/../.." && pwd)"
 source "$ROOT/tools/android-native/instrumentation-result.sh"
+export ANDROID_AVD_HOME="${ANDROID_AVD_HOME:-${ANDROID_EMULATOR_HOME:-${ANDROID_USER_HOME:-${HOME:?}/.android}}/avd}"
 readonly SDK_ROOT="${ANDROID_SDK_ROOT:-${ANDROID_HOME:-${HOME:?}/Library/Android/sdk}}"
 readonly ADB="$SDK_ROOT/platform-tools/adb"
 readonly EMULATOR="$SDK_ROOT/emulator/emulator"

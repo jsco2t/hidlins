@@ -149,6 +149,9 @@ run-tui:  ## Launch the interactive terminal UI (hidlins-tui).
 # fails loudly instead of silently reaching pub.dev (T2.4's stated guarantee).
 export PUB_CACHE := $(CURDIR)/app/vendor-pub
 export GRADLE_USER_HOME := $(CURDIR)/.gradle/android
+# SDK command-line tools and emulator releases can choose different defaults.
+# Share one explicit AVD home across provisioning and every scenario process.
+export ANDROID_AVD_HOME ?= $(or $(ANDROID_EMULATOR_HOME),$(ANDROID_USER_HOME),$(HOME)/.android)/avd
 
 FRB_RUST_OUT   := crates/hidlins-api/src/frb_generated.rs
 FRB_DART_OUT   := app/lib/src/bridge/
@@ -306,8 +309,10 @@ app-goldens-update: app-deps  ## Regenerate Flutter golden files (requires HIDLI
 # this is always the host target dir; only the extension is platform-bound.
 ifeq ($(UNAME_S),Darwin)
 HIDLINS_API_LIB := $(CURDIR)/target/debug/libhidlins_api.dylib
+HIDLINS_API_RELEASE_LIB := $(CURDIR)/target/release/libhidlins_api.dylib
 else
 HIDLINS_API_LIB := $(CURDIR)/target/debug/libhidlins_api.so
+HIDLINS_API_RELEASE_LIB := $(CURDIR)/target/release/libhidlins_api.so
 endif
 
 # The bridge smoke tests live in app/test_bridge/ (not app/test/) so plain
@@ -326,15 +331,15 @@ app-test-integration: app-deps  ## Run real native-bridge desktop lifecycle and 
 	cd app && HIDLINS_API_LIB=$(HIDLINS_API_LIB) HIDLINS_CLI_BIN=$(CURDIR)/target/debug/hidlins flutter test --no-pub test_bridge/real_bridge_process_coexistence_integration_test.dart
 	HIDLINS_CLI_BIN=$(CURDIR)/target/debug/hidlins $(CARGO) test -p hidlins-tui --features process-interop-tests --lib app::tests::tui_session_and_cli_process_share_the_advisory_lock -- --exact
 
-app-test-integration-performance: app-deps  ## Measure 5,000-entry list/search through the compiled native bridge.
+app-test-integration-performance: app-deps ncsa-boundary-precheck  ## Measure 5,000-entry list/search through the optimized native bridge.
 	$(CARGO) build -p hidlins-api --bin api-test-driver --features test-fixtures --offline --locked
-	$(CARGO) build -p hidlins-api --offline --locked
+	$(CARGO) build -p hidlins-api --release --offline --locked
 	@set -e; fixture="$$(mktemp -d)"; log="$$(mktemp)"; \
 	trap 'rm -rf "$$fixture"; rm -f "$$log"' EXIT; \
 	printf '%s\n' 'performance-integration-master-marker' | \
 		target/debug/api-test-driver create-search-corpus "$$fixture" performance 5000; \
 	cd app; \
-	HIDLINS_API_LIB=$(HIDLINS_API_LIB) \
+	HIDLINS_API_LIB=$(HIDLINS_API_RELEASE_LIB) \
 	HIDLINS_PERF_STATE_DIR="$$fixture" \
 	HIDLINS_FLUTTER_VERSION="$$(cat ../.flutter-version)" \
 	HIDLINS_GIT_REVISION="$$(git -C .. rev-parse HEAD)" \

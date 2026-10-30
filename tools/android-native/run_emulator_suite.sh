@@ -3,6 +3,7 @@ set -euo pipefail
 
 readonly ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/../.." && pwd)"
 source "$ROOT/tools/android-native/gradle-env.sh"
+export ANDROID_AVD_HOME="${ANDROID_AVD_HOME:-${ANDROID_EMULATOR_HOME:-${ANDROID_USER_HOME:-${HOME:?}/.android}}/avd}"
 readonly APP_DIR="$ROOT/app"
 readonly SDK_ROOT="${ANDROID_SDK_ROOT:-${ANDROID_HOME:-${HOME:?}/Library/Android/sdk}}"
 readonly ADB="$SDK_ROOT/platform-tools/adb"
@@ -93,7 +94,7 @@ boot_emulator() {
   local avd="$1"
   local expected_api="$2"
   local expected_abi="$3"
-  if ! "$EMULATOR" -list-avds | grep -Fxq "$avd"; then
+  if ! "$EMULATOR" -list-avds | grep -Fx "$avd" >/dev/null; then
     echo "error: required AVD is not installed: $avd" >&2
     exit 1
   fi
@@ -102,6 +103,12 @@ boot_emulator() {
     -no-boot-anim >"$emulator_log" 2>&1 &
   CURRENT_PID=$!
   for _ in $(seq 1 180); do
+    if ! kill -0 "$CURRENT_PID" 2>/dev/null; then
+      echo "error: Android emulator exited during startup: $avd" >&2
+      # This is the fresh emulator boot log, before any app or vault is loaded.
+      cat "$emulator_log" >&2
+      exit 1
+    fi
     CURRENT_SERIAL="$($ADB devices | awk 'NR > 1 && $1 ~ /^emulator-/ && $2 == "device" {print $1; exit}')"
     if [[ -n "$CURRENT_SERIAL" ]] && \
        [[ "$($ADB -s "$CURRENT_SERIAL" shell getprop sys.boot_completed 2>/dev/null | tr -d '\r')" == 1 ]]; then
@@ -111,6 +118,7 @@ boot_emulator() {
   done
   if [[ -z "$CURRENT_SERIAL" ]]; then
     echo "error: Android emulator did not become available: $avd" >&2
+    cat "$emulator_log" >&2
     exit 1
   fi
   local actual_api actual_abi actual_avd

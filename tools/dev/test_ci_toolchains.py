@@ -46,7 +46,7 @@ class CiToolchainTests(unittest.TestCase):
         self.bin = self.temp / 'bin'
         self.bin.mkdir()
         for name in ('make', 'python3', 'bash', 'uname', 'dirname', 'grep', 'mkdir', 'sed', 'rm',
-                     'cp', 'mktemp'):
+                     'cp', 'mktemp', 'sleep', 'awk', 'tr', 'seq', 'cat'):
             (self.bin / name).symlink_to(shutil.which(name))
         self.sdk = self.temp / 'Android SDK'
         self.ndk = self.sdk / 'ndk' / CONTRACT['ndk_version']
@@ -92,6 +92,104 @@ class CiToolchainTests(unittest.TestCase):
                                 job.index('run: make flutter-sdk-prepare'))
                 self.assertLess(job.index('run: make flutter-sdk-prepare'),
                                 job.index('- name: Disable telemetry'))
+
+    def test_performance_gate_builds_and_loads_optimized_native_code(self):
+        result = self.run_command(['make', '--no-print-directory', '--dry-run',
+                                   'app-test-integration-performance'])
+        self.assertEqual(result.returncode, 0, result.stdout + result.stderr)
+        self.assertIn('cargo build -p hidlins-api --release --offline --locked', result.stdout)
+        suffix = 'dylib' if platform.system() == 'Darwin' else 'so'
+        self.assertIn(f'HIDLINS_API_LIB={ROOT}/target/release/libhidlins_api.{suffix}', result.stdout)
+
+    def test_emulator_startup_failure_exposes_the_boot_diagnostic(self):
+        source = (ROOT / 'tools/android-native/run_emulator_suite.sh').read_text()
+        boot = source[source.index('boot_emulator() {'):source.index('exercise_os_lifecycle() {')]
+        self.executable(self.bin / 'emulator', '''
+if [[ "$1" == -list-avds ]]; then echo test-avd; exit 0; fi
+echo 'fixture: emulator cannot initialize the hypervisor' >&2
+exit 42
+''')
+        self.executable(self.bin / 'adb', 'sleep 0.02\n')
+        # Exercise the complete startup loop without waiting three minutes.
+        (self.bin / 'sleep').unlink()
+        self.executable(self.bin / 'sleep', f'exec "{shutil.which("sleep")}" 0.001\n')
+        result = self.run_command(['bash', '-c', '''
+set -euo pipefail
+EMULATOR="$1/emulator"
+ADB="$1/adb"
+RESULTS_DIR="$2"
+MODE=core
+''' + boot + '\nboot_emulator test-avd 29 arm64-v8a', 'fixture', str(self.bin), str(self.temp)])
+        self.assertNotEqual(result.returncode, 0)
+        self.assertIn('fixture: emulator cannot initialize the hypervisor', result.stderr)
+
+    def test_provisioned_avds_are_visible_and_reused_by_the_emulator(self):
+        self.env['HOME'] = str(self.temp / 'home')
+        self.env['XDG_CONFIG_HOME'] = str(self.temp / 'xdg')
+        for name in ('ANDROID_AVD_HOME', 'ANDROID_USER_HOME', 'ANDROID_EMULATOR_HOME'):
+            self.env.pop(name, None)
+        self.executable(self.bin / 'java', 'exit 0\n')
+        self.executable(self.sdk / 'platform-tools/adb', 'exit 0\n')
+        self.executable(self.sdk / 'cmdline-tools/latest/bin/sdkmanager', 'exit 1\n')
+        self.ndk.mkdir(parents=True)
+        matrix = json.loads((ROOT / 'tools/android-native/emulator-matrix.json').read_text())
+        host = 'arm64' if platform.machine() in ('arm64', 'aarch64') else platform.machine()
+        entries = [entry for entry in matrix['entries'] if entry['host_arch'] == host]
+        expected = {entry['avd'] + suffix for entry in entries
+                    for suffix in ('', '-authority', '-authority-replacement')}
+        for entry in entries:
+            (self.sdk / entry['system_image'].replace(';', '/')).mkdir(parents=True)
+        self.executable(self.sdk / 'cmdline-tools/latest/bin/avdmanager', '''
+while [[ $# -gt 0 ]]; do
+  if [[ "$1" == --name ]]; then avd_name="$2"; shift; fi
+  shift
+done
+avd_root="${ANDROID_AVD_HOME:-$XDG_CONFIG_HOME/android/avd}"
+mkdir -p "$avd_root"
+: > "$avd_root/$avd_name.ini"
+printf '%s\\n' "$avd_name" >> "$TEST_AVD_CREATIONS"
+''')
+        emulator = self.sdk / 'emulator/emulator'
+        self.executable(emulator, '''
+avd_root="${ANDROID_AVD_HOME:-$HOME/.android/avd}"
+for file in "$avd_root"/*.ini; do
+  if [[ -f "$file" ]]; then
+    name="${file##*/}"; printf '%s\\n' "${name%.ini}"
+    sleep 0.01
+  fi
+done
+''')
+        self.env['TEST_AVD_CREATIONS'] = str(self.temp / 'created-avds')
+        fragment = self.temp / 'provision.mk'
+        fragment.write_text('_test-provision:\n\tbash tools/android-native/provision_emulators.sh\n'
+                            '\t"' + str(emulator) + '" -list-avds > "$(TEST_TOOL_LOG)"\n')
+        command = ['make', '--no-print-directory', '-f', 'Makefile', '-f', str(fragment),
+                   '_test-provision']
+        first = self.run_command(command)
+        self.assertEqual(first.returncode, 0, first.stdout + first.stderr)
+        self.assertEqual(set(Path(self.env['TEST_TOOL_LOG']).read_text().splitlines()), expected)
+        second = self.run_command(command)
+        self.assertEqual(second.returncode, 0, second.stdout + second.stderr)
+        self.assertIn('already installed', second.stdout)
+        self.assertEqual(len(Path(self.env['TEST_AVD_CREATIONS']).read_text().splitlines()), 6)
+        for variable, home in (
+            ('ANDROID_USER_HOME', self.temp / 'user preferences'),
+            ('ANDROID_EMULATOR_HOME', self.temp / 'emulator preferences'),
+            ('ANDROID_AVD_HOME', self.temp / 'custom avds'),
+        ):
+            self.env[variable] = str(home)
+            configured = self.run_command(command)
+            self.assertEqual(configured.returncode, 0, configured.stdout + configured.stderr)
+            self.assertEqual(set(Path(self.env['TEST_TOOL_LOG']).read_text().splitlines()), expected)
+            avd_root = home if variable == 'ANDROID_AVD_HOME' else home / 'avd'
+            self.assertTrue((avd_root / (sorted(expected)[0] + '.ini')).is_file())
+        # A successful writer exit is insufficient if it did not publish an AVD.
+        missing = sorted(expected)[0]
+        (Path(self.env['ANDROID_AVD_HOME']) / (missing + '.ini')).unlink()
+        self.executable(self.sdk / 'cmdline-tools/latest/bin/avdmanager', 'exit 0\n')
+        invisible = self.run_command(command)
+        self.assertNotEqual(invisible.returncode, 0, invisible.stdout + invisible.stderr)
+        self.assertIn('emulator cannot find AVD', invisible.stderr)
 
     def test_flutter_sdk_bootstrap_is_outside_reviewed_pub_cache(self):
         self.env['HOME'] = str(self.temp / 'home')
