@@ -176,9 +176,9 @@ For example, on a physical Apple-Silicon workstation, run each command in a
 separate terminal:
 
 ```sh
-"$ANDROID_SDK_ROOT/emulator/emulator" -avd hidlins-api30 -port 5554 -no-audio -no-snapshot -wipe-data -no-boot-anim -feature VirtioWifi,WiFiPacketStream
-"$ANDROID_SDK_ROOT/emulator/emulator" -avd hidlins-api30-authority -port 5556 -no-audio -no-snapshot -wipe-data -no-boot-anim -feature VirtioWifi,WiFiPacketStream
-"$ANDROID_SDK_ROOT/emulator/emulator" -avd hidlins-api30-authority-replacement -port 5558 -no-audio -no-snapshot -wipe-data -no-boot-anim -feature VirtioWifi,WiFiPacketStream
+"$ANDROID_SDK_ROOT/emulator/emulator" -avd hidlins-api30 -port 5554 -no-audio -no-snapshot -wipe-data -no-boot-anim -feature VirtioWifi,WiFiPacketStream -lowram -memory 1536
+"$ANDROID_SDK_ROOT/emulator/emulator" -avd hidlins-api30-authority -port 5556 -no-audio -no-snapshot -wipe-data -no-boot-anim -feature VirtioWifi,WiFiPacketStream -lowram -memory 1536
+"$ANDROID_SDK_ROOT/emulator/emulator" -avd hidlins-api30-authority-replacement -port 5558 -no-audio -no-snapshot -wipe-data -no-boot-anim -feature VirtioWifi,WiFiPacketStream -lowram -memory 1536
 ```
 
 Use the matching API 36 or x86_64 names for those selections. API 30 needs the

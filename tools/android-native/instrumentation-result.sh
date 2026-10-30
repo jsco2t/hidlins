@@ -1,7 +1,7 @@
 #!/usr/bin/env bash
 
 hidlins_device_ui_diagnostics() {
-  local focused_window="" focus_category="other" power_state=""
+  local focused_window="" focus_category="other" power_state="" error_owner="none"
   # Never publish raw window titles, hierarchy dumps, or application content.
   if focused_window="$("$1" shell dumpsys -t 5 window 2>/dev/null |
       awk '/mCurrentFocus=/ && !seen {print; seen=1}')"; then
@@ -15,6 +15,16 @@ hidlins_device_ui_diagnostics() {
       *mCurrentFocus=null*) focus_category="none" ;;
     esac
   fi
+  if [[ "$focus_category" == error-dialog ]]; then
+    # Classify only known owners; never print a dialog title or package value.
+    case "$focused_window" in
+      *app.hidlins*|*Hidlins*) error_owner="hidlins" ;;
+      *com.android.systemui*|*"System UI"*) error_owner="system-ui" ;;
+      *com.android.launcher*|*Launcher*) error_owner="launcher" ;;
+      *system_server*|*"system isn't responding"*) error_owner="system" ;;
+      *) error_owner="other" ;;
+    esac
+  fi
   if power_state="$("$1" shell dumpsys -t 5 power 2>/dev/null |
       awk '/^[[:space:]]*mWakefulness=/ && !seen {print; seen=1}' |
       sed -nE 's/^[[:space:]]*mWakefulness=(Awake|Asleep|Dreaming|Dozing)([[:space:]].*)?$/\1/p')"; then
@@ -25,7 +35,8 @@ hidlins_device_ui_diagnostics() {
   else
     power_state="unknown"
   fi
-  printf 'focus-window=%s\nwakefulness=%s\n' "$focus_category" "$power_state"
+  printf 'focus-window=%s\nwakefulness=%s\nerror-owner=%s\n' \
+    "$focus_category" "$power_state" "$error_owner"
 }
 
 hidlins_device_tests_passed() {

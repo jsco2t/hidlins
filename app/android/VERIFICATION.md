@@ -18,6 +18,10 @@ targets. The supported application floor is API 29. Shipping APKs contain only
   shared-LAN application scenarios against a
   separate release-mode CLI authority through shipping Android NSD discovery.
 
+After provisioning with `make android-emulator-provision`,
+`make test-local-sync-android-lan-scenarios` reruns only the strict shared-LAN
+scenarios while building and inspecting the application and test artifacts.
+
 The emulator matrix is declared in
 `tools/android-native/emulator-matrix.json`: native/UI clients use API 29 phone
 and API 36 tablet; shared-LAN clients use API 30 phone and API 36 tablet. Each
@@ -36,7 +40,9 @@ and sync traffic. No endpoint, `10.0.2.2` data route, ADB forwarding, proxy, or
 synthetic discovery result is supplied to the client. API 30 and API 36 use
 shared emulator Wi-Fi with platform-default cellular state. The runner explicitly
 selects `VirtioWifi,WiFiPacketStream` because API 30 otherwise defaults to the
-isolated legacy backend. The API 29 default image cannot provide this shared
+isolated legacy backend. Each scenario guest has an explicit 1536 MiB RAM
+budget using `-lowram -memory 1536`, so three guests fit on CI and developer
+hosts without automatic 4 GiB-per-guest expansion. The API 29 default image cannot provide this shared
 LAN; forcing the modern
 backend leaves it without a Wi-Fi address. API 29 remains a required native/UI
 and bridge gate and remains the application minimum, but its cross-device LAN

@@ -174,12 +174,26 @@ class MobileScenarioHarnessTest(unittest.TestCase):
                     results_dir=root)
             # API30 ships both drivers but defaults to isolated legacy Wi-Fi.
             # Select the shared backend; DHCP and routing remain Android-owned.
-            shared_wifi = ('-feature', 'VirtioWifi,WiFiPacketStream')
-            self.assertEqual(starts, [
-                ('hidlins-authority', module.AUTHORITY_SERIAL, shared_wifi),
-                ('hidlins-client', module.CLIENT_SERIAL, shared_wifi),
-                ('hidlins-replacement', module.REPLACEMENT_SERIAL, shared_wifi),
+            self.assertEqual([(avd, serial) for avd, serial, _ in starts], [
+                ('hidlins-authority', module.AUTHORITY_SERIAL),
+                ('hidlins-client', module.CLIENT_SERIAL),
+                ('hidlins-replacement', module.REPLACEMENT_SERIAL),
             ])
+            total_memory = 0
+            for _, _, args in starts:
+                self.assertIn('-lowram', args)
+                paired = [arg for arg in args if arg != '-lowram']
+                options = dict(zip(paired[::2], paired[1::2]))
+                self.assertEqual(options.get('-feature'), 'VirtioWifi,WiFiPacketStream')
+                # Without an explicit limit, modern images expand to 4 GiB
+                # per guest and exhaust a 16 GiB CI/developer host.
+                self.assertIn('-memory', options)
+                memory = int(options['-memory'])
+                self.assertGreater(memory, 0)
+                self.assertLessEqual(memory, 2048)
+                total_memory += memory
+                self.assertEqual(set(options), {'-feature', '-memory'})
+            self.assertLessEqual(total_memory, 6144)
             for process in processes:
                 process.wait.assert_called_once_with(timeout=15)
             cleanup.assert_has_calls([

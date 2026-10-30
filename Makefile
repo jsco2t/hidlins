@@ -543,6 +543,12 @@ test-local-sync-android-lan-discovery: android-emulator-provision android-scenar
 test-local-sync-mobile-scenarios-ios: release test-local-sync-mobile-harness  ## Run expensive iPhone/iPad client scenarios against a CLI authority.
 	HIDLINS_MOBILE_SYNC_SCENARIOS=1 $(MAKE) --no-print-directory app-test-ios-integration
 
+# Provision AVDs separately, matching app-test-android-emulator. This focused
+# gate avoids repeating native/UI journeys when diagnosing real LAN scenarios.
+.PHONY: test-local-sync-android-lan-scenarios
+test-local-sync-android-lan-scenarios: app-build-android test-local-sync-mobile-harness  ## Run only strict Android shared-LAN CLI-authority scenarios on provisioned AVDs.
+	HIDLINS_ANDROID_STRICT=1 python3 tools/android-native/android_mobile_scenario.py
+
 test-local-sync-mobile-scenarios-android: release android-emulator-provision android-scenario-boundary-check test-local-sync-mobile-harness  ## Run expensive Android client scenarios against a CLI authority.
 	HIDLINS_MOBILE_SYNC_SCENARIOS=1 $(MAKE) --no-print-directory app-test-android-emulator
 

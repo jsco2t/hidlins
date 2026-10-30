@@ -32,7 +32,11 @@ REMOTE_ROOT = lan.REMOTE_ROOT
 PORT = lan.PORT
 # API30 includes virtio_wifi but its image defaults to isolated legacy Wi-Fi.
 # Choose the shared backend explicitly; Android still owns DHCP and routing.
-SHARED_WIFI_ARGS = ("-feature", "VirtioWifi,WiFiPacketStream")
+# AVD defaults can expand each guest to 4 GiB; three must fit on a 16 GiB host.
+# -lowram is required: otherwise the emulator raises -memory to its image floor.
+SHARED_EMULATOR_ARGS = (
+    "-feature", "VirtioWifi,WiFiPacketStream", "-lowram", "-memory", "1536"
+)
 
 
 class AndroidAuthorityHarness:
@@ -630,13 +634,13 @@ def run_entry(
             scratch / "replacement.log"
         ).open("w", encoding="utf-8") as replacement_log:
             authority_process = lan.boot(
-                authority_avd, AUTHORITY_SERIAL, 5556, authority_log, SHARED_WIFI_ARGS
+                authority_avd, AUTHORITY_SERIAL, 5556, authority_log, SHARED_EMULATOR_ARGS
             )
             processes.append(authority_process)
-            client_process = lan.boot(avd, CLIENT_SERIAL, 5554, client_log, SHARED_WIFI_ARGS)
+            client_process = lan.boot(avd, CLIENT_SERIAL, 5554, client_log, SHARED_EMULATOR_ARGS)
             processes.append(client_process)
             replacement_process = lan.boot(
-                replacement_avd, REPLACEMENT_SERIAL, 5558, replacement_log, SHARED_WIFI_ARGS
+                replacement_avd, REPLACEMENT_SERIAL, 5558, replacement_log, SHARED_EMULATOR_ARGS
             )
             processes.append(replacement_process)
             runtime_identity(CLIENT_SERIAL, avd, api, abi)
