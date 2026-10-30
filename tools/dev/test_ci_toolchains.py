@@ -32,7 +32,8 @@ class CiToolchainTests(unittest.TestCase):
         self.temp = Path(temporary.name).resolve()
         self.bin = self.temp / 'bin'
         self.bin.mkdir()
-        for name in ('make', 'python3', 'bash', 'uname', 'dirname', 'grep', 'mkdir', 'sed', 'rm'):
+        for name in ('make', 'python3', 'bash', 'uname', 'dirname', 'grep', 'mkdir', 'sed', 'rm',
+                     'cp', 'mktemp'):
             (self.bin / name).symlink_to(shutil.which(name))
         self.sdk = self.temp / 'Android SDK'
         self.ndk = self.sdk / 'ndk' / CONTRACT['ndk_version']
@@ -133,6 +134,27 @@ class CiToolchainTests(unittest.TestCase):
                                  ['--sdk_root=' + str(self.sdk), 'ndk;' + CONTRACT['ndk_version']])
                 self.assertIn('ANDROID_NDK_HOME=' + str(self.ndk) + '\n',
                               Path(self.env['GITHUB_ENV']).read_text())
+
+    def test_gradle_wrapper_uses_one_default_or_explicit_project_directory(self):
+        self.executable(self.bin / 'flutter', 'exit 0\n')
+        wrapper = self.temp / 'bin/cache/artifacts/gradle_wrapper/gradle/wrapper/gradle-wrapper.jar'
+        wrapper.parent.mkdir(parents=True)
+        wrapper.touch()
+        self.env['JAVA_HOME'] = str(self.temp / 'jdk')
+        self.executable(Path(self.env['JAVA_HOME']) / 'bin/java',
+                        'printf "%s\\n" "$@" > "$TEST_TOOL_LOG"\n')
+        for project, arguments in ((ROOT / 'app/android', []),
+                                   (self.temp / 'fixture project', ['--project-dir',
+                                                                  str(self.temp / 'fixture project')])):
+            with self.subTest(arguments=arguments):
+                result = self.run_command(['bash', 'tools/android-native/gradle.sh',
+                                           *arguments, 'help'])
+                self.assertEqual(result.returncode, 0, result.stdout + result.stderr)
+                argv = Path(self.env['TEST_TOOL_LOG']).read_text().splitlines()
+                indexes = [i for i, arg in enumerate(argv) if arg in ('-p', '--project-dir')]
+                self.assertEqual(len(indexes), 1, argv)
+                self.assertEqual(argv[indexes[0] + 1], str(project))
+                self.assertEqual(argv[-1], 'help')
 
     def check_ndk(self, revision_line):
         host = 'darwin-x86_64' if platform.system() == 'Darwin' else 'linux-x86_64'
