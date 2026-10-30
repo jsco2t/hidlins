@@ -148,6 +148,7 @@ run-tui:  ## Launch the interactive terminal UI (hidlins-tui).
 # `flutter build` / `flutter test` / build_runner is ALSO offline-bound and
 # fails loudly instead of silently reaching pub.dev (T2.4's stated guarantee).
 export PUB_CACHE := $(CURDIR)/app/vendor-pub
+export GRADLE_USER_HOME := $(CURDIR)/.gradle/android
 
 FRB_RUST_OUT   := crates/hidlins-api/src/frb_generated.rs
 FRB_DART_OUT   := app/lib/src/bridge/
@@ -231,7 +232,15 @@ build-android: ncsa-boundary-precheck  ## Build/stage release Rust libraries for
 android-artifacts-check:  ## Reject stale, wrong-profile, wrong-ABI, misaligned, or modified staged Android libraries.
 	python3 tools/android-native/artifacts.py check
 
-app-android-config-check: app-deps  ## Verify Flutter 3.47.2 built-in Kotlin/old-DSL pins and reject legacy KGP application.
+.PHONY: android-gradle-prepare android-dependency-check
+
+android-gradle-prepare:  ## Install the JUnit-free policy before Android Gradle/plugin resolution.
+	bash tools/android-native/gradle-env.sh
+
+android-dependency-check: android-gradle-prepare  ## Verify JUnit exclusion with real offline Gradle fixtures and device-test contracts.
+	python3 tools/android-native/test_dependency_policy.py
+
+app-android-config-check: app-deps android-dependency-check  ## Verify Flutter 3.47.2 built-in Kotlin/old-DSL pins and reject legacy KGP application.
 	python3 tools/android-native/config_check.py self-test
 	python3 tools/android-native/config_check.py check
 	python3 tools/android-native/plugin_registrant.py self-test
@@ -333,7 +342,7 @@ app-test-integration-performance: app-deps  ## Measure 5,000-entry list/search t
 	status=$${PIPESTATUS[0]}; test "$$status" -eq 0; \
 	grep -Eo 'HIDLINS_PERF_JSON:\{.*\}' "$$log"
 
-app-deps:  ## Install pub dependencies (offline from the vendored cache).
+app-deps: android-gradle-prepare  ## Install pub dependencies (offline from the vendored cache).
 	@log="$$(mktemp)"; trap 'rm -f "$$log"' EXIT; \
 	cd app && flutter pub get --offline --enforce-lockfile 2>&1 | tee "$$log"; \
 	status=$${PIPESTATUS[0]}; \

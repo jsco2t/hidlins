@@ -8,6 +8,8 @@ import subprocess
 import sys
 import zipfile
 
+from verify_app_apk import reject_junit
+
 ROOT = pathlib.Path(__file__).resolve().parents[2]
 SHIPPING_APKS = (
     ROOT / "app/build/app/outputs/flutter-apk/app-debug.apk",
@@ -84,6 +86,10 @@ def main() -> None:
         raise SystemExit(f"instrumentation APK is unavailable: {TEST_APK}")
     if not apk_contains(TEST_APK, REGISTRAR_MARKER):
         raise SystemExit("instrumentation APK is missing the test-only NSD registrar")
+    with zipfile.ZipFile(TEST_APK) as archive:
+        for name in archive.namelist():
+            if name.endswith('.dex'):
+                reject_junit(archive.read(name), 'instrumentation')
     print(
         "  OK: Android scenario authority and NSD registrar are confined to test artifacts"
     )

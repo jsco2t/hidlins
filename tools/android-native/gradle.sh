@@ -2,6 +2,7 @@
 set -euo pipefail
 
 readonly ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/../.." && pwd)"
+source "$ROOT/tools/android-native/gradle-env.sh"
 if [[ -z "${ANDROID_HOME:-}" && -z "${ANDROID_SDK_ROOT:-}" ]]; then
   case "$(uname -s)" in
     Darwin) export ANDROID_HOME="${HOME:?}/Library/Android/sdk" ;;

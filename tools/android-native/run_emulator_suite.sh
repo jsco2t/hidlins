@@ -2,6 +2,7 @@
 set -euo pipefail
 
 readonly ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/../.." && pwd)"
+source "$ROOT/tools/android-native/gradle-env.sh"
 readonly APP_DIR="$ROOT/app"
 readonly SDK_ROOT="${ANDROID_SDK_ROOT:-${ANDROID_HOME:-${HOME:?}/Library/Android/sdk}}"
 readonly ADB="$SDK_ROOT/platform-tools/adb"

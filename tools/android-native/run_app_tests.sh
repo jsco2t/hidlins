@@ -2,6 +2,7 @@
 set -euo pipefail
 
 readonly ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/../.." && pwd)"
+source "$ROOT/tools/android-native/instrumentation-result.sh"
 readonly SDK_ROOT="${ANDROID_SDK_ROOT:-${ANDROID_HOME:-${HOME:?}/Library/Android/sdk}}"
 readonly ADB="$SDK_ROOT/platform-tools/adb"
 readonly EMULATOR="$SDK_ROOT/emulator/emulator"
@@ -10,7 +11,7 @@ readonly TEST_APK="$ROOT/app/build/app/outputs/apk/androidTest/debug/app-debug-a
 readonly AVD="${HIDLINS_ANDROID_AVD:-hidlins-spike}"
 readonly EXPECTED_API="${HIDLINS_ANDROID_EXPECTED_API:-}"
 readonly EXPECTED_ABI="${HIDLINS_ANDROID_EXPECTED_ABI:-}"
-readonly TEST_COMPONENT="app.hidlins.test/androidx.test.runner.AndroidJUnitRunner"
+readonly TEST_COMPONENT="app.hidlins.test/app.hidlins.HidlinsAndroidTest"
 readonly EMULATOR_LOG="$(mktemp)"
 started=""
 
@@ -52,8 +53,8 @@ fi
 "$ADB" install -r "$TEST_APK" >/dev/null
 result="$("$ADB" shell am instrument -w -r "$TEST_COMPONENT" | tr -d '\r')"
 printf '%s\n' "$result"
-grep -q 'OK (' <<<"$result" || {
+if ! hidlins_device_tests_passed "$result"; then
   echo "error: Hidlins Android instrumentation did not report success" >&2
   exit 1
-}
+fi
 printf '  OK: Android lifecycle, clipboard, storage, SAF, backup, and sync-permission assertions passed on %s (API %s, ABI %s)\n' "$AVD" "$actual_api" "$actual_abi"

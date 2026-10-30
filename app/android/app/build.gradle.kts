@@ -32,7 +32,7 @@ android {
         targetSdk = flutter.targetSdkVersion
         versionCode = flutter.versionCode
         versionName = flutter.versionName
-        testInstrumentationRunner = "androidx.test.runner.AndroidJUnitRunner"
+        testInstrumentationRunner = "app.hidlins.HidlinsAndroidTest"
         ndk {
             abiFilters += listOf("arm64-v8a", "x86_64")
         }

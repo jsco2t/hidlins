@@ -1,0 +1,109 @@
+// Apply before settings/plugin resolution, including Flutter's included build.
+// JUnit and its BOMs are excluded from tools, applications, and device tests.
+if (gradle.ext.has('hidlinsDependencyPolicy')) {
+    return
+}
+gradle.ext.set('hidlinsDependencyPolicy', true)
+// Four Apache-2.0 Commons POMs inherit parents that import JUnit BOMs even
+// for non-test consumers. Resolve their unchanged, SHA-256-verified JARs
+// using the exact non-optional runtime edges reviewed in README.md instead.
+def commonsRuntime = [
+    'commons-io:commons-io:2.16.1': [],
+    'commons-codec:commons-codec:1.17.1': [],
+    'org.apache.commons:commons-lang3:3.16.0': [],
+    'org.apache.commons:commons-compress:1.27.1': [
+        'commons-codec:commons-codec:1.17.1',
+        'commons-io:commons-io:2.16.1',
+        'org.apache.commons:commons-lang3:3.16.0'
+    ]
+]
+def configureRepositories = { repositories ->
+    def runtimeRepository = repositories.maven {
+        name = 'HidlinsCommonsRuntime'
+        // The override lets the offline regression use its disposable fixture.
+        // SHA-256 verification remains mandatory for every artifact.
+        url = System.getProperty('hidlins.commons.repository', 'https://repo.maven.apache.org/maven2')
+        metadataSources { artifact() }
+        content {
+            commonsRuntime.keySet().each { coordinate ->
+                def parts = coordinate.split(':')
+                includeVersion(parts[0], parts[1], parts[2])
+            }
+        }
+    }
+    repositories.all { repository ->
+        if (repository != runtimeRepository) {
+            repository.content { descriptor ->
+                commonsRuntime.keySet().each { coordinate ->
+                    def parts = coordinate.split(':')
+                    descriptor.excludeVersion(parts[0], parts[1], parts[2])
+                }
+            }
+        }
+    }
+}
+def configureComponents = { components ->
+    components.all { details ->
+        def coordinate = "${details.id.group}:${details.id.name}:${details.id.version}".toString()
+        if (commonsRuntime.containsKey(coordinate)) {
+            details.allVariants {
+                withDependencies { edges ->
+                    commonsRuntime[coordinate].each { edges.add(it) }
+                }
+            }
+        }
+    }
+}
+def blockedGroups = ['junit', 'org.junit', 'org.junit.jupiter',
+                     'org.junit.platform', 'org.junit.vintage',
+                     'androidx.test', 'androidx.test.espresso']
+def blockedKotlinModules = ['kotlin-test-junit', 'kotlin-test-junit5']
+def blocked = { group, name ->
+    blockedGroups.contains(group) ||
+        (group == 'org.jetbrains.kotlin' && blockedKotlinModules.contains(name))
+}
+def configure = { configurations ->
+    configurations.configureEach {
+        blockedGroups.each { excludedGroup -> exclude group: excludedGroup }
+        blockedKotlinModules.each { excludedModule ->
+            exclude group: 'org.jetbrains.kotlin', module: excludedModule
+        }
+        withDependencies { dependencies ->
+            dependencies.removeAll { blocked(it.group, it.name) }
+        }
+        incoming.afterResolve {
+            incoming.resolutionResult.allComponents.each { component ->
+                def id = component.moduleVersion
+                if (id != null && blocked(id.group, id.name)) {
+                    throw new GradleException("Forbidden test dependency: ${id.group}:${id.name}")
+                }
+            }
+        }
+    }
+}
+
+gradle.beforeSettings { settings ->
+    configure(settings.buildscript.configurations)
+    configureRepositories(settings.buildscript.repositories)
+    configureComponents(settings.buildscript.dependencies.components)
+    configureRepositories(settings.dependencyResolutionManagement.repositories)
+    configureComponents(settings.dependencyResolutionManagement.components)
+}
+gradle.beforeProject { project ->
+    configure(project.buildscript.configurations)
+    configure(project.configurations)
+    configureRepositories(project.buildscript.repositories)
+    if (project.gradle.settings.dependencyResolutionManagement.repositoriesMode.get() ==
+            org.gradle.api.initialization.resolve.RepositoriesMode.PREFER_PROJECT) {
+        configureRepositories(project.repositories)
+    }
+    configureComponents(project.buildscript.dependencies.components)
+    configureComponents(project.dependencies.components)
+    if (project.name == 'integration_test') {
+        project.plugins.withId('com.android.library') {
+            // flutter drive uses the VM service and IntegrationTestPlugin;
+            // the SDK's separate JUnit runner is not part of that protocol.
+            project.android.sourceSets.main.java.exclude('**/FlutterTestRunner.java')
+        }
+    }
+}
