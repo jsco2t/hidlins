@@ -109,8 +109,10 @@ class CiToolchainTests(unittest.TestCase):
     def test_emulator_startup_failure_exposes_the_boot_diagnostic(self):
         source = (ROOT / 'tools/android-native/run_emulator_suite.sh').read_text()
         boot = source[source.index('boot_emulator() {'):source.index('exercise_os_lifecycle() {')]
+        self.env['TEST_RENDERER_ARGS'] = str(self.temp / 'renderer-args')
         self.executable(self.bin / 'emulator', '''
 if [[ "$1" == -list-avds ]]; then echo test-avd; exit 0; fi
+printf '%s\n' "$@" > "$TEST_RENDERER_ARGS"
 echo 'fixture: emulator cannot initialize the hypervisor' >&2
 exit 42
 ''')
@@ -127,6 +129,9 @@ MODE=core
 ''' + boot + '\nboot_emulator test-avd 29 arm64-v8a', 'fixture', str(self.bin), str(self.temp)])
         self.assertNotEqual(result.returncode, 0)
         self.assertIn('fixture: emulator cannot initialize the hypervisor', result.stderr)
+        arguments = Path(self.env['TEST_RENDERER_ARGS']).read_text().splitlines()
+        self.assertIn('-gpu', arguments)
+        self.assertEqual(arguments[arguments.index('-gpu') + 1], 'swiftshader')
 
     def test_provisioned_avds_are_visible_and_reused_by_the_emulator(self):
         self.env['HOME'] = str(self.temp / 'home')

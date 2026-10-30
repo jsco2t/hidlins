@@ -27,7 +27,7 @@ trap cleanup EXIT
 tools/android-native/gradle.sh -Ptarget-platform=android-arm64,android-x64 \
   :app:assembleDebug :app:assembleDebugAndroidTest
 if ! "$ADB" get-state >/dev/null 2>&1; then
-  "$EMULATOR" -avd "$AVD" -no-window -no-audio -no-snapshot-save -wipe-data >"$EMULATOR_LOG" 2>&1 &
+  "$EMULATOR" -avd "$AVD" -no-window -no-audio -gpu swiftshader -no-snapshot-save -wipe-data >"$EMULATOR_LOG" 2>&1 &
   started=1
 fi
 "$ADB" wait-for-device

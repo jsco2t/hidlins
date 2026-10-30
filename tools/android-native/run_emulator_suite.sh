@@ -100,7 +100,7 @@ boot_emulator() {
   fi
   local emulator_log="$RESULTS_DIR/$MODE-$avd-emulator.log"
   "$EMULATOR" -avd "$avd" -no-window -no-audio -no-snapshot -wipe-data \
-    -no-boot-anim >"$emulator_log" 2>&1 &
+    -gpu swiftshader -no-boot-anim >"$emulator_log" 2>&1 &
   CURRENT_PID=$!
   for _ in $(seq 1 180); do
     if ! kill -0 "$CURRENT_PID" 2>/dev/null; then

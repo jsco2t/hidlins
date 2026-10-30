@@ -54,10 +54,13 @@ class MobileScenarioHarnessTest(unittest.TestCase):
         process = mock.Mock()
         process.poll.return_value = None
         booted = module.subprocess.CompletedProcess([], 0, stdout='1\n')
-        with mock.patch.object(module.subprocess, 'Popen', return_value=process), \
+        with mock.patch.object(module.subprocess, 'Popen', return_value=process) as launch, \
                 mock.patch.object(module.subprocess, 'run', return_value=booted), \
                 mock.patch.object(module, 'adb') as adb:
             self.assertIs(module.boot('fixture', 'emulator-fixture', 5554, io.StringIO()), process)
+        command = launch.call_args.args[0]
+        self.assertIn('-gpu', command)
+        self.assertEqual(command[command.index('-gpu') + 1], 'swiftshader')
         adb.assert_has_calls([
             mock.call('emulator-fixture', 'shell', 'input', 'keyevent', 'KEYCODE_WAKEUP'),
             mock.call('emulator-fixture', 'shell', 'wm', 'dismiss-keyguard'),

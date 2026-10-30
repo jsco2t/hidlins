@@ -124,6 +124,8 @@ def boot(
             "-no-snapshot",
             "-wipe-data",
             "-no-boot-anim",
+            "-gpu",
+            "swiftshader",
             *extra_args,
         ],
         stdout=log,

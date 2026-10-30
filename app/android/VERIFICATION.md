@@ -22,6 +22,9 @@ After provisioning with `make android-emulator-provision`,
 `make test-local-sync-android-lan-scenarios` reruns only the strict shared-LAN
 scenarios while building and inspecting the application and test artifacts.
 
+All headless runtime guests explicitly use the emulator's bundled SwiftShader
+renderer. This keeps graphics selection consistent on developer and CI hosts.
+
 The emulator matrix is declared in
 `tools/android-native/emulator-matrix.json`: native/UI clients use API 29 phone
 and API 36 tablet; shared-LAN clients use API 30 phone and API 36 tablet. Each
