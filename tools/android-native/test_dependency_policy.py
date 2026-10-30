@@ -185,8 +185,16 @@ tasks.register('verifyPolicy') {{
     }}
 }}
 '''
-            (root / 'settings.gradle').write_text(buildscript + "rootProject.name = 'policy-fixture'\nincludeBuild('included')\n")
+            (root / 'settings.gradle').write_text(buildscript + "rootProject.name = 'policy-fixture'\nincludeBuild('included')\ninclude('integration_test')\n")
             (root / 'build.gradle').write_text(project_script)
+            sdk_plugin = root / 'integration_test'
+            sdk_plugin.mkdir()
+            # Like Flutter's SDK integration plugin, this child redundantly
+            # declares another AGP even though the root supplies its tooling.
+            # It is deliberately unavailable: the child must not resolve it.
+            (sdk_plugin / 'build.gradle').write_text(project_script.replace(
+                "classpath 'fixture:safe:1.0'",
+                "classpath 'fixture:safe:1.0'; classpath 'com.android.tools.build:gradle:8.11.0'"))
             included = root / 'included'
             included.mkdir()
             settings_repositories = f'''dependencyResolutionManagement {{
@@ -218,11 +226,11 @@ tasks.register('verifyPolicy') {{
                 command += ['--init-script', str(POLICY)]
             command += ['--project-dir', str(root), '--offline', '--no-daemon',
                         '-Dhidlins.commons.repository=' + repo.as_uri(),
-                        'verifyPolicy', ':included:verifyPolicy']
+                        'verifyPolicy', ':included:verifyPolicy', ':integration_test:verifyPolicy']
             result = subprocess.run(command, cwd=ROOT, text=True, stdout=subprocess.PIPE,
                                     stderr=subprocess.STDOUT, timeout=180)
             self.assertEqual(result.returncode, 0, result.stdout)
-            self.assertEqual(result.stdout.count('HIDLINS_POLICY_PASS'), 2, result.stdout)
+            self.assertEqual(result.stdout.count('HIDLINS_POLICY_PASS'), 3, result.stdout)
             # Artifact-only metadata must not weaken the existing byte check.
             tampered = repo / 'commons-codec/commons-codec/1.17.1/commons-codec-1.17.1.jar'
             tampered.write_bytes(tampered.read_bytes() + b'tampered')

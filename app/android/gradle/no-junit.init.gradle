@@ -100,6 +100,15 @@ gradle.beforeProject { project ->
     configureComponents(project.buildscript.dependencies.components)
     configureComponents(project.dependencies.components)
     if (project.name == 'integration_test') {
+        project.buildscript.configurations.configureEach {
+            withDependencies { dependencies ->
+                // The root already provides AGP 9.1.0. The SDK plugin's
+                // redundant 8.x classpath imports another forbidden test BOM.
+                dependencies.removeAll {
+                    it.group == 'com.android.tools.build' && it.name == 'gradle'
+                }
+            }
+        }
         project.plugins.withId('com.android.library') {
             // flutter drive uses the VM service and IntegrationTestPlugin;
             // the SDK's separate JUnit runner is not part of that protocol.

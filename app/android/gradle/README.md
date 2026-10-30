@@ -11,7 +11,9 @@ The platform device runner extends `android.app.Instrumentation` and retains all
 assertions. Flutter's SDK integration plugin keeps its method-channel and
 screenshot implementation for `flutter drive`; its separate `FlutterTestRunner`
 source and AndroidX/JUnit runner dependencies are excluded from compilation and
-resolution. No SDK sources are copied or modified.
+resolution. Its redundant AGP 8.x buildscript dependency is removed too: the
+root's pinned AGP 9.1.0 supplies the Android library plugin. Resolving both versions
+would import another unused test BOM. No SDK sources are copied or modified.
 
 ## Apache Commons runtime metadata
 
