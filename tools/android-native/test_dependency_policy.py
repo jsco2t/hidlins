@@ -34,6 +34,37 @@ CASES = (
 
 
 class DependencyPolicyTests(unittest.TestCase):
+    def test_device_ui_diagnostics_emit_only_fixed_categories(self):
+        with tempfile.TemporaryDirectory(prefix='hidlins-focus-diagnostic-') as scratch:
+            adb = Path(scratch) / 'adb'
+            adb.write_text('''#!/bin/bash
+if [[ "$5" == window ]]; then
+  printf '%s\\n' "$TEST_WINDOW"
+  sleep 0.01
+  for _ in {1..16}; do printf '%4096s\\n' 'ignored SECRET-CANARY'; done
+  echo 'mCurrentFocus=Window{u0 app.hidlins/.MainActivity}'
+else
+  printf '%s\\n' "$TEST_POWER"
+  echo 'mWakefulness=Asleep'
+fi
+''')
+            adb.chmod(0o755)
+            for window, power, expected in (
+                ('mCurrentFocus=Window{u0 com.android.permissioncontroller/.GrantPermissionsActivity SECRET-CANARY}',
+                 'mWakefulness=Awake SECRET-CANARY', 'focus-window=permission-dialog\nwakefulness=Awake\n'),
+                ('mCurrentFocus=SECRET-CANARY', 'mWakefulness=SECRET-CANARY',
+                 'focus-window=other\nwakefulness=unknown\n'),
+            ):
+                with self.subTest(window=window):
+                    result = subprocess.run(
+                        ['bash', '-c', 'set -euo pipefail; source "$1"; hidlins_device_ui_diagnostics "$2"',
+                         'focus-fixture', str(ROOT / 'tools/android-native/instrumentation-result.sh'), str(adb)],
+                        env=dict(os.environ, TEST_WINDOW=window, TEST_POWER=power),
+                        capture_output=True, text=True, timeout=5)
+                    self.assertEqual(result.returncode, 0, result.stderr)
+                    self.assertEqual(result.stdout, expected)
+                    self.assertNotIn('SECRET-CANARY', result.stdout + result.stderr)
+
     def test_apk_inspection_rejects_forbidden_test_classes(self):
         valid = b'\0'.join(verify_app_apk.REQUIRED_CLASSES)
         for marker in (b'Lorg/junit/Test;', b'Ljunit/framework/TestCase;', b'Lorg/jacoco/agent/Agent;'):

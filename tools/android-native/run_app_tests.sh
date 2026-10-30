@@ -64,10 +64,12 @@ else
 fi
 printf '%s\n' "$result"
 if [[ "$instrumentation_status" != 0 ]]; then
+  hidlins_device_ui_diagnostics "$ADB" >&2
   echo "error: Hidlins Android instrumentation command failed" >&2
   exit "$instrumentation_status"
 fi
 if ! hidlins_device_tests_passed "$result"; then
+  hidlins_device_ui_diagnostics "$ADB" >&2
   echo "error: Hidlins Android instrumentation did not report success" >&2
   exit 1
 fi
