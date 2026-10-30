@@ -143,6 +143,51 @@ class MobileScenarioHarnessTest(unittest.TestCase):
             self.assertNotIn(module.mobile.MASTER_PASSWORD[-5:],
                              evidence['boot_diagnostics']['authority.log'])
 
+    def test_api29_wifi_bootstrap_uses_disjoint_cellular_and_wifi_leases(self) -> None:
+        module = load_android_scenario_module()
+        with tempfile.TemporaryDirectory(prefix='hidlins-wifi-bootstrap-') as scratch:
+            root = pathlib.Path(scratch)
+            artifact = root / 'artifact'
+            artifact.write_bytes(b'fixture')
+            starts = []
+            process = mock.Mock()
+
+            def boot(avd, serial, port, log, extra_args=()):
+                starts.append((serial, extra_args))
+                if len(starts) == 2:
+                    raise RuntimeError('stop after capturing both boot commands')
+                return process
+
+            row = ('hidlins-fixture', '29', 'x86_64', 'phone', 'fixture-image')
+            with mock.patch.object(module.lan, 'boot', side_effect=boot), \
+                    mock.patch.object(module, 'cleanup_guest'), \
+                    mock.patch.object(module.mobile, 'reserve_port', return_value=37373), \
+                    mock.patch.object(module.mobile, 'git_revision', return_value='fixture'), \
+                    contextlib.redirect_stdout(io.StringIO()), \
+                    contextlib.redirect_stderr(io.StringIO()):
+                module.run_entry(
+                    row, authority_row=row, replacement_row=row, binary=artifact,
+                    test_apk=artifact, shipping_apk=artifact, emulator_version='37.2.13',
+                    results_dir=root)
+            self.assertEqual([serial for serial, _ in starts],
+                             [module.AUTHORITY_SERIAL, module.CLIENT_SERIAL])
+            self.assertEqual(starts[0][1][:2], ('-wifi-server-port', '37373'))
+            self.assertEqual(starts[1][1][:2], ('-wifi-client-port', '37373'))
+            # Each API29 guest consumes a cellular lease and the next Wi-Fi
+            # lease. Its cellular address must never shadow another guest.
+            arguments = [args for _, args in starts]
+            arguments.append(module._legacy_wifi_arguments('replacement', 37373))
+            allocated = set()
+            for args in arguments:
+                self.assertEqual(args[2], '-network-user-mode-options')
+                self.assertTrue(args[3].startswith('dhcpstart='))
+                first = ipaddress.IPv4Address(args[3].split('=', 1)[1])
+                leases = {first, first + 1}
+                self.assertFalse(allocated & leases,
+                                 f'cellular/Wi-Fi DHCP leases overlap: {allocated & leases}')
+                allocated.update(leases)
+            process.wait.assert_called_once_with(timeout=15)
+
     def test_emulator_version_probe_works_without_desktop_audio_libraries(self) -> None:
         module = load_lan_module()
         with tempfile.TemporaryDirectory(prefix='hidlins-headless-emulator-') as scratch:
@@ -433,9 +478,9 @@ esac
         self.assertIn('switch_service("trusted")', source)
         self.assertIn("replace_authority", source)
         self.assertIn('selected_scenario_avds("replacement")', source)
-        self.assertIn('"-wifi-server-port"', source)
-        self.assertIn('"-wifi-client-port"', source)
-        self.assertIn('"-network-user-mode-options"', source)
+        self.assertIn('_legacy_wifi_arguments("client", wifi_link_port)', source)
+        self.assertIn('_legacy_wifi_arguments("authority", wifi_link_port)', source)
+        self.assertIn('_legacy_wifi_arguments("replacement", wifi_link_port)', source)
         self.assertIn("prepare_legacy_wifi_guest", source)
         initial_client_boot = source.index("client_process = lan.boot")
         initial_authority_boot = source.index("authority_process = lan.boot")
@@ -466,9 +511,9 @@ esac
         self.assertRegex(
             source,
             re.compile(
-                r"client_network_args\s*=.*?-wifi-client-port.*?"
-                r"authority_network_args\s*=.*?-wifi-server-port.*?"
-                r"replacement_network_args\s*=.*?-wifi-server-port",
+                r'client_network_args\s*=.*?_legacy_wifi_arguments\("client".*?'
+                r'authority_network_args\s*=.*?_legacy_wifi_arguments\("authority".*?'
+                r'replacement_network_args\s*=.*?_legacy_wifi_arguments\("replacement"',
                 re.DOTALL,
             ),
         )

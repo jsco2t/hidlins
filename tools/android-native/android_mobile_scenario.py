@@ -457,6 +457,20 @@ def runtime_identity(serial: str, expected_avd: str, api: str, abi: str) -> None
         raise RuntimeError("Android scenario runtime identity mismatch")
 
 
+def _legacy_wifi_arguments(role: str, port: int) -> tuple[str, ...]:
+    # API29 consumes one DHCP lease for cellular and the next for Wi-Fi.
+    # Reserve both so a guest's radio cannot claim another guest's Wi-Fi IP.
+    starts = {"client": 16, "authority": 18, "replacement": 20}
+    start = starts[role]
+    direction = "client" if role == "client" else "server"
+    return (
+        f"-wifi-{direction}-port",
+        str(port),
+        "-network-user-mode-options",
+        f"dhcpstart=10.0.2.{start}",
+    )
+
+
 def prepare_legacy_wifi_guest(serial: str) -> None:
     """Make the API 29 emulator's explicit Wi-Fi link the sole data network.
 
@@ -657,34 +671,13 @@ def run_entry(
             legacy_wifi = int(api) < 31
             wifi_link_port = mobile.reserve_port()
             client_network_args = (
-                (
-                    "-wifi-client-port",
-                    str(wifi_link_port),
-                    "-network-user-mode-options",
-                    "dhcpstart=10.0.2.16",
-                )
-                if legacy_wifi
-                else ()
+                _legacy_wifi_arguments("client", wifi_link_port) if legacy_wifi else ()
             )
             authority_network_args = (
-                (
-                    "-wifi-server-port",
-                    str(wifi_link_port),
-                    "-network-user-mode-options",
-                    "dhcpstart=10.0.2.17",
-                )
-                if legacy_wifi
-                else ()
+                _legacy_wifi_arguments("authority", wifi_link_port) if legacy_wifi else ()
             )
             replacement_network_args = (
-                (
-                    "-wifi-server-port",
-                    str(wifi_link_port),
-                    "-network-user-mode-options",
-                    "dhcpstart=10.0.2.18",
-                )
-                if legacy_wifi
-                else ()
+                _legacy_wifi_arguments("replacement", wifi_link_port) if legacy_wifi else ()
             )
             authority_process = lan.boot(
                 authority_avd,
