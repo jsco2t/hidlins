@@ -1,12 +1,13 @@
 #!/usr/bin/env bash
 
 hidlins_device_ui_diagnostics() {
-  local focused_window="" focus_category="other" power_state="" error_owner="none"
+  local focused_window="" focus_category="other" power_state="" error_owner="none" error_kind="none"
   # Never publish raw window titles, hierarchy dumps, or application content.
   if focused_window="$("$1" shell dumpsys -t 5 window 2>/dev/null |
       awk '/mCurrentFocus=/ && !seen {print; seen=1}')"; then
     case "$focused_window" in
-      *"Application Error"*|*"Not Responding"*) focus_category="error-dialog" ;;
+      *"Application Error"*) focus_category="error-dialog"; error_kind="crash" ;;
+      *"Not Responding"*) focus_category="error-dialog"; error_kind="anr" ;;
       *permissioncontroller*) focus_category="permission-dialog" ;;
       *com.android.systemui*) focus_category="system-ui" ;;
       *com.android.provision*|*setupwizard*) focus_category="setup" ;;
@@ -35,8 +36,8 @@ hidlins_device_ui_diagnostics() {
   else
     power_state="unknown"
   fi
-  printf 'focus-window=%s\nwakefulness=%s\nerror-owner=%s\n' \
-    "$focus_category" "$power_state" "$error_owner"
+  printf 'focus-window=%s\nwakefulness=%s\nerror-owner=%s\nerror-kind=%s\n' \
+    "$focus_category" "$power_state" "$error_owner" "$error_kind"
 }
 
 hidlins_device_tests_passed() {

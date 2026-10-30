@@ -51,18 +51,18 @@ fi
             adb.chmod(0o755)
             for window, power, expected in (
                 ('mCurrentFocus=Window{u0 com.android.permissioncontroller/.GrantPermissionsActivity SECRET-CANARY}',
-                 'mWakefulness=Awake SECRET-CANARY', 'focus-window=permission-dialog\nwakefulness=Awake\nerror-owner=none\n'),
+                 'mWakefulness=Awake SECRET-CANARY', 'focus-window=permission-dialog\nwakefulness=Awake\nerror-owner=none\nerror-kind=none\n'),
                 ('mCurrentFocus=SECRET-CANARY', 'mWakefulness=SECRET-CANARY',
-                 'focus-window=other\nwakefulness=unknown\nerror-owner=none\n'),
+                 'focus-window=other\nwakefulness=unknown\nerror-owner=none\nerror-kind=none\n'),
                 ('mCurrentFocus=Window{u0 Application Not Responding: com.android.systemui SECRET-CANARY}',
                  'mWakefulness=Awake',
-                 'focus-window=error-dialog\nwakefulness=Awake\nerror-owner=system-ui\n'),
+                 'focus-window=error-dialog\nwakefulness=Awake\nerror-owner=system-ui\nerror-kind=anr\n'),
                 ('mCurrentFocus=Window{u0 Application Error: app.hidlins SECRET-CANARY}',
                  'mWakefulness=Awake',
-                 'focus-window=error-dialog\nwakefulness=Awake\nerror-owner=hidlins\n'),
+                 'focus-window=error-dialog\nwakefulness=Awake\nerror-owner=hidlins\nerror-kind=crash\n'),
                 ('mCurrentFocus=Window{u0 Application Error: SECRET-CANARY}',
                  'mWakefulness=Awake',
-                 'focus-window=error-dialog\nwakefulness=Awake\nerror-owner=other\n'),
+                 'focus-window=error-dialog\nwakefulness=Awake\nerror-owner=other\nerror-kind=crash\n'),
             ):
                 with self.subTest(window=window):
                     result = subprocess.run(
