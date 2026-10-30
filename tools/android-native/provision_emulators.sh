@@ -40,22 +40,24 @@ python3 "$ROOT/tools/android-native/emulator_matrix.py" replacement >"$REPLACEME
 # Provisioning is an ensure operation, not an update operation. Avoid contacting
 # Google's repository when every pinned package and AVD is already present;
 # this keeps repeat scenario runs deterministic and usable offline.
+# Assignment values do not split; avoid Bash 3.2 retaining the escaped slash
+# inside a double-quoted pattern replacement.
 packages_installed=1
 avds_installed=1
 [[ -x "$SDK_ROOT/platform-tools/adb" && -x "$EMULATOR" \
    && -d "$SDK_ROOT/ndk/28.2.13676358" ]] || packages_installed=0
 while IFS=$'\t' read -r avd _ _ _ system_image; do
-  image_path="${system_image//;/\/}"
+  image_path=${system_image//;/\/}
   [[ -d "$SDK_ROOT/$image_path" ]] || packages_installed=0
   "$EMULATOR" -list-avds 2>/dev/null | grep -Fx "$avd" >/dev/null || avds_installed=0
 done <"$MATRIX"
 while IFS=$'\t' read -r avd _ _ _ system_image; do
-  image_path="${system_image//;/\/}"
+  image_path=${system_image//;/\/}
   [[ -d "$SDK_ROOT/$image_path" ]] || packages_installed=0
   "$EMULATOR" -list-avds 2>/dev/null | grep -Fx "$avd" >/dev/null || avds_installed=0
 done <"$AUTHORITY"
 while IFS=$'\t' read -r avd _ _ _ system_image; do
-  image_path="${system_image//;/\/}"
+  image_path=${system_image//;/\/}
   [[ -d "$SDK_ROOT/$image_path" ]] || packages_installed=0
   "$EMULATOR" -list-avds 2>/dev/null | grep -Fx "$avd" >/dev/null || avds_installed=0
 done <"$REPLACEMENT"

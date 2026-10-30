@@ -257,12 +257,17 @@ public final class HidlinsAndroidTest extends Instrumentation {
         return target;
     }
 
-    private static MainActivity awaitActivity() throws AssertionError {
-        for (int attempt = 0; attempt < 250; attempt += 1) {
-            MainActivity activity = MainActivity.currentForTest();
-            if (activity != null && !activity.isFinishing() && activity.hasWindowFocus()) {
-                return activity;
-            }
+    private MainActivity launchActivity() {
+        Context target = context();
+        MainActivity activity = (MainActivity) startActivitySync(
+                new Intent(target, MainActivity.class)
+                        .addFlags(Intent.FLAG_ACTIVITY_NEW_TASK));
+        waitForIdleSync();
+        // Clipboard access requires a focused window, not merely onCreate.
+        // Always wait for the activity returned by this launch, never a stale
+        // process-wide reference from the preceding case.
+        for (int attempt = 0; attempt < 1500; attempt += 1) {
+            if (activity.hasWindowFocus()) return activity;
             try {
                 Thread.sleep(20);
             } catch (InterruptedException error) {
@@ -270,14 +275,7 @@ public final class HidlinsAndroidTest extends Instrumentation {
                 throw new AssertionError("activity wait interrupted", error);
             }
         }
-        throw new AssertionError("activity did not start");
-    }
-
-    private MainActivity launchActivity() {
-        Context target = context();
-        target.startActivity(new Intent(target, MainActivity.class)
-                .addFlags(Intent.FLAG_ACTIVITY_NEW_TASK));
-        return awaitActivity();
+        throw new AssertionError("activity did not gain focus");
     }
 
     private static void runOnMain(Runnable action) {

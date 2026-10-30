@@ -118,6 +118,49 @@ public final class AssertionsProbe {
                 self.assertNotIn('junit', component.get('name', '').lower())
         self.assertNotIn('junit', (ANDROID / 'app/gradle.lockfile').read_text().lower())
 
+    def test_device_launch_waits_for_its_own_activity_instead_of_a_previous_one(self):
+        source = (ANDROID / 'app/src/androidTest/java/app/hidlins/HidlinsAndroidTest.java').read_text()
+        launch = source[source.index('    private MainActivity launchActivity() {'):
+                        source.index('    private static void runOnMain(')]
+        with tempfile.TemporaryDirectory(prefix='hidlins-device-launch-') as scratch:
+            root = Path(scratch)
+            probe = root / 'LaunchProbe.java'
+            probe.write_text('''public final class LaunchProbe {
+    static final class Context { void startActivity(Intent intent) {} }
+    static final class Intent {
+        static final int FLAG_ACTIVITY_NEW_TASK = 1;
+        Intent(Context context, Class<?> type) {}
+        Intent addFlags(int flags) { return this; }
+    }
+    static final class MainActivity { boolean hasWindowFocus() { return true; } }
+    static class Instrumentation {
+        final MainActivity started = new MainActivity();
+        boolean idle;
+        Object startActivitySync(Intent intent) { return started; }
+        void waitForIdleSync() { idle = true; }
+    }
+    static final class Runner extends Instrumentation {
+        static final MainActivity previous = new MainActivity();
+        Context context() { return new Context(); }
+        static MainActivity awaitActivity() { return previous; }
+''' + launch + '''
+    }
+    public static void main(String[] args) {
+        Runner runner = new Runner();
+        if (runner.launchActivity() != runner.started || !runner.idle) {
+            throw new AssertionError("device case did not wait for its own activity");
+        }
+    }
+}''')
+            java_home = Path(os.environ['JAVA_HOME'])
+            compiled = subprocess.run([str(java_home / 'bin/javac'), '-Xlint:all', '-Werror',
+                                       '-d', str(root), str(probe)], capture_output=True,
+                                      text=True, timeout=30)
+            self.assertEqual(compiled.returncode, 0, compiled.stdout + compiled.stderr)
+            result = subprocess.run([str(java_home / 'bin/java'), '-cp', str(root), 'LaunchProbe'],
+                                    capture_output=True, text=True, timeout=5)
+            self.assertEqual(result.returncode, 0, result.stdout + result.stderr)
+
     def test_epl_jacoco_artifacts_are_not_admitted_or_locked(self):
         self.assertNotIn('org.jacoco', (ANDROID / 'gradle/verification-metadata.xml').read_text())
         self.assertNotIn('org.jacoco', (ANDROID / 'app/gradle.lockfile').read_text())

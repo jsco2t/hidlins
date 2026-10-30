@@ -59,7 +59,7 @@ class CiToolchainTests(unittest.TestCase):
 
     def executable(self, path, script):
         path.parent.mkdir(parents=True, exist_ok=True)
-        path.write_text('#!/bin/bash\nset -eu\n' + script)
+        path.write_text('#!/usr/bin/env bash\nset -eu\n' + script)
         path.chmod(0o755)
 
     def run_command(self, command):
@@ -175,7 +175,7 @@ done
 ''')
         self.env['BASH_ENV'] = str(startup)
         fragment = self.temp / 'provision.mk'
-        fragment.write_text('_test-provision:\n\tbash tools/android-native/provision_emulators.sh\n'
+        fragment.write_text('_test-provision:\n\tbash -x tools/android-native/provision_emulators.sh\n'
                             '\t"' + str(emulator) + '" -list-avds > "$(TEST_TOOL_LOG)"\n')
         command = ['make', '--no-print-directory', '-f', 'Makefile', '-f', str(fragment),
                    '_test-provision']
