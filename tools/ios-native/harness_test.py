@@ -7,6 +7,7 @@ import json
 import os
 from pathlib import Path
 import signal
+import re
 import subprocess
 import tempfile
 import unittest
@@ -21,6 +22,24 @@ class IntegrationHarnessTests(unittest.TestCase):
         source = (ROOT / 'app/ios/Runner/AppDelegate.swift').read_text()
         callback = source[source.index('func didInitializeImplicitFlutterEngine'):]
         self.assertIn('GeneratedPluginRegistrant.register(with: engineBridge.pluginRegistry)', callback)
+
+    def test_sdk_registrant_is_exposed_to_swift_and_compiled_with_the_app(self) -> None:
+        bridge = (ROOT / 'app/ios/Runner/Runner-Bridging-Header.h').read_text()
+        self.assertIn('#import "GeneratedPluginRegistrant.h"', bridge)
+        project = (ROOT / 'app/ios/Runner.xcodeproj/project.pbxproj').read_text()
+        implementation = re.search(
+            r'([A-F0-9]{24}) /\* GeneratedPluginRegistrant.m \*/ = '
+            r'\{isa = PBXFileReference;[^\n]*path = GeneratedPluginRegistrant.m;', project)
+        self.assertIsNotNone(implementation)
+        build_file = re.search(
+            r'([A-F0-9]{24}) /\* GeneratedPluginRegistrant.m in Sources \*/ = '
+            r'\{isa = PBXBuildFile; fileRef = ' + implementation.group(1), project)
+        self.assertIsNotNone(build_file)
+        app_sources = re.search(
+            r'isa = PBXSourcesBuildPhase;[^}]*files = \(([^)]*AppDelegate.swift in Sources[^)]*)\)',
+            project)
+        self.assertIsNotNone(app_sources)
+        self.assertIn(build_file.group(1), app_sources.group(1))
 
     def test_hung_flutter_child_fails_and_shuts_down_owned_simulator(self) -> None:
         with tempfile.TemporaryDirectory(prefix='hidlins-ios-integration-') as temporary:
