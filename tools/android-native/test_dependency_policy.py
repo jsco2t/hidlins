@@ -6,6 +6,7 @@ import json
 import os
 from pathlib import Path
 import re
+import signal
 import subprocess
 import tempfile
 import unittest
@@ -109,6 +110,35 @@ public final class AssertionsProbe {
                 [str(java_home / 'bin/java'), '-cp', str(root), 'app.hidlins.AssertionsProbe'],
                 capture_output=True, text=True, timeout=30)
             self.assertEqual(executed.returncode, 0, executed.stdout + executed.stderr)
+
+    def test_native_instrumentation_timeout_fails_and_preserves_its_output(self):
+        source = (ROOT / 'tools/android-native/run_app_tests.sh').read_text()
+        reporting = source[source.index('"$ADB" install -r "$TEST_APK"'):]
+        with tempfile.TemporaryDirectory(prefix='hidlins-instrumentation-timeout-') as scratch:
+            root = Path(scratch)
+            adb = root / 'adb'
+            adb.write_text('''#!/bin/bash
+if [[ "$1" == install ]]; then exit 0; fi
+echo 'INSTRUMENTATION_STATUS: stream=PASS firstCase'
+exec sleep 60
+''')
+            adb.chmod(0o755)
+            env = dict(os.environ, ROOT=str(ROOT), ADB=str(adb), TEST_APK='fixture',
+                       TEST_COMPONENT='app.hidlins.test/app.hidlins.HidlinsAndroidTest',
+                       HIDLINS_ANDROID_INSTRUMENTATION_TIMEOUT_SECONDS='0.1')
+            process = subprocess.Popen(
+                ['bash', '-c', 'set -euo pipefail\nsource "$ROOT/tools/android-native/instrumentation-result.sh"\n' + reporting],
+                env=env, text=True, stdout=subprocess.PIPE, stderr=subprocess.PIPE,
+                start_new_session=True)
+            try:
+                output, error = process.communicate(timeout=3)
+            except subprocess.TimeoutExpired:
+                os.killpg(process.pid, signal.SIGKILL)
+                process.communicate()
+                self.fail('native instrumentation did not enforce its timeout')
+            self.assertEqual(process.returncode, 124, output + error)
+            self.assertIn('PASS firstCase', output)
+            self.assertIn('timeout', output)
 
     def test_no_junit_artifacts_are_admitted_or_locked(self):
         metadata = ET.parse(ANDROID / 'gradle/verification-metadata.xml')

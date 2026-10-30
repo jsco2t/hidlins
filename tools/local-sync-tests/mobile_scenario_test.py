@@ -7,6 +7,7 @@ import importlib.util
 import ipaddress
 import pathlib
 import re
+import tempfile
 import unittest
 from unittest import mock
 
@@ -46,6 +47,23 @@ def load_android_scenario_module():
 
 
 class MobileScenarioHarnessTest(unittest.TestCase):
+    def test_emulator_version_probe_works_without_desktop_audio_libraries(self) -> None:
+        module = load_lan_module()
+        with tempfile.TemporaryDirectory(prefix='hidlins-headless-emulator-') as scratch:
+            emulator = pathlib.Path(scratch) / 'emulator'
+            emulator.write_text('''#!/bin/sh
+case "$*" in
+  '-no-window -no-audio -version') echo 'Android emulator version 37.2.13.0 (fixture)' ;;
+  *) echo 'libpulse.so.0: cannot open shared object file' >&2; exit 127 ;;
+esac
+''')
+            emulator.chmod(0o755)
+            with mock.patch.object(module, 'EMULATOR', emulator):
+                self.assertEqual(module.emulator_version(), '37.2.13')
+                emulator.write_text('#!/bin/sh\necho unknown-version\n')
+                with self.assertRaisesRegex(RuntimeError, 'could not be determined'):
+                    module.emulator_version()
+
     def test_platform_routes_are_explicit_and_local_only(self) -> None:
         module = load_module()
         self.assertEqual(module.platform_route("ios"), "127.0.0.1")

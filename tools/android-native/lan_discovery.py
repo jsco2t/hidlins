@@ -87,7 +87,7 @@ def selected_avd(command: str) -> tuple[str, str, str]:
 
 
 def emulator_version() -> str:
-    output = run([str(EMULATOR), "-version"]).stdout
+    output = run([str(EMULATOR), "-no-window", "-no-audio", "-version"]).stdout
     match = re.search(r"Android emulator version (\d+\.\d+\.\d+)", output)
     if match is None:
         raise RuntimeError("Android Emulator version could not be determined")

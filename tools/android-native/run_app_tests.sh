@@ -52,8 +52,18 @@ fi
 
 "$ADB" install -r "$APP_APK" >/dev/null
 "$ADB" install -r "$TEST_APK" >/dev/null
-result="$("$ADB" shell am instrument -w -r "$TEST_COMPONENT" | tr -d '\r')"
+if result="$(python3 "$ROOT/tools/android-native/run_with_timeout.py" \
+    "${HIDLINS_ANDROID_INSTRUMENTATION_TIMEOUT_SECONDS:-300}" \
+    "$ADB" shell am instrument -w -r "$TEST_COMPONENT" | tr -d '\r')"; then
+  instrumentation_status=0
+else
+  instrumentation_status=$?
+fi
 printf '%s\n' "$result"
+if [[ "$instrumentation_status" != 0 ]]; then
+  echo "error: Hidlins Android instrumentation command failed" >&2
+  exit "$instrumentation_status"
+fi
 if ! hidlins_device_tests_passed "$result"; then
   echo "error: Hidlins Android instrumentation did not report success" >&2
   exit 1
