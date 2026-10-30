@@ -484,32 +484,39 @@ def prepare_legacy_wifi_guest(serial: str) -> None:
     )
 
 
-def require_peer_reachable(serial: str, address: str) -> None:
-    """Wait until an emulator's selected Wi-Fi route reaches its peer."""
+def require_wifi_route(serial: str, address: str, source_address: str) -> None:
+    """Wait for Android to select the observed Wi-Fi source and interface.
+
+    Emulator ICMP support is environment-dependent, so ping is not a valid
+    precondition for TCP/UDP. This only checks routing readiness; the scenario
+    must still prove actual NSD discovery and authenticated CLI synchronization.
+    https://developer.android.com/studio/run/emulator-networking-address
+    """
 
     deadline = time.monotonic() + 30
     while time.monotonic() < deadline:
-        result = subprocess.run(
-            [
-                str(lan.ADB),
-                "-s",
-                serial,
-                "shell",
-                "ping",
-                "-c",
-                "1",
-                "-W",
-                "1",
-                address,
-            ],
-            stdout=subprocess.DEVNULL,
-            stderr=subprocess.DEVNULL,
-            check=False,
-        )
-        if result.returncode == 0:
-            return
+        try:
+            result = subprocess.run(
+                [str(lan.ADB), "-s", serial, "shell", "ip", "-4", "route", "get", address],
+                text=True,
+                capture_output=True,
+                check=False,
+                timeout=5,
+            )
+            lines = result.stdout.splitlines()
+            fields = lines[0].split() if lines else []
+            if (
+                result.returncode == 0
+                and fields
+                and fields[0] == address
+                and fields[fields.index("dev") + 1] == "wlan0"
+                and fields[fields.index("src") + 1] == source_address
+            ):
+                return
+        except (ValueError, IndexError, subprocess.TimeoutExpired):
+            pass
         time.sleep(0.25)
-    raise RuntimeError(f"{serial} did not establish its Wi-Fi route to the peer")
+    raise RuntimeError(f"{serial} did not select its Wi-Fi route to the peer")
 
 
 def cleanup_guest(serial: str) -> None:
@@ -715,13 +722,15 @@ def run_entry(
                 authority_address=authority_address,
                 prefix_length=prefix,
             )
-            require_peer_reachable(
+            require_wifi_route(
                 CLIENT_SERIAL,
                 authority_address,
+                client_address,
             )
-            require_peer_reachable(
+            require_wifi_route(
                 AUTHORITY_SERIAL,
                 client_address,
+                authority_address,
             )
             if replacement_address is not None and replacement_prefix is not None:
                 evidence["observed_routes"]["replacement"] = {  # type: ignore[index]
@@ -738,8 +747,10 @@ def run_entry(
                     authority_address=replacement_address,
                     prefix_length=prefix,
                 )
-                require_peer_reachable(CLIENT_SERIAL, replacement_address)
-                require_peer_reachable(REPLACEMENT_SERIAL, client_address)
+                require_wifi_route(
+                    CLIENT_SERIAL, replacement_address, client_address
+                )
+                require_wifi_route(REPLACEMENT_SERIAL, client_address, replacement_address)
                 if len({client_address, authority_address, replacement_address}) != 3:
                     raise RuntimeError(
                         "Android scenario guests did not receive distinct DHCP routes"
@@ -847,8 +858,12 @@ def run_entry(
                     authority_address=replacement_address,
                     prefix_length=prefix,
                 )
-                require_peer_reachable(CLIENT_SERIAL, replacement_address)
-                require_peer_reachable(REPLACEMENT_SERIAL, restarted_client_address)
+                require_wifi_route(
+                    CLIENT_SERIAL, replacement_address, restarted_client_address
+                )
+                require_wifi_route(
+                    REPLACEMENT_SERIAL, restarted_client_address, replacement_address
+                )
                 if replacement_address == authority_address:
                     raise RuntimeError("replacement authority reused the original DHCP route")
                 harness.activate_replacement(replacement_address)

@@ -333,24 +333,41 @@ esac
                 self.assertRaisesRegex(RuntimeError, 'Wi-Fi-only'):
             module.prepare_legacy_wifi_guest('emulator-fixture')
 
-    def test_android_peer_route_readiness_retries_until_live(self) -> None:
+    def test_android_peer_route_readiness_uses_wifi_without_requiring_icmp(self) -> None:
         module = load_android_scenario_module()
-        failed = module.subprocess.CompletedProcess([], 1)
-        connected = module.subprocess.CompletedProcess([], 0)
+        failed = module.subprocess.CompletedProcess([], 2, stdout='', stderr='unreachable')
+        connected = module.subprocess.CompletedProcess(
+            [], 0, stdout='10.0.2.18 dev wlan0 table 1005 src 10.0.2.16 uid 2000\n    cache\n')
         with mock.patch.object(
-            module.subprocess,
-            "run",
-            side_effect=(failed, connected),
+            module.subprocess, "run",
+            side_effect=(module.subprocess.TimeoutExpired("adb", 5), failed, connected),
         ) as run, mock.patch.object(module.time, "sleep") as sleep:
-            module.require_peer_reachable("emulator-5554", "10.0.2.18")
+            module.require_wifi_route("emulator-5554", "10.0.2.18", "10.0.2.16")
 
-        self.assertEqual(run.call_count, 2)
-        sleep.assert_called_once_with(0.25)
-        command = run.call_args.args[0]
-        self.assertEqual(
-            command[-6:],
-            ["ping", "-c", "1", "-W", "1", "10.0.2.18"],
-        )
+        self.assertEqual(run.call_count, 3)
+        self.assertEqual(sleep.call_args_list, [mock.call(0.25), mock.call(0.25)])
+        self.assertEqual(run.call_args.args[0][-5:],
+                         ["ip", "-4", "route", "get", "10.0.2.18"])
+        self.assertIs(run.call_args.kwargs['capture_output'], True)
+
+    def test_android_peer_route_rejects_cellular_and_malformed_routes(self) -> None:
+        module = load_android_scenario_module()
+        for route in (
+            '10.0.2.18 dev rmnet_data0 src 10.0.2.15',
+            '10.0.2.18 dev wlan01 src 10.0.2.16',
+            'unreachable 10.0.2.18 dev wlan0',
+            '10.0.2.19 dev wlan0 src 10.0.2.16',
+            '10.0.2.18 dev wlan0',
+            '10.0.2.18 dev wlan0 src 10.0.2.15',
+            '',
+        ):
+            with self.subTest(route=route), \
+                    mock.patch.object(module.subprocess, 'run', return_value=
+                                      module.subprocess.CompletedProcess([], 0, stdout=route)), \
+                    mock.patch.object(module.time, 'monotonic', side_effect=(0, 0, 31)), \
+                    mock.patch.object(module.time, 'sleep'), \
+                    self.assertRaisesRegex(RuntimeError, 'Wi-Fi route'):
+                module.require_wifi_route('emulator-5554', '10.0.2.18', '10.0.2.16')
 
     def test_android_registrar_is_confined_to_instrumentation_source_set(self) -> None:
         root = MODULE_PATH.parents[2]
@@ -411,7 +428,7 @@ esac
         )
         topology_check = source.index("mobile.require_android_lan_topology")
         peer_route_check = source.index(
-            "require_peer_reachable(\n                CLIENT_SERIAL",
+            "require_wifi_route(\n                CLIENT_SERIAL",
             topology_check,
         )
         initial_harness = source.index("harness = AndroidAuthorityHarness")
