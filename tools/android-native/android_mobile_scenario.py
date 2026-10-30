@@ -466,12 +466,22 @@ def prepare_legacy_wifi_guest(serial: str) -> None:
     selection with Android while preserving the genuine multicast Wi-Fi LAN.
     """
 
-    lan.adb(serial, "shell", "svc", "data", "disable")
-    mobile_data = lan.adb(
-        serial, "shell", "settings", "get", "global", "mobile_data"
-    ).stdout.strip()
-    if mobile_data != "0":
-        raise RuntimeError("Android emulator did not enter the Wi-Fi-only state")
+    # API 29's svc command ignores the telephony service's boolean result.
+    # A successful shell exit during modem startup need not have disabled data.
+    deadline = time.monotonic() + 30
+    mobile_data = "not-observed"
+    while time.monotonic() < deadline:
+        lan.adb(serial, "shell", "svc", "data", "disable")
+        mobile_data = lan.adb(
+            serial, "shell", "settings", "get", "global", "mobile_data"
+        ).stdout.strip()
+        if mobile_data == "0":
+            return
+        time.sleep(0.25)
+    observed = mobile_data if mobile_data in {"0", "1", "null", "not-observed"} else "unexpected"
+    raise RuntimeError(
+        f"Android emulator did not enter the Wi-Fi-only state (mobile_data={observed})"
+    )
 
 
 def require_peer_reachable(serial: str, address: str) -> None:

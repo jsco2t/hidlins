@@ -296,6 +296,29 @@ esac
         with self.assertRaises(ValueError):
             module.registrar_start_arguments(port=37371, kind="other")
 
+    def test_legacy_cellular_disable_waits_for_the_observed_setting(self) -> None:
+        module = load_android_scenario_module()
+        readings = iter(('1\n', '0\n'))
+
+        def adb(serial, *args):
+            output = next(readings) if args[:2] == ('shell', 'settings') else ''
+            return module.subprocess.CompletedProcess([], 0, stdout=output)
+
+        with mock.patch.object(module.lan, 'adb', side_effect=adb) as commands, \
+                mock.patch.object(module.time, 'sleep') as sleep:
+            module.prepare_legacy_wifi_guest('emulator-fixture')
+        self.assertEqual(commands.call_count, 4)
+        sleep.assert_called_once_with(0.25)
+
+    def test_legacy_cellular_disable_fails_if_the_setting_stays_enabled(self) -> None:
+        module = load_android_scenario_module()
+        response = module.subprocess.CompletedProcess([], 0, stdout='1\n')
+        with mock.patch.object(module.lan, 'adb', return_value=response), \
+                mock.patch.object(module.time, 'monotonic', side_effect=(0, 0, 31)), \
+                mock.patch.object(module.time, 'sleep'), \
+                self.assertRaisesRegex(RuntimeError, 'Wi-Fi-only'):
+            module.prepare_legacy_wifi_guest('emulator-fixture')
+
     def test_android_peer_route_readiness_retries_until_live(self) -> None:
         module = load_android_scenario_module()
         failed = module.subprocess.CompletedProcess([], 1)
