@@ -49,6 +49,21 @@ def load_android_scenario_module():
 
 
 class MobileScenarioHarnessTest(unittest.TestCase):
+    def test_ios_scenario_selects_the_reporter_its_result_parser_requires(self) -> None:
+        module = load_module()
+
+        def flutter(command, **kwargs):
+            # Flutter's GitHub reporter is selected by the CI environment;
+            # unlike expanded output, its successful summary has no "All".
+            summary = ('00:01 +1: All tests passed!' if '--reporter=expanded' in command
+                       else '🎉 1 test passed.')
+            return module.subprocess.CompletedProcess(command, 0, stdout=summary, stderr='')
+
+        with mock.patch.object(module.subprocess, 'run', side_effect=flutter):
+            output = module.run_flutter(MODULE_PATH.parents[2], 'ios', 'fixture',
+                                        'pair', 37373, 37374, 'test-token')
+        self.assertTrue(module.flutter_output_passed(output))
+
     def test_ios_scenario_reports_redacted_authority_failure(self) -> None:
         module = load_module()
         with tempfile.TemporaryDirectory(prefix='hidlins-ios-diagnostic-') as scratch:

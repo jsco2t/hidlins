@@ -537,7 +537,11 @@ def run_flutter(
     )
     target = "integration_test/mobile_local_sync_scenario_test.dart"
     if platform == "ios":
-        command = ["flutter", "test", "--no-pub", "-d", device, *defines, target]
+        # Keep the parsed success marker independent of CI reporter defaults.
+        command = [
+            "flutter", "test", "--no-pub", "--reporter=expanded",
+            "-d", device, *defines, target,
+        ]
     else:
         command = [
             "flutter",
