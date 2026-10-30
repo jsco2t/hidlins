@@ -41,6 +41,29 @@ class IntegrationHarnessTests(unittest.TestCase):
         self.assertIsNotNone(app_sources)
         self.assertIn(build_file.group(1), app_sources.group(1))
 
+    def test_native_test_failure_preserves_the_assertion_diagnostic(self) -> None:
+        with tempfile.TemporaryDirectory(prefix='hidlins-ios-native-log-') as temporary:
+            root = Path(temporary)
+            flutter = root / 'flutter'
+            flutter.write_text('#!/bin/bash\nexit 0\n')
+            xcodebuild = root / 'xcodebuild'
+            xcodebuild.write_text('''#!/bin/bash
+for argument in "$@"; do
+  if [[ "$argument" == -quiet ]]; then exit 65; fi
+done
+echo 'XCTAssertNotEqual failed: clipboard expiry assertion at RunnerTests.swift'
+exit 65
+''')
+            for executable in (flutter, xcodebuild):
+                executable.chmod(0o755)
+            env = dict(os.environ, PATH=str(root) + os.pathsep + os.environ['PATH'])
+            result = subprocess.run(
+                ['bash', str(ROOT / 'tools/ios-native/run.sh'), 'simulator'],
+                env=env, capture_output=True, text=True, timeout=5)
+            self.assertEqual(result.returncode, 65, result.stdout + result.stderr)
+            self.assertIn('clipboard expiry assertion at RunnerTests.swift',
+                          result.stdout + result.stderr)
+
     def test_hung_flutter_child_fails_and_shuts_down_owned_simulator(self) -> None:
         with tempfile.TemporaryDirectory(prefix='hidlins-ios-integration-') as temporary:
             root = Path(temporary)
