@@ -177,11 +177,19 @@ non-distributable. Root policy and every product graph continue to reject NCSA;
 closure, packaging hooks, negative controls, and produced artifacts.
 
 The following are **forbidden**, including via transitive deps:
-`GPL-*`, `LGPL-*`, `AGPL-*`, `SSPL-*`, `Commons Clause`,
+`GPL-*`, `LGPL-*`, `AGPL-*`, **`EPL-1.0`, `EPL-2.0` (Eclipse Public License,
+including JUnit)**, `SSPL-*`, `Commons Clause`,
 **including GPL-with-linking-exception** (the ambiguity isn't worth it —
 e.g., `libgit2` remains banned).
 
-`cargo deny check licenses` enforces this.
+JUnit and EPL-licensed dependencies have no development, testing, build-tool,
+runner, adapter, BOM, or metadata-only exception. Do not add verification hashes
+to admit them; remove the dependency path while preserving test coverage.
+
+`make deny` enforces the Rust license allowlist. `make ci-toolchain-check`
+guards the explicit EPL ban and ensures neither Rust policy admits it.
+`make android-dependency-check` enforces JUnit exclusion and its negative controls;
+see [the Android dependency policy](app/android/gradle/README.md).
 
 **Clarification — linked vs. invoked test drivers:** GPL software
 **linked or loaded** into the build (linked as a C library, loaded via

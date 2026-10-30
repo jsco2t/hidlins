@@ -9,6 +9,7 @@ import re
 import shutil
 import subprocess
 import tempfile
+import tomllib
 import unittest
 import xml.etree.ElementTree as ET
 
@@ -24,6 +25,18 @@ def job_text(name):
 
 
 class CiToolchainTests(unittest.TestCase):
+    def test_eclipse_licenses_are_explicitly_forbidden_without_exceptions(self):
+        guidance = (ROOT / 'AGENTS.md').read_text()
+        forbidden = next(line for line in guidance.splitlines() if line.startswith('- **Forbidden:**'))
+        for license_id in ('EPL-1.0', 'EPL-2.0'):
+            self.assertIn(license_id, forbidden)
+            for file in ('deny.toml', 'fuzz/deny.toml'):
+                with self.subTest(license=license_id, policy=file):
+                    policy = tomllib.loads((ROOT / file).read_text())['licenses']
+                    allowed = policy['allow'] + [value for exception in policy.get('exceptions', [])
+                                                 for value in exception.get('allow', [])]
+                    self.assertFalse(any(license_id in value for value in allowed))
+
     def setUp(self):
         temporary = tempfile.TemporaryDirectory(prefix='hidlins-ci-toolchains-')
         self.addCleanup(temporary.cleanup)
