@@ -21,10 +21,12 @@ import 'helpers/golden.dart';
 // goldens_test.dart continues to use the strict default pixel comparator.
 class _CaptureContract extends GoldenFileComparator {
   Size? pixels;
+  int captures = 0;
   VoidCallback? onCapture;
 
   @override
   Future<bool> compare(Uint8List imageBytes, Uri golden) async {
+    captures += 1;
     final header = ByteData.sublistView(imageBytes);
     pixels = Size(
       header.getUint32(16).toDouble(),
@@ -91,6 +93,11 @@ void main() {
           name: 'contract',
           size: size,
           brightness: brightness,
+        );
+        expect(
+          capture.captures,
+          1,
+          reason: 'Scene contract capture must run on every host platform',
         );
         expect(logicalSize, size);
         expect(actualBrightness, brightness);

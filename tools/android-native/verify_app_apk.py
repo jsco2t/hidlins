@@ -97,13 +97,13 @@ def validate_contents(abis: set[str], dex: bytes, label: str) -> None:
     for class_name in REQUIRED_CLASSES:
         if class_name not in dex:
             fail(f"{label} APK is missing required R8/JNI class {class_name.decode()}")
-    reject_junit(dex, label)
+    reject_forbidden_test_code(dex, label)
 
 
-def reject_junit(dex: bytes, label: str) -> None:
-    for marker in (b"Lorg/junit/", b"Ljunit/"):
+def reject_forbidden_test_code(dex: bytes, label: str) -> None:
+    for marker in (b"Lorg/junit/", b"Ljunit/", b"Lorg/jacoco/"):
         if marker in dex:
-            fail(f"{label} APK contains a forbidden JUnit class or reference")
+            fail(f"{label} APK contains a forbidden JUnit/JaCoCo class or reference")
 
 
 def verify_native_hashes(apk: Path, native_manifest: dict) -> None:

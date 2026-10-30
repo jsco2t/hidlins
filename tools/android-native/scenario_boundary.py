@@ -8,7 +8,7 @@ import subprocess
 import sys
 import zipfile
 
-from verify_app_apk import reject_junit
+from verify_app_apk import reject_forbidden_test_code
 
 ROOT = pathlib.Path(__file__).resolve().parents[2]
 SHIPPING_APKS = (
@@ -89,7 +89,7 @@ def main() -> None:
     with zipfile.ZipFile(TEST_APK) as archive:
         for name in archive.namelist():
             if name.endswith('.dex'):
-                reject_junit(archive.read(name), 'instrumentation')
+                reject_forbidden_test_code(archive.read(name), 'instrumentation')
     print(
         "  OK: Android scenario authority and NSD registrar are confined to test artifacts"
     )

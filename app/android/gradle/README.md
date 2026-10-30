@@ -1,7 +1,7 @@
 # Android dependency policy
 
-JUnit is forbidden in the application, device tests, and resolved Gradle build
-dependencies. `no-junit.init.gradle` applies before settings and plugin resolution,
+JUnit and EPL-2.0-licensed JaCoCo are forbidden in the application, device tests,
+and resolved Gradle build dependencies. `no-junit.init.gradle` applies before settings and plugin resolution,
 including Flutter's included build. `make app-deps` installs it in the ignored,
 repository-local Gradle home; Android build/runner scripts also prepare that home
 before launching Gradle or Flutter. Use the Makefile workflows.
@@ -14,6 +14,8 @@ source and AndroidX/JUnit runner dependencies are excluded from compilation and
 resolution. Its redundant AGP 8.x buildscript dependency is removed too: the
 root's pinned AGP 9.1.0 supplies the Android library plugin. Resolving both versions
 would import another unused test BOM. No SDK sources are copied or modified.
+Unused JaCoCo coverage admissions are removed; device-test execution uses the
+platform runner without a coverage agent.
 
 ## Apache Commons runtime metadata
 

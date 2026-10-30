@@ -33,9 +33,9 @@ CASES = (
 
 
 class DependencyPolicyTests(unittest.TestCase):
-    def test_apk_inspection_rejects_junit_classes(self):
+    def test_apk_inspection_rejects_forbidden_test_classes(self):
         valid = b'\0'.join(verify_app_apk.REQUIRED_CLASSES)
-        for marker in (b'Lorg/junit/Test;', b'Ljunit/framework/TestCase;'):
+        for marker in (b'Lorg/junit/Test;', b'Ljunit/framework/TestCase;', b'Lorg/jacoco/agent/Agent;'):
             with self.subTest(marker=marker):
                 with self.assertRaises(SystemExit):
                     verify_app_apk.validate_contents(
@@ -112,6 +112,10 @@ public final class AssertionsProbe {
                 self.assertNotIn('junit', component.get('name', '').lower())
         self.assertNotIn('junit', (ANDROID / 'app/gradle.lockfile').read_text().lower())
 
+    def test_epl_jacoco_artifacts_are_not_admitted_or_locked(self):
+        self.assertNotIn('org.jacoco', (ANDROID / 'gradle/verification-metadata.xml').read_text())
+        self.assertNotIn('org.jacoco', (ANDROID / 'app/gradle.lockfile').read_text())
+
     def test_all_existing_device_cases_use_platform_instrumentation(self):
         source = (ANDROID / 'app/src/androidTest/java/app/hidlins/HidlinsAndroidTest.java').read_text()
         self.assertNotIn('org.junit', source)
@@ -175,6 +179,7 @@ dependencies {{
     probe platform('org.junit:junit-bom:5.10.2')
     probe 'org.junit.jupiter:junit-jupiter-api:5.10.2'
     probe 'org.jetbrains.kotlin:kotlin-test-junit5:2.2.21'
+    probe 'org.jacoco:org.jacoco.core:0.8.14'
 }}
 tasks.register('verifyPolicy') {{
     doLast {{

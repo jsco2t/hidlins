@@ -1,5 +1,3 @@
-import 'dart:io';
-
 import 'package:material_ui/material_ui.dart';
 import 'package:flutter_test/flutter_test.dart';
 
@@ -11,8 +9,6 @@ const goldenSizeCompact = Size(400, 800);
 const goldenSizeMedium = Size(720, 800);
 const goldenSizeExpanded = Size(1200, 800);
 
-bool get _isLinux => Platform.isLinux;
-
 Future<void> expectGolden(
   WidgetTester tester,
   Widget child, {
@@ -21,11 +17,6 @@ Future<void> expectGolden(
   Brightness brightness = Brightness.light,
   bool settle = true,
 }) async {
-  if (!_isLinux) {
-    markTestSkipped('Golden tests run on Linux only (deterministic rendering)');
-    return;
-  }
-
   final theme = brightness == Brightness.dark
       ? hidlinsDarkTheme()
       : hidlinsLightTheme();

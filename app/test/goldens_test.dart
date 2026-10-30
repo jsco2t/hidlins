@@ -1,3 +1,5 @@
+import 'dart:io';
+
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:flutter_test/flutter_test.dart';
 import 'package:material_ui/material_ui.dart';
@@ -27,6 +29,8 @@ void main() {
     ('dark', Brightness.dark),
   ];
 
+  // Only reference PNG comparisons depend on the Linux renderer. Fixture
+  // contract tests exercise the shared scene helper on every host platform.
   group('24-screen desktop alpha matrix', () {
     for (final scene in _AlphaScene.values) {
       for (final (themeName, brightness) in themes) {
@@ -57,7 +61,7 @@ void main() {
         }
       }
     }
-  });
+  }, skip: !Platform.isLinux);
 
   group('additional brand and sync states', () {
     testWidgets('branded first run light compact', (tester) async {
@@ -108,7 +112,7 @@ void main() {
         );
       });
     }
-  });
+  }, skip: !Platform.isLinux);
 }
 
 Widget _scene(_AlphaScene scene) {
