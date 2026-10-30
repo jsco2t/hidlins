@@ -369,6 +369,24 @@ esac
                     self.assertRaisesRegex(RuntimeError, 'Wi-Fi route'):
                 module.require_wifi_route('emulator-5554', '10.0.2.18', '10.0.2.16')
 
+    def test_android_route_failure_reports_only_bounded_network_fields(self) -> None:
+        module = load_android_scenario_module()
+        for output, expected in (
+            ('local 10.0.2.16 dev lo src 10.0.2.16 uid SECRET-CANARY',
+             'kind=local, interface=lo, source=10.0.2.16'),
+            ('10.0.2.16 dev SECRET-CANARY src SECRET-CANARY',
+             'kind=unicast, interface=other, source=unknown'),
+        ):
+            response = module.subprocess.CompletedProcess([], 0, stdout=output)
+            with self.subTest(output=output), \
+                    mock.patch.object(module.subprocess, 'run', return_value=response), \
+                    mock.patch.object(module.time, 'monotonic', side_effect=(0, 0, 31)), \
+                    mock.patch.object(module.time, 'sleep'), \
+                    self.assertRaises(RuntimeError) as failed:
+                module.require_wifi_route('emulator-5556', '10.0.2.16', '10.0.2.17')
+            self.assertIn(expected, str(failed.exception))
+            self.assertNotIn('SECRET-CANARY', str(failed.exception))
+
     def test_android_registrar_is_confined_to_instrumentation_source_set(self) -> None:
         root = MODULE_PATH.parents[2]
         registrar = (

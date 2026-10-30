@@ -4,6 +4,7 @@
 from __future__ import annotations
 
 import argparse
+import ipaddress
 import json
 import os
 import pathlib
@@ -484,6 +485,28 @@ def prepare_legacy_wifi_guest(serial: str) -> None:
     )
 
 
+def _route_observation(fields: list[str]) -> str:
+    def field(name: str) -> str:
+        try:
+            return fields[fields.index(name) + 1]
+        except (ValueError, IndexError):
+            return ""
+
+    def ipv4(value: str) -> str:
+        try:
+            return str(ipaddress.IPv4Address(value))
+        except ipaddress.AddressValueError:
+            return "unknown"
+
+    kind = fields[0] if fields else "missing"
+    if kind not in {"local", "broadcast", "unreachable", "prohibit", "blackhole", "missing"}:
+        kind = "unicast" if ipv4(kind) != "unknown" else "other"
+    interface = field("dev")
+    if interface not in {"wlan0", "lo"}:
+        interface = "cellular" if interface.startswith("rmnet") else "other"
+    return f"kind={kind}, interface={interface}, source={ipv4(field('src'))}"
+
+
 def require_wifi_route(serial: str, address: str, source_address: str) -> None:
     """Wait for Android to select the observed Wi-Fi source and interface.
 
@@ -494,6 +517,7 @@ def require_wifi_route(serial: str, address: str, source_address: str) -> None:
     """
 
     deadline = time.monotonic() + 30
+    observed = "not-observed"
     while time.monotonic() < deadline:
         try:
             result = subprocess.run(
@@ -505,6 +529,7 @@ def require_wifi_route(serial: str, address: str, source_address: str) -> None:
             )
             lines = result.stdout.splitlines()
             fields = lines[0].split() if lines else []
+            observed = f"{_route_observation(fields)}, exit={result.returncode}"
             if (
                 result.returncode == 0
                 and fields
@@ -513,10 +538,14 @@ def require_wifi_route(serial: str, address: str, source_address: str) -> None:
                 and fields[fields.index("src") + 1] == source_address
             ):
                 return
-        except (ValueError, IndexError, subprocess.TimeoutExpired):
+        except subprocess.TimeoutExpired:
+            observed = "timed-out"
+        except (ValueError, IndexError):
             pass
         time.sleep(0.25)
-    raise RuntimeError(f"{serial} did not select its Wi-Fi route to the peer")
+    raise RuntimeError(
+        f"{serial} did not select its Wi-Fi route to the peer ({observed})"
+    )
 
 
 def cleanup_guest(serial: str) -> None:
