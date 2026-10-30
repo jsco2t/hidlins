@@ -176,12 +176,13 @@ For example, on a physical Apple-Silicon workstation, run each command in a
 separate terminal:
 
 ```sh
-"$ANDROID_SDK_ROOT/emulator/emulator" -avd hidlins-api30 -port 5554 -no-audio -no-snapshot -wipe-data -no-boot-anim
-"$ANDROID_SDK_ROOT/emulator/emulator" -avd hidlins-api30-authority -port 5556 -no-audio -no-snapshot -wipe-data -no-boot-anim
-"$ANDROID_SDK_ROOT/emulator/emulator" -avd hidlins-api30-authority-replacement -port 5558 -no-audio -no-snapshot -wipe-data -no-boot-anim
+"$ANDROID_SDK_ROOT/emulator/emulator" -avd hidlins-api30 -port 5554 -no-audio -no-snapshot -wipe-data -no-boot-anim -feature VirtioWifi,WiFiPacketStream
+"$ANDROID_SDK_ROOT/emulator/emulator" -avd hidlins-api30-authority -port 5556 -no-audio -no-snapshot -wipe-data -no-boot-anim -feature VirtioWifi,WiFiPacketStream
+"$ANDROID_SDK_ROOT/emulator/emulator" -avd hidlins-api30-authority-replacement -port 5558 -no-audio -no-snapshot -wipe-data -no-boot-anim -feature VirtioWifi,WiFiPacketStream
 ```
 
-Use the matching API 36 or x86_64 names for those selections. No legacy Wi-Fi
+Use the matching API 36 or x86_64 names for those selections. API 30 needs the
+explicit shared-backend selection above. No legacy Wi-Fi
 forwarding or manual DHCP option is needed. These commands are diagnostic only;
 they do not install the test registrar or execute
 acceptance. Build, install, and launch the development application on serial

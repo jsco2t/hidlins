@@ -162,30 +162,33 @@ void main() {
     debugDefaultTargetPlatformOverride = null;
   });
 
-  testWidgets('Android routed system back returns detail to its entry list', (
-    tester,
-  ) async {
-    tester.view.devicePixelRatio = 1;
-    tester.view.physicalSize = const Size(412, 915);
-    addTearDown(tester.view.resetDevicePixelRatio);
-    addTearDown(tester.view.resetPhysicalSize);
-    final harness = TestHarness();
-    registerTestVault(harness);
-    harness.session.currentLockState = LockEvent.unlocked;
-    addTearDown(harness.dispose);
+  for (final width in [412.0, 800.0]) {
+    testWidgets(
+      'Android routed system back returns $width-dp detail to its entry list',
+      (tester) async {
+        tester.view.devicePixelRatio = 1;
+        tester.view.physicalSize = Size(width, 915);
+        addTearDown(tester.view.resetDevicePixelRatio);
+        addTearDown(tester.view.resetPhysicalSize);
+        final harness = TestHarness();
+        registerTestVault(harness);
+        harness.session.currentLockState = LockEvent.unlocked;
+        addTearDown(harness.dispose);
 
-    await tester.pumpWidget(HidlinsApp(overrides: harness.overrides));
-    await tester.pumpAndSettle();
-    await tester.tap(find.text('GitHub'));
-    await tester.pumpAndSettle();
-    expect(find.text('Development account'), findsOneWidget);
+        await tester.pumpWidget(HidlinsApp(overrides: harness.overrides));
+        await tester.pumpAndSettle();
+        await tester.tap(find.text('GitHub'));
+        await tester.pumpAndSettle();
+        expect(find.text('Development account'), findsOneWidget);
 
-    await tester.binding.handlePopRoute();
-    await tester.pumpAndSettle();
-    expect(find.text('Bank of Test'), findsOneWidget);
-    expect(find.text('Development account'), findsNothing);
-    debugDefaultTargetPlatformOverride = null;
-  });
+        await tester.binding.handlePopRoute();
+        await tester.pumpAndSettle();
+        expect(find.text('Bank of Test'), findsOneWidget);
+        expect(find.text('Development account'), findsNothing);
+        debugDefaultTargetPlatformOverride = null;
+      },
+    );
+  }
 }
 
 bool _focusIsWithin(Finder finder) {

@@ -172,10 +172,13 @@ class MobileScenarioHarnessTest(unittest.TestCase):
                     row, authority_row=authority, replacement_row=replacement, binary=artifact,
                     test_apk=artifact, shipping_apk=artifact, emulator_version='37.2.13',
                     results_dir=root)
+            # API30 ships both drivers but defaults to isolated legacy Wi-Fi.
+            # Select the shared backend; DHCP and routing remain Android-owned.
+            shared_wifi = ('-feature', 'VirtioWifi,WiFiPacketStream')
             self.assertEqual(starts, [
-                ('hidlins-authority', module.AUTHORITY_SERIAL, ()),
-                ('hidlins-client', module.CLIENT_SERIAL, ()),
-                ('hidlins-replacement', module.REPLACEMENT_SERIAL, ()),
+                ('hidlins-authority', module.AUTHORITY_SERIAL, shared_wifi),
+                ('hidlins-client', module.CLIENT_SERIAL, shared_wifi),
+                ('hidlins-replacement', module.REPLACEMENT_SERIAL, shared_wifi),
             ])
             for process in processes:
                 process.wait.assert_called_once_with(timeout=15)

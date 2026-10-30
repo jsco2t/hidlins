@@ -372,7 +372,8 @@ make verify
   stored under `build/verification/mobile-local-sync/`. API 29 remains covered
   by native/UI/bridge gates. Its legacy image cannot provide shared-LAN peer
   connectivity, so the emulator gate does not claim API 29 cross-device sync.
-  API 30 and API 36 retain platform-default shared Wi-Fi state.
+  API 30 and API 36 use the explicitly selected shared Wi-Fi backend with
+  platform-default cellular state; no routes or DHCP leases are supplied.
 
 - `make verify` is the broad repository gate.
 

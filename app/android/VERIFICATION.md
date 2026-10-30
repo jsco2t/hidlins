@@ -34,8 +34,10 @@ resolves that service through `LocalDiscoveryController`, Flutter, and Rust
 private-address validation, then connects directly to the CLI for Noise XX/IK
 and sync traffic. No endpoint, `10.0.2.2` data route, ADB forwarding, proxy, or
 synthetic discovery result is supplied to the client. API 30 and API 36 use
-shared emulator Wi-Fi with platform-default network state. The API 29 default
-image's legacy backend cannot provide this shared LAN; forcing the modern
+shared emulator Wi-Fi with platform-default cellular state. The runner explicitly
+selects `VirtioWifi,WiFiPacketStream` because API 30 otherwise defaults to the
+isolated legacy backend. The API 29 default image cannot provide this shared
+LAN; forcing the modern
 backend leaves it without a Wi-Fi address. API 29 remains a required native/UI
 and bridge gate and remains the application minimum, but its cross-device LAN
 acceptance is not claimed by this emulator gate.
