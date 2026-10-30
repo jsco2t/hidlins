@@ -141,8 +141,12 @@ automated acceptance map, optional human-observation register, and disposition
 of all 45 July Flutter tasks are documented in
 [`docs/flutter-alpha-release.md`](docs/flutter-alpha-release.md) and its checked
 machine-readable companion. Android CI uses `make android-emulator-provision`
-followed by the same local-sync emulator targets used locally. The isolated,
-expensive `make test-local-sync-mobile-scenarios HIDLINS_ANDROID_STRICT=1`
+followed by the same local-sync emulator targets used locally. The hosted
+Linux/KVM runtime job covers API 29 and current x86_64 devices; hosted
+macOS cannot run ARM64 Android emulators because nested virtualization is
+unavailable. Both Android ABIs remain build/artifact gates. Run the same
+acceptance targets on an ARM64 workstation for ARM64 runtime verification.
+The isolated, expensive `make test-local-sync-mobile-scenarios HIDLINS_ANDROID_STRICT=1`
 target drives real iPhone, iPad, Android phone, and Android tablet applications
 against a separate release CLI authority; use its platform-specific `-ios` and
 `-android` targets while iterating.

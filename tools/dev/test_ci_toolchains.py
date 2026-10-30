@@ -75,6 +75,11 @@ class CiToolchainTests(unittest.TestCase):
                 self.assertIn('run: make ci-flutter-version', job)
                 self.assertIn('flutter-version: ${{ steps.flutter-version.outputs.version }}', job)
 
+    def test_hosted_emulator_ci_uses_the_supported_linux_hypervisor(self):
+        job = job_text('android-emulator')
+        self.assertIn('os: [ubuntu-24.04]', job)
+        self.assertNotIn('macos-15', job)
+
     def test_flutter_output_matches_pin_and_preserves_prior_outputs(self):
         output = Path(self.env['GITHUB_OUTPUT'])
         output.write_text('previous=value\n')
@@ -160,6 +165,15 @@ for file in "$avd_root"/*.ini; do
 done
 ''')
         self.env['TEST_AVD_CREATIONS'] = str(self.temp / 'created-avds')
+        # Force the macOS-observed schedule: avdmanager returns without reading
+        # its input before the shell writes the default-device answer.
+        startup = self.temp / 'bash-startup'
+        startup.write_text('''printf() {
+  if [[ "$1" == 'no\\n' ]]; then sleep 0.1; fi
+  builtin printf "$@"
+}
+''')
+        self.env['BASH_ENV'] = str(startup)
         fragment = self.temp / 'provision.mk'
         fragment.write_text('_test-provision:\n\tbash tools/android-native/provision_emulators.sh\n'
                             '\t"' + str(emulator) + '" -list-avds > "$(TEST_TOOL_LOG)"\n')

@@ -34,4 +34,13 @@ final class DeviceAssertions {
             throw new AssertionError("bytes differ");
         }
     }
+
+    static String failureLocation(Throwable error) {
+        for (StackTraceElement frame : error.getStackTrace()) {
+            if (frame.getClassName().equals("app.hidlins.HidlinsAndroidTest")) {
+                return "HidlinsAndroidTest.java:" + frame.getLineNumber();
+            }
+        }
+        return "unknown";
+    }
 }

@@ -92,8 +92,8 @@ while IFS=$'\t' read -r avd _ _ form_factor system_image; do
   fi
   device="pixel_2"
   if [[ "$form_factor" == "tablet" ]]; then device="pixel_c"; fi
-  printf 'no\n' | "$AVDMANAGER" create avd --force --name "$avd" \
-    --package "$system_image" --device "$device"
+  "$AVDMANAGER" create avd --force --name "$avd" \
+    --package "$system_image" --device "$device" <<< "no"
   require_visible_avd "$avd"
   echo "Android AVD installed: $avd ($system_image, $device)"
 done <"$MATRIX"
@@ -105,8 +105,8 @@ while IFS=$'\t' read -r avd _ _ form_factor system_image; do
   fi
   device="pixel_2"
   if [[ "$form_factor" == "tablet" ]]; then device="pixel_c"; fi
-  printf 'no\n' | "$AVDMANAGER" create avd --force --name "$avd" \
-    --package "$system_image" --device "$device"
+  "$AVDMANAGER" create avd --force --name "$avd" \
+    --package "$system_image" --device "$device" <<< "no"
   require_visible_avd "$avd"
   echo "Android authority AVD installed: $avd ($system_image, $device)"
 done <"$AUTHORITY"
@@ -118,8 +118,8 @@ while IFS=$'\t' read -r avd _ _ form_factor system_image; do
   fi
   device="pixel_2"
   if [[ "$form_factor" == "tablet" ]]; then device="pixel_c"; fi
-  printf 'no\n' | "$AVDMANAGER" create avd --force --name "$avd" \
-    --package "$system_image" --device "$device"
+  "$AVDMANAGER" create avd --force --name "$avd" \
+    --package "$system_image" --device "$device" <<< "no"
   require_visible_avd "$avd"
   echo "Android replacement authority AVD installed: $avd ($system_image, $device)"
 done <"$REPLACEMENT"

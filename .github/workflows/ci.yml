@@ -298,16 +298,16 @@ jobs:
       - name: Acceptance evidence contract
         run: make acceptance-evidence-check
 
-  # Host-native Android acceptance. macos-15 is the standard Apple Silicon
-  # image; ubuntu-24.04 is x86_64. The declarative matrix refuses to run an ABI
-  # that does not match the host and covers API 29 phone + API 36 tablet on each.
+  # Hosted macOS has no nested virtualization (HV_UNSUPPORTED). Runtime CI
+  # covers API 29 phone + API 36 tablet on Linux/KVM. Both ABIs are still built
+  # and inspected above; the full ARM64 runtime matrix remains a local target.
   android-emulator:
     name: android-emulator (${{ matrix.os }})
     runs-on: ${{ matrix.os }}
     strategy:
       fail-fast: false
       matrix:
-        os: [ubuntu-24.04, macos-15]
+        os: [ubuntu-24.04]
 
     steps:
       - uses: actions/checkout@v4

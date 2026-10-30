@@ -65,7 +65,8 @@ public final class HidlinsAndroidTest extends Instrumentation {
         } catch (Exception | AssertionError error) {
             failures += 1;
             // Never print assertion operands: tests exercise secret buffers.
-            report("FAIL " + name + " (" + error.getClass().getSimpleName() + ")");
+            report("FAIL " + name + " (" + error.getClass().getSimpleName() + ", "
+                    + DeviceAssertions.failureLocation(error) + ")");
         } finally {
             MainActivity activity = MainActivity.currentForTest();
             if (activity != null && !activity.isFinishing()) {

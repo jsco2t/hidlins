@@ -80,6 +80,12 @@ public final class AssertionsProbe {
         rejects(() -> assertEquals("secret-canary", "different"));
         rejects(() -> assertArrayEquals(new byte[]{1}, new byte[]{1, 2}));
         rejects(() -> assertArrayEquals(null, new byte[]{1}));
+        AssertionError located = new AssertionError("secret-canary");
+        located.setStackTrace(new StackTraceElement[]{
+            new StackTraceElement("app.hidlins.DeviceAssertions", "assertTrue", "DeviceAssertions.java", 1),
+            new StackTraceElement("app.hidlins.HidlinsAndroidTest", "caseName", "secret-canary", 123)});
+        assertEquals("HidlinsAndroidTest.java:123", failureLocation(located));
+        assertEquals("unknown", failureLocation(new AssertionError("secret-canary")));
     }
     private static void rejects(Runnable action) {
         boolean rejected = false;
