@@ -4,6 +4,8 @@
 from __future__ import annotations
 
 import importlib.util
+import contextlib
+import io
 import ipaddress
 import pathlib
 import re
@@ -47,6 +49,71 @@ def load_android_scenario_module():
 
 
 class MobileScenarioHarnessTest(unittest.TestCase):
+    def test_ios_scenario_reports_redacted_authority_failure(self) -> None:
+        module = load_module()
+        with tempfile.TemporaryDirectory(prefix='hidlins-ios-diagnostic-') as scratch:
+            root = pathlib.Path(scratch)
+            artifact = root / 'artifact'
+            artifact.write_bytes(b'fixture')
+            args = module.argparse.Namespace(
+                platform='ios', cli=str(artifact), device_name='iPhone fixture',
+                device='fixture', runtime='fixture', results_dir=str(root), artifact=str(artifact))
+            harness = mock.Mock(service_stderr=[])
+            token = 'test-control-token-canary'
+            control = mock.Mock(token=token, server_address=('127.0.0.1', 37374),
+                                failures=module.queue.Queue())
+            output = io.StringIO()
+            with mock.patch.object(module, 'AuthorityHarness', return_value=harness), \
+                    mock.patch.object(module, 'git_revision', return_value='fixture'), \
+                    mock.patch.object(module, 'reserve_port', return_value=37373), \
+                    mock.patch.object(module, 'ControlServer', return_value=control), \
+                    mock.patch.object(module.secrets, 'token_hex', return_value=token), \
+                    mock.patch.object(module.threading, 'Thread'), \
+                    mock.patch.object(module, 'run_flutter', side_effect=RuntimeError(
+                        'fixture authority failure ' + module.MASTER_PASSWORD + ' ' + token)), \
+                    contextlib.redirect_stdout(output), contextlib.redirect_stderr(output):
+                status = module.run_scenario(args)
+            self.assertEqual(status, 1)
+            self.assertIn('fixture authority failure', output.getvalue())
+            self.assertNotIn(module.MASTER_PASSWORD, output.getvalue())
+            self.assertNotIn(token, output.getvalue())
+            harness.stop.assert_called_once_with(force=True)
+
+    def test_android_scenario_reports_redacted_boot_failure_before_cleanup(self) -> None:
+        module = load_android_scenario_module()
+        with tempfile.TemporaryDirectory(prefix='hidlins-scenario-diagnostic-') as scratch:
+            root = pathlib.Path(scratch)
+            artifact = root / 'artifact'
+            artifact.write_bytes(b'fixture')
+            output = io.StringIO()
+
+            def failed_boot(avd, serial, port, log, extra_args=()):
+                diagnostic = '\nfixture engine initialization failed'
+                # Force a canary across the output-tail boundary: redact the
+                # complete value before truncation, including partial tails.
+                log.write(module.mobile.MASTER_PASSWORD +
+                          'x' * (2000 - len(diagnostic) - 5) + diagnostic)
+                log.flush()
+                raise RuntimeError('fixture boot failure ' + module.mobile.MASTER_PASSWORD)
+
+            row = ('hidlins-fixture', '29', 'x86_64', 'phone', 'fixture-image')
+            with mock.patch.object(module.lan, 'boot', side_effect=failed_boot), \
+                    mock.patch.object(module, 'cleanup_guest'), \
+                    mock.patch.object(module.mobile, 'reserve_port', return_value=37373), \
+                    mock.patch.object(module.mobile, 'git_revision', return_value='fixture'), \
+                    contextlib.redirect_stdout(output), contextlib.redirect_stderr(output):
+                passed = module.run_entry(
+                    row, authority_row=row, replacement_row=row, binary=artifact,
+                    test_apk=artifact, shipping_apk=artifact, emulator_version='37.2.13',
+                    results_dir=root)
+            self.assertFalse(passed)
+            self.assertIn('fixture boot failure', output.getvalue())
+            self.assertIn('fixture engine initialization failed', output.getvalue())
+            self.assertNotIn(module.mobile.MASTER_PASSWORD, output.getvalue())
+            evidence = module.json.loads((root / 'android-hidlins-fixture.json').read_text())
+            self.assertNotIn(module.mobile.MASTER_PASSWORD[-5:],
+                             evidence['boot_diagnostics']['authority.log'])
+
     def test_emulator_version_probe_works_without_desktop_audio_libraries(self) -> None:
         module = load_lan_module()
         with tempfile.TemporaryDirectory(prefix='hidlins-headless-emulator-') as scratch:
@@ -75,12 +142,14 @@ esac
         module = load_module()
         raw = (
             "Pairing SAS: ABC-123 integration-master-marker "
-            "/private/tmp/hidlins-mobile-sync.secret/vaults.toml"
+            "/private/tmp/hidlins-mobile-sync.secret/vaults.toml "
+            "/tmp/hidlins-android-mobile-sync.secret/vaults.toml"
         )
         redacted = module.redact_text(raw, ["integration-master-marker"])
         self.assertNotIn("ABC-123", redacted)
         self.assertNotIn("integration-master-marker", redacted)
         self.assertNotIn("hidlins-mobile-sync.secret", redacted)
+        self.assertNotIn("hidlins-android-mobile-sync", redacted)
         self.assertIn("<redacted-sas>", redacted)
 
     def test_public_sync_endpoint_is_rejected(self) -> None:

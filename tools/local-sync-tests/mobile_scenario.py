@@ -31,7 +31,7 @@ AUTHORITY_VAULT = "authority"
 AUTHORITY_ENTRY = "authority-origin"
 CLIENT_ENTRY = "mobile-origin"
 SAS_PATTERN = re.compile(r"\b[0-9A-HJKMNP-TV-Z]{3}-[0-9A-HJKMNP-TV-Z]{3}\b")
-SCRATCH_PATTERN = re.compile(r"/[^\s]*hidlins-mobile-sync\.[^\s/]*(?:/[^\s]*)?")
+SCRATCH_PATTERN = re.compile(r"/[^\s]*hidlins-(?:android-)?mobile-sync\.[^\s/]*(?:/[^\s]*)?")
 DISCOVERY_PATTERN = re.compile(
     r"HIDLINS_DISCOVERY_CANDIDATE=([^:\s]+):(\d+):(\d+)"
 )
@@ -675,10 +675,17 @@ def run_scenario(args: argparse.Namespace) -> int:
             evidence["cleanup_failure"] = redact_text(str(error), [MASTER_PASSWORD])
         shutil.rmtree(scratch_path, ignore_errors=True)
         evidence["duration_seconds"] = round(time.time() - started, 3)
+        sensitive = [MASTER_PASSWORD] + ([] if control is None else [control.token])
+        for field in ("failure", "cleanup_failure"):
+            if field in evidence:
+                evidence[field] = redact_text(str(evidence[field]), sensitive)
         log_path.write_text(redact_text("\n".join(logs + harness.service_stderr), [MASTER_PASSWORD]), encoding="utf-8")
         evidence_path.write_text(json.dumps(evidence, indent=2, sort_keys=True) + "\n", encoding="utf-8")
         print(f"mobile local-sync scenario: platform={args.platform} result={evidence['result']}")
         print(f"evidence={evidence_path}")
+        for field in ("failure", "cleanup_failure"):
+            if field in evidence:
+                print(f"{field}: {evidence[field]}", file=sys.stderr)
         signal.signal(signal.SIGINT, previous_sigint)
         signal.signal(signal.SIGTERM, previous_sigterm)
     if evidence["result"] != "PASS" and exit_code == 0:

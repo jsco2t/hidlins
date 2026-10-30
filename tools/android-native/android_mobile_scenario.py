@@ -991,6 +991,18 @@ def run_entry(
                 except subprocess.TimeoutExpired:
                     emulators_stopped = False
                     cleanup_failures.append("emulator process ignored termination")
+        sensitive = [mobile.MASTER_PASSWORD]
+        if control is not None:
+            sensitive.append(control.token)
+        if evidence["result"] != "PASS":
+            diagnostics = {}
+            for name in ("client.log", "authority.log", "replacement.log"):
+                try:
+                    detail = (scratch / name).read_text(encoding="utf-8", errors="replace")
+                except OSError as error:
+                    detail = f"boot log unavailable ({type(error).__name__})"
+                diagnostics[name] = mobile.redact_text(detail, sensitive)[-2000:]
+            evidence["boot_diagnostics"] = diagnostics
         scratch_removed = False
         try:
             shutil.rmtree(scratch)
@@ -1025,12 +1037,22 @@ def run_entry(
             ),
             encoding="utf-8",
         )
+        for field in ("failure", "cleanup_failure"):
+            if field in evidence:
+                evidence[field] = mobile.redact_text(str(evidence[field]), sensitive)
         evidence_path.write_text(
             json.dumps(evidence, indent=2, sort_keys=True) + "\n",
             encoding="utf-8",
         )
     print(f"Android discovered local-sync scenario: avd={avd} result={evidence['result']}")
     print(f"evidence={evidence_path}")
+    if evidence["result"] != "PASS":
+        for field in ("failure", "cleanup_failure"):
+            if field in evidence:
+                print(f"{field}: {evidence[field]}", file=sys.stderr)
+        for name, detail in evidence.get("boot_diagnostics", {}).items():
+            if detail:
+                print(f"{name}:\n{detail}", file=sys.stderr)
     return evidence["result"] == "PASS"
 
 
