@@ -78,6 +78,27 @@ class MobileScenarioHarnessTest(unittest.TestCase):
                                         'pair', 37373, 37374, 'test-token')
         self.assertTrue(module.flutter_output_passed(output))
 
+    def test_flutter_timeout_reports_redacted_partial_output(self) -> None:
+        module = load_module()
+        token = 'timeout-control-secret-canary'
+        # Redact before taking the tail, even across the truncation boundary.
+        ending = '\nlast-stage=restart-compile'
+        stderr = '\ncompiler-stalled'
+        padding = 6000 - 5 - len(ending) - len(stderr)
+        partial = (module.MASTER_PASSWORD + token + 'x' * padding + ending).encode()
+        error = module.subprocess.TimeoutExpired(
+            ['flutter'], 420, output=partial, stderr=stderr.encode())
+        with mock.patch.object(module.subprocess, 'run', side_effect=error):
+            with self.assertRaisesRegex(RuntimeError, 'Flutter ios phase restart timed out') as failure:
+                module.run_flutter(MODULE_PATH.parents[2], 'ios', 'fixture',
+                                   'restart', 37373, 37374, token)
+        detail = str(failure.exception)
+        self.assertIn('last-stage=restart-compile', detail)
+        self.assertIn('compiler-stalled', detail)
+        self.assertNotIn(module.MASTER_PASSWORD, detail)
+        self.assertNotIn(token, detail)
+        self.assertNotIn(token[-5:], detail)
+
     def test_ios_scenario_reports_redacted_authority_failure(self) -> None:
         module = load_module()
         with tempfile.TemporaryDirectory(prefix='hidlins-ios-diagnostic-') as scratch:

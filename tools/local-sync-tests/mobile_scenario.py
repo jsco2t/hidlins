@@ -555,14 +555,27 @@ def run_flutter(
             "--android-project-arg=target-platform=android-arm64,android-x64",
             *defines,
         ]
-    result = subprocess.run(
-        command,
-        cwd=repo / "app",
-        text=True,
-        capture_output=True,
-        timeout=420,
-        check=False,
-    )
+    try:
+        result = subprocess.run(
+            command,
+            cwd=repo / "app",
+            text=True,
+            capture_output=True,
+            timeout=420,
+            check=False,
+        )
+    except subprocess.TimeoutExpired as error:
+        # TimeoutExpired can carry bytes even when text=True. Preserve the
+        # last stage without publishing command arguments or secret values.
+        partial = "".join(
+            part.decode("utf-8", errors="replace") if isinstance(part, bytes) else (part or "")
+            for part in (error.stdout, error.stderr)
+        )
+        output = redact_text(partial, [MASTER_PASSWORD, token])
+        raise RuntimeError(
+            f"Flutter {platform} phase {phase} timed out after {error.timeout:g} seconds:\n"
+            f"{output[-6000:]}"
+        ) from None
     output = redact_text(result.stdout + result.stderr, [MASTER_PASSWORD, token])
     if result.returncode != 0 or not flutter_output_passed(output):
         raise RuntimeError(f"Flutter {platform} phase {phase} failed:\n{output[-6000:]}")
