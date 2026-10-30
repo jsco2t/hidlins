@@ -52,6 +52,9 @@ fi
 
 "$ADB" install -r "$APP_APK" >/dev/null
 "$ADB" install -r "$TEST_APK" >/dev/null
+# Headless guests may still be asleep or behind the default swipe keyguard.
+"$ADB" shell input keyevent KEYCODE_WAKEUP
+"$ADB" shell wm dismiss-keyguard
 if result="$(python3 "$ROOT/tools/android-native/run_with_timeout.py" \
     "${HIDLINS_ANDROID_INSTRUMENTATION_TIMEOUT_SECONDS:-300}" \
     "$ADB" shell am instrument -w -r "$TEST_COMPONENT" | tr -d '\r')"; then

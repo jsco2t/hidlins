@@ -141,6 +141,8 @@ def boot(
             check=False,
         )
         if status.returncode == 0 and status.stdout.strip() == "1":
+            adb(serial, "shell", "input", "keyevent", "KEYCODE_WAKEUP")
+            adb(serial, "shell", "wm", "dismiss-keyguard")
             return process
         time.sleep(1)
     raise RuntimeError(f"Android emulator did not boot: {avd}")

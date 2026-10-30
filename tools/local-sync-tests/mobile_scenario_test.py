@@ -49,6 +49,20 @@ def load_android_scenario_module():
 
 
 class MobileScenarioHarnessTest(unittest.TestCase):
+    def test_scenario_boot_wakes_and_dismisses_keyguard(self) -> None:
+        module = load_lan_module()
+        process = mock.Mock()
+        process.poll.return_value = None
+        booted = module.subprocess.CompletedProcess([], 0, stdout='1\n')
+        with mock.patch.object(module.subprocess, 'Popen', return_value=process), \
+                mock.patch.object(module.subprocess, 'run', return_value=booted), \
+                mock.patch.object(module, 'adb') as adb:
+            self.assertIs(module.boot('fixture', 'emulator-fixture', 5554, io.StringIO()), process)
+        adb.assert_has_calls([
+            mock.call('emulator-fixture', 'shell', 'input', 'keyevent', 'KEYCODE_WAKEUP'),
+            mock.call('emulator-fixture', 'shell', 'wm', 'dismiss-keyguard'),
+        ])
+
     def test_ios_scenario_selects_the_reporter_its_result_parser_requires(self) -> None:
         module = load_module()
 

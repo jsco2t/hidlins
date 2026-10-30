@@ -118,13 +118,15 @@ public final class AssertionsProbe {
             root = Path(scratch)
             adb = root / 'adb'
             adb.write_text('''#!/bin/bash
-if [[ "$1" == install ]]; then exit 0; fi
+printf '%s\\n' "$*" >> "$TEST_COMMAND_LOG"
+if [[ "$1 $2 $3" != 'shell am instrument' ]]; then exit 0; fi
 echo 'INSTRUMENTATION_STATUS: stream=PASS firstCase'
 exec sleep 60
 ''')
             adb.chmod(0o755)
             env = dict(os.environ, ROOT=str(ROOT), ADB=str(adb), TEST_APK='fixture',
                        TEST_COMPONENT='app.hidlins.test/app.hidlins.HidlinsAndroidTest',
+                       TEST_COMMAND_LOG=str(root / 'commands'),
                        HIDLINS_ANDROID_INSTRUMENTATION_TIMEOUT_SECONDS='0.1')
             process = subprocess.Popen(
                 ['bash', '-c', 'set -euo pipefail\nsource "$ROOT/tools/android-native/instrumentation-result.sh"\n' + reporting],
@@ -139,6 +141,11 @@ exec sleep 60
             self.assertEqual(process.returncode, 124, output + error)
             self.assertIn('PASS firstCase', output)
             self.assertIn('timeout', output)
+            commands = (root / 'commands').read_text().splitlines()
+            self.assertLess(commands.index('shell input keyevent KEYCODE_WAKEUP'),
+                            next(i for i, value in enumerate(commands) if value.startswith('shell am instrument')))
+            self.assertLess(commands.index('shell wm dismiss-keyguard'),
+                            next(i for i, value in enumerate(commands) if value.startswith('shell am instrument')))
 
     def test_no_junit_artifacts_are_admitted_or_locked(self):
         metadata = ET.parse(ANDROID / 'gradle/verification-metadata.xml')
