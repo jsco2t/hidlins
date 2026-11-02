@@ -43,7 +43,7 @@ use sha2::{Digest as _, Sha256};
 
 use crate::atomic::{install_staged_file, remove_file_durable, write_atomic};
 use crate::error::VaultError;
-use crate::locking::acquire_exclusive;
+use crate::locking::{acquire_exclusive, resolve_file_path};
 use crate::paths::HidlinsPaths;
 use crate::vault::Vault;
 use crate::MasterPassword;
@@ -155,6 +155,7 @@ struct RotationMarker {
     new_extra_sha256: String,
 }
 
+#[derive(PartialEq, Eq)]
 struct RotationArtifacts {
     marker: PathBuf,
     registry_stage: PathBuf,
@@ -180,13 +181,20 @@ impl VaultRegistry {
     ///   TOML or its `version` is not [`SCHEMA_VERSION`].
     pub fn load(paths: HidlinsPaths) -> Result<Self, VaultError> {
         let file = paths.vaults_toml();
-        let contents = match std::fs::read_to_string(&file) {
+        Self::load_from(paths, &file)
+    }
+
+    fn load_from(paths: HidlinsPaths, file: &Path) -> Result<Self, VaultError> {
+        let contents = match std::fs::read_to_string(file) {
             Ok(s) => s,
             Err(e) if e.kind() == std::io::ErrorKind::NotFound => {
                 return Ok(Self::with_paths(paths));
             }
             Err(source) => {
-                return Err(VaultError::Io { source, path: file });
+                return Err(VaultError::Io {
+                    source,
+                    path: file.to_path_buf(),
+                });
             }
         };
 
@@ -243,24 +251,25 @@ impl VaultRegistry {
     ///   snapshot was loaded; reload, reapply the edit, and retry.
     pub fn save(&mut self) -> Result<(), VaultError> {
         self.paths.ensure_exists()?;
-        let _guard = crate::locking::acquire_exclusive(&self.paths.vaults_toml())?;
-        let current = match std::fs::read_to_string(self.paths.vaults_toml()) {
+        let path = resolve_file_path(&self.paths.vaults_toml())?;
+        let _guard = acquire_exclusive(&path)?;
+        let current = match std::fs::read_to_string(&path) {
             Ok(contents) => Some(contents),
             Err(e) if e.kind() == std::io::ErrorKind::NotFound => None,
             Err(source) => {
                 return Err(VaultError::Io {
                     source,
-                    path: self.paths.vaults_toml(),
+                    path: path.clone(),
                 })
             }
         };
         if current != self.baseline {
             return Err(VaultError::RegistryChanged);
         }
-        self.save_unlocked()
+        self.save_unlocked_at(&path)
     }
 
-    fn save_unlocked(&mut self) -> Result<(), VaultError> {
+    fn save_unlocked_at(&mut self, path: &Path) -> Result<(), VaultError> {
         let on_disk = OnDisk {
             version: SCHEMA_VERSION,
             vaults: self.vaults.clone(),
@@ -270,7 +279,7 @@ impl VaultRegistry {
         let body = toml::to_string(&on_disk)
             .map_err(|source| VaultError::RegistrySerializationFailed { source })?;
 
-        write_atomic(&self.paths.vaults_toml(), body.as_bytes())?;
+        write_atomic(path, body.as_bytes())?;
         self.baseline = Some(body);
         Ok(())
     }
@@ -284,9 +293,9 @@ impl VaultRegistry {
         update: impl FnOnce(&mut toml::Table),
     ) -> Result<(), VaultError> {
         self.paths.ensure_exists()?;
-        let path = self.paths.vaults_toml();
-        let _guard = crate::locking::acquire_exclusive(&path)?;
-        let mut latest = Self::load(self.paths.clone())?;
+        let path = resolve_file_path(&self.paths.vaults_toml())?;
+        let _guard = acquire_exclusive(&path)?;
+        let mut latest = Self::load_from(self.paths.clone(), &path)?;
         let vault = latest
             .vaults
             .iter_mut()
@@ -295,7 +304,7 @@ impl VaultRegistry {
                 name: name.to_string(),
             })?;
         update(&mut vault.extra);
-        latest.save_unlocked()?;
+        latest.save_unlocked_at(&path)?;
         *self = latest;
         Ok(())
     }
@@ -333,10 +342,8 @@ impl VaultRegistry {
 
         // A prior interrupted transaction must be resolved before a new one
         // can reuse its fixed artifact names.
-        if rotation_artifacts(&self.paths, vault.path(), vault_name)
-            .marker
-            .exists()
-        {
+        let candidates = rotation_artifact_candidates(&self.paths, vault.path(), vault_name)?;
+        if candidates.iter().any(|artifacts| artifacts.marker.exists()) {
             return Err(VaultError::PasswordRotationRecoveryFailed {
                 reason: "a prior password rotation requires restart recovery",
             });
@@ -344,9 +351,9 @@ impl VaultRegistry {
 
         // `vault` owns the first lock. Acquiring the registry second is the
         // documented global order for this two-file operation.
-        let registry_path = self.paths.vaults_toml();
+        let registry_path = resolve_file_path(&self.paths.vaults_toml())?;
         let _registry_lock = acquire_exclusive(&registry_path)?;
-        let mut latest = Self::load(self.paths.clone())?;
+        let mut latest = Self::load_from(self.paths.clone(), &registry_path)?;
         let target = latest
             .vaults
             .iter_mut()
@@ -354,7 +361,7 @@ impl VaultRegistry {
             .ok_or_else(|| VaultError::NotRegistered {
                 name: vault_name.to_string(),
             })?;
-        if target.path != vault.path() {
+        if resolve_file_path(&target.path)? != vault.backing_path() {
             return Err(VaultError::RegistryChanged);
         }
         if target.extra.get(extra_key) != Some(expected_old) {
@@ -372,7 +379,8 @@ impl VaultRegistry {
             .extra
             .insert(extra_key.to_string(), replacement.clone());
         let new_registry = latest.serialize()?;
-        let artifacts = rotation_artifacts(&self.paths, vault.path(), vault_name);
+        let artifacts =
+            rotation_artifacts_for_targets(&registry_path, vault.backing_path(), vault_name);
 
         // No arbitrary path enters this protocol: every artifact is derived
         // from the configured registry target, registered vault path, and a
@@ -393,7 +401,7 @@ impl VaultRegistry {
             vault_name: vault_name.to_string(),
             extra_key: extra_key.to_string(),
             phase: RotationPhase::Prepared,
-            old_vault_sha256: hash_file(vault.path())?,
+            old_vault_sha256: hash_file(vault.backing_path())?,
             new_vault_sha256: hash_file(&artifacts.vault_stage)?,
             old_registry_sha256: hash_bytes(old_registry.as_bytes()),
             new_registry_sha256: hash_bytes(new_registry.as_bytes()),
@@ -410,7 +418,7 @@ impl VaultRegistry {
         marker.phase = RotationPhase::VaultCommitStarted;
         write_rotation_marker(&artifacts.marker, &marker)?;
         maybe_signal_rotation_phase("vault_commit_started")?;
-        install_staged_file(&staged_vault.path, vault.path())?;
+        install_staged_file(&staged_vault.path, vault.backing_path())?;
         vault.finish_staged_password_change(staged_vault);
         maybe_signal_rotation_phase("vault_renamed")?;
 
@@ -439,46 +447,93 @@ impl VaultRegistry {
     /// missing, malformed, or inconsistent with the live files.
     pub fn recover_password_rotations(paths: &HidlinsPaths) -> Result<(), VaultError> {
         paths.ensure_exists()?;
-        let registry_path = paths.vaults_toml();
+        let registry_path = resolve_file_path(&paths.vaults_toml())?;
         let registry_parent = parent_dir(&registry_path);
-        let prefix = rotation_registry_prefix(&registry_path);
+        let logical_registry = paths.vaults_toml();
+        let legacy_parent =
+            std::fs::canonicalize(parent_dir(&logical_registry)).map_err(|source| {
+                VaultError::Io {
+                    source,
+                    path: parent_dir(&logical_registry).to_path_buf(),
+                }
+            })?;
+        let mut parents = vec![registry_parent.to_path_buf()];
+        if legacy_parent != registry_parent {
+            parents.push(legacy_parent);
+        }
+        let prefixes = [
+            rotation_registry_prefix(&registry_path),
+            rotation_registry_prefix(&paths.vaults_toml()),
+        ];
         let mut markers = Vec::new();
         let mut registry_stages = Vec::new();
-        for entry in std::fs::read_dir(registry_parent).map_err(|source| VaultError::Io {
-            source,
-            path: registry_parent.to_path_buf(),
-        })? {
-            let entry = entry.map_err(|source| VaultError::Io {
+        for parent in parents {
+            for entry in std::fs::read_dir(&parent).map_err(|source| VaultError::Io {
                 source,
-                path: registry_parent.to_path_buf(),
-            })?;
-            let name = entry.file_name();
-            let name = name.to_string_lossy();
-            if !name.starts_with(&prefix) {
-                continue;
-            }
-            if name.ends_with(".txn") {
-                markers.push(entry.path());
-            } else if name.ends_with(".registry.stage") {
-                registry_stages.push(entry.path());
+                path: parent.clone(),
+            })? {
+                let entry = entry.map_err(|source| VaultError::Io {
+                    source,
+                    path: parent.clone(),
+                })?;
+                let name = entry.file_name();
+                let name = name.to_string_lossy();
+                if !prefixes.iter().any(|prefix| name.starts_with(prefix)) {
+                    continue;
+                }
+                if name.ends_with(".txn") {
+                    markers.push(entry.path());
+                } else if name.ends_with(".registry.stage") {
+                    registry_stages.push(entry.path());
+                }
             }
         }
-        markers.sort();
-
-        // A crash before the marker became durable leaves the old live pair
-        // untouched. Fixed stage names can therefore be removed safely after
-        // matching them against the current registry; no path is read from an
-        // untrusted artifact.
+        // Stages can belong to a live writer before its marker exists. Use
+        // the same vault-then-registry lock order and recheck durable state
+        // before treating them as abandoned.
         if !registry_stages.is_empty() {
-            let registry = Self::load(paths.clone())?;
+            let registry = Self::load_from(paths.clone(), &registry_path)?;
             for stage in registry_stages {
                 let mut matched = false;
                 for entry in &registry.vaults {
-                    let artifacts = rotation_artifacts(paths, &entry.path, &entry.name);
-                    if artifacts.registry_stage == stage {
-                        if !artifacts.marker.exists() {
-                            remove_file_durable(&artifacts.registry_stage)?;
-                            remove_file_durable(&artifacts.vault_stage)?;
+                    // Match the registry-stage name before resolving a vault:
+                    // unrelated registrations may intentionally be missing.
+                    let current =
+                        rotation_artifacts_for_targets(&registry_path, &entry.path, &entry.name);
+                    let legacy = rotation_artifacts(paths, &entry.path, &entry.name);
+                    if [
+                        current.registry_stage.file_name(),
+                        legacy.registry_stage.file_name(),
+                    ]
+                    .contains(&stage.file_name())
+                    {
+                        let vault_path = resolve_file_path(&entry.path)?;
+                        let _vault_lock = acquire_exclusive(&vault_path)?;
+                        let _registry_lock = acquire_exclusive(&registry_path)?;
+                        let latest = Self::load_from(paths.clone(), &registry_path)?;
+                        let entry = latest.get(&entry.name).ok_or(
+                            VaultError::PasswordRotationRecoveryFailed {
+                                reason: "password rotation vault is no longer registered",
+                            },
+                        )?;
+                        if resolve_file_path(&entry.path)? != vault_path {
+                            return Err(VaultError::PasswordRotationRecoveryFailed {
+                                reason: "password rotation vault path changed",
+                            });
+                        }
+                        for artifacts in
+                            rotation_artifact_candidates(paths, &entry.path, &entry.name)?
+                        {
+                            if artifacts.registry_stage == stage {
+                                if artifacts.marker.exists() {
+                                    // It may have appeared after the directory
+                                    // scan. Recover it after these guards drop.
+                                    markers.push(artifacts.marker);
+                                } else {
+                                    remove_file_durable(&artifacts.registry_stage)?;
+                                    remove_file_durable(&artifacts.vault_stage)?;
+                                }
+                            }
                         }
                         matched = true;
                         break;
@@ -492,6 +547,8 @@ impl VaultRegistry {
             }
         }
 
+        markers.sort();
+        markers.dedup();
         for marker_path in markers {
             recover_one_rotation(paths, &marker_path)?;
         }
@@ -523,11 +580,11 @@ impl VaultRegistry {
     ///   [`Self::save`].
     pub fn register_and_save(&mut self, vault: RegisteredVault) -> Result<(), VaultError> {
         self.paths.ensure_exists()?;
-        let path = self.paths.vaults_toml();
-        let _guard = crate::locking::acquire_exclusive(&path)?;
-        let mut latest = Self::load(self.paths.clone())?;
+        let path = resolve_file_path(&self.paths.vaults_toml())?;
+        let _guard = acquire_exclusive(&path)?;
+        let mut latest = Self::load_from(self.paths.clone(), &path)?;
         latest.register(vault)?;
-        latest.save_unlocked()?;
+        latest.save_unlocked_at(&path)?;
         *self = latest;
         Ok(())
     }
@@ -553,6 +610,8 @@ impl VaultRegistry {
     /// `delete_file` is `true`, the registered file is unlinked before
     /// the in-memory entry is removed. A missing file is treated as
     /// already deleted; other I/O failures leave the registry unchanged.
+    /// Physical deletion requires the vault's exclusive advisory lock;
+    /// an active reader or writer returns [`VaultError::Contended`].
     pub fn deregister(
         &mut self,
         name: &str,
@@ -566,12 +625,35 @@ impl VaultRegistry {
                 name: name.to_string(),
             })?;
 
+        let path = &self.vaults[index].path;
+        // A missing file is already deleted, including when its parent no
+        // longer exists. Inspect the link itself so a dangling registered
+        // symlink still follows the normal locked unlink path.
+        let _file_lock = if delete_file {
+            match std::fs::symlink_metadata(path) {
+                Ok(_) => Some(acquire_exclusive(path)?),
+                Err(source) if source.kind() == std::io::ErrorKind::NotFound => None,
+                Err(source) => {
+                    return Err(VaultError::Io {
+                        source,
+                        path: path.clone(),
+                    });
+                }
+            }
+        } else {
+            None
+        };
+
         if delete_file {
-            let path = self.vaults[index].path.clone();
-            match std::fs::remove_file(&path) {
+            match std::fs::remove_file(path) {
                 Ok(()) => {}
                 Err(source) if source.kind() == std::io::ErrorKind::NotFound => {}
-                Err(source) => return Err(VaultError::Io { source, path }),
+                Err(source) => {
+                    return Err(VaultError::Io {
+                        source,
+                        path: path.clone(),
+                    });
+                }
             }
         }
 
@@ -617,16 +699,22 @@ fn recover_one_rotation(paths: &HidlinsPaths, marker_path: &Path) -> Result<(), 
     validate_rotation_name(&marker.vault_name)?;
     validate_extra_key(&marker.extra_key)?;
 
-    let initial = VaultRegistry::load(paths.clone())?;
-    let vault_path = initial
+    let registry_path = resolve_file_path(&paths.vaults_toml())?;
+    let initial = VaultRegistry::load_from(paths.clone(), &registry_path)?;
+    let logical_vault_path = initial
         .get(&marker.vault_name)
         .ok_or(VaultError::PasswordRotationRecoveryFailed {
             reason: "password rotation vault is no longer registered",
         })?
         .path
         .clone();
-    let artifacts = rotation_artifacts(paths, &vault_path, &marker.vault_name);
-    if artifacts.marker != marker_path {
+    let vault_path = resolve_file_path(&logical_vault_path)?;
+    let mut candidates: Vec<_> =
+        rotation_artifact_candidates(paths, &logical_vault_path, &marker.vault_name)?
+            .into_iter()
+            .filter(|artifacts| artifacts.marker == marker_path)
+            .collect();
+    if candidates.is_empty() {
         return Err(VaultError::PasswordRotationRecoveryFailed {
             reason: "password rotation marker name is inconsistent",
         });
@@ -634,16 +722,29 @@ fn recover_one_rotation(paths: &HidlinsPaths, marker_path: &Path) -> Result<(), 
 
     // Same stable order as the live transaction: vault, then registry.
     let _vault_lock = acquire_exclusive(&vault_path)?;
-    let registry_path = paths.vaults_toml();
     let _registry_lock = acquire_exclusive(&registry_path)?;
-    let mut latest = VaultRegistry::load(paths.clone())?;
+    // Prefer a surviving legacy vault stage when the registry identity is
+    // unchanged but a file alias put its old stage in another directory.
+    let stages: Vec<_> = candidates
+        .iter()
+        .enumerate()
+        .filter(|(_, a)| a.vault_stage.exists())
+        .map(|(i, _)| i)
+        .collect();
+    if stages.len() > 1 {
+        return Err(VaultError::PasswordRotationRecoveryFailed {
+            reason: "multiple password rotation vault stages",
+        });
+    }
+    let artifacts = candidates.swap_remove(stages.first().copied().unwrap_or(0));
+    let mut latest = VaultRegistry::load_from(paths.clone(), &registry_path)?;
     let latest_vault =
         latest
             .get(&marker.vault_name)
             .ok_or(VaultError::PasswordRotationRecoveryFailed {
                 reason: "password rotation vault is no longer registered",
             })?;
-    if latest_vault.path != vault_path {
+    if resolve_file_path(&latest_vault.path)? != vault_path {
         return Err(VaultError::PasswordRotationRecoveryFailed {
             reason: "password rotation vault path changed",
         });
@@ -721,7 +822,11 @@ fn recover_registry_value(
         let replacement = staged
             .vaults
             .iter()
-            .find(|entry| entry.name == marker.vault_name && entry.path == vault_path)
+            .find(|entry| {
+                entry.name == marker.vault_name
+                    && (entry.path == vault_path
+                        || resolve_file_path(&entry.path).is_ok_and(|path| path == vault_path))
+            })
             .and_then(|entry| entry.extra.get(&marker.extra_key))
             .ok_or(VaultError::PasswordRotationRecoveryFailed {
                 reason: "password rotation registry stage is inconsistent",
@@ -750,7 +855,7 @@ fn recover_registry_value(
             target
                 .extra
                 .insert(marker.extra_key.clone(), replacement.clone());
-            latest.save_unlocked()?;
+            latest.save_unlocked_at(registry_path)?;
         }
     } else if current_extra_hash != marker.new_extra_sha256 {
         return Err(VaultError::PasswordRotationRecoveryFailed {
@@ -767,7 +872,15 @@ fn rotation_artifacts(
     vault_name: &str,
 ) -> RotationArtifacts {
     let registry_path = paths.vaults_toml();
-    let registry_parent = parent_dir(&registry_path);
+    rotation_artifacts_for_targets(&registry_path, vault_path, vault_name)
+}
+
+fn rotation_artifacts_for_targets(
+    registry_path: &Path,
+    vault_path: &Path,
+    vault_name: &str,
+) -> RotationArtifacts {
+    let registry_parent = parent_dir(registry_path);
     let vault_parent = parent_dir(vault_path);
     let registry_hash = hash_bytes(registry_path.as_os_str().as_encoded_bytes());
     let name_hash = hash_bytes(vault_name.as_bytes());
@@ -778,6 +891,40 @@ fn rotation_artifacts(
         registry_stage: registry_parent.join(format!("{base}.registry.stage")),
         vault_stage: vault_parent.join(format!("{base}.vault.stage")),
     }
+}
+
+/// New transactions share canonical target identities. Keep the prior raw
+/// path-derived names readable so an upgrade cannot abandon a durable marker.
+fn rotation_artifact_candidates(
+    paths: &HidlinsPaths,
+    vault_path: &Path,
+    vault_name: &str,
+) -> Result<Vec<RotationArtifacts>, VaultError> {
+    let current = rotation_artifacts_for_targets(
+        &resolve_file_path(&paths.vaults_toml())?,
+        &resolve_file_path(vault_path)?,
+        vault_name,
+    );
+    let mut legacy = rotation_artifacts(paths, vault_path, vault_name);
+    // Normalize only artifact parents; never follow a stage/marker symlink.
+    let normalize = |path: &Path| -> Result<PathBuf, VaultError> {
+        let parent = std::fs::canonicalize(parent_dir(path)).map_err(|source| VaultError::Io {
+            source,
+            path: path.to_path_buf(),
+        })?;
+        Ok(parent.join(
+            path.file_name()
+                .expect("internally derived artifact filename"),
+        ))
+    };
+    legacy.marker = normalize(&legacy.marker)?;
+    legacy.registry_stage = normalize(&legacy.registry_stage)?;
+    legacy.vault_stage = normalize(&legacy.vault_stage)?;
+    let mut candidates = vec![current];
+    if candidates[0] != legacy {
+        candidates.push(legacy);
+    }
+    Ok(candidates)
 }
 
 fn rotation_registry_prefix(registry_path: &Path) -> String {

@@ -73,7 +73,7 @@ pub struct SharedLock {
 /// `flock(2)` on macOS / Linux and `LockFileEx` on Windows. The lock is
 /// released when this value is dropped (closing the file).
 pub fn acquire_exclusive(path: &Path) -> Result<ExclusiveLock, VaultError> {
-    let lock_path = sidecar_lock_path(path);
+    let lock_path = sidecar_lock_path(path)?;
     let file = OpenOptions::new()
         .read(true)
         .write(true)
@@ -102,7 +102,7 @@ pub fn acquire_exclusive(path: &Path) -> Result<ExclusiveLock, VaultError> {
 /// shared locks may coexist on the same file. The lock is released when
 /// this value is dropped (closing the file).
 pub fn acquire_shared(path: &Path) -> Result<SharedLock, VaultError> {
-    let lock_path = sidecar_lock_path(path);
+    let lock_path = sidecar_lock_path(path)?;
     let file = OpenOptions::new()
         .read(true)
         .write(true)
@@ -248,7 +248,26 @@ fn try_acquire_with_eintr_retry(file: &File, kind: LockKind) -> Result<(), Acqui
 /// Atomic temp-file cleanup uses the same primitive as vault sidecar locking so
 /// Android cannot accidentally regress through a second direct std call.
 pub(crate) fn try_lock_exclusive(file: &File) -> Result<(), TryLockError> {
-    try_lock_file(file, LockKind::Exclusive)
+    loop {
+        match try_lock_file(file, LockKind::Exclusive) {
+            Err(TryLockError::Error(error)) if error.kind() == io::ErrorKind::Interrupted => {}
+            result => return result,
+        }
+    }
+}
+
+/// Short blocking setup coordination; never hold this across serialization.
+pub(crate) fn lock_exclusive(file: &File) -> io::Result<()> {
+    loop {
+        #[cfg(not(target_os = "android"))]
+        let result = file.lock();
+        #[cfg(target_os = "android")]
+        let result = flock(file, libc::LOCK_EX);
+        match result {
+            Err(error) if error.kind() == io::ErrorKind::Interrupted => {}
+            result => return result,
+        }
+    }
 }
 
 #[cfg(not(target_os = "android"))]
@@ -260,47 +279,70 @@ fn try_lock_file(file: &File, kind: LockKind) -> Result<(), TryLockError> {
 }
 
 #[cfg(target_os = "android")]
-#[allow(unsafe_code)] // audited single libc flock call; descriptor stays borrowed
 fn try_lock_file(file: &File, kind: LockKind) -> Result<(), TryLockError> {
     let operation = match kind {
         LockKind::Exclusive => libc::LOCK_EX,
         LockKind::Shared => libc::LOCK_SH,
     } | libc::LOCK_NB;
-
-    // SAFETY: `file.as_raw_fd()` is a live descriptor borrowed for the duration
-    // of this call, and `flock` neither retains nor takes ownership of it.
-    if unsafe { libc::flock(file.as_raw_fd(), operation) } == 0 {
-        return Ok(());
-    }
-    let error = io::Error::last_os_error();
-    if error.kind() == io::ErrorKind::WouldBlock {
-        Err(TryLockError::WouldBlock)
-    } else {
-        Err(TryLockError::Error(error))
-    }
-}
-
-#[cfg(not(target_os = "android"))]
-fn unlock_file(file: &File) -> io::Result<()> {
-    file.unlock()
+    flock(file, operation).map_err(|error| {
+        if error.kind() == io::ErrorKind::WouldBlock {
+            TryLockError::WouldBlock
+        } else {
+            TryLockError::Error(error)
+        }
+    })
 }
 
 #[cfg(target_os = "android")]
-#[allow(unsafe_code)] // audited single libc flock call; descriptor stays borrowed
-fn unlock_file(file: &File) -> io::Result<()> {
-    // SAFETY: `file.as_raw_fd()` is a live descriptor borrowed for the duration
-    // of this call, and `flock` neither retains nor takes ownership of it.
-    if unsafe { libc::flock(file.as_raw_fd(), libc::LOCK_UN) } == 0 {
+#[allow(unsafe_code)] // audited libc flock primitive; descriptor stays borrowed
+fn flock(file: &File, operation: libc::c_int) -> io::Result<()> {
+    // SAFETY: the borrowed descriptor remains live throughout this call;
+    // flock takes no pointer and does not retain ownership of the descriptor.
+    if unsafe { libc::flock(file.as_raw_fd(), operation) } == 0 {
         Ok(())
     } else {
         Err(io::Error::last_os_error())
     }
 }
 
-fn sidecar_lock_path(path: &Path) -> PathBuf {
-    let mut lock_path = path.as_os_str().to_owned();
+#[cfg(not(target_os = "android"))]
+pub(crate) fn unlock_file(file: &File) -> io::Result<()> {
+    file.unlock()
+}
+
+#[cfg(target_os = "android")]
+pub(crate) fn unlock_file(file: &File) -> io::Result<()> {
+    flock(file, libc::LOCK_UN)
+}
+
+/// Resolve an existing backing file, or a missing filename under its real
+/// parent. Resolving the parent also unifies directory aliases before a new
+/// vault or registry has been created.
+pub(crate) fn resolve_file_path(path: &Path) -> Result<PathBuf, VaultError> {
+    let resolve = || -> io::Result<PathBuf> {
+        match std::fs::canonicalize(path) {
+            Ok(resolved) => Ok(resolved),
+            Err(error) if error.kind() == io::ErrorKind::NotFound => {
+                let name = path.file_name().ok_or_else(|| {
+                    io::Error::new(io::ErrorKind::InvalidInput, "file path has no filename")
+                })?;
+                let parent = path.parent().filter(|p| !p.as_os_str().is_empty());
+                Ok(std::fs::canonicalize(parent.unwrap_or(Path::new(".")))?.join(name))
+            }
+            Err(error) => Err(error),
+        }
+    };
+    resolve().map_err(|source| VaultError::Io {
+        source,
+        path: path.to_path_buf(),
+    })
+}
+
+fn sidecar_lock_path(path: &Path) -> Result<PathBuf, VaultError> {
+    let resolved = resolve_file_path(path)?;
+    let mut lock_path = resolved.as_os_str().to_owned();
     lock_path.push(".lock");
-    PathBuf::from(lock_path)
+    Ok(PathBuf::from(lock_path))
 }
 
 // ---------------------------------------------------------------------------

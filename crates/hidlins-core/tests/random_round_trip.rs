@@ -203,35 +203,25 @@ fn seed_from_env_or_default() -> u64 {
 /// and exotic BMP codepoints (skipping the surrogate range, which is not
 /// a valid scalar value).
 ///
-/// **Constraint**: non-empty strings are guaranteed to contain at least
-/// one non-whitespace character. Pure-whitespace string values (e.g.
-/// `"\n"` or `"  "`) round-trip through KDBX as the empty string —
-/// the underlying XML serializer normalizes whitespace-only element
-/// content. That's a real finding but not realistic user data (nobody
-/// types a single-newline title), so this generator avoids the
-/// degenerate case rather than testing it. The keepass-rs whitespace
-/// normalization is tracked as a deferred item in
-/// `features/entry-management/follow-ups/open-items.md`.
+/// Whitespace-only values are valid KDBX data and must also round-trip.
 fn random_string(rng: &mut fastrand::Rng, min: usize, max: usize) -> String {
     let target_len = rng.usize(min..=max);
-    if target_len == 0 {
-        return String::new();
-    }
     let mut out = String::with_capacity(target_len);
-    // Seed the first character as a guaranteed non-whitespace letter so
-    // the whole string can never normalize to "".
-    out.push(rng.alphabetic());
-    while out.chars().count() < target_len {
+    let whitespace_only = rng.usize(0..4) == 0;
+    for _ in 0..target_len {
+        if whitespace_only {
+            out.push(
+                *rng.choice(&[' ', '\t', '\n', '\u{a0}', '\u{2003}'])
+                    .unwrap(),
+            );
+            continue;
+        }
         let kind = rng.u8(0..6);
         let c = match kind {
             0 => rng.alphabetic(),
             1 => rng.digit(10),
             // Common ASCII printable range — the bytes a user actually types.
             2 => rng.char(' '..='~'),
-            // Embedded whitespace exercises XML-text round-tripping in
-            // contexts where the string also contains non-whitespace data
-            // (the first character is already non-whitespace, so the
-            // overall string isn't pure whitespace).
             3 => '\t',
             4 => '\n',
             _ => {

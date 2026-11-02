@@ -474,6 +474,10 @@ endif
 test:  ## Run default-parallel tests (offline, vendored).
 	$(CARGO) test $(CARGO_FLAGS)
 
+.PHONY: test-atomic-recovery-matrix
+test-atomic-recovery-matrix:  ## Run atomic recovery regressions on host and real API29/API36 Android (cached SDK/AVDs).
+	python3 tools/android-native/run_rust_tests.py
+
 test-ignored:  ## Run #[ignore]d tests serially (env-mutating + signal-handler tests, etc).
 	# `--features test-binaries` enables hidlins-security's `sigstop_helper`
 	# test binary, needed by `tests/us_052_sigstop_lock.rs`. Other workspace

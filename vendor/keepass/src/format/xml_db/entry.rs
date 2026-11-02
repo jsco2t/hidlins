@@ -269,8 +269,7 @@ pub struct StringValue {
 
     #[serde(
         default,
-        rename = "$value",
-        with = "cs_opt_string",
+        rename = "$text",
         skip_serializing_if = "Option::is_none"
     )]
     value: Option<String>,

@@ -10,7 +10,7 @@
 use std::fmt;
 use std::path::{Path, PathBuf};
 
-use zeroize::{Zeroize, ZeroizeOnDrop};
+use zeroize::{Zeroize, ZeroizeOnDrop, Zeroizing};
 
 /// A master password. The inner bytes are zeroized when this value is
 /// dropped, and the `Debug` impl reveals nothing about the contents.
@@ -23,63 +23,113 @@ use zeroize::{Zeroize, ZeroizeOnDrop};
 /// On Unix the buffer is additionally `mlock(2)`ed while the value is
 /// alive (best-effort — `RLIMIT_MEMLOCK` quotas are small, so a failed
 /// lock is silently tolerated rather than treated as fatal; see
-/// `kb/memory-hygiene.md`). The lock is released and the bytes zeroized
+/// `kb/memory-hygiene.md`). The bytes are zeroized before the lock is released
 /// on drop. This covers the password itself; key material derived
 /// inside `keepass-rs` (`DatabaseKey`, Argon2 output) is owned by that
 /// crate and cannot be locked from here — an honest, documented limit.
 ///
-/// Invariant the `mlock` relies on: the inner `String` is never mutated
-/// after construction (no method takes `&mut self` except `zeroize`,
-/// which overwrites in place without reallocating), so the heap buffer
-/// address registered with `mlock` stays valid until `munlock` in drop.
-#[derive(Zeroize)]
-pub struct MasterPassword(String);
+/// Locked pages lie wholly within this value's allocation, so another
+/// password cannot share them. Alignment and rounding require at most two
+/// pages of allocation overhead. The allocation is never resized; the lock
+/// extent survives explicit zeroization independently of the logical length.
+pub struct MasterPassword {
+    storage: Box<[u8]>,
+    start: usize,
+    len: usize,
+    #[cfg(unix)]
+    locked_len: usize,
+}
 
 impl MasterPassword {
     /// Wrap a caller-supplied password string.
     pub fn new(value: String) -> Self {
-        let password = Self(value);
-        password.lock_memory();
+        // Erase the source allocation even if construction unwinds. Only
+        // zero-filled storage exists before its private pages are locked.
+        let value = Zeroizing::new(value);
+        let len = value.len();
+        let page = if len == 0 {
+            0
+        } else {
+            Self::page_size().unwrap_or(0)
+        };
+        let padded = if page == 0 {
+            None
+        } else {
+            len.div_ceil(page)
+                .checked_mul(page)
+                .and_then(|locked| locked.checked_add(page - 1).map(|size| (size, locked)))
+                .filter(|(size, _)| isize::try_from(*size).is_ok())
+        };
+        // Locking is optional even when page padding cannot be represented.
+        let (allocation_len, locked_len) = padded.unwrap_or((len, 0));
+        let storage = vec![0; allocation_len].into_boxed_slice();
+        let start = if locked_len == 0 {
+            0
+        } else {
+            (page - storage.as_ptr() as usize % page) % page
+        };
+        let mut password = Self {
+            storage,
+            start,
+            len,
+            #[cfg(unix)]
+            locked_len: 0,
+        };
+        password.lock_memory(locked_len);
+        password.storage[start..start + len].copy_from_slice(value.as_bytes());
         password
+    }
+
+    #[cfg(unix)]
+    fn page_size() -> Option<usize> {
+        // SAFETY: sysconf takes no pointers and only queries OS metadata.
+        // An unavailable/invalid page size keeps the best-effort fallback.
+        #[allow(unsafe_code)]
+        let size = unsafe { libc::sysconf(libc::_SC_PAGESIZE) };
+        usize::try_from(size).ok().filter(|size| *size > 0)
+    }
+
+    #[cfg(not(unix))]
+    fn page_size() -> Option<usize> {
+        None
     }
 
     /// Best-effort `mlock(2)` of the password buffer so it cannot be
     /// paged to swap. Failures (quota exhausted, unsupported platform)
     /// are ignored per the documented best-effort posture.
     #[cfg(unix)]
-    fn lock_memory(&self) {
-        if self.0.is_empty() {
+    fn lock_memory(&mut self, length: usize) {
+        if length == 0 {
             return;
         }
-        // SAFETY (locally audited unsafe, design §3.9): `mlock` only
-        // reads the page tables for the given range; it does not read or
-        // write the buffer. The pointer/length come from the live inner
-        // `String`, which is valid for `len` bytes and — per the struct
-        // invariant above — is never reallocated during the value's
-        // lifetime. The matching `munlock` runs in `Drop` before the
-        // buffer is freed.
+        let range = &self.storage[self.start..self.start + length];
+        // SAFETY: the checked slice is a live allocation-owned range of
+        // whole pages. Padding ensures no other allocation occupies those
+        // pages; the Box is never resized. mlock retains no Rust reference.
         #[allow(unsafe_code)]
-        unsafe {
-            let _ = libc::mlock(self.0.as_ptr().cast::<libc::c_void>(), self.0.len());
+        let result = unsafe { libc::mlock(range.as_ptr().cast::<libc::c_void>(), range.len()) };
+        if result == 0 {
+            self.locked_len = length;
         }
     }
 
     #[cfg(not(unix))]
-    fn lock_memory(&self) {}
+    fn lock_memory(&mut self, _length: usize) {}
 
     /// Release the best-effort `mlock` taken in [`Self::lock_memory`].
-    /// Errors are ignored: `munlock` on a range that was never locked
-    /// (quota-failed `mlock`) is harmless.
+    /// Only a successfully acquired, allocation-private range is released.
     #[cfg(unix)]
     fn unlock_memory(&self) {
-        if self.0.is_empty() {
+        if self.locked_len == 0 {
             return;
         }
-        // SAFETY: same range and validity argument as `lock_memory`;
-        // called from `Drop` while the buffer is still allocated.
+        let range = &self.storage[self.start..self.start + self.locked_len];
+        // SAFETY: same owned range as the successful mlock. Explicit
+        // zeroization preserves this Box and its extent; Drop has erased all
+        // its bytes before this call, and frees the allocation afterward.
         #[allow(unsafe_code)]
         unsafe {
-            let _ = libc::munlock(self.0.as_ptr().cast::<libc::c_void>(), self.0.len());
+            let _ = libc::munlock(range.as_ptr().cast::<libc::c_void>(), range.len());
         }
     }
 
@@ -98,13 +148,20 @@ impl MasterPassword {
     /// can feed the master password into Argon2id without duplicating
     /// the zeroize-on-drop wrapper.
     pub fn as_bytes(&self) -> &[u8] {
-        self.0.as_bytes()
+        &self.storage[self.start..self.start + self.len]
     }
 
     /// Borrow the underlying string. Crate-private for the same reason
     /// as [`Self::as_bytes`].
     pub(crate) fn as_str(&self) -> &str {
-        &self.0
+        std::str::from_utf8(self.as_bytes()).expect("MasterPassword remains valid UTF-8")
+    }
+}
+
+impl Zeroize for MasterPassword {
+    fn zeroize(&mut self) {
+        self.storage.zeroize();
+        self.len = 0;
     }
 }
 
@@ -115,13 +172,13 @@ impl fmt::Debug for MasterPassword {
 }
 
 // Manual `Drop` (replacing `#[derive(ZeroizeOnDrop)]`) so the buffer is
-// `munlock`ed before being zeroized and freed. The `ZeroizeOnDrop`
+// zeroized before being `munlock`ed and freed. The `ZeroizeOnDrop`
 // marker impl below keeps the compile-time security assertion satisfied;
 // it is honest because this `Drop` performs the zeroize.
 impl Drop for MasterPassword {
     fn drop(&mut self) {
+        self.zeroize();
         self.unlock_memory();
-        self.0.zeroize();
     }
 }
 
@@ -244,8 +301,8 @@ mod tests {
         // SAFETY (`read_volatile`): we read bytes through `ptr` while
         // the buffer is still allocated — the wrapper is mutably
         // borrowed by `.zeroize()` and the read happens before any drop.
-        // The pointer was obtained from the live `String` and is valid
-        // for `len` bytes.
+        // The pointer was obtained from the live owned buffer and is valid
+        // for `len` bytes; explicit zeroization does not free or resize it.
 
         let sentinel = "supersecret-master-password-bytes".to_string();
         let len = sentinel.len();
