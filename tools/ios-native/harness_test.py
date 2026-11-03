@@ -9,6 +9,7 @@ from pathlib import Path
 import signal
 import re
 import subprocess
+import sys
 import tempfile
 import unittest
 
@@ -18,6 +19,131 @@ ROOT = Path(__file__).resolve().parents[2]
 
 
 class IntegrationHarnessTests(unittest.TestCase):
+    def test_vm_attach_does_not_require_a_unified_log_notification(self) -> None:
+        self.run_vm_fixture(expected=0)
+
+    def test_attached_driver_failure_is_preserved_without_retry(self) -> None:
+        self.run_vm_fixture(expected=9, driver_status=9)
+
+    def test_build_failure_prevents_simulator_launch(self) -> None:
+        self.run_vm_fixture(expected=7, build_status=7)
+
+    def test_missing_vm_service_times_out_and_cleans_up(self) -> None:
+        self.run_vm_fixture(expected=124, unavailable=True)
+
+    def test_unrelated_http_service_cannot_satisfy_vm_readiness(self) -> None:
+        self.run_vm_fixture(expected=124, vm_type='OtherService')
+
+    def run_vm_fixture(self, *, expected: int, driver_status: int = 0,
+                       build_status: int = 0, unavailable: bool = False,
+                       vm_type: str = 'VM') -> None:
+        # Reproduce a successful app launch whose VM URL never reaches unified
+        # logging. The VM itself is reachable; waiting for its log line hangs.
+        with tempfile.TemporaryDirectory(prefix='hidlins-ios-vm-') as temporary:
+            root = Path(temporary)
+            fixture = root / 'devices.json'
+            fixture.write_text(json.dumps({'devices': {
+                'com.apple.CoreSimulator.SimRuntime.iOS-26-5': [
+                    {'udid': 'iPhone', 'name': 'iPhone', 'isAvailable': True}],
+                'com.apple.CoreSimulator.SimRuntime.iOS-26-4': [
+                    {'udid': 'iPad', 'name': 'iPad', 'isAvailable': True}],
+            }}))
+            server = root / 'vm.py'
+            server.write_text('''import http.server, json, os, sys
+class VM(http.server.BaseHTTPRequestHandler):
+    def do_GET(self):
+        body = json.dumps({'result': {'type': os.environ['TEST_VM_TYPE']}}).encode()
+        self.send_response(200)
+        self.end_headers()
+        self.wfile.write(body)
+    def log_message(self, *args): pass
+http.server.HTTPServer(('127.0.0.1', int(sys.argv[1])), VM).serve_forever()
+''')
+            xcrun = root / 'xcrun'
+            xcrun.write_text(f'#!{sys.executable}\n' + '''import json, os, signal, subprocess, sys
+from pathlib import Path
+with open(os.environ['TEST_LOG'], 'a') as log:
+    log.write(json.dumps(['xcrun', *sys.argv[1:]]) + '\\n')
+action = sys.argv[2]
+if action == 'list':
+    print(Path(os.environ['TEST_DEVICES']).read_text())
+elif action == 'spawn':
+    sys.exit(1)
+elif action == 'launch' and os.environ['TEST_UNAVAILABLE'] == '0':
+    port = next(arg.split('=', 1)[1] for arg in sys.argv if arg.startswith('--vm-service-port='))
+    process = subprocess.Popen([sys.executable, os.environ['TEST_SERVER'], port],
+                               stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
+    Path(os.environ['TEST_PID']).write_text(str(process.pid))
+elif action == 'terminate':
+    try:
+        os.kill(int(Path(os.environ['TEST_PID']).read_text()), signal.SIGTERM)
+    except (FileNotFoundError, ProcessLookupError): pass
+''')
+            flutter = root / 'flutter'
+            flutter.write_text(f'#!{sys.executable}\n' + '''import json, os, socket, subprocess, sys, time, urllib.request
+from pathlib import Path
+with open(os.environ['TEST_LOG'], 'a') as log:
+    log.write(json.dumps(['flutter', *sys.argv[1:]]) + '\\n')
+if sys.argv[1] == 'test':
+    with socket.socket() as listener:
+        listener.bind(('127.0.0.1', 0))
+        port = listener.getsockname()[1]
+    vm = subprocess.Popen([sys.executable, os.environ['TEST_SERVER'], str(port)],
+                          stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
+    Path(os.environ['TEST_PID']).write_text(str(vm.pid))
+    print('Waiting for VM Service port to be available...', flush=True)
+    time.sleep(60)
+elif sys.argv[1] == 'build':
+    sys.exit(int(os.environ['TEST_BUILD_STATUS']))
+elif sys.argv[1] == 'drive':
+    uri = next(arg.split('=', 1)[1] for arg in sys.argv if arg.startswith('--use-existing-app='))
+    with urllib.request.urlopen(uri + 'getVM', timeout=1) as response:
+        assert json.load(response)['result']['type'] == 'VM'
+    print('All tests passed.' if os.environ['TEST_DRIVER_STATUS'] == '0' else 'Some tests failed.')
+    sys.exit(int(os.environ['TEST_DRIVER_STATUS']))
+''')
+            for executable in (xcrun, flutter):
+                executable.chmod(0o755)
+            env = dict(os.environ, PATH=str(root) + os.pathsep + os.environ['PATH'],
+                       TEST_LOG=str(root / 'commands'), TEST_DEVICES=str(fixture),
+                       TEST_SERVER=str(server), TEST_PID=str(root / 'pid'),
+                       TEST_UNAVAILABLE=str(int(unavailable)),
+                       TEST_VM_TYPE=vm_type,
+                       TEST_DRIVER_STATUS=str(driver_status), TEST_BUILD_STATUS=str(build_status),
+                       HIDLINS_IOS_TEST_TIMEOUT_SECONDS='2' if expected == 124 else '8')
+            process = subprocess.Popen(['bash', str(ROOT / 'tools/ios-native/integration.sh')],
+                                       env=env, text=True, stdout=subprocess.PIPE,
+                                       stderr=subprocess.PIPE, start_new_session=True)
+            try:
+                output, error = process.communicate(timeout=40)
+            except subprocess.TimeoutExpired:
+                os.killpg(process.pid, signal.SIGKILL)
+                process.communicate()
+                self.fail('iOS harness did not bound or clean up its child processes')
+            finally:
+                try:
+                    os.kill(int((root / 'pid').read_text()), signal.SIGTERM)
+                except (FileNotFoundError, ProcessLookupError):
+                    pass
+            self.assertEqual(process.returncode, expected, output + error)
+            commands = [json.loads(line) for line in (root / 'commands').read_text().splitlines()]
+            drives = [command for command in commands if command[:2] == ['flutter', 'drive']]
+            self.assertEqual(len(drives), 4 if expected == 0 else int(driver_status != 0))
+            self.assertFalse(any(command[:2] == ['flutter', 'test'] for command in commands))
+            devices = ('iPhone', 'iPad') if expected == 0 else ('iPhone',)
+            for device in devices:
+                self.assertIn(['xcrun', 'simctl', 'shutdown', device], commands)
+            launches = [command for command in commands if command[:3] == ['xcrun', 'simctl', 'launch']]
+            if build_status:
+                self.assertEqual(launches, [])
+            else:
+                self.assertTrue(launches)
+                for command in launches:
+                    self.assertIn('--vm-service-host=127.0.0.1', command)
+                    self.assertIn('--disable-vm-service-publication', command)
+                for device in devices:
+                    self.assertIn(['xcrun', 'simctl', 'terminate', device, 'app.hidlins.ios'], commands)
+
     def test_implicit_engine_registers_sdk_plugins(self) -> None:
         source = (ROOT / 'app/ios/Runner/AppDelegate.swift').read_text()
         callback = source[source.index('func didInitializeImplicitFlutterEngine'):]

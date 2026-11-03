@@ -207,7 +207,7 @@ check-ios: app-deps app-analyze app-brand-check  ## Cross-check iOS Rust targets
 app-test-ios-simulator: app-deps  ## Run bounded native iOS tests on the configured simulator.
 	tools/ios-native/run.sh simulator
 
-ios-harness-check:  ## Test deterministic iPhone/iPad simulator selection.
+ios-harness-check:  ## Test simulator selection, direct VM attachment, and cleanup.
 	python3 tools/ios-native/harness_test.py
 
 app-test-ios-integration: app-deps app-analyze ios-harness-check  ## Run UI and real-bridge journeys on an available iPhone and iPad simulator.

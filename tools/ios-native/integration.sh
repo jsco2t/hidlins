@@ -32,12 +32,14 @@ while IFS=$'\t' read -r udid name runtime; do
   (
     cd "$app_dir"
     python3 "$repo_root/tools/android-native/run_with_timeout.py" "$test_timeout" \
-      flutter test --no-pub --verbose -d "$udid" integration_test/ios_simulator_ui_test.dart
+      python3 "$repo_root/tools/ios-native/run_simulator_test.py" \
+      "$udid" integration_test/ios_simulator_ui_test.dart
   )
   (
     cd "$app_dir"
     python3 "$repo_root/tools/android-native/run_with_timeout.py" "$test_timeout" \
-      flutter test --no-pub --verbose -d "$udid" integration_test/ios_real_bridge_test.dart
+      python3 "$repo_root/tools/ios-native/run_simulator_test.py" \
+      "$udid" integration_test/ios_real_bridge_test.dart
   )
   if [[ "${HIDLINS_MOBILE_SYNC_SCENARIOS:-0}" == 1 ]]; then
     python3 "$repo_root/tools/local-sync-tests/mobile_scenario.py" ios \

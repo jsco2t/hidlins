@@ -537,10 +537,13 @@ def run_flutter(
     )
     target = "integration_test/mobile_local_sync_scenario_test.dart"
     if platform == "ios":
-        # Keep the parsed success marker independent of CI reporter defaults.
+        # Direct VM attachment avoids the SDK's unified-log startup race. The
+        # inner deadline kills the entire build/driver group before the outer
+        # capture timeout, preserving the redacted partial-output diagnostic.
         command = [
-            "flutter", "test", "--no-pub", "--reporter=expanded",
-            "-d", device, *defines, target,
+            sys.executable, str(repo / "tools/android-native/run_with_timeout.py"), "400",
+            sys.executable, str(repo / "tools/ios-native/run_simulator_test.py"),
+            device, target, *defines,
         ]
     else:
         command = [

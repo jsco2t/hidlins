@@ -66,20 +66,21 @@ class MobileScenarioHarnessTest(unittest.TestCase):
             mock.call('emulator-fixture', 'shell', 'wm', 'dismiss-keyguard'),
         ])
 
-    def test_ios_scenario_selects_the_reporter_its_result_parser_requires(self) -> None:
+    def test_ios_scenario_uses_bounded_direct_vm_attach_and_preserves_defines(self) -> None:
         module = load_module()
-
-        def flutter(command, **kwargs):
-            # Flutter's GitHub reporter is selected by the CI environment;
-            # unlike expanded output, its successful summary has no "All".
-            summary = ('00:01 +1: All tests passed!' if '--reporter=expanded' in command
-                       else '🎉 1 test passed.')
-            return module.subprocess.CompletedProcess(command, 0, stdout=summary, stderr='')
-
-        with mock.patch.object(module.subprocess, 'run', side_effect=flutter):
+        passed = module.subprocess.CompletedProcess([], 0, stdout='All tests passed.', stderr='')
+        with mock.patch.object(module.subprocess, 'run', return_value=passed) as run:
             output = module.run_flutter(MODULE_PATH.parents[2], 'ios', 'fixture',
                                         'pair', 37373, 37374, 'test-token')
         self.assertTrue(module.flutter_output_passed(output))
+        command = run.call_args.args[0]
+        self.assertEqual(pathlib.Path(command[1]).name, 'run_with_timeout.py')
+        self.assertEqual(command[2], '400')
+        self.assertEqual(pathlib.Path(command[4]).name, 'run_simulator_test.py')
+        self.assertEqual(command[5:7],
+                         ['fixture', 'integration_test/mobile_local_sync_scenario_test.dart'])
+        self.assertIn('--dart-define=HIDLINS_SCENARIO_PHASE=pair', command)
+        self.assertIn('--dart-define=HIDLINS_SCENARIO_TOKEN=test-token', command)
 
     def test_flutter_timeout_reports_redacted_partial_output(self) -> None:
         module = load_module()
