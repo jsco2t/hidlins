@@ -7,8 +7,8 @@ use keepass::config::{DatabaseConfig, DatabaseVersion, KdfConfig};
 use keepass::db::DatabaseOpenError;
 use keepass::Database;
 
-use crate::atomic::write_atomic_with;
-use crate::locking::{acquire_exclusive, acquire_shared};
+use crate::atomic::write_atomic_with_commit;
+use crate::locking::{acquire_exclusive, acquire_shared, resolve_file_path};
 use crate::unlock::{build_database_key, build_database_key_from_material, KeyfileMaterial};
 use crate::{ExclusiveLock, Keyfile, MasterPassword, SharedLock, VaultError};
 
@@ -75,6 +75,7 @@ impl NoRecoveryConfirmed {
 /// Read-write vault handle. Holds an exclusive advisory lock.
 pub struct Vault {
     path: PathBuf,
+    backing_path: PathBuf,
     database: Database,
     key: keepass::DatabaseKey,
     keyfile_material: KeyfileMaterial,
@@ -103,6 +104,11 @@ impl Vault {
             });
         }
 
+        // Resolve credentials before reserving the destination: a failed
+        // keyfile read must not leave a file or read our own reservation.
+        let keyfile_material = KeyfileMaterial::from_keyfile(keyfile)?;
+        let key = build_database_key_from_material(master, &keyfile_material)?;
+
         if let Some(parent) = path.parent() {
             std::fs::create_dir_all(parent).map_err(|source| VaultError::Io {
                 source,
@@ -110,10 +116,11 @@ impl Vault {
             })?;
         }
 
+        let backing_path = resolve_file_path(path)?;
         let reservation = OpenOptions::new()
             .write(true)
             .create_new(true)
-            .open(path)
+            .open(&backing_path)
             .map_err(|source| {
                 if source.kind() == std::io::ErrorKind::AlreadyExists {
                     VaultError::PathExists {
@@ -128,24 +135,23 @@ impl Vault {
             })?;
         drop(reservation);
 
-        let keyfile_material = KeyfileMaterial::from_keyfile(keyfile)?;
-        let key = build_database_key_from_material(master, &keyfile_material)?;
         let mut database = Database::with_config(kdf.database_config());
-        let lock = match acquire_exclusive(path) {
+        let lock = match acquire_exclusive(&backing_path) {
             Ok(lock) => lock,
             Err(err) => {
-                let _ = std::fs::remove_file(path);
+                let _ = std::fs::remove_file(&backing_path);
                 return Err(err);
             }
         };
 
-        if let Err(err) = save_database(path, &mut database, key.clone()) {
-            let _ = std::fs::remove_file(path);
+        if let Err(err) = save_database(&backing_path, &mut database, key.clone()) {
+            let _ = std::fs::remove_file(&backing_path);
             return Err(err);
         }
 
         Ok(Self {
             path: path.to_path_buf(),
+            backing_path,
             database,
             key,
             keyfile_material,
@@ -165,13 +171,15 @@ impl Vault {
             });
         }
 
-        let lock = acquire_exclusive(path)?;
+        let backing_path = resolve_file_path(path)?;
+        let lock = acquire_exclusive(&backing_path)?;
         let keyfile_material = KeyfileMaterial::from_keyfile(keyfile)?;
         let key = build_database_key_from_material(master, &keyfile_material)?;
-        let database = open_database(path, key.clone())?;
+        let database = open_database(&backing_path, key.clone())?;
 
         Ok(Self {
             path: path.to_path_buf(),
+            backing_path,
             database,
             key,
             keyfile_material,
@@ -181,23 +189,31 @@ impl Vault {
 
     /// Save the in-memory database to disk using an atomic replace.
     pub fn save(&mut self) -> Result<(), VaultError> {
-        save_database(&self.path, &mut self.database, self.key.clone())
+        save_database(&self.backing_path, &mut self.database, self.key.clone())
     }
 
     /// Re-encrypt the vault with a new master password after re-verifying
     /// the current password against the on-disk vault.
+    /// A durability error after rename can leave the new password committed;
+    /// the live handle keeps the key for the file actually installed.
     pub fn change_master_password(
         &mut self,
         current: &MasterPassword,
         new: &MasterPassword,
     ) -> Result<(), VaultError> {
         let current_key = build_database_key_from_material(current, &self.keyfile_material)?;
-        open_database(&self.path, current_key)?;
+        open_database(&self.backing_path, current_key)?;
 
         let new_key = build_database_key_from_material(new, &self.keyfile_material)?;
-        save_database(&self.path, &mut self.database, new_key.clone())?;
-        self.key = new_key;
-        Ok(())
+        let stored_key = &mut self.key;
+        save_database_with_commit(
+            &self.backing_path,
+            &mut self.database,
+            new_key.clone(),
+            || {
+                *stored_key = new_key;
+            },
+        )
     }
 
     pub(crate) fn stage_master_password_change(
@@ -207,7 +223,7 @@ impl Vault {
         stage_path: PathBuf,
     ) -> Result<StagedPasswordChange, VaultError> {
         let current_key = build_database_key_from_material(current, &self.keyfile_material)?;
-        open_database(&self.path, current_key)?;
+        open_database(&self.backing_path, current_key)?;
 
         let new_key = build_database_key_from_material(new, &self.keyfile_material)?;
         save_database(&stage_path, &mut self.database, new_key.clone())?;
@@ -224,6 +240,12 @@ impl Vault {
     /// Return the on-disk vault path.
     pub fn path(&self) -> &Path {
         &self.path
+    }
+
+    /// The file identity protected by this handle's lock. Keep it fixed even
+    /// when a caller retargets the original logical symlink while open.
+    pub(crate) fn backing_path(&self) -> &Path {
+        &self.backing_path
     }
 
     /// Return immutable access to the in-memory KDBX database.
@@ -310,12 +332,13 @@ impl Vault {
         }
 
         let previous = std::mem::replace(&mut self.database, new_db);
-        if let Err(error) = save_database(&self.path, &mut self.database, self.key.clone()) {
+        if let Err(error) = save_database(&self.backing_path, &mut self.database, self.key.clone())
+        {
             // A failure before rename leaves the previous file; a directory
             // fsync failure can occur after rename. Reopen whichever complete
             // encrypted KDBX is actually canonical so live and disk state do
             // not diverge across that ambiguous durability boundary.
-            self.database = open_database(&self.path, self.key.clone()).unwrap_or(previous);
+            self.database = open_database(&self.backing_path, self.key.clone()).unwrap_or(previous);
             return Err(error);
         }
         Ok(())
@@ -335,9 +358,10 @@ impl VaultReadOnly {
             });
         }
 
-        let lock = acquire_shared(path)?;
+        let backing_path = resolve_file_path(path)?;
+        let lock = acquire_shared(&backing_path)?;
         let key = build_database_key(master, keyfile)?;
-        let database = open_database(path, key)?;
+        let database = open_database(&backing_path, key)?;
 
         Ok(Self {
             path: path.to_path_buf(),
@@ -375,6 +399,15 @@ fn save_database(
     database: &mut Database,
     key: keepass::DatabaseKey,
 ) -> Result<(), VaultError> {
+    save_database_with_commit(path, database, key, || {})
+}
+
+fn save_database_with_commit(
+    path: &Path,
+    database: &mut Database,
+    key: keepass::DatabaseKey,
+    committed: impl FnOnce(),
+) -> Result<(), VaultError> {
     // Hidlins reads KDBX3 for migration but only writes the current KDBX4
     // minor version. KeePassXC can legitimately rewrite a shared vault as
     // KDBX 4.0, while keepass-rs currently serializes KDBX 4.1 only. Promote
@@ -392,11 +425,15 @@ fn save_database(
     if needs_migration {
         database.config.version = DatabaseVersion::KDB4(current_minor);
     }
-    write_atomic_with(path, |file| {
-        database
-            .save(file, key)
-            .map_err(|source| VaultError::WriteFailed { source })
-    })
+    write_atomic_with_commit(
+        path,
+        |file| {
+            database
+                .save(file, key)
+                .map_err(|source| VaultError::WriteFailed { source })
+        },
+        committed,
+    )
 }
 
 fn map_open_error(source: DatabaseOpenError, path: &Path) -> VaultError {

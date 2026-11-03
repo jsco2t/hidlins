@@ -389,9 +389,59 @@ def verify_snow_patch(crate_dir: Path) -> None:
             )
 
 
+def patch_quick_xml() -> None:
+    crate_dir = VENDOR / "quick-xml"
+    require_version(crate_dir, "0.41.0")
+    source = crate_dir / "src/de/map.rs"
+    # Respect explicitly requested text content while retaining indentation
+    # skipping for element maps. Preserve this pinned source's CRLF bytes.
+    before = b"        self.de.skip_whitespaces()\r\n"
+    after = (
+        b"        if self.has_text_field {\r\n"
+        b"            Ok(())\r\n"
+        b"        } else {\r\n"
+        b"            self.de.skip_whitespaces()\r\n"
+        b"        }\r\n"
+    )
+    data = source.read_bytes()
+    if data.count(after) != 1:
+        if data.count(before) != 1:
+            raise RuntimeError(f"expected exactly one audited text-map context in {source}")
+        source.write_bytes(data.replace(before, after, 1))
+    refresh_checksum(crate_dir)
+
+
 def patch_keepass() -> None:
     crate_dir = VENDOR / "keepass"
     require_version(crate_dir, "0.13.25")
+    # Entry strings are literal user data, including whitespace-only text.
+    # Keep cs_opt_string's empty-metadata handling for its other callers.
+    replace_once(
+        crate_dir / "src/format/xml_db/entry.rs",
+        '''pub struct StringValue {
+    #[serde(default, rename = "@Protected", with = "cs_bool")]
+    protected: bool,
+
+    #[serde(
+        default,
+        rename = "$value",
+        with = "cs_opt_string",
+        skip_serializing_if = "Option::is_none"
+    )]
+    value: Option<String>,
+}''',
+        '''pub struct StringValue {
+    #[serde(default, rename = "@Protected", with = "cs_bool")]
+    protected: bool,
+
+    #[serde(
+        default,
+        rename = "$text",
+        skip_serializing_if = "Option::is_none"
+    )]
+    value: Option<String>,
+}''',
+    )
     replace_once(
         crate_dir / "Cargo.toml",
         '[dependencies.hex]\nversion = "0.4"\n\n',
@@ -1221,6 +1271,7 @@ def patch_snow() -> None:
 
 
 def patch_vendor() -> None:
+    patch_quick_xml()
     patch_keepass()
     patch_flutter_rust_bridge_macros()
     patch_zbus()

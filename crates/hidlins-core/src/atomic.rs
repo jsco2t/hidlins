@@ -4,32 +4,38 @@
 //! `hidlins-core` (KDBX vault saves, `vaults.toml` updates) funnels
 //! through this module's [`write_atomic`] function. The algorithm is:
 //!
-//! 1. Create a sibling temp file in the same parent directory (`mkstemp(3)`
-//!    semantics via `tempfile::NamedTempFile`).
-//! 2. Write all bytes to the temp file.
-//! 3. `fsync` the temp file's data and metadata.
-//! 4. Detach from auto-delete (`into_temp_path()`).
-//! 5. `rename(2)` (atomic on POSIX same-fs) onto the target path.
-//! 6. Open the parent directory and `fsync` it to make the rename durable.
+//! 1. Lock the parent directory briefly, reclaim recognized abandoned stages,
+//!    and create a private `0700` sibling staging directory with a locked,
+//!    durable ownership marker. Unmarked legacy objects are preserved.
+//! 2. Release setup coordination and stream encrypted bytes into its `0600`
+//!    payload file; independent writers can serialize in parallel.
+//! 3. `fsync` the payload and rename it onto the target on the same filesystem.
+//! 4. Persist source-directory cleanup and the destination parent directory.
 //!
-//! On any ordinary error *before* step 5, the temp file is unlinked by
-//! `NamedTempFile`'s `Drop`. A process killed by `SIGKILL` cannot run
-//! destructors, so a Hidlins-owned temp file may be left behind; the next
-//! atomic write in the same directory removes stale Hidlins temp files before
-//! creating its own temp.
-//!
-//! Files are created with POSIX mode `0600`.
+//! Staging traversal and mutations are relative to held directory descriptors,
+//! with no-follow opens and inode checks. Ordinary errors clean owned artifacts
+//! through RAII. After process death the next write reclaims recognized stages;
+//! objects without an established marker remain unrecognized and untouched.
 
-use std::fs::{File, OpenOptions, TryLockError};
-use std::io::{self, Write as _};
+use std::ffi::{OsStr, OsString};
+use std::fs::{File, TryLockError};
+use std::io::{self, Read as _, Write as _};
+use std::os::unix::ffi::OsStrExt as _;
+use std::os::unix::fs::{MetadataExt as _, PermissionsExt as _};
 use std::path::Path;
 
-use tempfile::{Builder as TempFileBuilder, NamedTempFile};
+use rustix::fs::{
+    mkdirat, openat, renameat, statat, unlinkat, AtFlags, Dir, FileType, Mode, OFlags,
+};
+use tempfile::Builder as TempFileBuilder;
 
-use crate::locking::try_lock_exclusive;
+use crate::locking::{lock_exclusive, try_lock_exclusive, unlock_file};
 use crate::VaultError;
 
 const TEMP_PREFIX: &str = ".hidlins-tmp-";
+const OWNER: &str = "owner";
+const PAYLOAD: &str = "payload";
+const OWNER_MARKER: &[u8] = b"hidlins-atomic-stage/v1\n";
 
 /// Atomically replace the file at `target` with `bytes`.
 ///
@@ -43,56 +49,12 @@ const TEMP_PREFIX: &str = ".hidlins-tmp-";
 /// - `rename(2)` failure
 /// - parent-directory `fsync` failure
 pub fn write_atomic(target: &Path, bytes: &[u8]) -> Result<(), VaultError> {
-    let parent = target.parent().ok_or_else(|| VaultError::Io {
-        source: io::Error::new(
-            io::ErrorKind::InvalidInput,
-            "target path has no parent directory",
-        ),
-        path: target.to_path_buf(),
-    })?;
-
-    cleanup_stale_temp_files(parent)?;
-
-    // Step 1-2: create temp file in the parent dir and write all bytes.
-    //
-    // `NamedTempFile::new_in` invokes `mkstemp(3)`, which on Unix creates
-    // the file with mode `0600` per the `tempfile` crate's documented
-    // guarantee. `persist()` below is a `rename(2)` and preserves those
-    // permissions verbatim, so the final target file is also `0600` — no
-    // explicit `set_permissions` is needed here.
-    let mut temp = new_temp_file(parent)?;
-    lock_temp_file(&temp, target)?;
-
-    temp.write_all(bytes).map_err(|source| VaultError::Io {
-        source,
-        path: target.to_path_buf(),
-    })?;
-
-    maybe_signal_fault_phase(target, AtomicWritePhase::TempWritten)?;
-
-    // Step 3: fsync the temp file's data.
-    temp.as_file().sync_all().map_err(|source| VaultError::Io {
-        source,
-        path: target.to_path_buf(),
-    })?;
-
-    maybe_signal_fault_phase(target, AtomicWritePhase::FsyncDone)?;
-
-    // Step 4-5: detach and atomically rename onto the target.
-    let _persisted = temp.persist(target).map_err(|e| VaultError::Io {
-        source: e.error,
-        path: target.to_path_buf(),
-    })?;
-
-    maybe_signal_fault_phase(target, AtomicWritePhase::RenameDone)?;
-
-    // Step 6: fsync the parent directory to make the rename durable.
-    sync_parent_dir(parent).map_err(|source| VaultError::Io {
-        source,
-        path: parent.to_path_buf(),
-    })?;
-
-    Ok(())
+    write_atomic_with(target, |file| {
+        file.write_all(bytes).map_err(|source| VaultError::Io {
+            source,
+            path: target.to_path_buf(),
+        })
+    })
 }
 
 /// Streaming variant of [`write_atomic`].
@@ -113,47 +75,55 @@ pub fn write_atomic_with<F>(target: &Path, write: F) -> Result<(), VaultError>
 where
     F: FnOnce(&mut File) -> Result<(), VaultError>,
 {
-    let parent = target.parent().ok_or_else(|| VaultError::Io {
-        source: io::Error::new(
-            io::ErrorKind::InvalidInput,
-            "target path has no parent directory",
-        ),
-        path: target.to_path_buf(),
-    })?;
+    write_atomic_with_commit(target, write, || {})
+}
 
-    cleanup_stale_temp_files(parent)?;
-
-    // Step 1-2: create temp file and delegate to the writer closure.
-    let mut temp = new_temp_file(parent)?;
-    lock_temp_file(&temp, target)?;
-
-    write(temp.as_file_mut())?;
-
-    maybe_signal_fault_phase(target, AtomicWritePhase::TempWritten)?;
-
-    // Step 3: fsync the temp file's data.
-    temp.as_file().sync_all().map_err(|source| VaultError::Io {
+/// Notify an internal owner immediately after rename succeeds, before any
+/// fallible durability work. This keeps live credentials bound to the bytes
+/// actually installed even when a later operation reports an error.
+pub(crate) fn write_atomic_with_commit<F, C>(
+    target: &Path,
+    write: F,
+    committed: C,
+) -> Result<(), VaultError>
+where
+    F: FnOnce(&mut File) -> Result<(), VaultError>,
+    C: FnOnce(),
+{
+    let mut stage = AtomicStage::new(target).map_err(|source| VaultError::Io {
         source,
         path: target.to_path_buf(),
     })?;
-
+    write(&mut stage.files.payload)?;
+    maybe_signal_fault_phase(target, AtomicWritePhase::TempWritten)?;
+    stage
+        .files
+        .payload
+        .sync_all()
+        .map_err(|source| VaultError::Io {
+            source,
+            path: target.to_path_buf(),
+        })?;
     maybe_signal_fault_phase(target, AtomicWritePhase::FsyncDone)?;
 
-    // Step 4-5: detach and atomically rename.
-    let _persisted = temp.persist(target).map_err(|e| VaultError::Io {
-        source: e.error,
+    // Both names are relative to held directory descriptors. A pathname
+    // rebind cannot redirect this replacement or subsequent source cleanup.
+    renameat(
+        &stage.files.directory,
+        PAYLOAD,
+        &stage.parent,
+        target.file_name().expect("validated filename"),
+    )
+    .map_err(|source| VaultError::Io {
+        source: source.into(),
         path: target.to_path_buf(),
     })?;
-
+    committed();
     maybe_signal_fault_phase(target, AtomicWritePhase::RenameDone)?;
-
-    // Step 6: fsync the parent directory.
-    sync_parent_dir(parent).map_err(|source| VaultError::Io {
+    stage.finish().map_err(|source| VaultError::Io {
         source,
-        path: parent.to_path_buf(),
-    })?;
-
-    Ok(())
+        path: target.to_path_buf(),
+    })
 }
 
 /// Open `parent` and call `sync_all()` on it (fsync the directory).
@@ -162,7 +132,7 @@ where
 /// On APFS / macOS this may be a no-op, but we invoke it unconditionally
 /// for POSIX portability and clarity (design §4.5 in implementation-plan).
 pub(crate) fn sync_parent_dir(parent: &Path) -> io::Result<()> {
-    let dir = File::open(parent)?;
+    let dir = File::open(normalize_parent(parent))?;
     dir.sync_all()
 }
 
@@ -170,8 +140,8 @@ pub(crate) fn sync_parent_dir(parent: &Path) -> io::Result<()> {
 /// containing directory. Both paths must have the same parent; callers use
 /// this only for internally derived transaction artifacts.
 pub(crate) fn install_staged_file(stage: &Path, target: &Path) -> Result<(), VaultError> {
-    let stage_parent = stage.parent();
-    let target_parent = target.parent();
+    let stage_parent = stage.parent().map(normalize_parent);
+    let target_parent = target.parent().map(normalize_parent);
     if stage_parent.is_none() || stage_parent != target_parent {
         return Err(VaultError::PasswordRotationRecoveryFailed {
             reason: "transaction stage is not a sibling of its target",
@@ -200,73 +170,340 @@ pub(crate) fn remove_file_durable(path: &Path) -> Result<(), VaultError> {
             })
         }
     }
-    let parent = path
-        .parent()
-        .ok_or(VaultError::PasswordRotationRecoveryFailed {
-            reason: "transaction artifact has no parent directory",
-        })?;
+    let parent =
+        path.parent()
+            .map(normalize_parent)
+            .ok_or(VaultError::PasswordRotationRecoveryFailed {
+                reason: "transaction artifact has no parent directory",
+            })?;
     sync_parent_dir(parent).map_err(|source| VaultError::Io {
         source,
         path: parent.to_path_buf(),
     })
 }
 
-fn new_temp_file(parent: &Path) -> Result<NamedTempFile, VaultError> {
-    TempFileBuilder::new()
-        .prefix(TEMP_PREFIX)
-        .tempfile_in(parent)
-        .map_err(|source| VaultError::Io {
-            source,
-            path: parent.to_path_buf(),
-        })
+fn normalize_parent(parent: &Path) -> &Path {
+    // A bare filename has an empty parent, which denotes the current
+    // directory but is not accepted by filesystem operations like read_dir.
+    if parent.as_os_str().is_empty() {
+        Path::new(".")
+    } else {
+        parent
+    }
 }
 
-fn cleanup_stale_temp_files(parent: &Path) -> Result<(), VaultError> {
-    for entry in std::fs::read_dir(parent).map_err(|source| VaultError::Io {
-        source,
-        path: parent.to_path_buf(),
-    })? {
-        let entry = entry.map_err(|source| VaultError::Io {
-            source,
-            path: parent.to_path_buf(),
+/// A live stage's marker stays locked until all its mutations finish.
+struct StageFiles {
+    name: OsString,
+    directory: File,
+    owner: File,
+    payload: File,
+}
+
+struct AtomicStage {
+    parent: File,
+    files: StageFiles,
+    finished: bool,
+}
+
+impl AtomicStage {
+    fn new(target: &Path) -> io::Result<Self> {
+        // Path::file_name normalizes trailing separators and `/.`. Those
+        // spellings require a directory in the original OS pathname and
+        // must never be reduced to a replaceable file basename.
+        let raw = target.as_os_str().as_bytes();
+        if target.file_name().is_none() || raw.ends_with(b"/") || raw.ends_with(b"/.") {
+            return Err(io::Error::new(
+                io::ErrorKind::InvalidInput,
+                "target has no filename",
+            ));
+        }
+        let parent_path = target.parent().map(normalize_parent).ok_or_else(|| {
+            io::Error::new(
+                io::ErrorKind::InvalidInput,
+                "target has no parent directory",
+            )
         })?;
-        if !entry.file_name().to_string_lossy().starts_with(TEMP_PREFIX) {
+        let parent = File::open(parent_path)?;
+        let guard = ParentGuard::new(&parent)?;
+        cleanup_stale_temp_files(&parent)?;
+        // Retain tempfile's exclusive random-name allocation/retry behavior;
+        // actual creation is descriptor-relative and directory-only.
+        let candidate = TempFileBuilder::new()
+            .prefix(TEMP_PREFIX)
+            .rand_bytes(16)
+            .disable_cleanup(true)
+            .make_in(parent_path, |path| {
+                let name = path.file_name().expect("generated filename").to_owned();
+                mkdirat(&parent, &name, Mode::RWXU)?;
+                let directory = open_directory(&parent, &name)?;
+                let mut owner = create_private_file(&directory, OWNER)?;
+                try_lock_exclusive(&owner).map_err(lock_error)?;
+                owner.write_all(OWNER_MARKER)?;
+                owner.sync_all()?;
+                directory.sync_all()?;
+                // No payload can be written before its durable ownership
+                // marker exists and is locked by this writer.
+                let payload = create_private_file(&directory, PAYLOAD)?;
+                Ok(StageFiles {
+                    name,
+                    directory,
+                    owner,
+                    payload,
+                })
+            });
+        if candidate.is_err() {
+            // A failure after marker establishment can already be reclaimed.
+            // Untagged empty setup artifacts remain unrecognized and untouched.
+            let _ = cleanup_stale_temp_files(&parent);
+        }
+        drop(guard);
+        let (files, unused_path) = candidate?.into_parts();
+        drop(unused_path); // disable_cleanup(true): deletion is descriptor-relative
+        Ok(Self {
+            parent,
+            files,
+            finished: false,
+        })
+    }
+
+    fn finish(&mut self) -> io::Result<()> {
+        // The live marker lock already excludes orphan cleanup. Finalizing
+        // our own descriptor-bound stage needs no parent-wide coordination;
+        // other writers can set up or finish their stages concurrently.
+        let cleanup = cleanup_open_stage(
+            &self.parent,
+            &self.files.name,
+            &self.files.directory,
+            &self.files.owner,
+            Some(&self.files.payload),
+        );
+        // Make the installed target durable even if source cleanup fails.
+        let durable = self.parent.sync_all();
+        cleanup?;
+        durable?;
+        self.finished = true;
+        Ok(())
+    }
+}
+
+impl Drop for AtomicStage {
+    fn drop(&mut self) {
+        if !self.finished {
+            let _ = self.finish();
+        }
+    }
+}
+
+/// Serializes orphan discovery and stage creation, never encryption.
+struct ParentGuard<'a>(&'a File);
+
+impl<'a> ParentGuard<'a> {
+    fn new(file: &'a File) -> io::Result<Self> {
+        lock_exclusive(file)?;
+        Ok(Self(file))
+    }
+}
+
+impl Drop for ParentGuard<'_> {
+    fn drop(&mut self) {
+        let _ = unlock_file(self.0);
+    }
+}
+
+fn open_directory(parent: &File, name: &OsStr) -> io::Result<File> {
+    Ok(openat(
+        parent,
+        name,
+        OFlags::RDONLY | OFlags::DIRECTORY | OFlags::NOFOLLOW | OFlags::CLOEXEC,
+        Mode::empty(),
+    )?
+    .into())
+}
+
+fn create_private_file(directory: &File, name: &str) -> io::Result<File> {
+    Ok(openat(
+        directory,
+        name,
+        OFlags::RDWR | OFlags::CREATE | OFlags::EXCL | OFlags::NOFOLLOW | OFlags::CLOEXEC,
+        Mode::RUSR | Mode::WUSR,
+    )?
+    .into())
+}
+
+fn open_regular_file(directory: &File, name: &str) -> io::Result<File> {
+    let metadata = statat(directory, name, AtFlags::SYMLINK_NOFOLLOW)?;
+    if FileType::from_raw_mode(metadata.st_mode) != FileType::RegularFile {
+        return Err(io::Error::new(
+            io::ErrorKind::InvalidData,
+            "stage child is not a regular file",
+        ));
+    }
+    // NONBLOCK also closes the type-check/open race for a substituted FIFO.
+    Ok(openat(
+        directory,
+        name,
+        OFlags::RDONLY | OFlags::NOFOLLOW | OFlags::NONBLOCK | OFlags::CLOEXEC,
+        Mode::empty(),
+    )?
+    .into())
+}
+
+fn private_directory(file: &File, uid: u32) -> io::Result<bool> {
+    let metadata = file.metadata()?;
+    Ok(metadata.is_dir()
+        && metadata.uid() == uid
+        && metadata.permissions().mode() & 0o7777 == 0o700)
+}
+
+fn private_file(file: &File, uid: u32) -> io::Result<bool> {
+    let metadata = file.metadata()?;
+    Ok(metadata.is_file()
+        && metadata.uid() == uid
+        && metadata.nlink() == 1
+        && metadata.permissions().mode() & 0o7777 == 0o600)
+}
+
+fn same_file(left: &File, right: &File) -> io::Result<bool> {
+    let left = left.metadata()?;
+    let right = right.metadata()?;
+    Ok(left.dev() == right.dev() && left.ino() == right.ino())
+}
+
+fn known_children(directory: &File) -> io::Result<bool> {
+    for entry in Dir::read_from(directory)? {
+        let entry = entry?;
+        if !matches!(
+            entry.file_name().to_bytes(),
+            b"." | b".." | b"owner" | b"payload"
+        ) {
+            return Ok(false);
+        }
+    }
+    Ok(true)
+}
+
+fn cleanup_stale_temp_files(parent: &File) -> io::Result<()> {
+    let uid = effective_uid();
+    for entry in Dir::read_from(parent)? {
+        let entry = entry?;
+        let name = OsStr::from_bytes(entry.file_name().to_bytes());
+        if !name.as_bytes().starts_with(TEMP_PREFIX.as_bytes()) {
             continue;
         }
-        let path = entry.path();
-        let file = match OpenOptions::new().read(true).write(true).open(&path) {
-            Ok(file) => file,
-            Err(source) if source.kind() == io::ErrorKind::NotFound => continue,
-            Err(source) => {
-                return Err(VaultError::Io { source, path });
-            }
+        // Ordinary files (including prefixed live vaults/keyfiles), links,
+        // inaccessible directories and untagged legacy objects are not ours.
+        let Ok(directory) = open_directory(parent, name) else {
+            continue;
         };
-        match file.try_lock() {
+        if !private_directory(&directory, uid)? {
+            continue;
+        }
+        let Ok(mut owner) = open_regular_file(&directory, OWNER) else {
+            continue;
+        };
+        if !private_file(&owner, uid)? || owner.metadata()?.len() != OWNER_MARKER.len() as u64 {
+            continue;
+        }
+        match try_lock_exclusive(&owner) {
             Ok(()) => {}
             Err(TryLockError::WouldBlock) => continue,
-            Err(TryLockError::Error(source)) => {
-                return Err(VaultError::Io { source, path });
-            }
+            Err(TryLockError::Error(error)) => return Err(error),
         }
-        std::fs::remove_file(&path).map_err(|source| VaultError::Io { source, path })?;
+        // A live writer may have finalized after our initial metadata check
+        // and before this lock was acquired. Its unlinked marker is no longer
+        // evidence that the named directory still needs reclaiming.
+        if !private_file(&owner, uid)? {
+            continue;
+        }
+        let Ok(named_owner) = open_regular_file(&directory, OWNER) else {
+            continue;
+        };
+        if !same_file(&named_owner, &owner)? {
+            continue;
+        }
+        let mut marker = [0; OWNER_MARKER.len()];
+        if owner.read_exact(&mut marker).is_err() || marker != OWNER_MARKER {
+            continue;
+        }
+        if !known_children(&directory)? {
+            continue;
+        }
+        let payload = match open_regular_file(&directory, PAYLOAD) {
+            Ok(file) if private_file(&file, uid)? => Some(file),
+            Err(error) if error.kind() == io::ErrorKind::NotFound => None,
+            _ => continue,
+        };
+        cleanup_open_stage(parent, name, &directory, &owner, payload.as_ref())?;
+        parent.sync_all()?;
     }
     Ok(())
 }
 
-fn lock_temp_file(temp: &NamedTempFile, target: &Path) -> Result<(), VaultError> {
-    try_lock_exclusive(temp.as_file()).map_err(|source| match source {
-        TryLockError::WouldBlock => VaultError::Io {
-            source: io::Error::new(
-                io::ErrorKind::WouldBlock,
-                "newly-created temp file unexpectedly locked",
-            ),
-            path: target.to_path_buf(),
-        },
-        TryLockError::Error(source) => VaultError::Io {
-            source,
-            path: target.to_path_buf(),
-        },
-    })
+fn remove_owned_child(directory: &File, name: &str, expected: Option<&File>) -> io::Result<()> {
+    let current = match open_regular_file(directory, name) {
+        Ok(file) => file,
+        Err(error) if error.kind() == io::ErrorKind::NotFound => return Ok(()),
+        Err(error) => return Err(error),
+    };
+    if !expected
+        .map(|file| same_file(&current, file))
+        .transpose()?
+        .unwrap_or(false)
+    {
+        return Err(io::Error::new(
+            io::ErrorKind::InvalidData,
+            "stage child identity changed",
+        ));
+    }
+    unlinkat(directory, name, AtFlags::empty())?;
+    Ok(())
+}
+
+fn cleanup_open_stage(
+    parent: &File,
+    name: &OsStr,
+    directory: &File,
+    owner: &File,
+    payload: Option<&File>,
+) -> io::Result<()> {
+    if !known_children(directory)? {
+        return Err(io::Error::new(
+            io::ErrorKind::InvalidData,
+            "unrecognized stage child",
+        ));
+    }
+    remove_owned_child(directory, PAYLOAD, payload)?;
+    remove_owned_child(directory, OWNER, Some(owner))?;
+    // Persist source-directory mutations before unlinking the empty stage.
+    directory.sync_all()?;
+    match open_directory(parent, name) {
+        Ok(named) if same_file(&named, directory)? => unlinkat(parent, name, AtFlags::REMOVEDIR)?,
+        Err(error) if error.kind() == io::ErrorKind::NotFound => {}
+        _ => {
+            return Err(io::Error::new(
+                io::ErrorKind::InvalidData,
+                "stage directory identity changed",
+            ))
+        }
+    }
+    Ok(())
+}
+
+fn lock_error(error: TryLockError) -> io::Error {
+    match error {
+        TryLockError::WouldBlock => io::Error::new(
+            io::ErrorKind::WouldBlock,
+            "new stage marker unexpectedly locked",
+        ),
+        TryLockError::Error(error) => error,
+    }
+}
+
+#[allow(unsafe_code)] // audited argument-free POSIX identity query
+fn effective_uid() -> u32 {
+    // SAFETY: geteuid has no arguments, pointers, or ownership effects.
+    unsafe { libc::geteuid() }
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -298,7 +535,11 @@ fn maybe_signal_fault_phase(target: &Path, phase: AtomicWritePhase) -> Result<()
     };
 
     if target != Path::new(&expected_target) {
-        return Ok(());
+        let expected = crate::locking::resolve_file_path(Path::new(&expected_target)).ok();
+        let actual = crate::locking::resolve_file_path(target).ok();
+        if expected.is_none() || expected != actual {
+            return Ok(());
+        }
     }
 
     if let Ok(signal_dir) = std::env::var(SIGNAL_DIR_ENV) {
@@ -512,6 +753,33 @@ mod tests {
             result.is_err(),
             "write_atomic should fail on missing parent dir"
         );
+    }
+
+    #[test]
+    fn directory_syntax_cannot_overwrite_a_file() {
+        let dir = tempfile::TempDir::new().unwrap();
+        let target = dir.path().join("stable.bin");
+        for suffix in ["/", "/.", "//", "/./"] {
+            for streaming in [false, true] {
+                fs::write(&target, b"original").unwrap();
+                let mut raw = target.as_os_str().to_owned();
+                raw.push(suffix);
+                let invalid = std::path::PathBuf::from(raw);
+                let result = if streaming {
+                    write_atomic_with(&invalid, |file| {
+                        file.write_all(b"unexpected")
+                            .map_err(|source| VaultError::Io {
+                                source,
+                                path: invalid.clone(),
+                            })
+                    })
+                } else {
+                    write_atomic(&invalid, b"unexpected")
+                };
+                assert!(result.is_err(), "directory syntax accepted: {invalid:?}");
+                assert_eq!(fs::read(&target).unwrap(), b"original");
+            }
+        }
     }
 
     fn read_bytes(path: &Path) -> Vec<u8> {

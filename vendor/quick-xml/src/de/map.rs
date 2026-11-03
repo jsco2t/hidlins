@@ -236,7 +236,11 @@ where
     #[inline]
     fn skip_whitespaces(&mut self) -> Result<(), DeError> {
         // TODO: respect the `xml:space` attribute and probably some deserialized type sign
-        self.de.skip_whitespaces()
+        if self.has_text_field {
+            Ok(())
+        } else {
+            self.de.skip_whitespaces()
+        }
     }
 }
 

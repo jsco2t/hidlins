@@ -10,6 +10,7 @@ import shutil
 import subprocess
 import tempfile
 import unittest
+from unittest.mock import patch
 
 
 ROOT = Path(__file__).resolve().parents[2]
@@ -20,6 +21,71 @@ if spec is None or spec.loader is None:
     raise RuntimeError(f"cannot load {VENDOR_SCRIPT}")
 vendor = importlib.util.module_from_spec(spec)
 spec.loader.exec_module(vendor)
+
+
+class KeepassPatchReplayTests(unittest.TestCase):
+    def test_string_value_patch_replays_from_original_annotation(self) -> None:
+        with tempfile.TemporaryDirectory(prefix="hidlins-keepass-patch-") as temporary:
+            vendor_dir = Path(temporary)
+            crate = vendor_dir / "keepass"
+            shutil.copytree(ROOT / "vendor" / "keepass", crate)
+            relative = Path("src/format/xml_db/entry.rs")
+            reviewed = (crate / relative).read_text()
+            prefix, block = reviewed.split("pub struct StringValue {", 1)
+            value, suffix = block.split("    value: Option<String>,", 1)
+            # Reconstruct this upstream annotation even when the committed
+            # tree already contains the reviewed fix. The other audited
+            # patches remain applied; no downloads are needed.
+            value = value.replace('rename = "$text"', 'rename = "$value"', 1)
+            if 'with = "cs_opt_string"' not in value:
+                value = value.replace(
+                    '        rename = "$value",\n',
+                    '        rename = "$value",\n        with = "cs_opt_string",\n',
+                    1,
+                )
+            (crate / relative).write_text(
+                prefix + "pub struct StringValue {" + value
+                + "    value: Option<String>," + suffix
+            )
+            with patch.object(vendor, "VENDOR", vendor_dir):
+                vendor.patch_keepass()
+                self.assertEqual((crate / relative).read_text(), reviewed)
+                first = {
+                    path.relative_to(crate): path.read_bytes()
+                    for path in crate.rglob("*") if path.is_file()
+                }
+                vendor.patch_keepass()
+                second = {
+                    path.relative_to(crate): path.read_bytes()
+                    for path in crate.rglob("*") if path.is_file()
+                }
+                self.assertEqual(first, second)
+
+
+class QuickXmlTextPatchReplayTests(unittest.TestCase):
+    def test_text_map_patch_replays_and_preserves_other_bytes(self) -> None:
+        with tempfile.TemporaryDirectory(prefix="hidlins-xml-patch-") as temporary:
+            vendor_dir = Path(temporary)
+            crate = vendor_dir / "quick-xml"
+            shutil.copytree(ROOT / "vendor" / "quick-xml", crate)
+            source = crate / "src/de/map.rs"
+            reviewed = source.read_bytes()
+            fixed = (
+                b"        if self.has_text_field {\r\n"
+                b"            Ok(())\r\n"
+                b"        } else {\r\n"
+                b"            self.de.skip_whitespaces()\r\n"
+                b"        }\r\n"
+            )
+            original = b"        self.de.skip_whitespaces()\r\n"
+            source.write_bytes(reviewed.replace(fixed, original, 1))
+            with patch.object(vendor, "VENDOR", vendor_dir):
+                vendor.patch_quick_xml()
+                self.assertEqual(source.read_bytes(), reviewed)
+                first = (crate / ".cargo-checksum.json").read_bytes()
+                vendor.patch_quick_xml()
+                self.assertEqual(source.read_bytes(), reviewed)
+                self.assertEqual((crate / ".cargo-checksum.json").read_bytes(), first)
 
 
 class SnowPatchGuardTests(unittest.TestCase):

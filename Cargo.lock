@@ -1556,6 +1556,7 @@ dependencies = [
  "keepass",
  "libc",
  "rust-argon2",
+ "rustix",
  "serde",
  "sha1",
  "sha2 0.11.0",
