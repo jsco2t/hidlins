@@ -12,6 +12,7 @@ import subprocess
 import sys
 import tempfile
 import unittest
+from unittest import mock
 
 import select_simulators
 
@@ -19,6 +20,11 @@ ROOT = Path(__file__).resolve().parents[2]
 
 
 class IntegrationHarnessTests(unittest.TestCase):
+    def test_sdk_fixtures_ignore_the_parent_full_scenario_flag(self) -> None:
+        with mock.patch.dict(os.environ, HIDLINS_MOBILE_SYNC_SCENARIOS='1'):
+            self.run_vm_fixture(expected=0)
+            self.assertEqual(os.environ['HIDLINS_MOBILE_SYNC_SCENARIOS'], '1')
+
     def test_vm_attach_does_not_require_a_unified_log_notification(self) -> None:
         self.run_vm_fixture(expected=0)
 
@@ -84,6 +90,8 @@ elif action == 'terminate':
 from pathlib import Path
 with open(os.environ['TEST_LOG'], 'a') as log:
     log.write(json.dumps(['flutter', *sys.argv[1:]]) + '\\n')
+if os.environ.get('HIDLINS_MOBILE_SYNC_SCENARIOS') == '1':
+    sys.exit(37)  # SDK fixtures must never enter the real CLI-authority journey.
 if sys.argv[1] == 'test':
     with socket.socket() as listener:
         listener.bind(('127.0.0.1', 0))
@@ -110,6 +118,9 @@ elif sys.argv[1] == 'drive':
                        TEST_UNAVAILABLE=str(int(unavailable)),
                        TEST_VM_TYPE=vm_type,
                        TEST_DRIVER_STATUS=str(driver_status), TEST_BUILD_STATUS=str(build_status),
+                       # The real mobile gate sets this on its nested make.
+                       # These SDK fixtures cover UI/bridge orchestration only.
+                       HIDLINS_MOBILE_SYNC_SCENARIOS='0',
                        HIDLINS_IOS_TEST_TIMEOUT_SECONDS='2' if expected == 124 else '8')
             process = subprocess.Popen(['bash', str(ROOT / 'tools/ios-native/integration.sh')],
                                        env=env, text=True, stdout=subprocess.PIPE,
