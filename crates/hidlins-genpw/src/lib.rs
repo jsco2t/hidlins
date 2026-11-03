@@ -95,6 +95,10 @@ mod password;
 mod sampling;
 mod wordlist;
 
+#[cfg(test)]
+#[path = "test_support/entropy_allocator.rs"]
+mod entropy_allocator;
+
 pub use charset::{CharSet, AMBIGUOUS_CHARS};
 pub use error::GenError;
 pub use passphrase::{default_passphrase, PassphraseBuilder, DEFAULT_SEPARATOR, DEFAULT_WORDS};

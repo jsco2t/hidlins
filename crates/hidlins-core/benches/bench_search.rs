@@ -33,6 +33,21 @@ fn main() {
         .collect();
     let matcher_samples = sample_matcher(&matcher_candidates, "entry");
     print_summary("bench_fuzzy_matcher_5k", &matcher_samples);
+
+    // Exercise UTF-8-growing lowercase mappings in real secure-note fields,
+    // not just the ASCII corpus. Keep the same 5,000-entry / 50ms contract.
+    let mut unicode_db = Database::new();
+    for _ in 0..5_000 {
+        unicode_db.root_mut().add_entry().edit(|entry| {
+            entry.set_unprotected(fields::TITLE, "Unicode fixture");
+            entry.set_unprotected(fields::NOTES, "İȺȾ".repeat(40));
+        });
+    }
+    let unicode = SearchBenchFixture::new(unicode_db);
+    let samples = sample_search(&unicode.vault, || SearchOptions::new("ⱥ"));
+    print_summary("bench_search_5k_unicode_substring", &samples);
+    let samples = sample_search(&unicode.vault, || SearchOptions::new("*ⱦ*").wildcard(true));
+    print_summary("bench_search_5k_unicode_wildcard", &samples);
 }
 
 fn sample_matcher(candidates: &[String], query: &str) -> Vec<Duration> {

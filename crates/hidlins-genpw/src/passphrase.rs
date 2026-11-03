@@ -87,6 +87,13 @@ impl PassphraseBuilder {
     /// A [`GenError::Csprng`] is propagated if the platform CSPRNG
     /// fails.
     pub fn generate(&self) -> Result<Zeroizing<String>, GenError> {
+        self.generate_with_entropy(getrandom::fill)
+    }
+
+    fn generate_with_entropy(
+        &self,
+        fill: impl FnOnce(&mut [u8]) -> Result<(), getrandom::Error>,
+    ) -> Result<Zeroizing<String>, GenError> {
         self.validate()?;
 
         // Worst case: one 4-byte draw per word, plus rejection-loop
@@ -97,12 +104,10 @@ impl PassphraseBuilder {
             .words
             .saturating_add(OVERSAMPLE)
             .saturating_mul(BYTES_PER_DRAW);
-        let mut bytes = vec![0u8; needed];
-        getrandom::fill(&mut bytes)?;
+        let mut bytes = Zeroizing::new(vec![0u8; needed]);
+        fill(&mut bytes)?;
 
-        let result = self.generate_from_bytes(&bytes);
-        bytes.fill(0); // best-effort: scrub the entropy buffer
-        result
+        self.generate_from_bytes(&bytes)
     }
 
     fn validate(&self) -> Result<(), GenError> {
@@ -126,12 +131,32 @@ impl PassphraseBuilder {
 
         let wordlist = eff_large_wordlist();
         let mut cursor = ByteCursor::new(bytes);
-        let mut chosen: Vec<&'static str> = Vec::with_capacity(self.words);
+        let mut chosen = Zeroizing::new(Vec::with_capacity(self.words));
         for _ in 0..self.words {
             let idx = cursor.uniform_index(wordlist.len())?;
-            chosen.push(wordlist[idx]);
+            chosen.push(idx);
         }
-        Ok(Zeroizing::new(chosen.join(&self.separator)))
+        // Determine the complete byte length before copying any secret text,
+        // so growing the output cannot release an unwiped intermediate buffer.
+        let separators = self
+            .separator
+            .len()
+            .checked_mul(self.words - 1)
+            .expect("passphrase length overflow");
+        let length = chosen
+            .iter()
+            .try_fold(separators, |length, &index| {
+                length.checked_add(wordlist[index].len())
+            })
+            .expect("passphrase length overflow");
+        let mut passphrase = Zeroizing::new(String::with_capacity(length));
+        for (position, &index) in chosen.iter().enumerate() {
+            if position != 0 {
+                passphrase.push_str(&self.separator);
+            }
+            passphrase.push_str(wordlist[index]);
+        }
+        Ok(passphrase)
     }
 }
 
@@ -139,6 +164,10 @@ impl PassphraseBuilder {
 pub fn default_passphrase() -> Result<Zeroizing<String>, GenError> {
     PassphraseBuilder::new().generate()
 }
+
+#[cfg(test)]
+#[path = "test_support/passphrase_entropy.rs"]
+mod entropy_memory;
 
 #[cfg(test)]
 mod tests {

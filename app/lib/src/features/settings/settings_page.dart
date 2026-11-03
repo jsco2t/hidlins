@@ -2,6 +2,7 @@ import 'package:material_ui/material_ui.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 
 import '../../l10n/app_localizations.dart';
+import '../../licenses.dart';
 import '../../providers/providers.dart';
 import '../../ui/tokens.dart';
 import '../../ui/widgets/brand_mark.dart';
@@ -104,11 +105,14 @@ class SettingsPage extends ConsumerWidget {
                 leading: const Icon(Icons.description_outlined),
                 title: Text(l10n.settingsLicenses),
                 trailing: const Icon(Icons.chevron_right),
-                onTap: () => showLicensePage(
-                  context: context,
-                  applicationName: l10n.appTitle,
-                  applicationIcon: const BrandMark(size: 64),
-                ),
+                onTap: () {
+                  registerHidlinsAssetLicenses();
+                  showLicensePage(
+                    context: context,
+                    applicationName: l10n.appTitle,
+                    applicationIcon: const BrandMark(size: 64),
+                  );
+                },
               ),
             ],
           ),

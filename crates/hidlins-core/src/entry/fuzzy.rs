@@ -26,6 +26,8 @@
 //!   `Some(FuzzyMatch { score: 0, indices: [] })` — the browse-mode contract the
 //!   search overlay (T4.2) relies on, where an empty query lists everything.
 
+use zeroize::Zeroizing;
+
 /// Scoring constants (fzf-v2 model). One block so tuning is a one-line diff; the
 /// `GOLDEN_PAIRS` test names the property each governs.
 mod scoring {
@@ -118,14 +120,18 @@ fn is_subsequence(needle: &[char], haystack: &[char]) -> bool {
 /// simple full-matrix form is expected to remain within the NFR-002 budget;
 /// T4.1 adds the 5,000-entry benchmark gate that verifies it end to end.
 pub fn fuzzy_match(needle: &str, haystack: &str) -> Option<FuzzyMatch> {
-    let n_chars: Vec<char> = needle.chars().collect();
+    // These copies can contain secure-note text. Reserve their final size to
+    // avoid releasing plaintext through an intermediate growth allocation.
+    let mut n_chars = Zeroizing::new(Vec::with_capacity(needle.chars().count()));
+    n_chars.extend(needle.chars());
     if n_chars.is_empty() {
         return Some(FuzzyMatch {
             score: 0,
             indices: Vec::new(),
         });
     }
-    let h_chars: Vec<char> = haystack.chars().collect();
+    let mut h_chars = Zeroizing::new(Vec::with_capacity(haystack.chars().count()));
+    h_chars.extend(haystack.chars());
     if !is_subsequence(&n_chars, &h_chars) {
         return None;
     }

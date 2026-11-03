@@ -24,6 +24,33 @@ spec.loader.exec_module(vendor)
 
 
 class KeepassPatchReplayTests(unittest.TestCase):
+    def test_value_erasure_patch_replays_and_preserves_other_bytes(self) -> None:
+        with tempfile.TemporaryDirectory(prefix="hidlins-value-drop-patch-") as temporary:
+            vendor_dir = Path(temporary)
+            crate = vendor_dir / "keepass"
+            shutil.copytree(ROOT / "vendor" / "keepass", crate)
+            source = crate / "src/db/types/value.rs"
+            reviewed = source.read_text()
+            marker = "// Hidlins: wipe owned unprotected values"
+            original = reviewed.replace(
+                "use zeroize::{Zeroize, ZeroizeOnDrop};", "use zeroize::Zeroize;"
+            )
+            if marker in original:
+                prefix, block = original.split(marker, 1)
+                _, suffix = block.split("impl<T: Zeroize + Display>", 1)
+                original = prefix + "impl<T: Zeroize + Display>" + suffix
+            source.write_text(original)
+            with patch.object(vendor, "VENDOR", vendor_dir):
+                vendor.patch_keepass()
+                replayed = source.read_text()
+                self.assertIn("ZeroizeOnDrop for Value<T>", replayed)
+                if marker in reviewed:
+                    self.assertEqual(replayed, reviewed)
+                first = (crate / ".cargo-checksum.json").read_bytes()
+                vendor.patch_keepass()
+                self.assertEqual(source.read_text(), replayed)
+                self.assertEqual((crate / ".cargo-checksum.json").read_bytes(), first)
+
     def test_string_value_patch_replays_from_original_annotation(self) -> None:
         with tempfile.TemporaryDirectory(prefix="hidlins-keepass-patch-") as temporary:
             vendor_dir = Path(temporary)

@@ -287,8 +287,9 @@ fn populate_entry_from_draft(entry: &mut keepass::db::EntryMut<'_>, draft: Entry
     if let Some(url) = draft.url {
         entry.set_unprotected(fields::URL, url);
     }
-    if let Some(notes) = draft.notes {
-        entry.set_unprotected(fields::NOTES, notes);
+    if let Some(mut notes) = draft.notes {
+        // Transfer the owned buffer without an additional plaintext copy.
+        entry.set_unprotected(fields::NOTES, std::mem::take(&mut *notes));
     }
     if let Some(expires_at) = draft.expires_at {
         entry.times.expires = Some(true);

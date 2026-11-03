@@ -97,6 +97,13 @@ impl PasswordBuilder {
     /// delegates to `generate_from_bytes` for the algorithm. A
     /// `GenError::Csprng` is propagated if the platform CSPRNG fails.
     pub fn generate(&self) -> Result<Zeroizing<String>, GenError> {
+        self.generate_with_entropy(getrandom::fill)
+    }
+
+    fn generate_with_entropy(
+        &self,
+        fill: impl FnOnce(&mut [u8]) -> Result<(), getrandom::Error>,
+    ) -> Result<Zeroizing<String>, GenError> {
         // Validate first so we don't pull entropy we won't use.
         self.validate()?;
 
@@ -111,12 +118,10 @@ impl PasswordBuilder {
             .saturating_mul(2)
             .saturating_add(OVERSAMPLE)
             .saturating_mul(BYTES_PER_DRAW);
-        let mut bytes = vec![0u8; needed];
-        getrandom::fill(&mut bytes)?;
+        let mut bytes = Zeroizing::new(vec![0u8; needed]);
+        fill(&mut bytes)?;
 
-        let result = self.generate_from_bytes(&bytes);
-        bytes.fill(0); // best-effort: scrub the entropy buffer
-        result
+        self.generate_from_bytes(&bytes)
     }
 
     /// Validate knob values without consuming entropy.
@@ -165,7 +170,7 @@ impl PasswordBuilder {
         }
 
         let mut cursor = ByteCursor::new(bytes);
-        let mut out: Vec<char> = Vec::with_capacity(self.length);
+        let mut out = Zeroizing::new(Vec::with_capacity(self.length));
 
         // Reserve: one char from each enabled class's filtered alphabet.
         for (_, class_chars) in self.classes.enabled_classes(self.exclude_ambiguous) {
@@ -192,7 +197,9 @@ impl PasswordBuilder {
             out.swap(i, j);
         }
 
-        Ok(Zeroizing::new(out.into_iter().collect()))
+        let mut password = Zeroizing::new(String::with_capacity(self.length));
+        password.extend(out.iter().copied());
+        Ok(password)
     }
 }
 
@@ -200,6 +207,10 @@ impl PasswordBuilder {
 pub fn default_password() -> Result<Zeroizing<String>, GenError> {
     PasswordBuilder::new().generate()
 }
+
+#[cfg(test)]
+#[path = "test_support/password_entropy.rs"]
+mod entropy_memory;
 
 #[cfg(test)]
 #[allow(unsafe_code)] // volatile-read zeroize verification — mirrors hidlins-core::secret pattern

@@ -26,11 +26,15 @@ pub const BANNER: &str = r"
 /// with a stderr warning. Documented as reserved.
 pub const MASTER_PASSWORD_ENV_VAR: &str = "HIDLINS_MASTER_PASSWORD";
 
-const AFTER_HELP: &str = "\
+const AFTER_HELP: &str = concat!(
+    "\
 Master password is collected via a secure stdin prompt (no echo). The \
 HIDLINS_MASTER_PASSWORD environment variable, if set, is ignored and \
 removed from the process environment at startup. There is no \
---master-password flag by design.";
+--master-password flag by design.",
+    "\n\n",
+    include_str!("../../hidlins-genpw/LICENSES/EFF-wordlist-NOTICE.txt")
+);
 
 /// Top-level `hidlins` command.
 #[derive(Parser, Debug)]

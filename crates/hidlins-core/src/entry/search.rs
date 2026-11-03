@@ -14,6 +14,7 @@
 
 use keepass::db::{fields, EntryRef};
 use keepass::Database;
+use zeroize::Zeroizing;
 
 use crate::entry::crud::is_entry_in_recycle_bin;
 use crate::entry::fuzzy::fuzzy_match;
@@ -378,30 +379,112 @@ fn collect_group_ids(
 }
 
 enum Matcher {
-    Substring { needle: String },
-    Wildcard { pattern: Vec<char> },
+    Substring { needle: Zeroizing<String> },
+    Wildcard { pattern: Zeroizing<Vec<char>> },
 }
 
 impl Matcher {
     fn new(query: &str, mode: SearchMode) -> Self {
+        let lowercase = lowercase_sensitive(query);
         match mode {
-            SearchMode::Substring | SearchMode::Fuzzy => Self::Substring {
-                needle: query.to_lowercase(),
-            },
-            SearchMode::Wildcard => Self::Wildcard {
-                pattern: query.to_lowercase().chars().collect(),
-            },
+            SearchMode::Substring | SearchMode::Fuzzy => Self::Substring { needle: lowercase },
+            SearchMode::Wildcard => {
+                let mut pattern = Zeroizing::new(Vec::with_capacity(lowercase.chars().count()));
+                pattern.extend(lowercase.chars());
+                Self::Wildcard { pattern }
+            }
         }
     }
 
     fn is_match(&self, value: &str) -> bool {
         match self {
-            Self::Substring { needle } => value.to_lowercase().contains(needle.as_str()),
+            Self::Substring { needle } => lowercase_sensitive(value).contains(needle.as_str()),
             Self::Wildcard { pattern } => {
-                let value: Vec<char> = value.to_lowercase().chars().collect();
-                wildcard_match(pattern, &value)
+                let lowercase = lowercase_sensitive(value);
+                // Reserve the complete copy so growing it cannot release an
+                // earlier plaintext allocation before the zeroizing drop.
+                let mut folded = Zeroizing::new(Vec::with_capacity(lowercase.chars().count()));
+                folded.extend(lowercase.chars());
+                // Keep whole-string casing (including Greek final sigma),
+                // but do not let '?' consume just part of an expanded scalar.
+                // ASCII and non-expanding Unicode need no boundary allocation.
+                let mut boundaries = Vec::new();
+                if !value.is_ascii() {
+                    let mut position = 0;
+                    for scalar in value.chars() {
+                        let width = scalar.to_lowercase().count();
+                        if width > 1 {
+                            if boundaries.is_empty() {
+                                boundaries = vec![true; folded.len() + 1];
+                            }
+                            boundaries[position + 1..position + width].fill(false);
+                        }
+                        position += width;
+                    }
+                }
+                if boundaries.is_empty() {
+                    wildcard_match(pattern, &folded)
+                } else {
+                    wildcard_match_with_boundaries(pattern, &folded, &boundaries)
+                }
             }
         }
+    }
+}
+
+/// Keep normalization allocations zeroizing even when UTF-8 output grows.
+fn lowercase_sensitive(value: &str) -> Zeroizing<String> {
+    if value.is_ascii() {
+        return Zeroizing::new(value.to_ascii_lowercase());
+    }
+    let grows = value
+        .chars()
+        .any(|scalar| scalar.to_lowercase().map(char::len_utf8).sum::<usize>() > scalar.len_utf8());
+    if !grows {
+        // Std reserves the input byte length; none of these mappings grows.
+        return Zeroizing::new(value.to_lowercase());
+    }
+
+    // The exhaustive compiler-Unicode invariant test below pins this bound:
+    // every scalar's lowercase UTF-8 output fits twice its input byte length.
+    // Reserving once avoids releasing any intermediate plaintext allocation.
+    let capacity = value
+        .len()
+        .checked_mul(2)
+        .expect("lowercase input too large");
+    let mut lowercase = Zeroizing::new(String::with_capacity(capacity));
+    if !value.contains('Σ') {
+        for scalar in value.chars() {
+            // Avoid repeated Unicode-table lookups for the byte-growing
+            // mappings that selected this path. The exhaustive casing oracle
+            // checks these against std; every other scalar keeps std's mapping.
+            match scalar {
+                'İ' => lowercase.push_str("i\u{307}"),
+                'Ⱥ' => lowercase.push('ⱥ'),
+                'Ⱦ' => lowercase.push('ⱦ'),
+                _ => lowercase.extend(scalar.to_lowercase()),
+            }
+        }
+        return lowercase;
+    }
+    let mut contextual_sigma = false;
+    for scalar in value.chars() {
+        let mapped = scalar.to_lowercase();
+        if scalar == 'Σ' {
+            contextual_sigma = true;
+            lowercase.push(scalar);
+        } else {
+            for mapped in mapped {
+                lowercase.push(mapped);
+            }
+        }
+    }
+    if contextual_sigma {
+        // Lowercasing the other letters preserves cased/ignorable context.
+        // Only sigma still needs std's contextual mapping, which cannot grow.
+        Zeroizing::new(lowercase.to_lowercase())
+    } else {
+        lowercase
     }
 }
 
@@ -412,6 +495,10 @@ impl Matcher {
 /// typical inputs and O(n*m) worst case, well within budget for the
 /// 5,000-entry / ≤200-char field workload search is benchmarked against.
 fn wildcard_match(pattern: &[char], value: &[char]) -> bool {
+    wildcard_match_with_boundaries(pattern, value, &[])
+}
+
+fn wildcard_match_with_boundaries(pattern: &[char], value: &[char], boundaries: &[bool]) -> bool {
     let mut p = 0;
     let mut v = 0;
     let mut star_p: Option<usize> = None;
@@ -422,7 +509,16 @@ fn wildcard_match(pattern: &[char], value: &[char]) -> bool {
             star_p = Some(p);
             star_v = v;
             p += 1;
-        } else if p < pattern.len() && (pattern[p] == '?' || pattern[p] == value[v]) {
+        } else if p < pattern.len()
+            && pattern[p] == '?'
+            && boundaries.get(v).copied().unwrap_or(true)
+        {
+            p += 1;
+            v += 1;
+            while boundaries.get(v) == Some(&false) {
+                v += 1;
+            }
+        } else if p < pattern.len() && pattern[p] == value[v] {
             p += 1;
             v += 1;
         } else if let Some(saved) = star_p {
@@ -597,6 +693,17 @@ mod tests {
     use keepass::db::Value;
 
     use super::*;
+
+    #[test]
+    fn current_unicode_lowercase_fits_double_utf8_capacity() {
+        // This exhaustive compiler-data invariant permits one reservation
+        // without an unwiped intermediate String growth allocation. A future
+        // Unicode/toolchain mapping change must fail this gate before shipping.
+        for scalar in (0..=0x0010_ffff).filter_map(char::from_u32) {
+            let mapped = scalar.to_lowercase().map(char::len_utf8).sum::<usize>();
+            assert!(mapped <= scalar.len_utf8() * 2);
+        }
+    }
 
     fn search_db() -> (Database, uuid::Uuid, uuid::Uuid) {
         let mut db = Database::new();

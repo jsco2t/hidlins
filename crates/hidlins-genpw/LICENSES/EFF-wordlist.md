@@ -12,35 +12,38 @@
 
 ## License status
 
-The Electronic Frontier Foundation (EFF) published this wordlist in July 2016
-specifically for use in password / passphrase generators. The accompanying
-article explicitly states EFF's intent that the wordlist be freely reused.
-Lists of common-English words are not copyrightable under U.S. law (lists of
-facts / non-creative compilations).
+**Retained under:** Creative Commons Attribution 4.0 International
+([CC-BY-4.0](https://creativecommons.org/licenses/by/4.0/)).
+**Terms checked:** 2026-11-03.
 
-The most conservative interpretation consistent with Hidlins's supply-chain
-policy (`kb/supply-chain-policy.md`) is to treat this file as effectively
-public-domain or CC0-1.0 equivalent. CC0-1.0 is on Hidlins's permissive-license
-allow-list (`deny.toml`).
+[EFF's copyright policy](https://www.eff.org/copyright) licenses original EFF
+website material under CC-BY-4.0 unless otherwise noted. We apply that general
+grant to this original EFF wordlist; its plain-text download has no separate
+license header. The linked source and article did not establish a separate
+CC0 or public-domain grant. Reuse intent alone does not establish such a grant.
 
-This file is **not** part of the Cargo dependency graph; it is an embedded
-asset compiled into the binary via `include_str!`. `cargo deny`'s license
-review does not apply to it. This document is the project's record of due
-diligence — checked into the repository alongside the asset itself.
+The operator approved an exception on 2026-11-03 solely for the exact embedded
+non-code asset identified by the SHA-256 above. All code dependency license
+rules remain unchanged. The repository's MIT license does not relicense this
+asset. This exception permits no replacement bytes or additional assets.
+
+[EFF-wordlist-NOTICE.txt](EFF-wordlist-NOTICE.txt) preserves attribution to
+Joseph Bonneau and the Electronic Frontier Foundation, the source and license
+links, and the fact that our copy is unmodified. CLI and TUI binaries include
+this notice in their help output. Flutter bundles the identical text and shows
+it under “EFF Large Wordlist” on the existing Open source licenses page on all
+platforms.
+
+The wordlist is an embedded asset outside Cargo's dependency graph;
+`cargo deny` does not establish its license or check its notices.
 
 ## Verification
 
-To verify the embedded file matches the canonical EFF release:
+Run `make asset-license-check` to verify the full canonical wordlist digest,
+exact exception, attribution, identical packaged Flutter notice, and
+exclusion of CC-BY-4.0 from Cargo license allow-lists, including negative controls. `make verify` and
+`make release` include this check. The generator's unit tests also preserve
+word count, ordering endpoints, uniqueness and the supported character profile.
 
-    sha256sum crates/hidlins-genpw/src/assets/eff_large_wordlist.txt
-
-The output must match the SHA-256 listed above. A mismatch indicates either
-the EFF has updated the file (extremely unlikely; it has been stable since
-the original July 2016 release) or the embedded asset has been altered.
-Either case requires PR review and an update to this provenance document.
-
-The crate also contains an automated test
-(`crates/hidlins-genpw/src/wordlist.rs::tests::first_and_last_words_match_canonical_eff_list`)
-that fails fast if the embedded asset is swapped for a different wordlist —
-e.g., the smaller EFF short list (1,296 words) — without going through this
-provenance update path.
+Any wordlist change requires new review and authorization; updating the hash
+to accept replacement bytes does not fall under this exact-asset exception.

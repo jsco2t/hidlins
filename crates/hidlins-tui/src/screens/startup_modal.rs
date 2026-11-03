@@ -8,22 +8,17 @@ use ratatui::Frame;
 
 use crate::app::{App, OnboardingOrigin, Phase, UnlockOrigin, MAX_UNLOCK_ATTEMPTS};
 
-/// The requested decorative mark. Keep these twelve rows byte-for-byte.
-pub(crate) const HIDLINS_STARTUP_ART: &str = r"         ▄▄▄▄▄▄▄
-       ▄██▀▀▀▀▀██▄
-       ██       ██
-       ██       ██
-  ╔════██═══════██════╗
-  ║  ┌─────────────┐  ║
-  ║  │o  HIDLINS  o│  ║
-  ║  └─────────────┘  ║
-  ║       ▄▄▄▄▄       ║
-  ║         █         ║
-  ║       ▄▄█▄▄       ║
-  ╚═══════════════════╝";
+/// Compact padlock with an H cut out of the body. Preserve the spaces.
+pub(crate) const HIDLINS_STARTUP_ART: &str = "  ▄███▄
+  █   █
+█████████
+███ █ ███
+███   ███
+███ █ ███
+▀▀▀▀▀▀▀▀▀";
 
-const ART_WIDTH: u16 = 23;
-const ART_HEIGHT: u16 = 12;
+const ART_WIDTH: u16 = 9;
+const ART_HEIGHT: u16 = 7;
 const FULL_MODAL_HEIGHT: u16 = 15;
 const FULL_MODAL_MAX_WIDTH: u16 = 76;
 const COMPACT_MODAL_MAX_WIDTH: u16 = 56;
@@ -308,8 +303,13 @@ mod tests {
     use crate::test_support::{configured_app, onboarding_app, type_text};
 
     #[test]
-    fn decorative_art_is_twelve_rows_with_the_declared_display_geometry() {
+    fn decorative_art_is_nine_columns_by_seven_rows_with_the_declared_display_geometry() {
         let rows: Vec<_> = HIDLINS_STARTUP_ART.lines().collect();
+        assert_eq!(rows.len(), 7);
+        assert_eq!(
+            rows.iter().map(|row| UnicodeWidthStr::width(*row)).max(),
+            Some(9)
+        );
         assert_eq!(rows.len(), ART_HEIGHT as usize);
         assert_eq!(
             rows.iter().map(|row| UnicodeWidthStr::width(*row)).max(),

@@ -1,7 +1,7 @@
 use std::{fmt::Display, ops::Deref};
 
 use secrecy::{ExposeSecret, SecretBox};
-use zeroize::Zeroize;
+use zeroize::{Zeroize, ZeroizeOnDrop};
 
 /// Value in an [Entry][crate::db::Entry]'s fields or an [Attachment][crate::db::Attachment]'s data
 ///
@@ -14,6 +14,18 @@ pub enum Value<T: Zeroize> {
     /// protected data
     Protected(SecretBox<T>),
 }
+
+// Hidlins: wipe owned unprotected values without changing KDBX protection flags.
+impl<T: Zeroize> Drop for Value<T> {
+    fn drop(&mut self) {
+        if let Value::Unprotected(data) = self {
+            data.zeroize();
+        }
+        // Protected values are wiped by SecretBox's own destructor.
+    }
+}
+
+impl<T: Zeroize> ZeroizeOnDrop for Value<T> {}
 
 impl<T: Zeroize + Display> std::fmt::Display for Value<T> {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {

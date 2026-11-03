@@ -174,7 +174,8 @@ fn version_text() -> String {
 }
 
 fn help_text() -> String {
-    "\
+    concat!(
+        "\
 hidlins-tui — the Hidlins terminal UI
 
 USAGE:
@@ -197,7 +198,10 @@ Mouse: click to select/focus, click a tab to switch, wheel to scroll. Mouse is
 an accelerator only — every action has a keyboard equivalent. Hold Shift while
 dragging to bypass capture and use your terminal's native text selection/copy;
 `--no-mouse` (or `mouse = false` in config.toml) disables capture entirely.
-"
+",
+        "\n",
+        include_str!("../../hidlins-genpw/LICENSES/EFF-wordlist-NOTICE.txt")
+    )
     .to_string()
 }
 

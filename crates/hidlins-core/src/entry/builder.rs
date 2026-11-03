@@ -28,7 +28,7 @@ pub struct EntryBuilder {
     username: Option<String>,
     password: Option<Zeroizing<String>>,
     url: Option<String>,
-    notes: Option<String>,
+    notes: Option<Zeroizing<String>>,
     tags: Vec<Tag>,
     expires_at: Option<DateTime<Utc>>,
     custom_fields: Vec<CustomFieldDraft>,
@@ -44,7 +44,7 @@ pub struct EntryDraft {
     pub(crate) username: Option<String>,
     pub(crate) password: Option<Zeroizing<String>>,
     pub(crate) url: Option<String>,
-    pub(crate) notes: Option<String>,
+    pub(crate) notes: Option<Zeroizing<String>>,
     pub(crate) tags: Vec<Tag>,
     pub(crate) expires_at: Option<DateTime<Utc>>,
     pub(crate) custom_fields: Vec<CustomFieldDraft>,
@@ -61,7 +61,7 @@ pub(crate) struct CustomFieldDraft {
 // Manual `Debug` impls: `Zeroizing<String>`'s derived `Debug` is
 // transparent, and drafts are `pub` API types — a `dbg!`, panic message,
 // or error-context format of a draft must never print the password, the
-// otpauth URI (it embeds the TOTP seed), or protected custom-field
+// note body, otpauth URI (it embeds the TOTP seed), or protected custom-field
 // values. Mirrors `MasterPassword`/`Keyfile` in `secret.rs`.
 
 impl fmt::Debug for EntryBuilder {
@@ -72,7 +72,7 @@ impl fmt::Debug for EntryBuilder {
             .field("username", &self.username)
             .field("password", &self.password.as_ref().map(|_| "***"))
             .field("url", &self.url)
-            .field("notes", &self.notes)
+            .field("notes", &self.notes.as_ref().map(|_| "***"))
             .field("tags", &self.tags)
             .field("expires_at", &self.expires_at)
             .field("custom_fields", &self.custom_fields)
@@ -89,7 +89,7 @@ impl fmt::Debug for EntryDraft {
             .field("username", &self.username)
             .field("password", &self.password.as_ref().map(|_| "***"))
             .field("url", &self.url)
-            .field("notes", &self.notes)
+            .field("notes", &self.notes.as_ref().map(|_| "***"))
             .field("tags", &self.tags)
             .field("expires_at", &self.expires_at)
             .field("custom_fields", &self.custom_fields)
@@ -168,7 +168,7 @@ impl EntryBuilder {
 
     /// Set the notes field.
     pub fn notes(mut self, value: impl Into<String>) -> Self {
-        self.notes = Some(value.into());
+        self.notes = Some(Zeroizing::new(value.into()));
         self
     }
 
@@ -255,7 +255,7 @@ impl EntryDraft {
 
     /// Return the notes when present.
     pub fn notes(&self) -> Option<&str> {
-        self.notes.as_deref()
+        self.notes.as_deref().map(String::as_str)
     }
 
     /// Return tags on the draft.

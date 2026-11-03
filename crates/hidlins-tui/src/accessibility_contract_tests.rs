@@ -27,7 +27,7 @@ fn compact_accessible_startup_keeps_the_complete_semantic_password_form() {
         "Enter: Unlock",
         "Ctrl+Q: Exit",
     ]);
-    prompt.assert_excludes(&[".--------.", MASTER_PASSWORD, SECRET_CANARY]);
+    prompt.assert_excludes(&["▄███▄", MASTER_PASSWORD, SECRET_CANARY]);
     prompt.assert_no_terminal_controls();
 }
 
@@ -35,7 +35,7 @@ fn compact_accessible_startup_keeps_the_complete_semantic_password_form() {
 fn normal_supported_startup_sizes_render_every_exact_art_row_in_order() {
     let (_dir, app) = configured_app(&["personal"]);
     let expected: Vec<_> = HIDLINS_STARTUP_ART.lines().collect();
-    assert_eq!(expected.len(), 12);
+    assert_eq!(expected.len(), 7);
     for (width, height) in [(80, 24), (60, 16)] {
         let frame = render_at(&app, width, height, Instant::now());
         frame.assert_contains_in_order(&expected);
@@ -60,7 +60,7 @@ fn accessible_and_compact_startup_forms_preserve_semantics_without_art() {
         "Enter: Open vault",
         "Esc or Ctrl+Q: Exit",
     ]);
-    onboarding.assert_excludes(&[".--------."]);
+    onboarding.assert_excludes(&["▄███▄"]);
 
     type_text(&mut empty, "/definitely/missing/path-canary.kdbx");
     empty.handle_event(&key_code(KeyCode::Enter));
@@ -74,7 +74,7 @@ fn accessible_and_compact_startup_forms_preserve_semantics_without_art() {
         "Enter: Open vault",
         "Esc or Ctrl+Q: Exit",
     ]);
-    invalid.assert_excludes(&[".--------."]);
+    invalid.assert_excludes(&["▄███▄"]);
 
     let (_multi_dir, mut multiple) = configured_app(&["alpha", "beta", "gamma"]);
     multiple.theme = Theme::accessible();
@@ -87,7 +87,7 @@ fn accessible_and_compact_startup_forms_preserve_semantics_without_art() {
         "a: Add existing vault",
         "Ctrl+Q: Exit",
     ]);
-    picker.assert_excludes(&[".--------."]);
+    picker.assert_excludes(&["▄███▄"]);
     multiple.handle_event(&key_code(KeyCode::Enter));
     let prompt = render_at(&multiple, 40, 12, Instant::now());
     prompt.assert_contains_in_order(&[
@@ -98,7 +98,7 @@ fn accessible_and_compact_startup_forms_preserve_semantics_without_art() {
         "Esc: Back to vault list",
         "Ctrl+Q: Exit",
     ]);
-    prompt.assert_excludes(&[".--------."]);
+    prompt.assert_excludes(&["▄███▄"]);
 }
 
 #[test]

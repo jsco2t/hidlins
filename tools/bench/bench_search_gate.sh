@@ -34,7 +34,7 @@ esac
 
 cd "$(dirname "$0")/../.."
 
-output=$(cargo bench -p hidlins-core --bench bench_search --offline --locked 2>&1 | tail -22)
+output=$(cargo bench -p hidlins-core --bench bench_search --offline --locked 2>&1)
 
 extract() {
     local prefix="$1"
@@ -46,14 +46,20 @@ substring_value=$(extract "bench_search_5k" "$BENCH_STAT")
 wildcard_value=$(extract "bench_search_5k_wildcard" "$BENCH_STAT")
 fuzzy_value=$(extract "bench_search_5k_fuzzy" "$BENCH_STAT")
 matcher_value=$(extract "bench_fuzzy_matcher_5k" "$BENCH_STAT")
+unicode_substring_value=$(extract "bench_search_5k_unicode_substring" "$BENCH_STAT")
+unicode_wildcard_value=$(extract "bench_search_5k_unicode_wildcard" "$BENCH_STAT")
 
 substring_p99=$(extract "bench_search_5k" "p99")
 wildcard_p99=$(extract "bench_search_5k_wildcard" "p99")
 fuzzy_p99=$(extract "bench_search_5k_fuzzy" "p99")
 matcher_p99=$(extract "bench_fuzzy_matcher_5k" "p99")
+unicode_substring_p99=$(extract "bench_search_5k_unicode_substring" "p99")
+unicode_wildcard_p99=$(extract "bench_search_5k_unicode_wildcard" "p99")
 
 if [ -z "$substring_value" ] || [ -z "$wildcard_value" ] || [ -z "$fuzzy_value" ] || [ -z "$matcher_value" ] ||
-    [ -z "$substring_p99" ] || [ -z "$wildcard_p99" ] || [ -z "$fuzzy_p99" ] || [ -z "$matcher_p99" ]; then
+    [ -z "$unicode_substring_value" ] || [ -z "$unicode_wildcard_value" ] ||
+    [ -z "$substring_p99" ] || [ -z "$wildcard_p99" ] || [ -z "$fuzzy_p99" ] || [ -z "$matcher_p99" ] ||
+    [ -z "$unicode_substring_p99" ] || [ -z "$unicode_wildcard_p99" ]; then
     echo "bench_search_gate: failed to parse benchmark output" >&2
     echo "$output" >&2
     exit 2
@@ -118,12 +124,16 @@ check "substring" "$substring_value" || status=$?
 check "wildcard " "$wildcard_value"  || status=$?
 warn  "matcher  " "$matcher_value" "$FUZZY_WARN_MS"
 check "fuzzy    " "$fuzzy_value"      || status=$?
+check "unicode substring" "$unicode_substring_value" || status=$?
+check "unicode wildcard " "$unicode_wildcard_value" || status=$?
 
 if [ "$BENCH_STAT" = "median" ]; then
     report_p99 "substring" "$substring_p99" "$P99_REFERENCE_MS"
     report_p99 "wildcard " "$wildcard_p99" "$P99_REFERENCE_MS"
     report_p99 "matcher  " "$matcher_p99" "$FUZZY_WARN_MS"
     report_p99 "fuzzy    " "$fuzzy_p99" "$P99_REFERENCE_MS"
+    report_p99 "unicode substring" "$unicode_substring_p99" "$P99_REFERENCE_MS"
+    report_p99 "unicode wildcard " "$unicode_wildcard_p99" "$P99_REFERENCE_MS"
 fi
 
 exit "$status"

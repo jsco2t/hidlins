@@ -25,6 +25,7 @@ CARGO          := cargo
 CARGO_FLAGS    := --workspace --offline --locked
 CLIPPY_FLAGS   := --workspace --all-targets --offline --locked -- -D warnings
 APP_TEST_FLAGS ?=
+SPEC_POLICY_ROOT ?=
 
 # Every Rust compilation launched through make inherits fatal warnings. Use
 # `override` so a caller-provided RUSTFLAGS/RUSTDOCFLAGS value is preserved and
@@ -44,7 +45,7 @@ UNAME_S        := $(shell uname -s)
 # Devs who know what they want type `make build`, `make test`, `make check`.
 .DEFAULT_GOAL := help
 
-.PHONY: help toolchain fuzz-toolchain build release demo-vault build-policy-check _build-policy-check acceptance-evidence-check check-android build-android android-artifacts-check android-harness-check android-emulator-provision android-scenario-boundary-check app-android-config-check app-build-android app-test-android-integration app-test-android-emulator check-ios ios-harness-check app-test-ios-simulator app-test-ios-integration app-test-ios-device app-build-ios app-prepare-ios-observation test test-ignored test-all test-tui-contracts test-update-snapshots test-clipboard test-os-events \
+.PHONY: help asset-license-check toolchain fuzz-toolchain build release demo-vault build-policy-check _build-policy-check acceptance-evidence-check check-android build-android android-artifacts-check android-harness-check android-emulator-provision android-scenario-boundary-check app-android-config-check app-build-android app-test-android-integration app-test-android-emulator check-ios ios-harness-check app-test-ios-simulator app-test-ios-integration app-test-ios-device app-build-ios app-prepare-ios-observation test test-ignored test-all test-tui-contracts test-update-snapshots test-clipboard test-os-events \
         test-local-sync-security test-local-sync-discovery test-local-sync-integration test-local-sync-mobile-harness test-local-sync-android-lan-discovery test-local-sync-mobile-scenarios-ios test-local-sync-mobile-scenarios-android test-local-sync-mobile-scenarios fuzz-local-sync-corpus fuzz-local-sync-ci ncsa-boundary-precheck ncsa-boundary-check interop-sync s3-removal-check \
         fmt fmt-check lint lint-fix check-feature-gates \
         check verify interop interop-app interop-entry bench bench-search bench-search-gate bench-search-gate-ci \
@@ -104,7 +105,7 @@ fuzz-toolchain:  ## Install exact cargo-fuzz and pinned nightly (development/tes
 build:  ## Build the workspace (offline, vendored).
 	$(CARGO) build $(CARGO_FLAGS)
 
-release: ncsa-boundary-precheck  ## Build optimized CLI, TUI, and agent artifacts in target/release/ (host platform).
+release: ncsa-boundary-precheck asset-license-check  ## Build optimized CLI, TUI, and agent artifacts in target/release/ (host platform).
 	$(CARGO) build $(CARGO_FLAGS) --release
 	python3 tools/dev/ncsa-boundary-check.py artifacts target/release/hidlins target/release/hidlins-tui target/release/hidlins-agent
 
@@ -639,7 +640,11 @@ check: ci-toolchain-check build-policy-check fmt-check lint build test check-mac
 # fail the integrity gate without ever having run.
 app-check: flutter-version-check telemetry-check app-deps pub-vendor-check pub-production-check app-analyze app-fmt-check app-brand-check app-test app-test-bridge api-gen-check  ## Flutter-side gates (requires the Flutter SDK + Rust toolchain).
 
-verify: check app-check acceptance-evidence-check test-ignored doc deny audit interop interop-entry interop-sync test-local-sync-security test-local-sync-discovery test-local-sync-integration fuzz-local-sync-corpus ncsa-boundary-check s3-removal-check boundary-check  ## Full verification gate (Rust + Flutter + interop + acceptance evidence).
+verify: check asset-license-check app-check acceptance-evidence-check test-ignored doc deny audit interop interop-entry interop-sync test-local-sync-security test-local-sync-discovery test-local-sync-integration fuzz-local-sync-corpus ncsa-boundary-check s3-removal-check boundary-check  ## Full verification gate (Rust + Flutter + interop + acceptance evidence).
+
+asset-license-check:  ## Check the exact EFF asset exception, notices and unchanged code-license policy.
+	python3 -m unittest discover -s tools/dev -p 'test_asset_licenses.py'
+	python3 tools/dev/asset_license_check.py --spec-root "$(SPEC_POLICY_ROOT)"
 
 interop:  ## Run vault-core KeePassXC interop shell tests (requires keepassxc-cli).
 	$(CARGO) build -p hidlins-core --bin hidlins-test-driver --offline --locked

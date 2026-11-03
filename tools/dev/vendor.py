@@ -414,6 +414,28 @@ def patch_quick_xml() -> None:
 def patch_keepass() -> None:
     crate_dir = VENDOR / "keepass"
     require_version(crate_dir, "0.13.25")
+    replace_once(
+        crate_dir / "src/db/types/value.rs",
+        "use zeroize::Zeroize;",
+        "use zeroize::{Zeroize, ZeroizeOnDrop};",
+    )
+    replace_once(
+        crate_dir / "src/db/types/value.rs",
+        "impl<T: Zeroize + Display> std::fmt::Display for Value<T> {",
+        """// Hidlins: wipe owned unprotected values without changing KDBX protection flags.
+impl<T: Zeroize> Drop for Value<T> {
+    fn drop(&mut self) {
+        if let Value::Unprotected(data) = self {
+            data.zeroize();
+        }
+        // Protected values are wiped by SecretBox's own destructor.
+    }
+}
+
+impl<T: Zeroize> ZeroizeOnDrop for Value<T> {}
+
+impl<T: Zeroize + Display> std::fmt::Display for Value<T> {""",
+    )
     # Entry strings are literal user data, including whitespace-only text.
     # Keep cs_opt_string's empty-metadata handling for its other callers.
     replace_once(
