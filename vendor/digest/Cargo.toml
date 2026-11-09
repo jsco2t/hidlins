@@ -54,6 +54,7 @@ rand_core = ["common/rand_core"]
 zeroize = [
     "dep:zeroize",
     "block-buffer?/zeroize",
+    "common/zeroize",
 ]
 
 [lib]

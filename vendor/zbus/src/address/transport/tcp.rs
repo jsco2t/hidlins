@@ -1,16 +1,21 @@
-use super::encode_percents;
-use crate::{Error, Result};
-#[cfg(not(feature = "tokio"))]
-use async_io::Async;
-#[cfg(not(feature = "tokio"))]
-use std::net::{SocketAddr, TcpStream, ToSocketAddrs};
 use std::{
     collections::HashMap,
     fmt::{Display, Formatter},
+    net::{IpAddr, SocketAddr, ToSocketAddrs},
+    path::PathBuf,
     str::FromStr,
+    sync::Arc,
 };
-#[cfg(feature = "tokio")]
-use tokio::net::TcpStream;
+
+use super::encode_percents;
+use crate::{
+    Address, Error, Result,
+    connection::socket::{BoxedSplit, WriteHalf},
+    runtime::{
+        Runtime,
+        io::{RegisteredIo, TcpOps},
+    },
+};
 
 /// A TCP transport in a D-Bus address.
 #[derive(Clone, Debug, PartialEq, Eq)]
@@ -127,46 +132,116 @@ impl Tcp {
         })
     }
 
-    #[cfg(not(feature = "tokio"))]
-    pub(super) async fn connect(self) -> Result<Async<TcpStream>> {
-        let addrs = crate::Task::spawn_blocking(
-            move || -> Result<Vec<SocketAddr>> {
-                let addrs = (self.host(), self.port()).to_socket_addrs()?.filter(|a| {
-                    if let Some(family) = self.family() {
-                        if family == TcpTransportFamily::Ipv4 {
-                            a.is_ipv4()
-                        } else {
-                            a.is_ipv6()
-                        }
-                    } else {
-                        true
-                    }
-                });
-                Ok(addrs.collect())
-            },
-            "connect tcp",
-        )
-        .await
-        .map_err(|e| Error::Address(format!("Failed to receive TCP addresses: {e}")))??;
+    /// Connects to this address, passing the nonce it names along where there is one.
+    pub(super) async fn connect(&self, address: &Address, runtime: &Runtime) -> Result<BoxedSplit> {
+        let nonce = match self.nonce_file() {
+            Some(path) => Some(read_nonce(path, runtime).await?),
+            None => None,
+        };
+        let addresses = self.resolve(address, runtime).await?;
+        let mut error = self.nothing_found(address);
 
-        // we could attempt connections in parallel?
-        let mut last_err = Error::Address("Failed to connect".into());
-        for addr in addrs {
-            match Async::<TcpStream>::connect(addr).await {
-                Ok(stream) => return Ok(stream),
-                Err(e) => last_err = e.into(),
+        for socket_address in addresses {
+            match runtime.connect_tcp(socket_address).await {
+                Ok(source) => {
+                    let mut split = BoxedSplit::from(RegisteredIo::new(runtime, source, TcpOps)?);
+                    if let Some(nonce) = nonce.as_deref() {
+                        write_all(split.write_mut(), nonce).await?;
+                    }
+
+                    return Ok(split);
+                }
+                Err(e) => error = Error::Connection(Arc::new(e), Box::new(address.clone())),
             }
         }
 
-        Err(last_err)
+        Err(error)
     }
 
-    #[cfg(feature = "tokio")]
-    pub(super) async fn connect(self) -> Result<TcpStream> {
-        TcpStream::connect((self.host(), self.port()))
-            .await
-            .map_err(|e| Error::InputOutput(e.into()))
+    /// The socket addresses this one names, in the order they should be tried.
+    ///
+    /// A host written as an IP address is one already. Anything else is a name for the resolver,
+    /// which goes to `runtime` because looking it up blocks.
+    async fn resolve(&self, address: &Address, runtime: &Runtime) -> Result<Vec<SocketAddr>> {
+        let port = self.port();
+        let addresses = match self.host().parse::<IpAddr>() {
+            Ok(ip) => vec![SocketAddr::new(ip, port)],
+            Err(_) => {
+                let host = self.host().to_owned();
+
+                runtime
+                    .spawn_blocking(move || {
+                        (host.as_str(), port).to_socket_addrs().map(Vec::from_iter)
+                    })
+                    .await
+                    .map_err(|e| Error::Connection(Arc::new(e), Box::new(address.clone())))?
+            }
+        };
+
+        Ok(match self.family() {
+            Some(TcpTransportFamily::Ipv4) => {
+                addresses.into_iter().filter(SocketAddr::is_ipv4).collect()
+            }
+            Some(TcpTransportFamily::Ipv6) => {
+                addresses.into_iter().filter(SocketAddr::is_ipv6).collect()
+            }
+            None => addresses,
+        })
     }
+
+    /// The error a connection attempt that found nowhere to go reports.
+    fn nothing_found(&self, address: &Address) -> Error {
+        Error::Address(match self.family() {
+            Some(family) => format!("no `{family}` addresses found for `{address}`"),
+            None => format!("no addresses found for `{address}`"),
+        })
+    }
+}
+
+/// The nonce the server expects before anything else, read off `path`.
+async fn read_nonce(path: &[u8], runtime: &Runtime) -> Result<Vec<u8>> {
+    let path = nonce_path(path)?;
+
+    runtime
+        .spawn_blocking(move || std::fs::read(path))
+        .await
+        .map_err(Into::into)
+}
+
+/// `path`, as this platform names files.
+fn nonce_path(path: &[u8]) -> Result<PathBuf> {
+    #[cfg(unix)]
+    {
+        use std::os::unix::ffi::OsStrExt;
+
+        Ok(PathBuf::from(std::ffi::OsStr::from_bytes(path)))
+    }
+    // Windows names a file in UTF-16, and preview 2 of WASI in a string, of which std has no
+    // stable way to make a path from bytes: so the bytes have to be UTF-8 off unix.
+    #[cfg(not(unix))]
+    {
+        std::str::from_utf8(path)
+            .map(PathBuf::from)
+            .map_err(|_| Error::Address("nonce file path is invalid UTF-8".to_owned()))
+    }
+}
+
+/// Writes the whole of `bytes` to `half`, however many writes that takes.
+async fn write_all(half: &mut impl WriteHalf, bytes: &[u8]) -> Result<()> {
+    let mut rest = bytes;
+
+    while !rest.is_empty() {
+        let written = half
+            .sendmsg(
+                rest,
+                #[cfg(unix)]
+                &[],
+            )
+            .await?;
+        rest = &rest[written..];
+    }
+
+    Ok(())
 }
 
 impl Display for Tcp {
@@ -201,7 +276,9 @@ impl Display for Tcp {
 /// A `tcp:` address family.
 #[derive(Copy, Clone, Debug, PartialEq, Eq)]
 pub enum TcpTransportFamily {
+    /// IPv4, the `ipv4` value of the `family` key of a `tcp:` address.
     Ipv4,
+    /// IPv6, the `ipv6` value of the `family` key of a `tcp:` address.
     Ipv6,
 }
 

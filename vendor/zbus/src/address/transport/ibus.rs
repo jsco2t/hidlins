@@ -1,4 +1,9 @@
-use crate::{Address, Result, process::run};
+use std::process::Command;
+
+use crate::{
+    Address, Result,
+    runtime::{Runtime, process},
+};
 
 #[derive(Clone, Debug, PartialEq, Eq)]
 /// The transport properties of an IBus D-Bus address.
@@ -6,6 +11,8 @@ use crate::{Address, Result, process::run};
 /// This transport type queries the IBus daemon for its D-Bus address using the `ibus address`
 /// command. IBus (Intelligent Input Bus) is an input method framework used primarily on Linux
 /// systems for entering text in various languages.
+///
+/// This type is only available when the `ibus` feature is enabled.
 ///
 /// # Platform Support
 ///
@@ -38,7 +45,8 @@ impl Ibus {
     /// Determine the actual transport details behind an IBus address.
     ///
     /// This method executes the `ibus address` command to retrieve the D-Bus address from the
-    /// running IBus daemon, then parses and returns the underlying transport.
+    /// running IBus daemon, then parses and returns the underlying transport. The command runs
+    /// on `runtime`, which is also what waits for it to exit.
     ///
     /// # Errors
     ///
@@ -56,23 +64,19 @@ impl Ibus {
     /// #
     /// # block_on(async {
     /// // This method is used internally by the connection builder
-    /// let _conn = Builder::ibus()?.build().await?;
+    /// let _conn = Builder::ibus().build().await?;
     /// # Ok::<(), zbus::Error>(())
     /// # }).unwrap();
     /// ```
-    pub(super) async fn bus_address(&self) -> Result<Address> {
-        let output = run("ibus", ["address"])
+    pub(super) async fn bus_address(&self, runtime: &Runtime) -> Result<Address> {
+        let mut command = Command::new("ibus");
+        command.arg("address");
+
+        let printed = process::stdout(runtime, command)
             .await
-            .map_err(|e| crate::Error::Address(format!("Failed to execute ibus command: {e}")))?;
+            .map_err(|e| crate::Error::Address(format!("The ibus command failed: {e}")))?;
 
-        if !output.status.success() {
-            return Err(crate::Error::Address(format!(
-                "ibus terminated with code: {}",
-                output.status
-            )));
-        }
-
-        let addr = String::from_utf8(output.stdout).map_err(|e| {
+        let addr = String::from_utf8(printed).map_err(|e| {
             crate::Error::Address(format!("Unable to parse ibus output as UTF-8: {e}"))
         })?;
 
@@ -117,7 +121,7 @@ mod tests {
 
     #[test]
     fn test_ibus_default() {
-        let ibus = Ibus::default();
+        let ibus: Ibus = Default::default();
         assert_eq!(ibus.to_string(), "ibus:");
     }
 

@@ -1,7 +1,7 @@
 # TUI Skeleton Verification
 
 **Feature:** TUI Skeleton (`hidlins-tui`)
-**Last Updated:** 2026-08-31
+**Last Updated:** 2026-11-09
 
 Deterministic TUI behavior is verified automatically in the Hidlins repository.
 The former real-display and screen-reader procedure trees were removed because
@@ -16,8 +16,11 @@ they duplicated those checks and were not portable.
 - The work-package coverage ledger maps every removed manual test ID to its
   automated replacement or a narrowly irreducible external check.
 
-The surviving `01-local-headless/` documents are historical command/runbook
-references. The repository Make targets above are the current source of truth.
+Engineering plans and historical runbooks live in the
+[external project verification workspace](../../../../../../projects/hidlins/features/tui-skeleton/verifications/index.md).
+This link assumes the sibling project-workspace layout documented in
+`CLAUDE.md`; those runbook trees are not copied here. Repository Make targets
+are authoritative for current execution.
 
 ## Real-environment confidence
 

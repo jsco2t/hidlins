@@ -1,13 +1,14 @@
 use std::collections::HashMap;
+use std::ops::{Deref, DerefMut};
 use std::sync::atomic::{AtomicU64, Ordering};
-use std::sync::{Mutex, OnceLock};
+use std::sync::{Arc, Condvar, Mutex, OnceLock};
 use std::time::{Duration, Instant};
 
 use hidlins_core::Uuid;
-use zeroize::Zeroizing;
+use zeroize::{Zeroize, ZeroizeOnDrop, Zeroizing};
 
 use super::session::AppSession;
-use crate::dto::{ClipboardTransferTicket, CopyField, RevealField};
+use crate::dto::{ClipboardTransferTicket, CopyField, GeneratedSecret, RevealField};
 use crate::error::HidlinsApiError;
 
 #[cfg(feature = "desktop")]
@@ -18,6 +19,8 @@ static NEXT_CLIPBOARD_OWNER: AtomicU64 = AtomicU64::new(1);
 #[cfg(any(not(feature = "desktop"), test))]
 static NEXT_CLIPBOARD_TRANSFER: AtomicU64 = AtomicU64::new(1);
 static CLIPBOARD_TRANSFERS: OnceLock<Mutex<HashMap<String, ClipboardTransfer>>> = OnceLock::new();
+static ACTIVE_CLIPBOARD_TRANSFERS: OnceLock<Mutex<HashMap<String, ActiveClipboardTransfer>>> =
+    OnceLock::new();
 
 struct ClipboardTransfer {
     owner: u64,
@@ -25,8 +28,79 @@ struct ClipboardTransfer {
     value: Zeroizing<String>,
 }
 
+struct ClipboardCompletion {
+    done: Mutex<bool>,
+    finished: Condvar,
+}
+
+struct ActiveClipboardTransfer {
+    owner: u64,
+    completion: Arc<ClipboardCompletion>,
+}
+
+/// Native locals retain this guard through their synchronous publication.
+/// It is deliberately non-cloneable and never exported through the bridge.
+#[flutter_rust_bridge::frb(ignore)]
+pub(crate) struct ConsumedClipboardTransfer {
+    value: Zeroizing<String>,
+    id: String,
+    completion: Arc<ClipboardCompletion>,
+}
+
+impl Deref for ConsumedClipboardTransfer {
+    type Target = String;
+
+    fn deref(&self) -> &Self::Target {
+        &self.value
+    }
+}
+
+impl DerefMut for ConsumedClipboardTransfer {
+    fn deref_mut(&mut self) -> &mut Self::Target {
+        &mut self.value
+    }
+}
+
+impl ZeroizeOnDrop for ConsumedClipboardTransfer {}
+
+impl Drop for ConsumedClipboardTransfer {
+    fn drop(&mut self) {
+        // Field destruction follows custom Drop: explicitly erase before
+        // waking revocation, rather than relying on the field's later Drop.
+        self.value.zeroize();
+        {
+            let mut done = self
+                .completion
+                .done
+                .lock()
+                .unwrap_or_else(std::sync::PoisonError::into_inner);
+            *done = true;
+            self.completion.finished.notify_all();
+        }
+        // Never acquire a session or pending-registry lock here. Release
+        // completion before active; purges wait without either global lock.
+        active_transfers()
+            .lock()
+            .unwrap_or_else(std::sync::PoisonError::into_inner)
+            .remove(&self.id);
+    }
+}
+
+/// Protected copy input belongs to the exact origin that resolved it. The
+/// owner changes on revocation, so relocking and reopening the same vault
+/// cannot authorize an old value again.
+#[flutter_rust_bridge::frb(ignore)]
+struct ResolvedCopy {
+    owner: u64,
+    value: Zeroizing<String>,
+}
+
 fn transfers() -> &'static Mutex<HashMap<String, ClipboardTransfer>> {
     CLIPBOARD_TRANSFERS.get_or_init(|| Mutex::new(HashMap::new()))
+}
+
+fn active_transfers() -> &'static Mutex<HashMap<String, ActiveClipboardTransfer>> {
+    ACTIVE_CLIPBOARD_TRANSFERS.get_or_init(|| Mutex::new(HashMap::new()))
 }
 
 pub(crate) fn new_clipboard_owner() -> u64 {
@@ -65,9 +139,13 @@ fn insert_clipboard_transfer(
 
 /// Native platform adapters consume a ticket through a target-specific export.
 /// This function is deliberately crate-private so FRB cannot generate a Dart
-/// plaintext-returning door.
+/// plaintext-returning door. The returned local must span the synchronous
+/// native callback; revocation waits for its drop, including on errors/unwind.
+#[flutter_rust_bridge::frb(ignore)]
 #[allow(dead_code)]
-pub(crate) fn consume_clipboard_transfer(id: &str) -> Result<Zeroizing<String>, HidlinsApiError> {
+pub(crate) fn consume_clipboard_transfer(
+    id: &str,
+) -> Result<ConsumedClipboardTransfer, HidlinsApiError> {
     let mut registry = transfers().lock().map_err(|_| HidlinsApiError::Internal {
         context: "clipboard transfer registry unavailable".to_string(),
     })?;
@@ -83,15 +161,62 @@ pub(crate) fn consume_clipboard_transfer(id: &str) -> Result<Zeroizing<String>, 
             reason: "expired".to_string(),
         });
     }
-    Ok(transfer.value)
+    let completion = Arc::new(ClipboardCompletion {
+        done: Mutex::new(false),
+        finished: Condvar::new(),
+    });
+    // Atomic pending -> active transition with the same lock order as purge.
+    // Poison recovery must preserve active fences, never clear this map.
+    active_transfers()
+        .lock()
+        .unwrap_or_else(std::sync::PoisonError::into_inner)
+        .insert(
+            id.to_string(),
+            ActiveClipboardTransfer {
+                owner: transfer.owner,
+                completion: Arc::clone(&completion),
+            },
+        );
+    drop(registry);
+    Ok(ConsumedClipboardTransfer {
+        value: transfer.value,
+        id: id.to_string(),
+        completion,
+    })
 }
 
 pub(crate) fn purge_clipboard_transfers(owner: u64) {
-    match transfers().lock() {
-        Ok(mut registry) => registry.retain(|_, item| item.owner != owner),
+    let mut registry = match transfers().lock() {
+        Ok(registry) => registry,
         Err(poison) => {
-            poison.into_inner().clear();
+            let mut registry = poison.into_inner();
+            registry.clear();
             transfers().clear_poison();
+            registry
+        }
+    };
+    registry.retain(|_, item| item.owner != owner);
+    let completions: Vec<_> = active_transfers()
+        .lock()
+        .unwrap_or_else(std::sync::PoisonError::into_inner)
+        .values()
+        .filter(|item| item.owner == owner)
+        .map(|item| Arc::clone(&item.completion))
+        .collect();
+    // Keep active entries until guard Drop, so a concurrent purge observes
+    // the same fence. Release both global registries before any wait: other
+    // owners can consume and revoke independently of this native receiver.
+    drop(registry);
+    for completion in completions {
+        let mut done = completion
+            .done
+            .lock()
+            .unwrap_or_else(std::sync::PoisonError::into_inner);
+        while !*done {
+            done = completion
+                .finished
+                .wait(done)
+                .unwrap_or_else(std::sync::PoisonError::into_inner);
         }
     }
 }
@@ -109,6 +234,48 @@ pub(crate) fn purge_expired_clipboard_transfers() {
 }
 
 impl AppSession {
+    /// Copy the exact displayed generated result through the Rust clipboard.
+    pub fn copy_generated_secret(&self, result: GeneratedSecret) -> Result<(), HidlinsApiError> {
+        let text = resolve_generated_copy(result);
+        #[cfg(feature = "desktop")]
+        {
+            let state = self.lock_state();
+            state.require_vault()?;
+            if state.clipboard_owner != text.owner {
+                return Err(HidlinsApiError::VaultLocked);
+            }
+            self.clipboard_copy(text.value)
+        }
+        #[cfg(not(feature = "desktop"))]
+        {
+            drop(text);
+            Err(super::desktop_only(
+                "copy_generated_secret",
+                "mobile uses prepare_generated_clipboard_transfer",
+            ))
+        }
+    }
+
+    /// Prepare the displayed generated result for the existing native-only,
+    /// single-use clipboard handoff. Dart receives only the transfer ticket.
+    pub fn prepare_generated_clipboard_transfer(
+        &self,
+        result: GeneratedSecret,
+    ) -> Result<ClipboardTransferTicket, HidlinsApiError> {
+        let text = resolve_generated_copy(result);
+        #[cfg(feature = "desktop")]
+        {
+            drop(text);
+            Err(HidlinsApiError::UnsupportedPlatform {
+                capability: "clipboard".to_string(),
+            })
+        }
+        #[cfg(not(feature = "desktop"))]
+        {
+            self.stage_clipboard_transfer(text, Instant::now())
+        }
+    }
+
     /// Prepare a non-secret, single-use native clipboard handoff.
     ///
     /// Desktop uses the Rust clipboard directly and therefore returns a typed
@@ -130,7 +297,9 @@ impl AppSession {
         }
         #[cfg(not(feature = "desktop"))]
         {
-            let value = Zeroizing::new(self.resolve_copy_field(&uuid, &field)?);
+            let value = self.resolve_copy_field(&uuid, &field)?;
+            #[cfg(test)]
+            copy_origin_regressions::after_resolve(&value.value);
             self.stage_clipboard_transfer(value, Instant::now())
         }
     }
@@ -138,18 +307,20 @@ impl AppSession {
     #[cfg(any(not(feature = "desktop"), test))]
     fn stage_clipboard_transfer(
         &self,
-        value: Zeroizing<String>,
+        value: ResolvedCopy,
         created: Instant,
     ) -> Result<ClipboardTransferTicket, HidlinsApiError> {
-        // Revalidate and insert while holding the session lock. If a lock won
-        // the race after `resolve_copy_field`, the value is dropped and
-        // zeroized here. If the insert wins, the subsequent lock cannot run
-        // until this guard drops and will purge the just-created ticket.
+        // Validate the captured origin and insert under the same guard. A
+        // later lock purges this owner; a prior lock, including same-vault
+        // reopening, cannot authorize this old protected value.
         let state = self.lock_state();
         state.require_vault()?;
+        if state.clipboard_owner != value.owner {
+            return Err(HidlinsApiError::VaultLocked);
+        }
         Ok(insert_clipboard_transfer(
             state.clipboard_owner,
-            value,
+            value.value,
             created,
         ))
     }
@@ -203,7 +374,16 @@ impl AppSession {
     #[allow(clippy::needless_pass_by_value)]
     pub fn copy_entry_field(&self, uuid: String, field: CopyField) -> Result<(), HidlinsApiError> {
         let text = self.resolve_copy_field(&uuid, &field)?;
-        self.clipboard_copy(text)
+        #[cfg(test)]
+        copy_origin_regressions::after_resolve(&text.value);
+        let state = self.lock_state();
+        state.require_vault()?;
+        if state.clipboard_owner != text.owner {
+            return Err(HidlinsApiError::VaultLocked);
+        }
+        // Publish before releasing this guard. A lock that follows cannot
+        // return while this clipboard write could still publish afterward.
+        self.clipboard_copy(text.value)
     }
 
     #[cfg(not(feature = "desktop"))]
@@ -219,19 +399,24 @@ impl AppSession {
         ))
     }
 
-    fn resolve_copy_field(&self, uuid: &str, field: &CopyField) -> Result<String, HidlinsApiError> {
+    fn resolve_copy_field(
+        &self,
+        uuid: &str,
+        field: &CopyField,
+    ) -> Result<ResolvedCopy, HidlinsApiError> {
         let id = parse_uuid(uuid)?;
         let state = self.lock_state();
         let vault = state.require_vault()?;
+        let owner = state.clipboard_owner;
 
-        match field {
+        let value = match field {
             CopyField::Username => {
                 let view = vault.get_entry(id)?;
-                Ok(view.username().to_string())
+                Ok(Zeroizing::new(view.username().to_string()))
             }
             CopyField::Password => {
                 let view = vault.get_entry(id)?;
-                Ok(view.password().to_string())
+                Ok(Zeroizing::new(view.password().to_string()))
             }
             CopyField::TotpCode => {
                 drop(state);
@@ -247,27 +432,29 @@ impl AppSession {
                 let snap = cache.get(&id).ok_or_else(|| HidlinsApiError::Internal {
                     context: "totp not cached".to_string(),
                 })?;
-                Ok(snap.totp.code_at(now))
+                Ok(Zeroizing::new(snap.totp.code_at(now)))
             }
             CopyField::CustomField(name) => {
                 let entry = vault.get_entry(id)?;
-                entry.custom_field(name).map(String::from).ok_or_else(|| {
-                    HidlinsApiError::InvalidInput {
+                entry
+                    .custom_field(name)
+                    .map(|value| Zeroizing::new(value.to_string()))
+                    .ok_or_else(|| HidlinsApiError::InvalidInput {
                         field: "custom_field".to_string(),
                         reason: format!("field not found: {name}"),
-                    }
-                })
+                    })
             }
-        }
+        }?;
+        Ok(ResolvedCopy { owner, value })
     }
 
     #[cfg(feature = "desktop")]
-    fn clipboard_copy(&self, text: String) -> Result<(), HidlinsApiError> {
+    fn clipboard_copy(&self, mut text: Zeroizing<String>) -> Result<(), HidlinsApiError> {
         let port = self.clipboard.as_ref().ok_or_else(|| HidlinsApiError::Io {
             context: "clipboard unavailable".to_string(),
         })?;
         port.copy_with_autoclear(
-            text,
+            std::mem::take(&mut *text),
             std::time::Duration::from_secs(CLIPBOARD_AUTO_CLEAR_SECS),
         )
     }
@@ -280,6 +467,24 @@ fn parse_uuid(s: &str) -> Result<Uuid, HidlinsApiError> {
             reason: "invalid UUID".to_string(),
         })
 }
+
+fn resolve_generated_copy(result: GeneratedSecret) -> ResolvedCopy {
+    // Guard the entire inbound DTO before any validation/unsupported return;
+    // move its string allocation into the existing zeroizing copy path.
+    let mut result = Zeroizing::new(result);
+    ResolvedCopy {
+        owner: result.copy_origin,
+        value: Zeroizing::new(std::mem::take(&mut result.value)),
+    }
+}
+
+#[cfg(test)]
+#[path = "copy_origin_regressions.rs"]
+mod copy_origin_regressions;
+
+#[cfg(test)]
+#[path = "generated_copy_regressions.rs"]
+mod generated_copy_regressions;
 
 #[cfg(test)]
 fn insert_clipboard_transfer_for_test(
@@ -379,10 +584,14 @@ mod tests {
         ))
         .expect("session");
         let before = clipboard_transfer_count_for_test();
+        let owner = session.lock_state().clipboard_owner;
 
         assert_eq!(
             session.stage_clipboard_transfer(
-                Zeroizing::new("race-secret-canary".to_string()),
+                ResolvedCopy {
+                    owner,
+                    value: Zeroizing::new("race-secret-canary".to_string()),
+                },
                 Instant::now(),
             ),
             Err(HidlinsApiError::VaultLocked)

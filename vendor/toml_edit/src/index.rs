@@ -1,8 +1,8 @@
 use std::ops;
 
-use crate::DocumentMut;
 use crate::key::Key;
-use crate::{InlineTable, Item, Table, Value, value};
+use crate::DocumentMut;
+use crate::{value, InlineTable, Item, Table, Value};
 
 // copied from
 // https://github.com/serde-rs/json/blob/master/src/value/index.rs
@@ -83,9 +83,9 @@ impl<I> ops::Index<I> for Item
 where
     I: Index,
 {
-    type Output = Self;
+    type Output = Item;
 
-    fn index(&self, index: I) -> &Self {
+    fn index(&self, index: I) -> &Item {
         index.index(self).expect("index not found")
     }
 }
@@ -94,7 +94,7 @@ impl<I> ops::IndexMut<I> for Item
 where
     I: Index,
 {
-    fn index_mut(&mut self, index: I) -> &mut Self {
+    fn index_mut(&mut self, index: I) -> &mut Item {
         index.index_mut(self).expect("index not found")
     }
 }

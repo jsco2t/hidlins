@@ -13,5 +13,5 @@
 pub(crate) mod keymap;
 pub(crate) mod registry;
 
-pub(crate) use keymap::{Keymap, PendingSeq, Preset, Resolution};
+pub(crate) use keymap::{edit_save_key, Keymap, PendingSeq, Preset, Resolution};
 pub(crate) use registry::Command;

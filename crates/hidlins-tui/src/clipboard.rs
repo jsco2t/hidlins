@@ -65,7 +65,8 @@ impl ClipboardSink for SystemClipboard {
 pub(crate) struct UnavailableClipboard;
 
 impl ClipboardSink for UnavailableClipboard {
-    fn copy(&mut self, _text: String, _ttl: Duration) -> Result<(), SecurityError> {
+    fn copy(&mut self, text: String, _ttl: Duration) -> Result<(), SecurityError> {
+        let _text = zeroize::Zeroizing::new(text);
         Err(SecurityError::ClipboardUnavailable(
             "no system clipboard (headless?)".to_string(),
         ))

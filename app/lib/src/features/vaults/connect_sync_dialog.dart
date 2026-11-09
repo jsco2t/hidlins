@@ -1,9 +1,13 @@
+import 'dart:async';
+
 import 'package:flutter/foundation.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:material_ui/material_ui.dart';
 
 import '../../data/failures.dart';
 import '../../data/models.dart';
+import '../../data/repositories.dart';
+import '../sync/foreground_lifecycle.dart';
 import '../../l10n/app_localizations.dart';
 import '../../providers/providers.dart';
 import '../../ui/activity_capture.dart';
@@ -25,6 +29,8 @@ class _ConnectSyncDialogState extends ConsumerState<ConnectSyncDialog> {
   final _manualEndpoint = TextEditingController();
   final _password = TextEditingController();
   bool _working = false;
+  bool _progress = false;
+  _ImportAttempt? _attempt;
   String? _error;
 
   bool get _isMobile =>
@@ -35,6 +41,8 @@ class _ConnectSyncDialogState extends ConsumerState<ConnectSyncDialog> {
 
   @override
   void dispose() {
+    final attempt = _attempt;
+    if (attempt != null) unawaited(attempt.lease.release());
     _name.dispose();
     _peerName.dispose();
     _manualEndpoint.dispose();
@@ -120,7 +128,7 @@ class _ConnectSyncDialogState extends ConsumerState<ConnectSyncDialog> {
                   const SizedBox(height: HidlinsSpacing.lg),
                   FilledButton.icon(
                     onPressed: _working ? null : _connect,
-                    icon: _working
+                    icon: _progress
                         ? const SizedBox.square(
                             dimension: 18,
                             child: CircularProgressIndicator(strokeWidth: 2),
@@ -145,120 +153,216 @@ class _ConnectSyncDialogState extends ConsumerState<ConnectSyncDialog> {
       ? AppLocalizations.of(context)!.validatorRequired
       : null;
 
+  bool _isCurrent(_ImportAttempt attempt) =>
+      mounted &&
+      identical(_attempt, attempt) &&
+      !attempt.retired &&
+      attempt.lease.isCurrent;
+
   Future<void> _connect() async {
-    if (!_formKey.currentState!.validate()) return;
-    if (_isMobile && !await _showPermissionRationale()) return;
+    if (_working || !_formKey.currentState!.validate()) return;
+    final attempt = _ImportAttempt(
+      ref.read(syncRepositoryProvider),
+      name: _name.text.trim(),
+      peerName: _peerName.text.trim(),
+      endpoint: _manualEndpoint.text.trim(),
+      password: _password.text,
+    );
+    _password.clear();
+    _attempt = attempt;
     setState(() {
       _working = true;
       _error = null;
     });
-    final repository = ref.read(syncRepositoryProvider);
+    attempt.lease = ref
+        .read(syncForegroundLifecycleProvider)
+        .acquire(attempt, () => _prepareCleanup(attempt));
     try {
-      if (_manualEndpoint.text.trim().isNotEmpty) {
-        await repository.setManualEndpoint(
-          _parseEndpoint(_manualEndpoint.text),
+      if (_isMobile) {
+        final allowed = await _showPermissionRationale(attempt);
+        if (!_isCurrent(attempt) || !allowed) return;
+      }
+      await attempt.lease.ready;
+      if (!_isCurrent(attempt)) return;
+      setState(() => _progress = true);
+      attempt.startedNative = true;
+      final repository = attempt.repository;
+      if (attempt.endpoint.isNotEmpty) {
+        await attempt.lease.track(
+          repository.setManualEndpoint(_parseEndpoint(attempt.endpoint)),
         );
       } else {
-        final discovery = await repository.discover(DiscoveryKind.pairing);
+        final discovery = await attempt.lease.track(
+          repository.discover(DiscoveryKind.pairing),
+        );
+        if (!_isCurrent(attempt)) return;
         _requireCandidate(discovery);
       }
-      final prompt = await repository.beginPairImport(
-        name: _name.text.trim(),
-        masterPassword: _password.text,
+      if (!_isCurrent(attempt)) return;
+      final prompt = await attempt.lease.track(
+        repository
+            .beginPairImport(
+              name: attempt.name,
+              masterPassword: attempt.takePassword(),
+            )
+            .then((prompt) async {
+              // Keep exact-handle rejection inside the tracked native call, so a
+              // replacement import waits until the old transaction is gone.
+              if (!_isCurrent(attempt)) {
+                await _reject(repository, prompt);
+              } else {
+                attempt.prompt = prompt;
+              }
+              return prompt;
+            }),
       );
-      _password.clear();
-      if (!mounted) return;
-      final accepted = await _showSas(prompt);
-      if (!mounted) return;
-      final imported = await repository.confirmPairing(
-        transactionHandle: prompt.transactionHandle,
-        accepted: accepted,
-        peerDisplayName: _peerName.text.trim(),
+      if (!_isCurrent(attempt)) return;
+      setState(() => _progress = false);
+      final accepted = await _showSas(attempt, prompt);
+      if (!_isCurrent(attempt)) return;
+      attempt.prompt = null; // Confirmation now owns this handle.
+      setState(() => _progress = true);
+      final imported = await attempt.lease.track(
+        repository.confirmPairing(
+          transactionHandle: prompt.transactionHandle,
+          accepted: accepted,
+          peerDisplayName: attempt.peerName,
+        ),
       );
-      if (accepted && imported != null && mounted) {
+      if (!mounted || !_isCurrent(attempt)) return;
+      if (accepted && imported != null && ModalRoute.of(context)!.isCurrent) {
         Navigator.of(context).pop(true);
-        return;
       }
-      if (mounted) setState(() => _working = false);
     } on AppFailure catch (failure) {
-      _password.clear();
-      if (mounted) {
-        setState(() {
-          _working = false;
-          _error = _failureMessage(failure);
-        });
+      if (_isCurrent(attempt)) {
+        setState(() => _error = _failureMessage(failure));
       }
     } on Exception {
-      _password.clear();
-      if (mounted) {
+      if (_isCurrent(attempt)) {
+        setState(() => _error = AppLocalizations.of(context)!.errorGeneric);
+      }
+    } finally {
+      await attempt.lease.release();
+      if (mounted && identical(_attempt, attempt)) {
+        _attempt = null;
         setState(() {
           _working = false;
-          _error = AppLocalizations.of(context)!.errorGeneric;
+          _progress = false;
         });
       }
     }
   }
 
-  Future<bool> _showPermissionRationale() async {
-    final l10n = AppLocalizations.of(context)!;
-    return await showDialog<bool>(
-          context: context,
-          builder: (context) => AlertDialog(
-            title: Text(l10n.syncPermissionTitle),
-            content: Text(l10n.syncPermissionRationale),
-            actions: [
-              TextButton(
-                onPressed: () => Navigator.pop(context, false),
-                child: Text(l10n.actionCancel),
-              ),
-              FilledButton(
-                onPressed: () => Navigator.pop(context, true),
-                child: Text(l10n.actionConfirm),
-              ),
-            ],
-          ),
-        ) ??
-        false;
+  ForegroundCleanup _prepareCleanup(_ImportAttempt attempt) {
+    attempt.retired = true;
+    attempt.password = null;
+    final prompt = attempt.prompt;
+    attempt.prompt = null;
+    final modal = attempt.modal;
+    attempt.modal = null;
+    // dispose can run while Navigator is updating its history. Remove only
+    // our own still-active route after that synchronous update has finished.
+    scheduleMicrotask(() {
+      final navigator = modal?.navigator;
+      if (navigator != null && navigator.mounted && modal!.isActive) {
+        navigator.removeRoute(modal, false);
+      }
+    });
+    return (mayCancelNative) async {
+      if (prompt != null) await _reject(attempt.repository, prompt);
+      if (!mayCancelNative || !attempt.startedNative) return;
+      try {
+        await attempt.repository.cancelSync();
+      } finally {
+        await attempt.repository.stopDiscovery();
+      }
+    };
   }
 
-  Future<bool> _showSas(PairingPrompt prompt) async {
+  Future<void> _reject(SyncRepository repository, PairingPrompt prompt) async {
+    await repository
+        .confirmPairing(
+          transactionHandle: prompt.transactionHandle,
+          accepted: false,
+          peerDisplayName: '',
+        )
+        .onError((_, _) => null);
+  }
+
+  Future<bool> _showOwnedDialog(
+    _ImportAttempt attempt, {
+    required WidgetBuilder builder,
+    bool barrierDismissible = true,
+  }) async {
+    final route = DialogRoute<bool>(
+      context: context,
+      builder: builder,
+      barrierDismissible: barrierDismissible,
+    );
+    attempt.modal = route;
+    final result = await Navigator.of(context, rootNavigator: true).push(route);
+    if (identical(attempt.modal, route)) attempt.modal = null;
+    return result ?? false;
+  }
+
+  Future<bool> _showPermissionRationale(_ImportAttempt attempt) async {
     final l10n = AppLocalizations.of(context)!;
-    return await showDialog<bool>(
-          context: context,
-          barrierDismissible: false,
-          builder: (context) => PopScope(
-            canPop: false,
-            child: AlertDialog(
-              title: Text(l10n.syncCompareCode),
-              content: Column(
-                mainAxisSize: MainAxisSize.min,
-                children: [
-                  Semantics(
-                    label: '${l10n.syncCompareCode}: ${prompt.sas}',
-                    child: SelectableText(
-                      prompt.sas,
-                      key: const ValueKey('pair-import-sas'),
-                      style: Theme.of(context).textTheme.headlineMedium,
-                    ),
-                  ),
-                  const SizedBox(height: HidlinsSpacing.md),
-                  Text(l10n.syncCompareCodeHelp),
-                ],
-              ),
-              actions: [
-                TextButton(
-                  onPressed: () => Navigator.pop(context, false),
-                  child: Text(l10n.syncRejectPairing),
-                ),
-                FilledButton(
-                  onPressed: () => Navigator.pop(context, true),
-                  child: Text(l10n.syncConfirmMatches),
-                ),
-              ],
-            ),
+    return await _showOwnedDialog(
+      attempt,
+      builder: (context) => AlertDialog(
+        title: Text(l10n.syncPermissionTitle),
+        content: Text(l10n.syncPermissionRationale),
+        actions: [
+          TextButton(
+            onPressed: () => Navigator.pop(context, false),
+            child: Text(l10n.actionCancel),
           ),
-        ) ??
-        false;
+          FilledButton(
+            onPressed: () => Navigator.pop(context, true),
+            child: Text(l10n.actionConfirm),
+          ),
+        ],
+      ),
+    );
+  }
+
+  Future<bool> _showSas(_ImportAttempt attempt, PairingPrompt prompt) async {
+    final l10n = AppLocalizations.of(context)!;
+    return await _showOwnedDialog(
+      attempt,
+      barrierDismissible: false,
+      builder: (context) => PopScope(
+        canPop: false,
+        child: AlertDialog(
+          title: Text(l10n.syncCompareCode),
+          content: Column(
+            mainAxisSize: MainAxisSize.min,
+            children: [
+              Semantics(
+                label: '${l10n.syncCompareCode}: ${prompt.sas}',
+                child: SelectableText(
+                  prompt.sas,
+                  key: const ValueKey('pair-import-sas'),
+                  style: Theme.of(context).textTheme.headlineMedium,
+                ),
+              ),
+              const SizedBox(height: HidlinsSpacing.md),
+              Text(l10n.syncCompareCodeHelp),
+            ],
+          ),
+          actions: [
+            TextButton(
+              onPressed: () => Navigator.pop(context, false),
+              child: Text(l10n.syncRejectPairing),
+            ),
+            FilledButton(
+              onPressed: () => Navigator.pop(context, true),
+              child: Text(l10n.syncConfirmMatches),
+            ),
+          ],
+        ),
+      ),
+    );
   }
 
   String _failureMessage(AppFailure failure) {
@@ -324,4 +428,32 @@ LocalEndpoint _parseEndpoint(String input) {
     );
   }
   return LocalEndpoint(address: address, port: port, scopeId: scope);
+}
+
+// Dart/FRB strings cannot be zeroized here. Minimize their retained references:
+// the text intake is cleared before any await and this copy is taken at handoff.
+class _ImportAttempt {
+  _ImportAttempt(
+    this.repository, {
+    required this.name,
+    required this.peerName,
+    required this.endpoint,
+    required this.password,
+  });
+  final SyncRepository repository;
+  final String name;
+  final String peerName;
+  final String endpoint;
+  String? password;
+  late final SyncForegroundLease lease;
+  PairingPrompt? prompt;
+  DialogRoute<bool>? modal;
+  bool startedNative = false;
+  bool retired = false;
+
+  String takePassword() {
+    final value = password!;
+    password = null;
+    return value;
+  }
 }

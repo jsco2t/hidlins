@@ -6,12 +6,14 @@
 //! with a `(row, col)` cursor, where `col` is a byte offset on a UTF-8 boundary
 //! (the same discipline as [`crate::widgets::password_input`]). It handles
 //! character insert, `Enter` (split line), `Backspace` (delete / merge), and
-//! arrow navigation. Notes are not secret, so a plain `String` is fine.
+//! arrow navigation. Notes can contain recovery codes or an entire `SecureNote`,
+//! so every owned line is erased on drop and before a growth allocation frees it.
 
 use crossterm::event::{KeyCode, KeyEvent, KeyModifiers};
+use zeroize::{Zeroize, ZeroizeOnDrop, Zeroizing};
 
 /// A multi-line plaintext editor.
-#[derive(Debug, Clone)]
+#[derive(Clone, Zeroize, ZeroizeOnDrop)]
 pub(crate) struct TextArea {
     lines: Vec<String>,
     /// Cursor line index (always `< lines.len()`).
@@ -42,8 +44,21 @@ impl TextArea {
     }
 
     /// The full text with `\n` between lines.
-    pub(crate) fn value(&self) -> String {
-        self.lines.join("\n")
+    pub(crate) fn value(&self) -> Zeroizing<String> {
+        let length = self
+            .lines
+            .iter()
+            .try_fold(0usize, |total, line| total.checked_add(line.len()))
+            .and_then(|total| total.checked_add(self.lines.len() - 1))
+            .expect("notes too large");
+        let mut value = Zeroizing::new(String::with_capacity(length));
+        for (index, line) in self.lines.iter().enumerate() {
+            if index > 0 {
+                value.push('\n');
+            }
+            value.push_str(line);
+        }
+        value
     }
 
     /// Lines for rendering (read-only borrow).
@@ -95,6 +110,7 @@ impl TextArea {
     }
 
     fn insert_char(&mut self, c: char) {
+        crate::util::reserve_sensitive(&mut self.lines[self.row], c.len_utf8());
         self.lines[self.row].insert(self.col, c);
         self.col += c.len_utf8();
     }
@@ -113,9 +129,10 @@ impl TextArea {
             self.col = prev;
         } else if self.row > 0 {
             // Merge this line onto the end of the previous one.
-            let current = self.lines.remove(self.row);
+            let current = Zeroizing::new(self.lines.remove(self.row));
             self.row -= 1;
             self.col = self.lines[self.row].len();
+            crate::util::reserve_sensitive(&mut self.lines[self.row], current.len());
             self.lines[self.row].push_str(&current);
         }
     }
@@ -211,14 +228,14 @@ mod tests {
     #[test]
     fn insert_and_value_roundtrip() {
         let ta = typed("hello");
-        assert_eq!(ta.value(), "hello");
+        assert_eq!(ta.value().as_str(), "hello");
         assert_eq!(ta.cursor(), (0, 5));
     }
 
     #[test]
     fn enter_splits_into_multiple_lines() {
         let ta = typed("a\nbc");
-        assert_eq!(ta.value(), "a\nbc");
+        assert_eq!(ta.value().as_str(), "a\nbc");
         assert_eq!(ta.lines().len(), 2);
         assert_eq!(ta.cursor(), (1, 2));
     }
@@ -230,7 +247,7 @@ mod tests {
         ta.on_key(&code(KeyCode::Left));
         assert_eq!(ta.cursor(), (1, 0));
         ta.on_key(&code(KeyCode::Backspace));
-        assert_eq!(ta.value(), "ab");
+        assert_eq!(ta.value().as_str(), "ab");
         assert_eq!(ta.cursor(), (0, 1));
     }
 
@@ -238,14 +255,14 @@ mod tests {
     fn from_str_splits_on_newlines() {
         let ta = TextArea::from_str("one\ntwo\nthree");
         assert_eq!(ta.lines().len(), 3);
-        assert_eq!(ta.value(), "one\ntwo\nthree");
+        assert_eq!(ta.value().as_str(), "one\ntwo\nthree");
     }
 
     #[test]
     fn from_str_empty_keeps_one_line() {
         let ta = TextArea::from_str("");
         assert_eq!(ta.lines().len(), 1);
-        assert_eq!(ta.value(), "");
+        assert_eq!(ta.value().as_str(), "");
     }
 
     #[test]
@@ -258,6 +275,6 @@ mod tests {
         // Left/right must never panic mid-codepoint.
         ta.on_key(&code(KeyCode::Left));
         ta.on_key(&code(KeyCode::Right));
-        assert_eq!(ta.value(), "é\nx");
+        assert_eq!(ta.value().as_str(), "é\nx");
     }
 }

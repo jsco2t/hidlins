@@ -1,4 +1,3 @@
-use std::collections::HashMap;
 use std::path::PathBuf;
 use std::sync::atomic::{AtomicBool, AtomicU64, AtomicU8, Ordering};
 use std::sync::{Arc, Mutex, MutexGuard, OnceLock, RwLock};
@@ -15,6 +14,7 @@ use hidlins_sync::{
 };
 use zeroize::Zeroize;
 
+use super::totp_cache::TotpCache;
 pub use crate::dto::{
     AppInitConfig, KeyfileRef, LifecycleStateDto, LockEvent, SyncEvent, VaultTree,
 };
@@ -117,6 +117,7 @@ pub(crate) struct SessionState {
     pub(crate) clipboard_owner: u64,
     pub(crate) startup_sync_tracker: StartupSyncTracker,
     pub(crate) discovery_cache: CandidateCache,
+    pub(crate) discovery_cancel: Option<Arc<AtomicBool>>,
     pub(crate) discovery_permission: DiscoveryPermission,
     pub(crate) injected_candidates: Vec<LocalEndpoint>,
     pub(crate) server_capable: bool,
@@ -124,11 +125,12 @@ pub(crate) struct SessionState {
     pub(crate) server_runtime: Option<SessionServerRuntime>,
     pub(crate) pairing_open: bool,
     pub(crate) pairing_api: Arc<crate::api::sync::PairingApiState>,
+    pub(crate) totp_cache: Arc<RwLock<TotpCache>>,
 }
 
 pub(crate) struct SessionServerRuntime {
     pub(crate) controller: ServerController,
-    pub(crate) processor: HostProcessor,
+    pub(crate) processor: Option<HostProcessor>,
 }
 
 impl SessionState {
@@ -155,7 +157,7 @@ impl SessionState {
         // would otherwise be lost while the UI keeps rendering cached state.
         // Pushing the current state under the same mutex that installed the
         // sink makes registration + first event atomic.
-        let snapshot = if self.is_unlocked() {
+        let snapshot = if self.is_logically_unlocked() {
             LockEvent::Unlocked
         } else {
             LockEvent::Locked
@@ -170,7 +172,7 @@ impl SessionState {
     }
 
     pub(crate) fn do_lock(&mut self) {
-        crate::api::secrets::purge_clipboard_transfers(self.clipboard_owner);
+        self.revoke_cached_secrets();
         self.pairing_api.cancel_all();
         self.stop_server_runtime();
         self.vault = None;
@@ -181,6 +183,37 @@ impl SessionState {
 
     pub(crate) fn is_unlocked(&self) -> bool {
         self.vault.is_some()
+    }
+
+    pub(crate) fn is_logically_unlocked(&self) -> bool {
+        !self.dead
+            && !self.lock_pending
+            && (self.vault.is_some() || (self.syncing && self.credentials.is_some()))
+    }
+
+    pub(crate) fn revoke_cached_secrets(&mut self) {
+        clear_totp_cache_inner(&self.totp_cache);
+        let previous_owner = std::mem::replace(
+            &mut self.clipboard_owner,
+            crate::api::secrets::new_clipboard_owner(),
+        );
+        crate::api::secrets::purge_clipboard_transfers(previous_owner);
+    }
+
+    fn mark_lock_pending(&mut self) {
+        self.pairing_api.cancel_all();
+        if self.lock_pending {
+            return;
+        }
+        self.lock_pending = true;
+        self.revoke_cached_secrets();
+        if let Some(cancellation) = self.sync_cancellation.as_ref() {
+            cancellation.cancel();
+        }
+        self.stop_server_runtime();
+        self.credentials = None;
+        self.controller.lock_now(OsLockReason::Manual);
+        self.push_lock_event(LockEvent::Locked);
     }
 
     pub(crate) fn require_vault(&self) -> Result<&Vault, HidlinsApiError> {
@@ -200,15 +233,22 @@ impl SessionState {
     fn kill(&mut self) {
         // Idempotent: only the first transition emits `Locked`. Both the
         // poison-recovery path and the ticker's poison branch call this.
-        let was_alive = !self.dead;
-        crate::api::secrets::purge_clipboard_transfers(self.clipboard_owner);
+        let publish_locked = !self.dead && !self.lock_pending;
+        self.revoke_cached_secrets();
+        if let Some(cancellation) = self.sync_cancellation.as_ref() {
+            cancellation.cancel();
+        }
+        if let Some(cancellation) = self.discovery_cancel.as_ref() {
+            cancellation.store(true, Ordering::Release);
+        }
+        self.lock_pending |= self.syncing || self.unlocking;
         self.pairing_api.cancel_all();
         self.server_requested = None;
         self.stop_server_runtime();
         self.vault = None;
         self.credentials = None;
         self.dead = true;
-        if was_alive {
+        if publish_locked {
             self.push_lock_event(LockEvent::Locked);
         }
         // A dead session emits nothing further — drop the sink so Dart
@@ -219,7 +259,9 @@ impl SessionState {
     pub(crate) fn stop_server_runtime(&mut self) {
         self.pairing_open = false;
         if let Some(mut runtime) = self.server_runtime.take() {
-            runtime.processor.shutdown();
+            if let Some(mut processor) = runtime.processor.take() {
+                processor.shutdown();
+            }
             runtime.controller.stop();
             self.push_sync_event(SyncEvent::ServerStopped);
         }
@@ -258,7 +300,7 @@ pub struct AppSession {
     dropped_lock_events: Arc<AtomicU64>,
     ticker_shutdown: Arc<AtomicBool>,
     ticker_join: Mutex<Option<JoinHandle<()>>>,
-    pub(crate) totp_cache: Arc<RwLock<HashMap<Uuid, TotpSnapshot>>>,
+    pub(crate) totp_cache: Arc<RwLock<TotpCache>>,
     pub(crate) paths: HidlinsPaths,
     #[cfg_attr(not(feature = "desktop"), allow(dead_code))]
     pub(crate) clipboard: Option<Arc<dyn crate::clipboard_port::ClipboardPort>>,
@@ -266,6 +308,7 @@ pub struct AppSession {
     pub(crate) background_workers: Mutex<Vec<JoinHandle<()>>>,
     pub(crate) discovery_port:
         Mutex<Option<Box<dyn hidlins_sync::discovery::DiscoveryPort + Send>>>,
+    pub(crate) discovery_operation: Mutex<()>,
     pub(crate) pairing_api: Arc<crate::api::sync::PairingApiState>,
 }
 
@@ -341,13 +384,27 @@ fn attach_platform_lock_sources(
     }
 
     #[cfg(all(target_os = "linux", feature = "logind"))]
-    if let Err(e) = controller.attach_event_source(hidlins_security::LogindSource) {
-        startup_warnings.push(format!("OS lock detection degraded (logind): {e}"));
+    match hidlins_security::LogindSource::new() {
+        Ok(source) => {
+            if let Err(e) = controller.attach_event_source(source) {
+                startup_warnings.push(format!("OS lock detection degraded (logind attach): {e}"));
+            }
+        }
+        Err(e) => {
+            startup_warnings.push(format!("OS lock detection degraded (logind init): {e}"));
+        }
     }
 
     #[cfg(all(target_os = "macos", feature = "iokit"))]
-    if let Err(e) = controller.attach_event_source(hidlins_security::IoKitSource) {
-        startup_warnings.push(format!("OS lock detection degraded (IOKit): {e}"));
+    match hidlins_security::IoKitSource::new() {
+        Ok(source) => {
+            if let Err(e) = controller.attach_event_source(source) {
+                startup_warnings.push(format!("OS lock detection degraded (IOKit attach): {e}"));
+            }
+        }
+        Err(e) => {
+            startup_warnings.push(format!("OS lock detection degraded (IOKit init): {e}"));
+        }
     }
 
     (controller, startup_warnings)
@@ -394,6 +451,7 @@ pub fn init_app(cfg: AppInitConfig) -> Result<AppSession, HidlinsApiError> {
     // `startup_warnings()` (FR-052 best-effort).
     let (controller, startup_warnings) = attach_platform_lock_sources(controller);
 
+    let totp_cache = Arc::new(RwLock::new(TotpCache::default()));
     let pairing_api = Arc::new(crate::api::sync::PairingApiState::new());
     let state = SessionState {
         registry,
@@ -413,6 +471,7 @@ pub fn init_app(cfg: AppInitConfig) -> Result<AppSession, HidlinsApiError> {
         clipboard_owner: crate::api::secrets::new_clipboard_owner(),
         startup_sync_tracker: StartupSyncTracker::default(),
         discovery_cache: CandidateCache::new(),
+        discovery_cancel: None,
         discovery_permission: if cfg!(feature = "desktop") {
             DiscoveryPermission::Granted
         } else {
@@ -424,6 +483,7 @@ pub fn init_app(cfg: AppInitConfig) -> Result<AppSession, HidlinsApiError> {
         server_runtime: None,
         pairing_open: false,
         pairing_api: Arc::clone(&pairing_api),
+        totp_cache: Arc::clone(&totp_cache),
     };
 
     let inner = Arc::new(Mutex::new(state));
@@ -431,7 +491,6 @@ pub fn init_app(cfg: AppInitConfig) -> Result<AppSession, HidlinsApiError> {
     let lifecycle_state = Arc::new(AtomicU8::new(lifecycle_to_u8(LifecycleStateDto::Resumed)));
     let ticker_progress = Arc::new(Mutex::new(TickerProgress::default()));
     let ticker_shutdown = Arc::new(AtomicBool::new(false));
-    let totp_cache = Arc::new(RwLock::new(HashMap::new()));
 
     let ticker_join = spawn_ticker(
         Arc::clone(&inner),
@@ -439,7 +498,6 @@ pub fn init_app(cfg: AppInitConfig) -> Result<AppSession, HidlinsApiError> {
         Arc::clone(&lifecycle_state),
         Arc::clone(&ticker_progress),
         Arc::clone(&ticker_shutdown),
-        Arc::clone(&totp_cache),
     );
 
     #[cfg(feature = "desktop")]
@@ -466,6 +524,7 @@ pub fn init_app(cfg: AppInitConfig) -> Result<AppSession, HidlinsApiError> {
         sync_engine: Arc::new(crate::sync_port::DefaultSyncEngine),
         background_workers: Mutex::new(Vec::new()),
         discovery_port: Mutex::new(None),
+        discovery_operation: Mutex::new(()),
         pairing_api,
     })
 }
@@ -506,7 +565,6 @@ impl AppSession {
         self.activity_counter.fetch_add(1, Ordering::Relaxed);
     }
 
-    #[flutter_rust_bridge::frb(sync)]
     pub fn report_lifecycle_state(&self, state: LifecycleStateDto) -> LockEvent {
         self.lifecycle_state
             .store(lifecycle_to_u8(state), Ordering::Relaxed);
@@ -523,8 +581,8 @@ impl AppSession {
             if let Some(cancellation) = session.sync_cancellation.as_ref() {
                 cancellation.cancel();
             }
+            session.pairing_api.cancel_all();
         }
-        let locked_before = !session.is_unlocked();
         let TickerProgress {
             grace_start,
             last_seen_activity,
@@ -537,17 +595,9 @@ impl AppSession {
             grace_start,
             last_seen_activity,
         );
-        let locked_after = !session.is_unlocked() || session.lock_pending;
+        let locked_after = !session.is_logically_unlocked();
         drop(session);
         drop(progress);
-
-        if cancel_foreground {
-            self.pairing_api.cancel_all();
-        }
-
-        if !locked_before && locked_after {
-            clear_totp_cache_inner(&self.totp_cache);
-        }
 
         if locked_after {
             LockEvent::Locked
@@ -616,6 +666,13 @@ impl AppSession {
                 });
             }
 
+            // Sync retains exclusive ownership even while its vault is
+            // temporarily outside this slot. Do not mix a new vault's
+            // credentials or lock lifecycle with that ownership loan.
+            if state.syncing {
+                return Err(HidlinsApiError::VaultBusySyncing);
+            }
+
             if state.is_unlocked() {
                 return Err(HidlinsApiError::Internal {
                     context: "a vault is already unlocked".to_string(),
@@ -634,6 +691,9 @@ impl AppSession {
                 .ok_or_else(|| HidlinsApiError::FileNotFound { path: name.clone() })?
                 .path
                 .clone();
+            // A new unlock claim supersedes any locked-session import even
+            // if its KDF later fails; the old operation cannot revive.
+            state.pairing_api.cancel_all();
             state.unlocking = true;
             path
         };
@@ -737,15 +797,15 @@ impl AppSession {
     }
 
     pub fn lock_now(&self) -> Result<(), HidlinsApiError> {
-        self.clear_totp_cache();
         let mut state = self.lock_state();
+        // Locked imports have no physical vault to drop, but still own
+        // cancelable pairing work and credential-bearing pending state.
+        state.pairing_api.cancel_all();
+        clear_totp_cache_inner(&state.totp_cache);
         if state.is_unlocked() {
             state.do_lock();
         } else if state.unlocking || state.syncing {
-            state.lock_pending = true;
-            if let Some(cancellation) = state.sync_cancellation.as_ref() {
-                cancellation.cancel();
-            }
+            state.mark_lock_pending();
         }
         Ok(())
     }
@@ -778,16 +838,12 @@ impl AppSession {
 
     pub fn shutdown(&self) {
         self.ticker_shutdown.store(true, Ordering::Relaxed);
-        self.clear_totp_cache();
-        if let Ok(mut port) = self.discovery_port.lock() {
-            if let Some(mut port) = port.take() {
-                let _ = port.shutdown();
-            }
-        }
-
-        {
+        let discovery_cancel = {
             let mut state = self.lock_state();
+            clear_totp_cache_inner(&state.totp_cache);
             state.dead = true;
+            let discovery_cancel = super::sync::cancel_discovery_locked(&mut state);
+            state.pairing_api.cancel_all();
             if let Some(cancellation) = state.sync_cancellation.as_ref() {
                 cancellation.cancel();
             }
@@ -795,11 +851,19 @@ impl AppSession {
             state.stop_server_runtime();
             if state.is_unlocked() {
                 state.do_lock();
+            } else if state.syncing || state.unlocking {
+                state.mark_lock_pending();
             }
             state.sync_sink = None;
             state.lock_sink = None;
             state.controller.shutdown_sources();
-        }
+            discovery_cancel
+        };
+        // Revoke the vault and all retained credentials before waiting for a
+        // browser operation. Discovery never owns State while holding its port.
+        #[cfg(all(test, feature = "desktop"))]
+        super::sync::discovery_cancel_regressions::before_shutdown_discovery_wait();
+        let _ = self.finish_discovery_stop(&discovery_cancel);
 
         if let Ok(mut guard) = self.ticker_join.lock() {
             if let Some(handle) = guard.take() {
@@ -820,16 +884,35 @@ impl AppSession {
     }
 
     pub(crate) fn lock_state(&self) -> MutexGuard<'_, SessionState> {
-        self.inner.lock().unwrap_or_else(|poison| {
-            // Threading rule 7 — fail locked. Recover the guard, force the
-            // session to the locked state, then clear the poison so the
-            // recovery is a one-shot transition; without `clear_poison` every
-            // later call would re-run `kill()` and push another `Locked`.
-            let mut state = poison.into_inner();
-            state.kill();
-            self.inner.clear_poison();
-            state
-        })
+        lock_session_state(&self.inner)
+    }
+}
+
+fn recover_session_state<'a>(
+    inner: &'a Mutex<SessionState>,
+    poison: std::sync::PoisonError<MutexGuard<'a, SessionState>>,
+) -> MutexGuard<'a, SessionState> {
+    let mut state = poison.into_inner();
+    state.kill();
+    inner.clear_poison();
+    state
+}
+
+pub(crate) fn lock_session_state(inner: &Mutex<SessionState>) -> MutexGuard<'_, SessionState> {
+    inner
+        .lock()
+        .unwrap_or_else(|poison| recover_session_state(inner, poison))
+}
+
+pub(crate) fn try_lock_session_state(
+    inner: &Mutex<SessionState>,
+) -> Option<MutexGuard<'_, SessionState>> {
+    match inner.try_lock() {
+        Ok(state) => Some(state),
+        Err(std::sync::TryLockError::WouldBlock) => None,
+        Err(std::sync::TryLockError::Poisoned(poison)) => {
+            Some(recover_session_state(inner, poison))
+        }
     }
 }
 
@@ -901,6 +984,7 @@ impl AppSession {
                 context: format!("controller init: {e}"),
             })?;
 
+        let totp_cache = Arc::new(RwLock::new(TotpCache::default()));
         let pairing_api = Arc::new(crate::api::sync::PairingApiState::new());
         let state = SessionState {
             registry,
@@ -920,6 +1004,7 @@ impl AppSession {
             clipboard_owner: crate::api::secrets::new_clipboard_owner(),
             startup_sync_tracker: StartupSyncTracker::default(),
             discovery_cache: CandidateCache::new(),
+            discovery_cancel: None,
             discovery_permission: if lifecycle_enabled {
                 DiscoveryPermission::NotDetermined
             } else {
@@ -931,6 +1016,7 @@ impl AppSession {
             server_runtime: None,
             pairing_open: false,
             pairing_api: Arc::clone(&pairing_api),
+            totp_cache: Arc::clone(&totp_cache),
         };
 
         Ok(Self {
@@ -941,12 +1027,13 @@ impl AppSession {
             dropped_lock_events: Arc::new(AtomicU64::new(0)),
             ticker_shutdown: Arc::new(AtomicBool::new(false)),
             ticker_join: Mutex::new(None),
-            totp_cache: Arc::new(RwLock::new(HashMap::new())),
+            totp_cache,
             paths: session_paths,
             clipboard: None,
             sync_engine: Arc::new(crate::sync_port::DefaultSyncEngine),
             background_workers: Mutex::new(Vec::new()),
             discovery_port: Mutex::new(None),
+            discovery_operation: Mutex::new(()),
             pairing_api,
         })
     }
@@ -981,6 +1068,7 @@ impl AppSession {
             }
         })?;
 
+        let totp_cache = Arc::new(RwLock::new(TotpCache::default()));
         let pairing_api = Arc::new(crate::api::sync::PairingApiState::new());
         let state = SessionState {
             registry,
@@ -1000,6 +1088,7 @@ impl AppSession {
             clipboard_owner: crate::api::secrets::new_clipboard_owner(),
             startup_sync_tracker: StartupSyncTracker::default(),
             discovery_cache: CandidateCache::new(),
+            discovery_cancel: None,
             discovery_permission: if lifecycle_enabled {
                 DiscoveryPermission::NotDetermined
             } else {
@@ -1011,6 +1100,7 @@ impl AppSession {
             server_runtime: None,
             pairing_open: false,
             pairing_api: Arc::clone(&pairing_api),
+            totp_cache: Arc::clone(&totp_cache),
         };
 
         Ok(Self {
@@ -1021,12 +1111,13 @@ impl AppSession {
             dropped_lock_events: Arc::new(AtomicU64::new(0)),
             ticker_shutdown: Arc::new(AtomicBool::new(false)),
             ticker_join: Mutex::new(None),
-            totp_cache: Arc::new(RwLock::new(HashMap::new())),
+            totp_cache,
             paths: session_paths,
             clipboard,
             sync_engine,
             background_workers: Mutex::new(Vec::new()),
             discovery_port: Mutex::new(None),
+            discovery_operation: Mutex::new(()),
             pairing_api,
         })
     }
@@ -1159,7 +1250,6 @@ fn spawn_ticker(
     lifecycle_state: Arc<AtomicU8>,
     ticker_progress: Arc<Mutex<TickerProgress>>,
     shutdown: Arc<AtomicBool>,
-    totp_cache: Arc<RwLock<HashMap<Uuid, TotpSnapshot>>>,
 ) -> JoinHandle<()> {
     thread::Builder::new()
         .name("hidlins-api-ticker".to_string())
@@ -1187,17 +1277,12 @@ fn spawn_ticker(
                     Err(poison) => poison.into_inner(),
                 };
 
-                let mut state = match inner.try_lock() {
-                    Ok(guard) => guard,
-                    Err(std::sync::TryLockError::WouldBlock) => continue,
-                    Err(std::sync::TryLockError::Poisoned(p)) => {
-                        let mut s = p.into_inner();
-                        s.kill();
-                        break;
-                    }
+                let Some(mut state) = try_lock_session_state(&inner) else {
+                    continue;
                 };
-
-                let locked_before = !state.is_unlocked();
+                if state.dead {
+                    break;
+                }
                 let TickerProgress {
                     grace_start,
                     last_seen_activity,
@@ -1210,10 +1295,6 @@ fn spawn_ticker(
                     grace_start,
                     last_seen_activity,
                 );
-                let locked_after = !state.is_unlocked() || state.lock_pending;
-                if !locked_before && locked_after {
-                    clear_totp_cache_inner(&totp_cache);
-                }
                 drop(state);
                 drop(progress);
                 crate::api::sync::pump_server_once(&inner);
@@ -1222,7 +1303,7 @@ fn spawn_ticker(
         .expect("failed to spawn ticker thread")
 }
 
-pub(crate) fn clear_totp_cache_inner(cache: &RwLock<HashMap<Uuid, TotpSnapshot>>) {
+pub(crate) fn clear_totp_cache_inner(cache: &RwLock<TotpCache>) {
     match cache.write() {
         Ok(mut c) => c.clear(),
         Err(poison) => {
@@ -1287,14 +1368,31 @@ fn tick_inner(
         }
     }
 
+    // An affirmative event also revokes an import while normally locked.
+    // Ordinary controller_locked is expected in that state and is not a
+    // reason to cancel legitimate locked-session work on every timer tick.
+    if lifecycle_lock || lock_event_drained {
+        state.pairing_api.cancel_all();
+    }
+
     if state.is_unlocked() {
         if controller_locked || lifecycle_lock {
             state.do_lock();
         }
-    } else if (state.unlocking || state.syncing) && (lifecycle_lock || lock_event_drained) {
+    } else if ((state.unlocking || state.syncing) && (lifecycle_lock || lock_event_drained))
+        || (state.syncing && controller_locked)
+    {
         // An affirmative lock trigger fired while an unlock KDF or sync
         // worker owns the vault: mark pending so the commit phase
         // discards instead of presenting (threading rule 5).
-        state.lock_pending = true;
+        state.mark_lock_pending();
     }
 }
+
+#[cfg(test)]
+#[path = "lock_cache_regressions.rs"]
+pub(super) mod lock_cache_regressions;
+
+#[cfg(all(test, not(feature = "desktop")))]
+#[path = "worker_panic_ticket_regressions.rs"]
+mod worker_panic_ticket_regressions;

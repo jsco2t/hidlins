@@ -49,18 +49,14 @@ serde = { version = "1", features = ["derive"] }
 # detection on Linux enable `hidlins-security/logind`. Other platforms
 # (macOS) simply do not see this dependency.
 #
-# `default-features = false` drops zbus's optional adapters; we keep
-# only `async-io` (its lighter pure-Rust runtime — `tokio` would pull
-# `mio` + `parking_lot` + the full Tokio tree, none of which we need
-# for "open a connection, subscribe, drain signals"). Even with
-# `async-io`, we wrap zbus's blocking façade in `LogindSource` so the
-# crate does NOT expose async surface to consumers.
+# Keep the maintained zbus family exact-pinned with only its standard runtime
+# and client proxy. Service support is enabled only by Linux test fixtures.
+# The runtime remains behind LogindSource's synchronous event-source contract;
+# no async API is exposed to frontends and only admitted Unix bus addresses run.
 [target.'cfg(target_os = "linux")'.dependencies]
-zbus = { version = "5", default-features = false, features = ["async-io"], optional = true }
-# `async-channel` and `futures-lite` are already in the vendored tree
-# as transitive deps of `zbus`. Declaring them directly (still gated
-# behind `dep:`) lets us race the signal streams against a shutdown
-# channel without pulling the heavyweight `futures` crate.
+zbus = { version = "=6.2.1", default-features = false, features = ["default-rt", "proxy"], optional = true }
+# Reuse the existing narrowly gated channel and stream helpers to race the
+# entire connection/subscription lifetime against controller shutdown.
 async-channel = { version = "2", optional = true }
 futures-lite = { version = "2", default-features = false, optional = true }
 
@@ -185,3 +181,7 @@ required-features = ["test-binaries", "logind"]
 name = "iokit_helper"
 path = "tests/bin/iokit_helper.rs"
 required-features = ["test-binaries", "iokit"]
+
+# Linux private-bus test services only; shipping dependency omits service.
+[target.'cfg(target_os = "linux")'.dev-dependencies]
+zbus = { version = "=6.2.1", default-features = false, features = ["default-rt", "proxy", "service"] }

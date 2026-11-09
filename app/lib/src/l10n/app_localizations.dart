@@ -826,11 +826,35 @@ abstract class AppLocalizations {
   /// **'Move entry'**
   String get entryMoveTitle;
 
+  /// No description provided for @entryMoveDestinationLabel.
+  ///
+  /// In en, this message translates to:
+  /// **'Destination group'**
+  String get entryMoveDestinationLabel;
+
+  /// No description provided for @entryMoveNoDestinations.
+  ///
+  /// In en, this message translates to:
+  /// **'No other groups'**
+  String get entryMoveNoDestinations;
+
+  /// No description provided for @entryActionChanged.
+  ///
+  /// In en, this message translates to:
+  /// **'The vault changed. Try this action again.'**
+  String get entryActionChanged;
+
   /// No description provided for @entryHistoryTitle.
   ///
   /// In en, this message translates to:
   /// **'Entry history'**
   String get entryHistoryTitle;
+
+  /// No description provided for @entryHistoryEmpty.
+  ///
+  /// In en, this message translates to:
+  /// **'No history yet'**
+  String get entryHistoryEmpty;
 
   /// No description provided for @entryHistoryVersion.
   ///
@@ -874,6 +898,54 @@ abstract class AppLocalizations {
   /// **'Group name'**
   String get groupNameLabel;
 
+  /// No description provided for @groupsTitle.
+  ///
+  /// In en, this message translates to:
+  /// **'Groups'**
+  String get groupsTitle;
+
+  /// No description provided for @groupActionsFor.
+  ///
+  /// In en, this message translates to:
+  /// **'Actions for {name}'**
+  String groupActionsFor(String name);
+
+  /// No description provided for @groupMoveTitle.
+  ///
+  /// In en, this message translates to:
+  /// **'Move group'**
+  String get groupMoveTitle;
+
+  /// No description provided for @groupMoveNoDestinations.
+  ///
+  /// In en, this message translates to:
+  /// **'No other eligible groups'**
+  String get groupMoveNoDestinations;
+
+  /// No description provided for @groupDeleteBehavior.
+  ///
+  /// In en, this message translates to:
+  /// **'Delete behavior'**
+  String get groupDeleteBehavior;
+
+  /// No description provided for @groupDeleteOnlyEmpty.
+  ///
+  /// In en, this message translates to:
+  /// **'Only if empty'**
+  String get groupDeleteOnlyEmpty;
+
+  /// No description provided for @groupDeleteSubtree.
+  ///
+  /// In en, this message translates to:
+  /// **'Group and contents to Recycle Bin'**
+  String get groupDeleteSubtree;
+
+  /// No description provided for @groupDeleteNonempty.
+  ///
+  /// In en, this message translates to:
+  /// **'This group is not empty. Choose to move it and its contents to Recycle Bin.'**
+  String get groupDeleteNonempty;
+
   /// No description provided for @recycleBin.
   ///
   /// In en, this message translates to:
@@ -916,6 +988,12 @@ abstract class AppLocalizations {
   /// **'Could not save attachment'**
   String get attachmentExportFailed;
 
+  /// No description provided for @attachmentSourceFailed.
+  ///
+  /// In en, this message translates to:
+  /// **'Could not choose attachment'**
+  String get attachmentSourceFailed;
+
   /// No description provided for @attachmentBytes.
   ///
   /// In en, this message translates to:
@@ -933,6 +1011,24 @@ abstract class AppLocalizations {
   /// In en, this message translates to:
   /// **'Clear expiration'**
   String get expirationClear;
+
+  /// No description provided for @expirationLabel.
+  ///
+  /// In en, this message translates to:
+  /// **'Expiration (UTC)'**
+  String get expirationLabel;
+
+  /// No description provided for @expirationNever.
+  ///
+  /// In en, this message translates to:
+  /// **'Never expires'**
+  String get expirationNever;
+
+  /// No description provided for @expirationPickerHelp.
+  ///
+  /// In en, this message translates to:
+  /// **'Expiration date (00:00 UTC)'**
+  String get expirationPickerHelp;
 
   /// No description provided for @searchHintText.
   ///
@@ -1053,6 +1149,12 @@ abstract class AppLocalizations {
   /// In en, this message translates to:
   /// **'Change master password'**
   String get vaultChangePasswordTitle;
+
+  /// No description provided for @vaultChangePasswordUnlockTarget.
+  ///
+  /// In en, this message translates to:
+  /// **'Unlock this vault before changing its password.'**
+  String get vaultChangePasswordUnlockTarget;
 
   /// No description provided for @vaultChangePasswordCurrent.
   ///

@@ -11,12 +11,10 @@
 //! 3. **Fall through to a no-echo stdin prompt** implemented directly
 //!    over `nix::sys::termios` — see [`read_password_no_echo`].
 //!
-//! Memory hygiene: the intermediate `String` from
-//! [`read_password_no_echo`] moves straight into [`MasterPassword`],
-//! which is `Zeroize + ZeroizeOnDrop`. The bytes are scrubbed on drop.
-//! The intermediate stack allocation is not separately zeroized — that
-//! is the same hygiene posture vault-core accepts (see
-//! `kb/memory-hygiene.md`).
+//! Memory hygiene: fallible reads and confirmation candidates use
+//! [`zeroize::Zeroizing`] ownership. A successful master-password input moves
+//! into [`MasterPassword`], which erases the consumed source allocation and
+//! zeroizes its retained bytes on drop.
 //!
 //! ## Why not `rpassword`?
 //!
@@ -33,10 +31,19 @@ use std::os::fd::{AsFd, AsRawFd, BorrowedFd};
 
 use hidlins_core::MasterPassword;
 use nix::sys::termios::{tcgetattr, tcsetattr, LocalFlags, SetArg, Termios};
+use zeroize::Zeroizing;
 
 use crate::agent::{AgentClient, AgentError};
 use crate::cli::MASTER_PASSWORD_ENV_VAR;
 use crate::exit::CliExit;
+
+#[cfg(test)]
+#[path = "prompt_terminal_regressions.rs"]
+mod terminal_control_regressions;
+
+#[cfg(test)]
+#[path = "prompt_serialization_regressions.rs"]
+mod serialization_regressions;
 
 /// Detect the `HIDLINS_MASTER_PASSWORD` env var; if set, write a
 /// warning to `stderr` and remove the variable from the process
@@ -106,11 +113,8 @@ pub const NEW_PASSWORD_MAX_ATTEMPTS: u8 = 3;
 /// Gives up after [`NEW_PASSWORD_MAX_ATTEMPTS`] complete attempts and
 /// returns [`CliExit::UserError`].
 ///
-/// Memory hygiene: each candidate `String` is dropped immediately after
-/// the comparison; the matching value moves directly into
-/// [`MasterPassword`]. The intermediate stack allocation is not
-/// separately zeroized — same posture as
-/// [`master_password`] / `kb/memory-hygiene.md`.
+/// Both candidates are erased on every return, mismatch and error path. The
+/// matching value transfers directly into [`MasterPassword`].
 ///
 /// # Errors
 ///
@@ -121,16 +125,16 @@ pub fn new_master_password_confirmed<R: BufRead, W: Write>(
     stderr: &mut W,
 ) -> Result<MasterPassword, CliExit> {
     for attempt in 1..=NEW_PASSWORD_MAX_ATTEMPTS {
-        let first = read_password_no_echo("New master password: ", stdin, stderr)
-            .map_err(|e| CliExit::UserError(format!("failed to read password: {e}")))?;
-        let second = read_password_no_echo("Confirm master password: ", stdin, stderr)
-            .map_err(|e| CliExit::UserError(format!("failed to read password: {e}")))?;
+        let mut first = Zeroizing::new(
+            read_password_no_echo("New master password: ", stdin, stderr)
+                .map_err(|e| CliExit::UserError(format!("failed to read password: {e}")))?,
+        );
+        let second = Zeroizing::new(
+            read_password_no_echo("Confirm master password: ", stdin, stderr)
+                .map_err(|e| CliExit::UserError(format!("failed to read password: {e}")))?,
+        );
         if first == second {
-            // Wrap one of the matching values; both `String`s drop at
-            // end of scope so the unwrapped duplicate is released
-            // immediately. We do not zeroize the duplicate — same
-            // posture as `master_password` (see `kb/memory-hygiene.md`).
-            return Ok(MasterPassword::new(first));
+            return Ok(MasterPassword::new(std::mem::take(&mut *first)));
         }
         let _ = writeln!(
             stderr,
@@ -148,7 +152,7 @@ pub fn new_master_password_confirmed<R: BufRead, W: Write>(
 /// (silent) Enter keypress.
 ///
 /// When `stdin` is not a TTY (e.g., piped input from a test harness or
-/// a script feeding the password), `tcgetattr` returns an error and
+/// a script feeding the password), `tcgetattr` returns `ENOTTY` and
 /// the function falls back to a plain `read_line` — input passes
 /// through unchanged, which is the documented "piped-input" behaviour
 /// (`verifications/01-local/03-master-password.md`).
@@ -162,9 +166,9 @@ pub fn new_master_password_confirmed<R: BufRead, W: Write>(
 /// # Errors
 ///
 /// Returns any `std::io::Error` produced by writing the prompt or
-/// reading the line. Failures to read/restore termios state are
-/// silently ignored — they only affect input echo, never correctness
-/// of the read value.
+/// reading the line, including missing input at EOF. Terminal attribute
+/// errors other than `ENOTTY`, or failure to disable echo, abort before
+/// reading secret input. Restoration on drop remains best-effort.
 pub fn read_password_no_echo<R: BufRead, W: Write>(
     prompt_label: &str,
     stdin: &mut R,
@@ -176,9 +180,9 @@ pub fn read_password_no_echo<R: BufRead, W: Write>(
     // Keep `stdin_handle` alive for the duration of the guard's
     // lifetime — `BorrowedFd` is tied to the `Stdin` value.
     let stdin_handle = std::io::stdin();
-    let _guard = EchoGuard::disable(stdin_handle.as_fd());
+    let _guard = EchoGuard::disable(stdin_handle.as_fd())?;
 
-    let mut line = String::new();
+    let mut line = Zeroizing::new(String::new());
     let read_result = stdin.read_line(&mut line);
 
     // The user's Enter keypress wasn't echoed when ECHO was off; add a
@@ -186,7 +190,12 @@ pub fn read_password_no_echo<R: BufRead, W: Write>(
     // Unconditional — harmless when echo was actually on.
     writeln!(stderr)?;
 
-    read_result?;
+    if read_result? == 0 {
+        return Err(std::io::Error::new(
+            std::io::ErrorKind::UnexpectedEof,
+            "password input ended before a value was supplied",
+        ));
+    }
     // Strip the trailing newline `read_line` leaves on the buffer.
     if line.ends_with('\n') {
         line.pop();
@@ -194,7 +203,9 @@ pub fn read_password_no_echo<R: BufRead, W: Write>(
             line.pop();
         }
     }
-    Ok(line)
+    // Transfer successful input without leaving a separate plaintext copy.
+    // Callers immediately move it into a master password or zeroizing owner.
+    Ok(std::mem::take(&mut *line))
 }
 
 /// Read a single line from `stdin` with terminal echo **left on**,
@@ -231,36 +242,69 @@ pub fn prompt_line<R: BufRead, W: Write>(
 
 /// RAII guard: when constructed via [`Self::disable`] it turns off the
 /// ECHO local flag on the given fd; on drop it restores the prior
-/// `Termios` value. If the fd is not a TTY (or any termios call
-/// fails) the guard does nothing — same effect as if the user piped
-/// input through a file.
+/// `Termios` value. A non-TTY fd needs no echo change; other terminal-control
+/// failures are returned before the caller reads input.
 struct EchoGuard<'fd> {
     fd: BorrowedFd<'fd>,
     original: Option<Termios>,
+    // Retained until Drop has restored terminal state and signal handlers.
+    _serial: std::sync::MutexGuard<'static, ()>,
 }
 
+static ECHO_LOCK: std::sync::Mutex<()> = std::sync::Mutex::new(());
+
 impl<'fd> EchoGuard<'fd> {
-    fn disable(fd: BorrowedFd<'fd>) -> Self {
-        let Ok(original) = tcgetattr(fd) else {
-            return Self { fd, original: None };
+    fn disable(fd: BorrowedFd<'fd>) -> std::io::Result<Self> {
+        // Snapshot only after acquiring ownership: a waiting prompt must not
+        // capture the preceding prompt's temporary echo-disabled settings.
+        let serial = ECHO_LOCK
+            .lock()
+            .unwrap_or_else(std::sync::PoisonError::into_inner);
+        let original = {
+            #[cfg(test)]
+            {
+                terminal_control_regressions::get_attrs(fd)
+            }
+            #[cfg(not(test))]
+            {
+                tcgetattr(fd)
+            }
+        };
+        let original = match original {
+            Ok(original) => original,
+            Err(nix::errno::Errno::ENOTTY) => {
+                return Ok(Self {
+                    fd,
+                    original: None,
+                    _serial: serial,
+                });
+            }
+            Err(error) => return Err(std::io::Error::from_raw_os_error(error as i32)),
         };
         let mut modified = original.clone();
         modified.local_flags &= !LocalFlags::ECHO;
-        if tcsetattr(fd, SetArg::TCSANOW, &modified).is_err() {
-            // Couldn't disable echo — leave terminal alone, no need
-            // to restore.
-            return Self { fd, original: None };
-        }
+        let set_result = {
+            #[cfg(test)]
+            {
+                terminal_control_regressions::set_attrs(fd, SetArg::TCSANOW, &modified)
+            }
+            #[cfg(not(test))]
+            {
+                tcsetattr(fd, SetArg::TCSANOW, &modified)
+            }
+        };
+        set_result.map_err(|error| std::io::Error::from_raw_os_error(error as i32))?;
         // ECHO is now off but ISIG is still on: ^C (SIGINT) or a `kill`
         // (SIGTERM) would terminate the process WITHOUT running this
         // guard's Drop, leaving the user's terminal permanently
         // echo-less. Arm an async-signal-safe handler that restores the
         // saved termios before re-raising the signal.
         echo_signals::arm(fd.as_raw_fd(), original.clone().into());
-        Self {
+        Ok(Self {
             fd,
             original: Some(original),
-        }
+            _serial: serial,
+        })
     }
 }
 
@@ -291,10 +335,10 @@ impl Drop for EchoGuard<'_> {
 /// allocation, locks, or Rust runtime services — which rules out the
 /// safe `nix` wrappers used elsewhere in this file.
 ///
-/// Concurrency: the CLI runs exactly one prompt at a time on the main
-/// thread (arm/disarm are strictly nested), so plain statics written
-/// before handler installation and read-only inside the handler are
-/// race-free.
+/// Prompt ownership: `EchoGuard` holds `ECHO_LOCK` from before the terminal
+/// snapshot through restoration and disarming. Another prompt cannot replace
+/// this process-wide state while the current guard is live. The handler reads
+/// state published before its installation.
 #[cfg(unix)]
 mod echo_signals {
     use std::sync::atomic::{AtomicBool, AtomicI32, AtomicUsize, Ordering};

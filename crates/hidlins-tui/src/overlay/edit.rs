@@ -22,6 +22,7 @@ use tui_input::Input;
 
 use super::generate::GenState;
 use super::{centered, clear};
+use crate::command::{Command, Keymap};
 use crate::theme::Theme;
 use crate::widgets::password_input::PasswordInput;
 use crate::widgets::text_area::TextArea;
@@ -94,9 +95,9 @@ pub(crate) struct EditState {
     pub(crate) error: Option<String>,
 }
 
-/// A plain snapshot of the form's committed values, consumed by `App` to drive
-/// `add_entry` / `update_entry`. The password is kept in `Zeroizing` so the
-/// snapshot wipes it on drop.
+/// A snapshot of the form's committed values, consumed by `App` to drive
+/// `add_entry` / `update_entry`. Sensitive values, including notes, are kept in
+/// `Zeroizing` so the snapshot wipes them on drop.
 pub(crate) struct EditValues {
     pub(crate) kind: EntryKind,
     pub(crate) title: String,
@@ -105,7 +106,7 @@ pub(crate) struct EditValues {
     pub(crate) url: String,
     /// otpauth URI (carries the seed) — `Zeroizing` so the snapshot wipes it.
     pub(crate) totp_uri: Zeroizing<String>,
-    pub(crate) notes: String,
+    pub(crate) notes: Zeroizing<String>,
     pub(crate) tags: Vec<Tag>,
     /// `(name, value, protected)`; the value is `Zeroizing` since a custom field
     /// may hold key material (PMF-1). `protected` preserves the loaded field's
@@ -308,6 +309,12 @@ impl EditState {
             if crate::util::is_otp_field(&name) {
                 return Err("Custom field name 'otp'/'TOTP' is reserved.".to_string());
             }
+            if matches!(
+                name.as_str(),
+                "Title" | "UserName" | "Password" | "URL" | "Notes"
+            ) {
+                return Err("Custom field names cannot be standard entry fields.".to_string());
+            }
             custom.retain(|(n, _, _)| n != &name);
             custom.push((
                 name,
@@ -350,6 +357,11 @@ impl EditState {
                 "type password   Ctrl+G: generate   Ctrl+R: reveal   Ctrl+S: save   Esc: cancel"
             }
             EditField::Notes => "Enter: newline   Tab: next field   Ctrl+S: save   Esc: cancel",
+            EditField::Custom(index, Col::Value)
+                if self.custom.get(index).is_some_and(|row| row.protected) =>
+            {
+                "edit value   Ctrl+R: reveal/hide   Ctrl+D: delete field   Tab: next   Ctrl+S: save   Esc: cancel"
+            }
             EditField::Custom(..) => {
                 "edit field   Ctrl+D: delete field   Tab: next   Ctrl+S: save   Esc: cancel"
             }
@@ -380,12 +392,29 @@ fn parse_tags(raw: &str) -> Result<Vec<Tag>, String> {
 /// Insert a `▏` caret at character index `col` in `line` (for the focused notes
 /// line). `col` is a character count, clamped to the line length.
 fn with_caret(line: &str, col: usize) -> String {
-    let chars: Vec<char> = line.chars().collect();
-    let at = col.min(chars.len());
-    let mut out: String = chars[..at].iter().collect();
+    let mut value = sensitive_caret(line, col);
+    // This path is only for non-secret Input metadata. Sensitive fields keep
+    // the protected owner through the complete draw.
+    std::mem::take(&mut *value)
+}
+
+fn sensitive_caret(line: &str, col: usize) -> Zeroizing<String> {
+    let at = char_byte(line, col);
+    let capacity = line
+        .len()
+        .checked_add('▏'.len_utf8())
+        .expect("input too large");
+    let mut out = Zeroizing::new(String::with_capacity(capacity));
+    out.push_str(&line[..at]);
     out.push('▏');
-    out.extend(chars[at..].iter());
+    out.push_str(&line[at..]);
     out
+}
+
+fn char_byte(line: &str, col: usize) -> usize {
+    line.char_indices()
+        .nth(col)
+        .map_or(line.len(), |(at, _)| at)
 }
 
 /// The displayed value of a single-line input: the plain value, plus a `▏`
@@ -399,17 +428,6 @@ fn caret_value(input: &Input, focused: bool) -> String {
     }
 }
 
-/// `caret_value` for a [`PasswordInput`]-backed visible field (the otpauth URI):
-/// the buffer is `Zeroizing` for memory hygiene, but the field is rendered in
-/// the clear (add-only) so a paste can be verified.
-fn caret_value_pw(input: &PasswordInput, focused: bool) -> String {
-    if focused {
-        with_caret(input.as_str(), input.cursor_chars())
-    } else {
-        input.as_str().to_string()
-    }
-}
-
 fn kind_label(kind: EntryKind) -> &'static str {
     match kind {
         EntryKind::Credential => "Credential",
@@ -418,7 +436,7 @@ fn kind_label(kind: EntryKind) -> &'static str {
     }
 }
 
-pub(crate) fn render(state: &EditState, frame: &mut Frame, theme: &Theme) {
+pub(crate) fn render(state: &EditState, frame: &mut Frame, theme: &Theme, keys: &Keymap) {
     // Generate panel takes over the modal while active.
     if let Some(gen) = state.generating.as_ref() {
         render_generate(gen, frame, theme);
@@ -437,11 +455,77 @@ pub(crate) fn render(state: &EditState, frame: &mut Frame, theme: &Theme) {
     let inner = block.inner(area);
     frame.render_widget(block, area);
 
-    let lines = form_lines(state, theme);
-    frame.render_widget(
-        Paragraph::new(lines).wrap(Wrap { trim: false }),
-        inner_with_margin(inner),
+    let generate_binding = keys.rendered_keys(Command::Generate);
+    let caret = match state.focused() {
+        EditField::TotpUri => Some(sensitive_caret(
+            state.totp_uri.as_str(),
+            state.totp_uri.cursor_chars(),
+        )),
+        EditField::Notes => {
+            let (row, col) = state.notes.cursor();
+            Some(sensitive_caret(&state.notes.lines()[row], col))
+        }
+        _ => None,
+    };
+    let form = form_lines(
+        state,
+        theme,
+        generate_binding.as_deref(),
+        caret.as_ref().map(|value| value.as_str()),
     );
+    #[cfg(test)]
+    crate::render_memory_regressions::capture("edit", &form.lines);
+    let viewport = inner_with_margin(inner);
+    let error = state.error.as_ref().map(|message| {
+        Paragraph::new(Span::styled(format!("⚠ {message}"), theme.error()))
+            .wrap(Wrap { trim: false })
+    });
+    let error_rows = error.as_ref().map_or(0, |paragraph| {
+        let rows = u16::try_from(paragraph.line_count(viewport.width)).unwrap_or(u16::MAX);
+        // One physical row prioritizes the validation error. Larger viewports
+        // retain room for the focused field while displaying the error below.
+        rows.min(if viewport.height <= 1 {
+            viewport.height
+        } else {
+            viewport.height / 2
+        })
+    });
+    let body = Rect {
+        height: viewport.height.saturating_sub(error_rows),
+        ..viewport
+    };
+    let paragraph = Paragraph::new(form.lines).wrap(Wrap { trim: false });
+    let row = form
+        .focus
+        .and_then(|position| {
+            paragraph
+                .wrapped_row_for_span(body.width, position.line, position.span, position.byte)
+                .or_else(|| {
+                    paragraph.wrapped_row_for_span(
+                        body.width,
+                        position.line,
+                        position.fallback_span,
+                        position.fallback_byte,
+                    )
+                })
+        })
+        .unwrap_or(0);
+    let limit = paragraph
+        .line_count(body.width)
+        .saturating_sub(usize::from(body.height));
+    let scroll = row.saturating_sub(usize::from(body.height) / 2).min(limit);
+    frame.render_widget(
+        paragraph.scroll((u16::try_from(scroll).unwrap_or(u16::MAX), 0)),
+        body,
+    );
+    if let Some(error) = error {
+        let area = Rect {
+            y: body.y.saturating_add(body.height),
+            height: error_rows,
+            ..viewport
+        };
+        frame.render_widget(error, area);
+    }
 }
 
 /// A `marker + label: value` line, styled by focus state.
@@ -458,34 +542,110 @@ fn field_line(label: &str, value: String, is_focused: bool, theme: &Theme) -> Li
     ])
 }
 
-/// Build the full set of form lines for the current state.
-fn form_lines(state: &EditState, theme: &Theme) -> Vec<Line<'static>> {
-    let focused = state.focused();
-    let mut lines: Vec<Line> = Vec::new();
-    push_identity_fields(&mut lines, state, theme, focused);
-    push_notes(&mut lines, state, theme, focused);
+fn push_input_field(
+    lines: &mut FormLines<'_>,
+    label: &str,
+    input: &Input,
+    focused: bool,
+    theme: &Theme,
+) {
+    if focused {
+        lines.focus_here(1, char_byte(input.value(), input.cursor()));
+    }
     lines.push(field_line(
-        "Tags",
-        caret_value(&state.tags, focused == EditField::Tags),
-        focused == EditField::Tags,
+        label,
+        caret_value(input, focused),
+        focused,
         theme,
     ));
-    push_custom_fields(&mut lines, state, theme, focused);
-    if let Some(err) = state.error.as_ref() {
-        lines.push(Line::from(""));
-        lines.push(Line::from(Span::styled(format!("⚠ {err}"), theme.error())));
+}
+
+/// Exact source location of the focused value and a visible label fallback.
+#[derive(Clone, Copy)]
+struct FocusPosition {
+    line: usize,
+    span: usize,
+    byte: usize,
+    fallback_span: usize,
+    fallback_byte: usize,
+}
+
+#[derive(Default)]
+struct FormLines<'a> {
+    lines: Vec<Line<'a>>,
+    focus: Option<FocusPosition>,
+}
+
+impl<'a> FormLines<'a> {
+    fn focus_here(&mut self, span: usize, byte: usize) {
+        self.focus_with_fallback(span, byte, 0, 0);
     }
+
+    fn focus_with_fallback(
+        &mut self,
+        span: usize,
+        byte: usize,
+        fallback_span: usize,
+        fallback_byte: usize,
+    ) {
+        self.focus = Some(FocusPosition {
+            line: self.lines.len(),
+            span,
+            byte,
+            fallback_span,
+            fallback_byte,
+        });
+    }
+
+    fn push(&mut self, line: Line<'a>) {
+        if let Some(position) = self.focus.as_mut().filter(|p| p.line == self.lines.len()) {
+            let length = line
+                .spans
+                .get(position.span)
+                .map_or(0, |span| span.content.len());
+            // A raw field cursor may be at end-of-input; an inserted caret is
+            // already an interior byte. Empty/unpainted targets use the label.
+            position.byte = position.byte.min(length.saturating_sub(1));
+        }
+        self.lines.push(line);
+    }
+}
+
+/// Build display lines and record focus as each field is appended.
+fn form_lines<'a>(
+    state: &'a EditState,
+    theme: &Theme,
+    generate_binding: Option<&str>,
+    caret: Option<&'a str>,
+) -> FormLines<'a> {
+    let focused = state.focused();
+    let mut lines = FormLines::default();
+    push_identity_fields(&mut lines, state, theme, focused, generate_binding, caret);
+    push_notes(&mut lines, state, theme, focused, caret);
+    push_input_field(
+        &mut lines,
+        "Tags",
+        &state.tags,
+        focused == EditField::Tags,
+        theme,
+    );
+    push_custom_fields(&mut lines, state, theme, focused);
     lines
 }
 
 /// Kind (add only) + title + the kind-specific identity fields.
-fn push_identity_fields(
-    lines: &mut Vec<Line<'static>>,
-    state: &EditState,
+fn push_identity_fields<'a>(
+    lines: &mut FormLines<'a>,
+    state: &'a EditState,
     theme: &Theme,
     focused: EditField,
+    generate_binding: Option<&str>,
+    caret: Option<&'a str>,
 ) {
     if state.is_new {
+        if focused == EditField::Kind {
+            lines.focus_here(1, 0);
+        }
         lines.push(field_line(
             "Type",
             format!("◂ {} ▸", kind_label(state.kind)),
@@ -493,60 +653,84 @@ fn push_identity_fields(
             theme,
         ));
     }
-    lines.push(field_line(
+    push_input_field(
+        lines,
         "Title",
-        caret_value(&state.title, focused == EditField::Title),
+        &state.title,
         focused == EditField::Title,
         theme,
-    ));
+    );
     match state.kind {
         EntryKind::Credential => {
-            lines.push(field_line(
+            push_input_field(
+                lines,
                 "Username",
-                caret_value(&state.username, focused == EditField::Username),
+                &state.username,
                 focused == EditField::Username,
                 theme,
-            ));
-            lines.push(password_line(state, theme, focused == EditField::Password));
-            lines.push(field_line(
-                "URL",
-                caret_value(&state.url, focused == EditField::Url),
-                focused == EditField::Url,
+            );
+            if focused == EditField::Password {
+                let byte = if state.reveal_password {
+                    char_byte(state.password.as_str(), state.password.cursor_chars())
+                } else {
+                    state.password.cursor_chars().saturating_mul('•'.len_utf8())
+                };
+                lines.focus_here(1, byte);
+            }
+            lines.push(password_line(
+                state,
                 theme,
+                focused == EditField::Password,
+                generate_binding,
             ));
+            push_input_field(lines, "URL", &state.url, focused == EditField::Url, theme);
         }
         EntryKind::Totp => {
             if state.is_new {
-                lines.push(field_line(
-                    "otpauth URI",
-                    caret_value_pw(&state.totp_uri, focused == EditField::TotpUri),
-                    focused == EditField::TotpUri,
-                    theme,
-                ));
+                let is_focused = focused == EditField::TotpUri;
+                if is_focused {
+                    lines.focus_here(
+                        1,
+                        char_byte(state.totp_uri.as_str(), state.totp_uri.cursor_chars()),
+                    );
+                }
+                let value = if is_focused {
+                    caret.unwrap_or(state.totp_uri.as_str())
+                } else {
+                    state.totp_uri.as_str()
+                };
+                lines.push(Line::from(vec![
+                    Span::styled(
+                        format!("{}otpauth URI: ", if is_focused { "> " } else { "  " }),
+                        if is_focused {
+                            theme.header()
+                        } else {
+                            theme.muted()
+                        },
+                    ),
+                    Span::raw(value),
+                ]));
             }
-            lines.push(field_line(
+            push_input_field(
+                lines,
                 "Username",
-                caret_value(&state.username, focused == EditField::Username),
+                &state.username,
                 focused == EditField::Username,
                 theme,
-            ));
-            lines.push(field_line(
-                "URL",
-                caret_value(&state.url, focused == EditField::Url),
-                focused == EditField::Url,
-                theme,
-            ));
+            );
+            push_input_field(lines, "URL", &state.url, focused == EditField::Url, theme);
         }
         EntryKind::SecureNote => {}
     }
 }
 
 /// The multi-line notes section, with an inline caret on the focused line.
-fn push_notes(
-    lines: &mut Vec<Line<'static>>,
-    state: &EditState,
+fn push_notes<'a>(
+    lines: &mut FormLines<'a>,
+    state: &'a EditState,
     theme: &Theme,
     focused: EditField,
+    caret: Option<&'a str>,
 ) {
     let notes_focused = focused == EditField::Notes;
     let notes_marker = if notes_focused { "> " } else { "  " };
@@ -561,18 +745,21 @@ fn push_notes(
     let (cursor_row, cursor_col) = state.notes.cursor();
     for (i, nl) in state.notes.lines().iter().enumerate() {
         let rendered = if notes_focused && i == cursor_row {
-            with_caret(nl, cursor_col)
+            caret.unwrap_or(nl.as_str())
         } else {
-            nl.clone()
+            nl.as_str()
         };
-        lines.push(Line::from(format!("    {rendered}")));
+        if notes_focused && i == cursor_row {
+            lines.focus_here(1, char_byte(nl, cursor_col));
+        }
+        lines.push(Line::from(vec![Span::raw("    "), Span::raw(rendered)]));
     }
 }
 
 /// The dynamic custom-field rows + the "add" affordance.
-fn push_custom_fields(
-    lines: &mut Vec<Line<'static>>,
-    state: &EditState,
+fn push_custom_fields<'a>(
+    lines: &mut FormLines<'a>,
+    state: &'a EditState,
     theme: &Theme,
     focused: EditField,
 ) {
@@ -584,6 +771,18 @@ fn push_custom_fields(
         let value_focused = focused == EditField::Custom(i, Col::Value);
         let nmarker = if name_focused { "> " } else { "  " };
         let vmarker = if value_focused { "> " } else { "  " };
+        if name_focused {
+            lines.focus_with_fallback(1, char_byte(row.name.value(), row.name.cursor()), 0, 2);
+        } else if value_focused {
+            // A fixed protected mask must not move according to the hidden
+            // secret's length or cursor. Reveal makes its true cursor visible.
+            let byte = if row.protected && !state.reveal_password {
+                0
+            } else {
+                char_byte(row.value.as_str(), row.value.cursor_chars())
+            };
+            lines.focus_with_fallback(3, byte, 2, 3);
+        }
         lines.push(Line::from(vec![
             Span::styled(
                 format!("  {nmarker}name: "),
@@ -602,11 +801,30 @@ fn push_custom_fields(
                     theme.muted()
                 },
             ),
-            Span::raw(row.value.as_str().to_string()),
+            Span::raw(if row.protected && !state.reveal_password {
+                "••••••••"
+            } else {
+                row.value.as_str()
+            }),
+            Span::styled(
+                if row.protected {
+                    if state.reveal_password {
+                        " (revealed · Ctrl+R: hide)"
+                    } else {
+                        " (Ctrl+R: reveal)"
+                    }
+                } else {
+                    ""
+                },
+                theme.muted(),
+            ),
         ]));
     }
 
     let add_focused = focused == EditField::CustomAdd;
+    if add_focused {
+        lines.focus_here(0, 0);
+    }
     lines.push(Line::from(Span::styled(
         format!(
             "{}[+ add custom field]",
@@ -632,7 +850,12 @@ fn inner_with_margin(inner: Rect) -> Rect {
 
 /// The password row: masked dots (or plaintext when revealed). Never prints the
 /// secret unless `reveal_password` is set.
-fn password_line(state: &EditState, theme: &Theme, is_focused: bool) -> Line<'static> {
+fn password_line<'a>(
+    state: &'a EditState,
+    theme: &Theme,
+    is_focused: bool,
+    generate_binding: Option<&str>,
+) -> Line<'a> {
     let marker = if is_focused { "> " } else { "  " };
     let label_style = if is_focused {
         theme.header()
@@ -640,19 +863,23 @@ fn password_line(state: &EditState, theme: &Theme, is_focused: bool) -> Line<'st
         theme.muted()
     };
     let value = if state.reveal_password {
-        state.password.as_str().to_string()
+        Span::raw(state.password.as_str())
     } else {
-        "•".repeat(state.password.len_chars())
+        Span::raw("•".repeat(state.password.len_chars()))
     };
-    let hint = if state.reveal_password {
-        " (Ctrl+R: hide · Ctrl+G: generate)"
+    let visibility = if state.reveal_password {
+        "hide"
     } else {
-        " (Ctrl+R: reveal · Ctrl+G: generate)"
+        "reveal"
+    };
+    let hint = match generate_binding {
+        Some(binding) => format!(" (Ctrl+R: {visibility} · {binding}: generate)"),
+        None => format!(" (Ctrl+R: {visibility})"),
     };
     Line::from(vec![
         Span::styled(format!("{marker}Password: "), label_style),
-        Span::raw(value),
-        Span::styled(hint.to_string(), theme.muted()),
+        value,
+        Span::styled(hint, theme.muted()),
     ])
 }
 
@@ -704,7 +931,7 @@ fn render_generate(gen: &GenState, frame: &mut Frame, theme: &Theme) {
     } else {
         lines.push(Line::from(vec![
             Span::styled("Preview: ", theme.muted()),
-            Span::styled(gen.preview.as_str().to_string(), theme.good()),
+            Span::styled(gen.preview.as_str(), theme.good()),
         ]));
     }
     lines.push(Line::from(""));
@@ -713,6 +940,8 @@ fn render_generate(gen: &GenState, frame: &mut Frame, theme: &Theme) {
         theme.muted(),
     )));
 
+    #[cfg(test)]
+    crate::render_memory_regressions::capture("generate", &lines);
     frame.render_widget(Paragraph::new(lines).wrap(Wrap { trim: false }), inner);
 }
 

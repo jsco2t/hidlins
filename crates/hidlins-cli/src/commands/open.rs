@@ -2,7 +2,9 @@
 
 use std::{io::Write as _, time::Duration};
 
-use hidlins_core::{Keyfile, MasterPassword, RegisteredVault, Vault, VaultError, VaultRegistry};
+use hidlins_core::{
+    Keyfile, MasterPassword, RegisteredVault, Vault, VaultError, VaultReadOnly, VaultRegistry,
+};
 use hidlins_sync::{
     client,
     config::local::LocalSyncConfig,
@@ -42,12 +44,33 @@ pub(crate) fn prepare(cli: &Cli, name: &str) -> Result<OpenContext, CliExit> {
         prompt_label: "Master password: ",
     })?;
     let keyfile = record.keyfile_path.clone().map(Keyfile::Path);
-    let mut vault = Vault::open(&record.path, &master, keyfile.as_ref()).map_err(CliExit::from)?;
-    if registry
+    let should_sync = registry
         .get(name)
         .and_then(LocalSyncConfig::from_vault_entry)
-        .is_some_and(|config| config.is_active_client())
-    {
+        .is_some_and(|config| config.is_active_client());
+    let startup_vault = if should_sync {
+        match Vault::open(&record.path, &master, keyfile.as_ref()) {
+            Ok(vault) => Some(vault),
+            Err(error @ VaultError::Contended { .. }) => {
+                // A failed sync write-lock attempt must not prevent an
+                // authenticated local read while another reader is active.
+                drop(
+                    VaultReadOnly::open(&record.path, &master, keyfile.as_ref())
+                        .map_err(CliExit::from)?,
+                );
+                let _ = writeln!(
+                    std::io::stderr().lock(),
+                    "warning: pre-operation local sync failed; continuing with local vault: {error}"
+                );
+                None
+            }
+            Err(error) => return Err(CliExit::from(error)),
+        }
+    } else {
+        drop(VaultReadOnly::open(&record.path, &master, keyfile.as_ref()).map_err(CliExit::from)?);
+        None
+    };
+    if let Some(mut vault) = startup_vault {
         let discovered = trusted_candidates();
         if let Err(error) = client::sync_vault(
             &mut vault,
@@ -64,7 +87,6 @@ pub(crate) fn prepare(cli: &Cli, name: &str) -> Result<OpenContext, CliExit> {
             );
         }
     }
-    drop(vault);
     Ok(OpenContext {
         record,
         master,

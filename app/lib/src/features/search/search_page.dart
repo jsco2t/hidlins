@@ -28,6 +28,7 @@ class _SearchPageState extends ConsumerState<SearchPage> {
   List<SearchHit> _results = [];
   bool _searching = false;
   bool _hasSearched = false;
+  int _searchRequest = 0;
 
   @override
   void dispose() {
@@ -39,21 +40,29 @@ class _SearchPageState extends ConsumerState<SearchPage> {
 
   void _onQueryChanged(String query) {
     ActivityCapture.reportTextInput(context);
-    _debounce?.cancel();
-    if (query.isEmpty) {
-      setState(() {
-        _results = [];
-        _hasSearched = false;
-      });
-      return;
-    }
-    _debounce = Timer(const Duration(milliseconds: 300), () => _search(query));
+    _scheduleSearch(query);
   }
 
-  Future<void> _search(String query) async {
+  void _scheduleSearch(String query, {bool immediate = false}) {
+    _debounce?.cancel();
+    final request = ++_searchRequest;
+    setState(() {
+      _results = [];
+      _hasSearched = false;
+      _searching = query.isNotEmpty;
+    });
     if (query.isEmpty) return;
-    setState(() => _searching = true);
+    if (immediate) {
+      unawaited(_search(query, request));
+    } else {
+      _debounce = Timer(
+        const Duration(milliseconds: 300),
+        () => _search(query, request),
+      );
+    }
+  }
 
+  Future<void> _search(String query, int request) async {
     try {
       final repo = ref.read(searchRepositoryProvider);
       final results = await repo.search(
@@ -63,7 +72,7 @@ class _SearchPageState extends ConsumerState<SearchPage> {
           includeRecycled: _includeRecycled,
         ),
       );
-      if (mounted) {
+      if (mounted && request == _searchRequest) {
         setState(() {
           _results = results;
           _searching = false;
@@ -71,7 +80,7 @@ class _SearchPageState extends ConsumerState<SearchPage> {
         });
       }
     } on Exception {
-      if (mounted) {
+      if (mounted && request == _searchRequest) {
         setState(() {
           _searching = false;
           _hasSearched = true;
@@ -137,21 +146,23 @@ class _SearchPageState extends ConsumerState<SearchPage> {
                         ),
                       ],
                       selected: {_mode},
-                      onSelectionChanged: (s) async {
+                      onSelectionChanged: (s) {
                         setState(() => _mode = s.first);
-                        if (_searchController.text.isNotEmpty) {
-                          await _search(_searchController.text);
-                        }
+                        _scheduleSearch(
+                          _searchController.text,
+                          immediate: true,
+                        );
                       },
                     );
                     final recycled = FilterChip(
                       label: Text(l10n.searchIncludeRecycled),
                       selected: _includeRecycled,
-                      onSelected: (v) async {
+                      onSelected: (v) {
                         setState(() => _includeRecycled = v);
-                        if (_searchController.text.isNotEmpty) {
-                          await _search(_searchController.text);
-                        }
+                        _scheduleSearch(
+                          _searchController.text,
+                          immediate: true,
+                        );
                       },
                     );
                     if (constraints.maxWidth < HidlinsBreakpoints.compact) {

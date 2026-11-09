@@ -137,7 +137,11 @@
   "entryPurgeConfirmTitle": "Permanently delete",
   "entryPurgeConfirmMessage": "This cannot be undone.",
   "entryMoveTitle": "Move entry",
+  "entryMoveDestinationLabel": "Destination group",
+  "entryMoveNoDestinations": "No other groups",
+  "entryActionChanged": "The vault changed. Try this action again.",
   "entryHistoryTitle": "Entry history",
+  "entryHistoryEmpty": "No history yet",
   "entryHistoryVersion": "v{number}",
   "@entryHistoryVersion": {
     "placeholders": {
@@ -150,6 +154,19 @@
   "groupDeleteMoveToParent": "Move contents to parent",
   "groupDeleteMoveToRecycleBin": "Move contents to recycle bin",
   "groupNameLabel": "Group name",
+  "groupsTitle": "Groups",
+  "groupActionsFor": "Actions for {name}",
+  "@groupActionsFor": {
+    "placeholders": {
+      "name": { "type": "String" }
+    }
+  },
+  "groupMoveTitle": "Move group",
+  "groupMoveNoDestinations": "No other eligible groups",
+  "groupDeleteBehavior": "Delete behavior",
+  "groupDeleteOnlyEmpty": "Only if empty",
+  "groupDeleteSubtree": "Group and contents to Recycle Bin",
+  "groupDeleteNonempty": "This group is not empty. Choose to move it and its contents to Recycle Bin.",
   "recycleBin": "Recycle bin",
   "attachmentSizeExceeded": "File too large",
   "attachmentDetachConfirm": "Remove this attachment?",
@@ -167,6 +184,7 @@
     }
   },
   "attachmentExportFailed": "Could not save attachment",
+  "attachmentSourceFailed": "Could not choose attachment",
   "attachmentBytes": "{size} bytes",
   "@attachmentBytes": {
     "placeholders": {
@@ -175,6 +193,9 @@
   },
   "expirationSet": "Set expiration",
   "expirationClear": "Clear expiration",
+  "expirationLabel": "Expiration (UTC)",
+  "expirationNever": "Never expires",
+  "expirationPickerHelp": "Expiration date (00:00 UTC)",
   "searchHintText": "Search entries…",
   "searchModeSubstring": "Contains",
   "searchModeFuzzy": "Fuzzy",
@@ -195,6 +216,7 @@
   "vaultDeregisterDeleteFile": "Also delete the vault file",
   "vaultDeregisterDeleteConfirm": "Are you sure? This permanently deletes the vault file.",
   "vaultChangePasswordTitle": "Change master password",
+  "vaultChangePasswordUnlockTarget": "Unlock this vault before changing its password.",
   "vaultChangePasswordCurrent": "Current password",
   "vaultChangePasswordNew": "New password",
   "vaultChangePasswordConfirm": "Confirm new password",

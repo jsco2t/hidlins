@@ -6,23 +6,37 @@ mod interface_deref;
 pub use interface_deref::*;
 
 use std::{
-    any::{Any, TypeId},
+    any::Any,
     collections::HashMap,
     fmt::{self, Write},
     sync::Arc,
 };
 
 use async_trait::async_trait;
-use zbus_names::{InterfaceName, MemberName};
-use zvariant::{OwnedValue, Value};
 
 use crate::{
-    Connection, ObjectServer,
-    async_lock::RwLock,
-    fdo,
+    BoxDBusError, Connection, DBusError, Error, ObjectServer, OwnedVariant, Variant, fdo,
     message::{self, Header, Message},
+    names::{InterfaceName, MemberName},
     object_server::SignalEmitter,
+    runtime::locks::RwLock,
 };
+
+/// Write `lines` as an XML comment at the given indentation level.
+///
+/// This is what the `#[interface]` macro uses to write doc comments in the introspection data.
+#[doc(hidden)]
+pub fn introspect_doc_comment(writer: &mut dyn Write, level: usize, lines: &str) {
+    writeln!(writer, "{:indent$}<!--", "", indent = level).unwrap();
+    for line in lines.split('\n') {
+        if line.is_empty() {
+            writeln!(writer).unwrap();
+        } else {
+            writeln!(writer, "{:indent$}{line}", "", indent = level).unwrap();
+        }
+    }
+    writeln!(writer, "{:indent$} -->", "", indent = level).unwrap();
+}
 
 /// This trait is used to dispatch messages to an interface instance.
 ///
@@ -31,7 +45,7 @@ use crate::{
 /// this trait. The [`crate::interface`] macro implements it for you.
 ///
 /// If you have an advanced use case where `interface` is inadequate, consider using
-/// [`crate::MessageStream`] or [`crate::blocking::MessageIterator`] instead.
+/// [`crate::MessageStream`] instead.
 #[async_trait]
 pub trait Interface: Any + Send + Sync {
     /// Return the name of the interface. Ex: "org.foo.MyInterface"
@@ -49,6 +63,8 @@ pub trait Interface: Any + Send + Sync {
 
     /// Get a property value. Returns `None` if the property doesn't exist.
     ///
+    /// A getter may fail with any D-Bus error, hence the boxed error type.
+    ///
     /// Note: The header parameter will be None when the getter is not being called as part
     /// of D-Bus communication (for example, when it is called as part of initial object setup,
     /// before it is registered on the bus, or when we manually send out property changed
@@ -60,31 +76,35 @@ pub trait Interface: Any + Send + Sync {
         connection: &Connection,
         header: Option<&message::Header<'_>>,
         emitter: &SignalEmitter<'_>,
-    ) -> Option<fdo::Result<OwnedValue>>;
+    ) -> Option<Result<OwnedVariant, BoxDBusError>>;
 
     /// Return all the properties.
+    ///
+    /// A property whose getter fails is left out, so this only fails when a value cannot be
+    /// serialized.
     async fn get_all(
         &self,
         object_server: &ObjectServer,
         connection: &Connection,
         header: Option<&message::Header<'_>>,
         emitter: &SignalEmitter<'_>,
-    ) -> fdo::Result<HashMap<String, OwnedValue>>;
+    ) -> fdo::Result<HashMap<String, OwnedVariant>>;
 
     /// Set a property value.
     ///
-    /// Return [`DispatchResult2::NotFound`] if the property doesn't exist, or
-    /// [`DispatchResult2::RequiresMut`] if `set_mut` should be used instead. The default
-    /// implementation just returns `RequiresMut`.
+    /// Return [`DispatchResult::NotFound`] if the property doesn't exist, or
+    /// [`DispatchResult::RequiresMut`] if `set_mut` should be used instead. The default
+    /// implementation just returns `RequiresMut`. The [`DispatchResult::Async`] future fails
+    /// with whatever D-Bus error the setter fails with.
     fn set<'call>(
         &'call self,
         property_name: &'call str,
-        value: &'call Value<'_>,
+        value: &'call Variant<'_>,
         object_server: &'call ObjectServer,
         connection: &'call Connection,
         header: Option<&'call message::Header<'_>>,
         emitter: &'call SignalEmitter<'_>,
-    ) -> DispatchResult2<'call> {
+    ) -> DispatchResult<'call> {
         let _ = (
             property_name,
             value,
@@ -93,28 +113,29 @@ pub trait Interface: Any + Send + Sync {
             header,
             emitter,
         );
-        DispatchResult2::RequiresMut
+        DispatchResult::RequiresMut
     }
 
     /// Set a property value.
     ///
-    /// Returns `None` if the property doesn't exist.
+    /// Returns `None` if the property doesn't exist. A setter may fail with any D-Bus error,
+    /// hence the boxed error type.
     ///
     /// This will only be invoked if `set` returned `RequiresMut`.
     async fn set_mut(
         &mut self,
         property_name: &str,
-        value: &Value<'_>,
+        value: &Variant<'_>,
         object_server: &ObjectServer,
         connection: &Connection,
         header: Option<&Header<'_>>,
         emitter: &SignalEmitter<'_>,
-    ) -> Option<fdo::Result<()>>;
+    ) -> Option<Result<(), BoxDBusError>>;
 
     /// Call a method.
     ///
-    /// Return [`DispatchResult2::NotFound`] if the method doesn't exist, or
-    /// [`DispatchResult2::RequiresMut`] if `call_mut` should be used instead.
+    /// Return [`DispatchResult::NotFound`] if the method doesn't exist, or
+    /// [`DispatchResult::RequiresMut`] if `call_mut` should be used instead.
     ///
     /// It is valid, though inefficient, for this to always return `RequiresMut`.
     fn call<'call>(
@@ -123,7 +144,7 @@ pub trait Interface: Any + Send + Sync {
         connection: &'call Connection,
         msg: &'call Message,
         name: MemberName<'call>,
-    ) -> DispatchResult2<'call>;
+    ) -> DispatchResult<'call>;
 
     /// Call a `&mut self` method.
     ///
@@ -134,10 +155,49 @@ pub trait Interface: Any + Send + Sync {
         connection: &'call Connection,
         msg: &'call Message,
         name: MemberName<'call>,
-    ) -> DispatchResult2<'call>;
+    ) -> DispatchResult<'call>;
 
     /// Write introspection XML to the writer, with the given indentation level.
     fn introspect_to_writer(&self, writer: &mut dyn Write, level: usize);
+}
+
+/// Conversion of a property handler's failure into the boxed error [`Interface`] carries.
+///
+/// The `#[interface]` macro applies it to whatever a getter or setter returns. Any `'static`
+/// [`DBusError`] is boxed as is. A plain [`Error`] is not a D-Bus error, so it is reported the
+/// way [`fdo::Error`] reports it.
+#[doc(hidden)]
+pub trait IntoDBusError {
+    fn into_dbus_error(self) -> BoxDBusError;
+
+    /// The failure as an [`Error`], for a caller that is not replying to a D-Bus call.
+    ///
+    /// A getter's failure reaches the caller of the generated `PropertiesChanged` emission
+    /// helper this way, as [`Error::DBus`].
+    fn into_error(self) -> Error;
+}
+
+impl<E> IntoDBusError for E
+where
+    E: DBusError + Send + Sync + 'static,
+{
+    fn into_dbus_error(self) -> BoxDBusError {
+        Box::new(self)
+    }
+
+    fn into_error(self) -> Error {
+        Error::DBus(Arc::new(self))
+    }
+}
+
+impl IntoDBusError for Error {
+    fn into_dbus_error(self) -> BoxDBusError {
+        self.into()
+    }
+
+    fn into_error(self) -> Error {
+        self
+    }
 }
 
 /// A type for a reference-counted Interface trait-object, with associated run-time details and a
@@ -165,34 +225,5 @@ impl fmt::Debug for ArcInterface {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         f.debug_struct("Arc<RwLock<dyn Interface>>")
             .finish_non_exhaustive()
-    }
-}
-
-// Note: while it is possible to implement this without `unsafe`, it currently requires a helper
-// trait with a blanket impl that creates `dyn Any` refs.  It's simpler (and more performant) to
-// just check the type ID and do the downcast ourself.
-//
-// See https://github.com/rust-lang/rust/issues/65991 for a rustc feature that will make it
-// possible to get a `dyn Any` ref directly from a `dyn Interface` ref; once that is stable, we can
-// remove this unsafe code.
-impl dyn Interface {
-    /// Return Any of self
-    pub(crate) fn downcast_ref<T: Any>(&self) -> Option<&T> {
-        if <dyn Interface as Any>::type_id(self) == TypeId::of::<T>() {
-            // SAFETY: If type ID matches, it means object is of type T
-            Some(unsafe { &*(self as *const dyn Interface as *const T) })
-        } else {
-            None
-        }
-    }
-
-    /// Return Any of self
-    pub(crate) fn downcast_mut<T: Any>(&mut self) -> Option<&mut T> {
-        if <dyn Interface as Any>::type_id(self) == TypeId::of::<T>() {
-            // SAFETY: If type ID matches, it means object is of type T
-            Some(unsafe { &mut *(self as *mut dyn Interface as *mut T) })
-        } else {
-            None
-        }
     }
 }

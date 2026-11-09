@@ -45,7 +45,7 @@
       "name": "attachment_export",
       "file": "attachment_export.dart",
       "channel": "app.hidlins/attachment_export",
-      "methods": ["chooseDestination"],
+      "methods": ["chooseDestination", "chooseSource"],
       "policy_owner": "rust",
       "mechanism_owner": "native"
     },

@@ -30,6 +30,7 @@ use std::io;
 use std::path::{Path, PathBuf};
 
 use hidlins_core::atomic::write_atomic;
+use hidlins_core::locking::acquire_exclusive;
 use hidlins_core::HidlinsPaths;
 use serde::{Deserialize, Serialize};
 use uuid::Uuid;
@@ -53,10 +54,18 @@ pub(crate) fn config_path(paths: &HidlinsPaths) -> PathBuf {
 #[derive(Debug, Clone, Default)]
 pub(crate) struct TuiConfig {
     vaults: BTreeMap<String, VaultUiState>,
+    /// Only fields changed by this session are merged into the latest file.
+    pending: BTreeMap<String, PendingFields>,
     /// Unknown top-level keys, preserved across saves (forward-compat). Legacy
     /// pref keys (`[global]`, `default-sort`, …) that moved to `config.toml`
     /// land here inertly (A-5: no migration).
     extra: toml::Table,
+}
+
+#[derive(Debug, Clone, Copy, Default)]
+struct PendingFields {
+    pinned: bool,
+    recents: bool,
 }
 
 /// Per-vault UI state: pinned-tab UUIDs and the recents (MRU) list.
@@ -78,7 +87,15 @@ impl TuiConfig {
     /// the per-vault table if absent and preserving any unknown keys already in
     /// it. Call before [`Self::save`].
     pub(crate) fn set_vault_state(&mut self, vault: &str, pinned: Vec<Uuid>, recents: Vec<Uuid>) {
+        let is_new = !self.vaults.contains_key(vault);
         let entry = self.vaults.entry(vault.to_string()).or_default();
+        let pinned_changed = is_new || entry.pinned != pinned;
+        let recents_changed = is_new || entry.recents != recents;
+        if pinned_changed || recents_changed {
+            let pending = self.pending.entry(vault.to_string()).or_default();
+            pending.pinned |= pinned_changed;
+            pending.recents |= recents_changed;
+        }
         entry.pinned = pinned;
         entry.recents = recents;
     }
@@ -108,20 +125,46 @@ impl TuiConfig {
         }
     }
 
-    /// Serialize to `path` via the atomic-write helper, creating the state
-    /// directory if needed. Failures are returned for the caller to surface
-    /// non-fatally (the UI keeps running on in-memory state; U.5).
+    /// Reload under the exclusive file lock and merge only this session's
+    /// changed fields before an atomic write. Keep the session's comparison
+    /// baseline aligned with its live tabs/recents, clearing only pending
+    /// writes on success; failures retain them for retry.
     ///
     /// # Errors
     /// [`TuiError::ConfigParse`] if the in-memory config cannot be expressed as
     /// TOML (near-impossible); [`TuiError::ConfigIo`] for filesystem failures.
-    pub(crate) fn save(&self, paths: &HidlinsPaths, path: &Path) -> Result<(), TuiError> {
+    pub(crate) fn save(&mut self, paths: &HidlinsPaths, path: &Path) -> Result<(), TuiError> {
         paths
             .ensure_exists()
             .map_err(|e| TuiError::ConfigIo(io::Error::other(e)))?;
-        let on_disk = OnDisk::from(self);
-        let body = toml::to_string(&on_disk).map_err(|e| TuiError::ConfigParse(e.to_string()))?;
-        write_atomic(path, body.as_bytes()).map_err(|e| TuiError::ConfigIo(io::Error::other(e)))
+        let _guard =
+            acquire_exclusive(path).map_err(|e| TuiError::ConfigIo(io::Error::other(e)))?;
+        let mut latest: Self = match std::fs::read_to_string(path) {
+            Ok(contents) => toml::from_str::<OnDisk>(&contents)
+                .map_err(|_| {
+                    TuiError::ConfigParse(
+                        "Could not parse tui.toml; refusing to overwrite it.".to_string(),
+                    )
+                })?
+                .into(),
+            Err(e) if e.kind() == io::ErrorKind::NotFound => Self::default(),
+            Err(e) => return Err(TuiError::ConfigIo(e)),
+        };
+        for (name, pending) in &self.pending {
+            let desired = self.vaults.get(name).expect("pending UI state has a vault");
+            let destination = latest.vaults.entry(name.clone()).or_default();
+            if pending.pinned {
+                destination.pinned.clone_from(&desired.pinned);
+            }
+            if pending.recents {
+                destination.recents.clone_from(&desired.recents);
+            }
+        }
+        let body = toml::to_string(&OnDisk::from(&latest))
+            .map_err(|_| TuiError::ConfigParse("Could not serialize tui.toml.".to_string()))?;
+        write_atomic(path, body.as_bytes()).map_err(|e| TuiError::ConfigIo(io::Error::other(e)))?;
+        self.pending.clear();
+        Ok(())
     }
 }
 
@@ -174,6 +217,7 @@ impl From<OnDisk> for TuiConfig {
                 })
                 .collect(),
             extra: d.extra,
+            pending: BTreeMap::new(),
         }
     }
 }
@@ -204,6 +248,36 @@ impl From<&TuiConfig> for OnDisk {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    mod ui_state_regressions {
+        use super::*;
+
+        #[test]
+        fn repeated_recent_saves_do_not_reclassify_stale_live_pins_as_new_edits() {
+            let dir = tempfile::tempdir().unwrap();
+            let paths = paths_in(dir.path());
+            let path = config_path(&paths);
+            let ids = uuids(4);
+            let mut initial = TuiConfig::default();
+            initial.set_vault_state("personal", vec![ids[0]], Vec::new());
+            initial.save(&paths, &path).unwrap();
+            let (mut first, _) = TuiConfig::load(&path);
+            let (mut second, _) = TuiConfig::load(&path);
+            first.set_vault_state("personal", vec![ids[1]], Vec::new());
+            first.save(&paths, &path).unwrap();
+            // The second UI still displays its own original pins. Merely
+            // using another entry twice must not undo the first UI's pin edit.
+            second.set_vault_state("personal", vec![ids[0]], vec![ids[2]]);
+            second.save(&paths, &path).unwrap();
+            second.set_vault_state("personal", vec![ids[0]], vec![ids[3], ids[2]]);
+            second.save(&paths, &path).unwrap();
+            let (latest, warning) = TuiConfig::load(&path);
+            assert!(warning.is_none());
+            let state = latest.vault_state("personal").unwrap();
+            assert_eq!(state.pinned, [ids[1]]);
+            assert_eq!(state.recents, [ids[3], ids[2]]);
+        }
+    }
 
     fn uuids(n: usize) -> Vec<Uuid> {
         (0..n).map(|_| Uuid::new_v4()).collect()
@@ -290,7 +364,7 @@ mod tests {
         )
         .unwrap();
 
-        let (config, _) = TuiConfig::load(&path);
+        let (mut config, _) = TuiConfig::load(&path);
         config.save(&paths, &path).expect("save");
 
         // Re-load and assert the unknown keys round-trip to the SAME place, not

@@ -1,9 +1,10 @@
 use std::{
+    any::Any,
     marker::PhantomData,
     ops::{Deref, DerefMut},
 };
 
-use crate::async_lock::{RwLockReadGuard, RwLockWriteGuard};
+use crate::runtime::locks::{RwLockReadGuard, RwLockWriteGuard};
 
 use super::Interface;
 
@@ -20,7 +21,7 @@ where
     type Target = I;
 
     fn deref(&self) -> &I {
-        self.iface.downcast_ref::<I>().unwrap()
+        <dyn Any>::downcast_ref::<I>(&*self.iface).expect("Unexpected interface type")
     }
 }
 
@@ -37,7 +38,7 @@ where
     type Target = I;
 
     fn deref(&self) -> &I {
-        self.iface.downcast_ref::<I>().unwrap()
+        <dyn Any>::downcast_ref::<I>(&*self.iface).expect("Unexpected interface type")
     }
 }
 
@@ -46,6 +47,6 @@ where
     I: Interface,
 {
     fn deref_mut(&mut self) -> &mut Self::Target {
-        self.iface.downcast_mut::<I>().unwrap()
+        <dyn Any>::downcast_mut::<I>(&mut *self.iface).expect("Unexpected interface type")
     }
 }

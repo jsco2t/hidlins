@@ -11,7 +11,7 @@
 
 pub mod transport;
 
-use crate::{Error, Guid, OwnedGuid, Result};
+use crate::{Error, Guid, OwnedGuid, Result, runtime::Runtime};
 #[cfg(all(unix, not(target_os = "macos")))]
 use rustix::process::geteuid;
 use std::{collections::HashMap, env, str::FromStr};
@@ -54,20 +54,24 @@ impl Address {
         &self.transport
     }
 
-    #[cfg_attr(any(target_os = "macos", windows), async_recursion::async_recursion)]
-    pub(crate) async fn connect(self) -> Result<Stream> {
-        self.transport.connect().await
+    pub(crate) async fn connect(&self, runtime: &Runtime) -> Result<Stream> {
+        self.transport.connect(self, runtime).await
     }
 
     /// Get the address for the session socket respecting the `DBUS_SESSION_BUS_ADDRESS` environment
     /// variable. If we don't recognize the value (or it's not set) we fall back to
     /// `$XDG_RUNTIME_DIR/bus`.
+    ///
+    /// WASI has no unix-domain sockets, so there is nothing to fall back to there, and an unset
+    /// variable is an error.
     pub fn session() -> Result<Self> {
         match env::var("DBUS_SESSION_BUS_ADDRESS") {
             Ok(val) => Self::from_str(&val),
             _ => {
                 #[cfg(windows)]
-                return Self::from_str("autolaunch:");
+                {
+                    Self::from_str("autolaunch:")
+                }
 
                 #[cfg(all(unix, not(target_os = "macos")))]
                 {
@@ -79,7 +83,14 @@ impl Address {
                 }
 
                 #[cfg(target_os = "macos")]
-                return Self::from_str("launchd:env=DBUS_LAUNCHD_SESSION_BUS_SOCKET");
+                {
+                    Self::from_str("launchd:env=DBUS_LAUNCHD_SESSION_BUS_SOCKET")
+                }
+
+                #[cfg(target_os = "wasi")]
+                {
+                    Err(no_default_address("DBUS_SESSION_BUS_ADDRESS"))
+                }
             }
         }
     }
@@ -87,6 +98,9 @@ impl Address {
     /// Get the address for the system bus respecting the `DBUS_SYSTEM_BUS_ADDRESS` environment
     /// variable. If we don't recognize the value (or it's not set) we fall back to
     /// `/var/run/dbus/system_bus_socket`.
+    ///
+    /// WASI has no unix-domain sockets, so there is nothing to fall back to there, and an unset
+    /// variable is an error.
     pub fn system() -> Result<Self> {
         match env::var("DBUS_SYSTEM_BUS_ADDRESS") {
             Ok(val) => Self::from_str(&val),
@@ -99,6 +113,9 @@ impl Address {
 
                 #[cfg(target_os = "macos")]
                 return Self::from_str("launchd:env=DBUS_LAUNCHD_SESSION_BUS_SOCKET");
+
+                #[cfg(target_os = "wasi")]
+                return Err(no_default_address("DBUS_SYSTEM_BUS_ADDRESS"));
             }
         }
     }
@@ -107,6 +124,16 @@ impl Address {
     pub fn guid(&self) -> Option<&Guid<'_>> {
         self.guid.as_ref().map(|guid| guid.inner())
     }
+}
+
+/// The error of a bus address looked up through the unset environment variable `variable` on WASI,
+/// which has no default to fall back to.
+#[cfg(target_os = "wasi")]
+fn no_default_address(variable: &str) -> Error {
+    Error::Address(format!(
+        "`{variable}` is not set, and WASI has no default bus address: it has no unix-domain \
+         sockets"
+    ))
 }
 
 impl Display for Address {
@@ -191,11 +218,14 @@ mod tests {
     };
     #[cfg(target_os = "macos")]
     use crate::address::transport::Launchd;
-    #[cfg(unix)]
+    #[cfg(all(unix, feature = "unixexec"))]
     use crate::address::transport::Unixexec;
     #[cfg(windows)]
     use crate::address::transport::{Autolaunch, AutolaunchScope};
-    use crate::address::transport::{Unix, UnixSocket};
+    use crate::{
+        address::transport::{Unix, UnixSocket},
+        runtime::test_runtime::under_every_runtime,
+    };
     use std::str::FromStr;
     use test_log::test;
 
@@ -234,7 +264,7 @@ mod tests {
                 .unwrap(),
             );
         }
-        #[cfg(unix)]
+        #[cfg(all(unix, feature = "unixexec"))]
         assert_eq!(
             Address::from_str("unixexec:path=/tmp/dbus-foo").unwrap(),
             Transport::Unixexec(Unixexec::new("/tmp/dbus-foo".into(), None, Vec::new())).into(),
@@ -293,22 +323,11 @@ mod tests {
             Address::from_str("launchd:env=my_cool_env_key").unwrap(),
             Transport::Launchd(Launchd::new("my_cool_env_key")).into(),
         );
-        #[cfg(unix)]
+        #[cfg(all(unix, feature = "ibus"))]
         assert_eq!(
             Address::from_str("ibus:").unwrap(),
             Transport::Ibus(crate::address::transport::Ibus::new()).into(),
         );
-
-        #[cfg(all(feature = "vsock", feature = "p2p", not(feature = "tokio")))]
-        {
-            let guid = crate::Guid::generate();
-            assert_eq!(
-                Address::from_str(&format!("vsock:cid=98,port=2934,guid={guid}")).unwrap(),
-                Address::from(Transport::Vsock(super::transport::Vsock::new(98, 2934)))
-                    .set_guid(guid)
-                    .unwrap(),
-            );
-        }
         assert_eq!(
             Address::from_str("unix:dir=/some/dir").unwrap(),
             Transport::Unix(Unix::new(UnixSocket::Dir("/some/dir".into()))).into(),
@@ -396,34 +415,58 @@ mod tests {
             Address::from(Transport::Launchd(Launchd::new("my_cool_key"))).to_string(),
             "launchd:env=my_cool_key"
         );
-        #[cfg(unix)]
+        #[cfg(all(unix, feature = "ibus"))]
         assert_eq!(
             Address::from(Transport::Ibus(crate::address::transport::Ibus::new())).to_string(),
             "ibus:"
         );
-
-        #[cfg(all(feature = "vsock", feature = "p2p", not(feature = "tokio")))]
-        {
-            let guid = crate::Guid::generate();
-            assert_eq!(
-                Address::from(Transport::Vsock(super::transport::Vsock::new(98, 2934)))
-                    .set_guid(guid.clone())
-                    .unwrap()
-                    .to_string(),
-                format!("vsock:cid=98,port=2934,guid={guid}"),
-            );
-        }
     }
 
     #[test]
+    #[ntest::timeout(15000)]
     fn connect_tcp() {
         let listener = std::net::TcpListener::bind("127.0.0.1:0").unwrap();
         let port = listener.local_addr().unwrap().port();
         let addr = Address::from_str(&format!("tcp:host=localhost,port={port}")).unwrap();
-        crate::utils::block_on(async { addr.connect().await }).unwrap();
+
+        under_every_runtime(|runtime| {
+            let addr = &addr;
+
+            async move {
+                addr.connect(&runtime).await.unwrap();
+            }
+        });
+    }
+
+    #[cfg(target_os = "linux")]
+    #[test]
+    #[ntest::timeout(15000)]
+    fn connect_abstract_unix() {
+        use std::os::{
+            linux::net::SocketAddrExt,
+            unix::net::{SocketAddr, UnixListener},
+        };
+
+        let name = format!("zbus-abstract-{}", std::process::id());
+        // The listener is bound through the standard library, so the name in the `abstract=`
+        // address is interpreted by something other than the code under test.
+        let listener =
+            UnixListener::bind_addr(&SocketAddr::from_abstract_name(&name).unwrap()).unwrap();
+        let addr = Address::from_str(&format!("unix:abstract={name}")).unwrap();
+
+        under_every_runtime(|runtime| {
+            let addr = &addr;
+            let listener = &listener;
+
+            async move {
+                addr.connect(&runtime).await.unwrap();
+                listener.accept().unwrap();
+            }
+        });
     }
 
     #[test]
+    #[ntest::timeout(15000)]
     fn connect_nonce_tcp() {
         struct PercentEncoded<'a>(&'a [u8]);
 
@@ -433,7 +476,7 @@ mod tests {
             }
         }
 
-        use std::io::Write;
+        use std::io::{Read, Write};
 
         const TEST_COOKIE: &[u8] = b"VERILY SECRETIVE";
 
@@ -453,28 +496,21 @@ mod tests {
         ))
         .unwrap();
 
-        let (sender, receiver) = std::sync::mpsc::sync_channel(1);
+        under_every_runtime(|runtime| {
+            let addr = &addr;
+            let listener = &listener;
 
-        std::thread::spawn(move || {
-            use std::io::Read;
+            async move {
+                // The nonce is on its way by the time the connection is handed over, so both
+                // calls below find what they are after without waiting for it.
+                addr.connect(&runtime).await.unwrap();
 
-            let mut client = listener.incoming().next().unwrap().unwrap();
+                let mut client = listener.accept().unwrap().0;
+                let mut nonce = [0u8; 16];
+                client.read_exact(&mut nonce).unwrap();
 
-            let mut buf = [0u8; 16];
-            client.read_exact(&mut buf).unwrap();
-
-            sender.send(buf == TEST_COOKIE).unwrap();
+                assert_eq!(&nonce[..], TEST_COOKIE, "the server saw a different nonce");
+            }
         });
-
-        crate::utils::block_on(addr.connect()).unwrap();
-
-        let saw_cookie = receiver
-            .recv_timeout(std::time::Duration::from_millis(100))
-            .expect("nonce file content hasn't been received by server thread in time");
-
-        assert!(
-            saw_cookie,
-            "nonce file content has been received, but was invalid"
-        );
     }
 }

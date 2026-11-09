@@ -2,7 +2,7 @@
 
 use std::{
     collections::{BTreeSet, HashSet},
-    io::{self, Read, Write},
+    io,
     net::{Shutdown, SocketAddr, TcpStream},
     sync::{
         atomic::{AtomicBool, Ordering},
@@ -10,6 +10,9 @@ use std::{
     },
     time::Instant,
 };
+
+#[cfg(test)]
+use std::io::Read;
 
 use sha2::{Digest, Sha256};
 use std::path::{Path, PathBuf};
@@ -20,7 +23,7 @@ use crate::{
     address::LocalEndpoint,
     config::local::{LocalConfigError, LocalSyncConfig},
     encoding::encode_lower,
-    framing::{Preface, PrefaceMode},
+    framing::{read_exact_until, write_all_until, Preface, PrefaceMode},
     noise::{HandshakeSession, NoiseKeypair, SecureTransport, SessionMode, HANDSHAKE_TIMEOUT},
     pairing::{ConfirmedPairing, PairingTransaction, SasCode},
     protocol::{
@@ -75,32 +78,37 @@ impl ClientPairingSession {
                 continue;
             }
             let handshake_deadline = connect_deadline.min(Instant::now() + HANDSHAKE_TIMEOUT);
-            configure_socket_deadline(&stream, handshake_deadline)?;
-            stream
-                .write_all(&Preface::new(PrefaceMode::Pairing).encode())
-                .map_err(|_| LanError::Unreachable)?;
+            write_all_until(
+                &mut stream,
+                &Preface::new(PrefaceMode::Pairing).encode(),
+                handshake_deadline,
+            )
+            .map_err(|_| LanError::Unreachable)?;
             let mut handshake = HandshakeSession::pairing_initiator(identity)
                 .map_err(|_| LanError::Authentication)?;
             let mut buffer = vec![0_u8; u16::MAX as usize].into_boxed_slice();
             let first = handshake
                 .write_handshake(&[], &mut buffer)
                 .map_err(|_| LanError::Authentication)?;
-            configure_socket_deadline(&stream, handshake_deadline)?;
-            write_frame(&mut stream, &buffer[..first]).map_err(|_| LanError::Unreachable)?;
-            configure_socket_deadline(&stream, handshake_deadline)?;
-            let second = read_frame(&mut stream).map_err(|_| LanError::Authentication)?;
+            write_frame(&mut stream, &buffer[..first], handshake_deadline)
+                .map_err(|_| LanError::Unreachable)?;
+            let second = read_frame(&mut stream, handshake_deadline)
+                .map_err(|_| LanError::Authentication)?;
             handshake
                 .read_handshake(&second, &mut buffer)
                 .map_err(|_| LanError::Authentication)?;
             let third = handshake
                 .write_handshake(&[], &mut buffer)
                 .map_err(|_| LanError::Authentication)?;
-            configure_socket_deadline(&stream, handshake_deadline)?;
-            write_frame(&mut stream, &buffer[..third]).map_err(|_| LanError::Unreachable)?;
+            write_frame(&mut stream, &buffer[..third], handshake_deadline)
+                .map_err(|_| LanError::Unreachable)?;
             let transport = handshake.finish().map_err(|_| LanError::Authentication)?;
             let server_key = crate::identity::PublicIdentity::new(transport.peer_static());
-            let confirmation =
-                ConfirmedPairing::from_authenticated(server_key, *transport.handshake_hash());
+            let confirmation = ConfirmedPairing::from_authenticated(
+                server_key,
+                *transport.handshake_hash(),
+                pairing_deadline,
+            );
             let mut protocol = ProtocolState::new(SessionMode::Pairing, LocalRole::Client);
             protocol.authenticate();
             return Ok(Self {
@@ -378,6 +386,17 @@ pub fn import_paired_vault(
         .paths()
         .ensure_exists()
         .map_err(|_| ImportError::Install)?;
+    let target =
+        hidlins_core::locking::resolve_file_path(target).map_err(|_| ImportError::Install)?;
+    let _target_lock =
+        hidlins_core::locking::acquire_exclusive(&target).map_err(|_| ImportError::Install)?;
+    let keyfile_path = keyfile
+        .and_then(Keyfile::path)
+        .map(std::fs::canonicalize)
+        .transpose()
+        .map_err(|_| ImportError::InvalidVault)?;
+    let stable_keyfile = keyfile_path.clone().map(Keyfile::Path);
+    let keyfile = stable_keyfile.as_ref().or(keyfile);
     if target.exists() || Vault::open_from_bytes(encrypted_kdbx, master_password, keyfile).is_err()
     {
         return Err(if target.exists() {
@@ -388,21 +407,23 @@ pub fn import_paired_vault(
     }
     let mut entry = RegisteredVault {
         name: vault_name.to_string(),
-        path: target.to_path_buf(),
+        path: target.clone(),
         created_at: chrono::Utc::now().to_rfc3339(),
-        keyfile_path: keyfile.and_then(Keyfile::path).map(Path::to_path_buf),
+        keyfile_path,
         extra: toml::Table::new(),
     };
     config.write_to_entry(&mut entry)?;
-    hidlins_core::atomic::write_atomic(target, encrypted_kdbx).map_err(|_| ImportError::Install)?;
-    entry.path = if let Ok(canonical) = std::fs::canonicalize(target) {
-        canonical
-    } else {
-        let _ = std::fs::remove_file(target);
-        return Err(ImportError::Install);
-    };
+    #[cfg(test)]
+    import_install_regressions::before_install();
+    hidlins_core::atomic::write_atomic_new(&target, encrypted_kdbx)
+        .map_err(|_| ImportError::Install)?;
     if registry.register_and_save(entry).is_err() {
-        std::fs::remove_file(target).map_err(|_| ImportError::Registry)?;
+        // Registration updates this snapshot at its rename commit point,
+        // before later durability errors. Use that transaction's own state;
+        // a subsequent unregister-without-delete must not trigger cleanup.
+        if !registry.list().any(|registered| registered.path == target) {
+            std::fs::remove_file(&target).map_err(|_| ImportError::Registry)?;
+        }
         return Err(ImportError::Registry);
     }
     Ok(())
@@ -907,20 +928,22 @@ impl LanSession {
         cancellation: LanCancellation,
     ) -> Result<Self, LanError> {
         cancellation.check()?;
-        configure_socket_deadline(&stream, handshake_deadline)?;
-        stream
-            .write_all(&Preface::new(PrefaceMode::Trusted).encode())
-            .map_err(|_| LanError::Unreachable)?;
+        write_all_until(
+            &mut stream,
+            &Preface::new(PrefaceMode::Trusted).encode(),
+            handshake_deadline,
+        )
+        .map_err(|_| LanError::Unreachable)?;
         let mut handshake = HandshakeSession::trusted_initiator(identity, pinned)
             .map_err(|_| LanError::Authentication)?;
         let mut buffer = vec![0_u8; u16::MAX as usize].into_boxed_slice();
         let length = handshake
             .write_handshake(&[], &mut buffer)
             .map_err(|_| LanError::Authentication)?;
-        configure_socket_deadline(&stream, handshake_deadline)?;
-        write_frame(&mut stream, &buffer[..length]).map_err(|_| LanError::Unreachable)?;
-        configure_socket_deadline(&stream, handshake_deadline)?;
-        let response = read_frame(&mut stream).map_err(|_| LanError::Authentication)?;
+        write_frame(&mut stream, &buffer[..length], handshake_deadline)
+            .map_err(|_| LanError::Unreachable)?;
+        let response =
+            read_frame(&mut stream, handshake_deadline).map_err(|_| LanError::Authentication)?;
         handshake
             .read_handshake(&response, &mut buffer)
             .map_err(|_| LanError::Authentication)?;
@@ -938,11 +961,9 @@ impl LanSession {
 
     fn send(&mut self, request_id: u32, message: &Message) -> Result<(), LanError> {
         self.cancellation.check()?;
-        configure_socket_deadline(
-            &self.stream,
-            self.deadline
-                .min(Instant::now() + AUTHENTICATED_IDLE_TIMEOUT),
-        )?;
+        let deadline = self
+            .deadline
+            .min(Instant::now() + AUTHENTICATED_IDLE_TIMEOUT);
         self.protocol
             .apply(Direction::Send, request_id, message)
             .map_err(|_| LanError::Protocol)?;
@@ -952,17 +973,16 @@ impl LanSession {
             .transport
             .write_message(&plain, &mut encrypted)
             .map_err(|_| LanError::Authentication)?;
-        write_frame(&mut self.stream, &encrypted[..length]).map_err(|error| map_io(&error))
+        write_frame(&mut self.stream, &encrypted[..length], deadline)
+            .map_err(|error| map_io(&error))
     }
 
     fn receive(&mut self) -> Result<(u32, Message), LanError> {
         self.cancellation.check()?;
-        configure_socket_deadline(
-            &self.stream,
-            self.deadline
-                .min(Instant::now() + AUTHENTICATED_IDLE_TIMEOUT),
-        )?;
-        let encrypted = read_frame(&mut self.stream).map_err(|error| map_io(&error))?;
+        let deadline = self
+            .deadline
+            .min(Instant::now() + AUTHENTICATED_IDLE_TIMEOUT);
+        let encrypted = read_frame(&mut self.stream, deadline).map_err(|error| map_io(&error))?;
         let mut plain = vec![0_u8; encrypted.len()];
         let length = self
             .transport
@@ -990,39 +1010,24 @@ fn checked_peer(address: SocketAddr) -> Result<LocalEndpoint, LanError> {
     LocalEndpoint::new(address.ip(), address.port(), scope).map_err(|_| LanError::Unreachable)
 }
 
-fn configure_socket_deadline(stream: &TcpStream, deadline: Instant) -> Result<(), LanError> {
-    let remaining = deadline
-        .checked_duration_since(Instant::now())
-        .ok_or(LanError::TimedOut)?;
-    if remaining.is_zero() {
-        return Err(LanError::TimedOut);
-    }
-    stream
-        .set_read_timeout(Some(remaining))
-        .map_err(|_| LanError::Unreachable)?;
-    stream
-        .set_write_timeout(Some(remaining))
-        .map_err(|_| LanError::Unreachable)
-}
-
-fn write_frame(stream: &mut TcpStream, bytes: &[u8]) -> io::Result<()> {
+fn write_frame(stream: &mut TcpStream, bytes: &[u8], deadline: Instant) -> io::Result<()> {
     let length = u16::try_from(bytes.len()).map_err(|_| io::ErrorKind::InvalidData)?;
     if length == 0 {
         return Err(io::ErrorKind::InvalidData.into());
     }
-    stream.write_all(&length.to_be_bytes())?;
-    stream.write_all(bytes)
+    write_all_until(stream, &length.to_be_bytes(), deadline)?;
+    write_all_until(stream, bytes, deadline)
 }
 
-fn read_frame(stream: &mut TcpStream) -> io::Result<Vec<u8>> {
+fn read_frame(stream: &mut TcpStream, deadline: Instant) -> io::Result<Vec<u8>> {
     let mut prefix = [0_u8; 2];
-    stream.read_exact(&mut prefix)?;
+    read_exact_until(stream, &mut prefix, deadline)?;
     let length = usize::from(u16::from_be_bytes(prefix));
     if length == 0 {
         return Err(io::ErrorKind::InvalidData.into());
     }
     let mut bytes = vec![0_u8; length];
-    stream.read_exact(&mut bytes)?;
+    read_exact_until(stream, &mut bytes, deadline)?;
     Ok(bytes)
 }
 
@@ -1062,3 +1067,9 @@ fn map_io(error: &io::Error) -> LanError {
         LanError::Unreachable
     }
 }
+
+#[cfg(test)]
+mod import_install_regressions;
+
+#[cfg(test)]
+mod deadline_regressions;

@@ -35,6 +35,9 @@ categories = [
 license = "MIT OR Apache-2.0"
 repository = "https://github.com/RustCrypto/utils"
 
+[features]
+zeroize = ["dep:zeroize", "hybrid-array/zeroize"]
+
 [lib]
 name = "block_buffer"
 path = "src/lib.rs"

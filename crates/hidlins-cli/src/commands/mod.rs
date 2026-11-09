@@ -26,6 +26,8 @@ use crate::format::OutputFormatter;
 
 pub mod completions;
 pub mod entry;
+#[cfg(feature = "desktop")]
+mod foreground_lock;
 pub mod gen;
 pub mod keys;
 pub(crate) mod open;

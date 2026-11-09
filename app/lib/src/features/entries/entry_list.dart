@@ -184,6 +184,9 @@ class _EntryRowState extends State<_EntryRow> {
             ),
         ],
         builder: (context, controller, child) => GestureDetector(
+          // Selecting first replaces the compact list with detail and disposes
+          // this menu before a touch user can choose its action.
+          onLongPress: controller.open,
           onSecondaryTapDown: (_) {
             widget.onTap();
             controller.open();
@@ -233,16 +236,27 @@ class _EntryRowState extends State<_EntryRow> {
                                     ),
                                     child: Semantics(
                                       label: l10n.entryDetailExpired,
-                                      child: Badge(
-                                        backgroundColor: colorScheme.error,
-                                        label: Text(
-                                          l10n.entryDetailExpired,
-                                          style: TextStyle(
-                                            color: colorScheme.onError,
-                                            fontSize: 10,
-                                          ),
-                                        ),
-                                      ),
+                                      child: constraints.maxWidth < 240
+                                          ? Tooltip(
+                                              message: l10n.entryDetailExpired,
+                                              excludeFromSemantics: true,
+                                              child: Icon(
+                                                Icons.event_busy,
+                                                size: 16,
+                                                color: colorScheme.error,
+                                              ),
+                                            )
+                                          : Badge(
+                                              backgroundColor:
+                                                  colorScheme.error,
+                                              label: Text(
+                                                l10n.entryDetailExpired,
+                                                style: TextStyle(
+                                                  color: colorScheme.onError,
+                                                  fontSize: 10,
+                                                ),
+                                              ),
+                                            ),
                                     ),
                                   ),
                               ],

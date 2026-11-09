@@ -29,11 +29,13 @@ impl SystemClipboard {
 #[cfg(feature = "desktop")]
 impl ClipboardPort for SystemClipboard {
     fn copy_with_autoclear(&self, text: String, ttl: Duration) -> Result<(), HidlinsApiError> {
+        // Own the value before the first fallible/poisonable port operation.
+        let mut text = zeroize::Zeroizing::new(text);
         let mut cb = self.clipboard.lock().map_err(|_| HidlinsApiError::Io {
             context: "clipboard lock poisoned".to_string(),
         })?;
         let guard = cb
-            .copy_with_autoclear(text, ttl)
+            .copy_with_autoclear(std::mem::take(&mut *text), ttl)
             .map_err(|e| HidlinsApiError::Io {
                 context: format!("clipboard: {e}"),
             })?;
@@ -57,7 +59,7 @@ impl Default for RecordingClipboard {
 #[cfg(any(test, feature = "test-fixtures"))]
 #[allow(dead_code)]
 pub struct RecordingClipboard {
-    pub(crate) copies: std::sync::Mutex<Vec<(String, Duration)>>,
+    pub(crate) copies: std::sync::Mutex<Vec<(zeroize::Zeroizing<String>, Duration)>>,
 }
 
 #[cfg(any(test, feature = "test-fixtures"))]
@@ -74,7 +76,7 @@ impl RecordingClipboard {
             .lock()
             .ok()?
             .last()
-            .map(|(text, _)| text.clone())
+            .map(|(text, _)| text.to_string())
     }
 
     pub fn last_ttl(&self) -> Option<Duration> {
@@ -85,6 +87,7 @@ impl RecordingClipboard {
 #[cfg(any(test, feature = "test-fixtures"))]
 impl ClipboardPort for RecordingClipboard {
     fn copy_with_autoclear(&self, text: String, ttl: Duration) -> Result<(), HidlinsApiError> {
+        let text = zeroize::Zeroizing::new(text);
         if let Ok(mut copies) = self.copies.lock() {
             copies.push((text, ttl));
         }

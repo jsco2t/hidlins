@@ -45,7 +45,7 @@ use crate::{
     params::{CipherChoice, DHChoice, HashChoice},
     types::{Cipher, Dh, Hash, Random},
 };
-use zeroize::{Zeroize, ZeroizeOnDrop};
+use zeroize::{Zeroize, ZeroizeOnDrop, Zeroizing};
 
 // NB: Intentionally private so RNG details aren't leaked into
 // the public API.
@@ -163,30 +163,16 @@ struct CipherXChaChaPoly {
 
 /// Wraps `RustCrypto`'s SHA-256 implementation.
 #[cfg(feature = "use-sha2")]
-#[derive(Default)]
+#[derive(Default, ZeroizeOnDrop)]
 struct HashSHA256 {
     hasher: Sha256,
 }
 
 /// Wraps `RustCrypto`'s SHA-512 implementation.
 #[cfg(feature = "use-sha2")]
-#[derive(Default)]
+#[derive(Default, ZeroizeOnDrop)]
 struct HashSHA512 {
     hasher: Sha512,
-}
-
-#[cfg(feature = "use-sha2")]
-impl Drop for HashSHA256 {
-    fn drop(&mut self) {
-        ShaDigest::reset(&mut self.hasher);
-    }
-}
-
-#[cfg(feature = "use-sha2")]
-impl Drop for HashSHA512 {
-    fn drop(&mut self) {
-        ShaDigest::reset(&mut self.hasher);
-    }
 }
 
 /// Wraps `blake2-rfc`'s implementation.
@@ -508,7 +494,8 @@ impl Hash for HashSHA256 {
     }
 
     fn result(&mut self, out: &mut [u8]) {
-        let hash = self.hasher.finalize_reset();
+        let mut hash = Zeroizing::new([0_u8; 32]);
+        core::mem::take(&mut self.hasher).finalize_into((&mut *hash).into());
         copy_slices!(hash.as_slice(), out);
     }
 }
@@ -536,7 +523,8 @@ impl Hash for HashSHA512 {
     }
 
     fn result(&mut self, out: &mut [u8]) {
-        let hash = self.hasher.finalize_reset();
+        let mut hash = Zeroizing::new([0_u8; 64]);
+        core::mem::take(&mut self.hasher).finalize_into((&mut *hash).into());
         copy_slices!(hash.as_slice(), out);
     }
 }

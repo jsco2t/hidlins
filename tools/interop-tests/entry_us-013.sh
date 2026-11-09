@@ -8,6 +8,7 @@ set -euo pipefail
 DRIVER="${HIDLINS_TEST_DRIVER:-target/debug/hidlins-test-driver}"
 PASSWORD="interop-master"
 ATTACHMENT_NAME="doc.bin"
+FINGERPRINT="$(dirname "${BASH_SOURCE[0]}")/../dev/content_fingerprint.py"
 
 if ! command -v keepassxc-cli >/dev/null 2>&1; then
     echo "keepassxc-cli not installed; skipping" >&2
@@ -44,8 +45,8 @@ printf '%s\n' "$PASSWORD" | "$DRIVER" entry attach \
 printf '%s\n' "$PASSWORD" | keepassxc-cli attachment-export -q \
     "$vault" "Document Holder" "$ATTACHMENT_NAME" "$exported"
 
-source_sha=$(sha256sum "$source_file" | awk '{print $1}')
-exported_sha=$(sha256sum "$exported" | awk '{print $1}')
+source_sha=$(python3 "$FINGERPRINT" file "$source_file")
+exported_sha=$(python3 "$FINGERPRINT" file "$exported")
 if [ "$source_sha" != "$exported_sha" ]; then
     echo "FAIL: source SHA $source_sha != keepassxc export SHA $exported_sha" >&2
     exit 1
@@ -55,7 +56,7 @@ fi
 printf '%s\n' "$PASSWORD" | "$DRIVER" entry extract \
     --vault "$vault" --uuid "$uuid" --name "$ATTACHMENT_NAME" --out "$re_extracted"
 
-reextracted_sha=$(sha256sum "$re_extracted" | awk '{print $1}')
+reextracted_sha=$(python3 "$FINGERPRINT" file "$re_extracted")
 if [ "$source_sha" != "$reextracted_sha" ]; then
     echo "FAIL: source SHA $source_sha != driver re-extract SHA $reextracted_sha" >&2
     exit 1

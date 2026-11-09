@@ -12,23 +12,30 @@
 )))]
 
 use proc_macro::TokenStream;
-use syn::{
-    DeriveInput, ItemImpl, ItemTrait, Meta, Token, parse_macro_input, punctuated::Punctuated,
-};
+use syn::DeriveInput;
+#[cfg(feature = "service")]
+use syn::ItemImpl;
+#[cfg(feature = "proxy")]
+use syn::ItemTrait;
+#[cfg(feature = "comms")]
+use syn::parse_macro_input;
+#[cfg(any(feature = "proxy", feature = "service"))]
+use syn::{Meta, Token, punctuated::Punctuated};
 
+#[cfg(feature = "comms")]
 mod error;
+#[cfg(feature = "service")]
 mod iface;
+#[cfg(feature = "proxy")]
 mod proxy;
 mod utils;
 
-/// Attribute macro for defining D-Bus proxies (using [`zbus::Proxy`] and
-/// [`zbus::blocking::Proxy`]).
+/// Attribute macro for defining D-Bus proxies (using [`zbus::Proxy`]).
 ///
-/// The macro must be applied on a `trait T`. Two matching `impl T` will provide an asynchronous
-/// Proxy implementation, named `TraitNameProxy` and a blocking one, named `TraitNameProxyBlocking`.
-/// The proxy instances can be created with the associated `new()` or `builder()` methods. The
-/// former doesn't take any argument and uses the default service name and path. The later allows
-/// you to specify non-default proxy arguments.
+/// The macro must be applied on a `trait T`. A matching `impl T` will provide an asynchronous
+/// Proxy implementation, named `TraitNameProxy`. The proxy instances can be created with the
+/// associated `new()` or `builder()` methods. The former doesn't take any argument and uses the
+/// default service name and path. The later allows you to specify non-default proxy arguments.
 ///
 /// The following attributes are supported:
 ///
@@ -39,14 +46,7 @@ mod utils;
 /// * `default_path` - The default object path the method calls will be sent on and signals will be
 ///   sent for by the target service.
 ///
-/// * `gen_async` - Whether or not to generate the asynchronous Proxy type.
-///
-/// * `gen_blocking` - Whether or not to generate the blocking Proxy type. If the `blocking-api`
-///   cargo feature is disabled, this attribute is ignored and blocking Proxy type is not generated.
-///
-/// * `async_name` - Specify the exact name of the asynchronous proxy type.
-///
-/// * `blocking_name` - Specify the exact name of the blocking proxy type.
+/// * `async_name` - Specify the exact name of the proxy type.
 ///
 /// * `assume_defaults` - whether to auto-generate values for `default_path` and `default_service`
 ///   if none are specified (default: `false`). `proxy` generates a warning if neither this
@@ -93,24 +93,20 @@ mod utils;
 ///   `object` attribute to specify the proxy object to be constructed from the returned
 ///   [`ObjectPath`].
 ///
-/// * `async_object` - if the assumptions made by `object` attribute about naming of the
-///   asynchronous proxy type, don't fit your bill, you can use this to specify its exact name.
-///
-/// * `blocking_object` - if the assumptions made by `object` attribute about naming of the blocking
-///   proxy type, don't fit your bill, you can use this to specify its exact name.
+/// * `proxy_type_name` - if the assumptions made by `object` attribute about naming of the proxy
+///   type, don't fit your bill, you can use this to specify its exact name.
 ///
 /// * `object_vec` - this method returns a list of [`ObjectPath`]s (DBus signature `ao`) that should
-///   be converted to the proxy object type named by `object`, `async_object` and `blocking_object`
-///   attributes, and returned as a `Vec<_>`.
+///   be converted to the proxy object type named by `object` and `proxy_type_name` attributes, and
+///   returned as a `Vec<_>`.
 ///
 ///   NB: Any doc comments provided shall be appended to the ones added by the macro.
 ///
 /// # Signals
 ///
 /// For each signal method declared, this macro will provide a method, named `receive_<method_name>`
-/// to create a [`zbus::SignalStream`] ([`zbus::blocking::SignalIterator`] for the blocking proxy)
-/// wrapper, named `<SignalName>Stream` (`<SignalName>Iterator` for the blocking proxy) that yield
-/// a [`zbus::message::Message`] wrapper, named `<SignalName>`. This wrapper provides type safe
+/// to create a [`zbus::SignalStream`] wrapper, named `<SignalName>Stream` that yield a
+/// [`zbus::message::Message`] wrapper, named `<SignalName>`. This wrapper provides type safe
 /// access to the signal arguments. It also implements `Deref<Target = Message>` to allow easy
 /// access to the underlying [`zbus::message::Message`].
 ///
@@ -123,9 +119,9 @@ mod utils;
 /// ```no_run
 /// # use std::error::Error;
 /// use zbus::proxy;
-/// use zbus::{blocking::Connection, Result, fdo, zvariant::Value};
+/// use zbus::{Connection, Result, fdo, Variant};
 /// use futures_util::stream::StreamExt;
-/// use async_io::block_on;
+/// use zbus::block_on;
 ///
 /// #[proxy(
 ///     interface = "org.test.SomeIface",
@@ -133,7 +129,7 @@ mod utils;
 ///     default_path = "/org/test/SomeObject"
 /// )]
 /// trait SomeIface {
-///     fn do_this(&self, with: &str, some: u32, arg: &Value<'_>) -> Result<bool>;
+///     fn do_this(&self, with: &str, some: u32, arg: &Variant<'_>) -> Result<bool>;
 ///
 ///     #[zbus(property)]
 ///     fn a_property(&self) -> fdo::Result<String>;
@@ -144,16 +140,14 @@ mod utils;
 ///     #[zbus(signal)]
 ///     fn some_signal(&self, arg1: &str, arg2: u32) -> fdo::Result<()>;
 ///
-///     #[zbus(object = "SomeOtherIface", blocking_object = "SomeOtherInterfaceBlock")]
-///     // The method will return a `SomeOtherIfaceProxy` or `SomeOtherIfaceProxyBlock`, depending
-///     // on whether it is called on `SomeIfaceProxy` or `SomeIfaceProxyBlocking`, respectively.
+///     #[zbus(object = "SomeOtherIface", proxy_type_name = "SomeOtherInterfaceProxy")]
+///     // The method will return a `SomeOtherInterfaceProxy`.
 ///     //
-///     // NB: We explicitly specified the exact name of the blocking proxy type. If we hadn't,
-///     // `SomeOtherIfaceProxyBlock` would have been assumed and expected. We could also specify
-///     // the specific name of the asynchronous proxy types, using the `async_object` attribute.
+///     // NB: We explicitly specified the exact name of the proxy type. If we hadn't,
+///     // `SomeOtherIfaceProxy` would have been assumed and expected.
 ///     fn some_method(&self, arg1: &str);
 ///
-///     #[zbus(property, object = "SomeOtherIface", blocking_object = "SomeOtherInterfaceBlock")]
+///     #[zbus(property, object = "SomeOtherIface", proxy_type_name = "SomeOtherInterfaceProxy")]
 ///     // Properties that return an ObjectPath can also use the `object` attribute.
 ///     fn related_object(&self);
 /// }
@@ -161,31 +155,19 @@ mod utils;
 /// #[proxy(
 ///     interface = "org.test.SomeOtherIface",
 ///     default_service = "org.test.SomeOtherService",
-///     blocking_name = "SomeOtherInterfaceBlock",
+///     async_name = "SomeOtherInterfaceProxy",
 /// )]
 /// trait SomeOtherIface {}
 ///
-/// let connection = Connection::session()?;
-/// // Use `builder` to override the default arguments, `new` otherwise.
-/// let proxy = SomeIfaceProxyBlocking::builder(&connection)
-///                .destination("org.another.Service")?
-///                .cache_properties(zbus::proxy::CacheProperties::No)
-///                .build()?;
-/// let _ = proxy.do_this("foo", 32, &Value::new(true));
-/// let _ = proxy.set_a_property("val");
-///
-/// let signal = proxy.receive_some_signal()?.next().unwrap();
-/// let args = signal.args()?;
-/// println!("arg1: {}, arg2: {}", args.arg1(), args.arg2());
-///
-/// // Now the same again, but asynchronous.
-/// block_on(async move {
-///     let proxy = SomeIfaceProxy::builder(&connection.into())
+/// block_on(async {
+///     let connection = Connection::session().await?;
+///     // Use `builder` to override the default arguments, `new` otherwise.
+///     let proxy = SomeIfaceProxy::builder(&connection)
+///                    .destination("org.another.Service")
 ///                    .cache_properties(zbus::proxy::CacheProperties::No)
 ///                    .build()
-///                    .await
-///                    .unwrap();
-///     let _ = proxy.do_this("foo", 32, &Value::new(true)).await;
+///                    .await?;
+///     let _ = proxy.do_this("foo", 32, &Variant::new(true)).await;
 ///     let _ = proxy.set_a_property("val").await;
 ///
 ///     let signal = proxy.receive_some_signal().await?.next().await.unwrap();
@@ -204,11 +186,10 @@ mod utils;
 /// [`zbus::Proxy`]: https://docs.rs/zbus/latest/zbus/proxy/struct.Proxy.html
 /// [`zbus::message::Message`]: https://docs.rs/zbus/latest/zbus/message/struct.Message.html
 /// [`zbus::proxy::PropertyStream`]: https://docs.rs/zbus/latest/zbus/proxy/struct.PropertyStream.html
-/// [`zbus::blocking::Proxy`]: https://docs.rs/zbus/latest/zbus/blocking/proxy/struct.Proxy.html
 /// [`zbus::SignalStream`]: https://docs.rs/zbus/latest/zbus/proxy/struct.SignalStream.html
-/// [`zbus::blocking::SignalIterator`]: https://docs.rs/zbus/latest/zbus/blocking/proxy/struct.SignalIterator.html
-/// [`ObjectPath`]: https://docs.rs/zvariant/latest/zvariant/struct.ObjectPath.html
+/// [`ObjectPath`]: https://docs.rs/zbus/latest/zbus/struct.ObjectPath.html
 /// [dbus_emits_changed_signal]: https://dbus.freedesktop.org/doc/dbus-specification.html#introspection-format
+#[cfg(feature = "proxy")]
 #[proc_macro_attribute]
 pub fn proxy(attr: TokenStream, item: TokenStream) -> TokenStream {
     let args = parse_macro_input!(attr with Punctuated<Meta, Token![,]>::parse_terminated);
@@ -244,12 +225,23 @@ pub fn proxy(attr: TokenStream, item: TokenStream) -> TokenStream {
 ///     methods when this setting is false, as it may lead to deadlocks under certain conditions.
 ///
 /// * `proxy` - If specified, a proxy type will also be generated for the interface. This attribute
-///   supports all the [`macro@proxy`]-specific sub-attributes (e.g `gen_async`). The common
-///   sub-attributes (e.g `name`) are automatically forwarded to the [`macro@proxy`] macro.
+#[cfg_attr(
+    feature = "proxy",
+    doc = "  supports all the [`macro@proxy`]-specific sub-attributes (e.g `async_name`). The",
+    doc = "  common sub-attributes (e.g `name`) are automatically forwarded to the",
+    doc = "  [`macro@proxy`] macro."
+)]
+#[cfg_attr(
+    not(feature = "proxy"),
+    doc = "  supports all the `proxy` macro-specific sub-attributes (e.g `async_name`). The common",
+    doc = "  sub-attributes (e.g `name`) are automatically forwarded to the `proxy` macro."
+)]
+///   If the `proxy` cargo feature of `zbus` is disabled, the attribute is accepted but no proxy
+///   type is generated.
 ///
 /// * `introspection_docs` - whether to include the documentation in the introspection data
 ///   (Default: `true`). If your interface is well-known or well-documented, you may want to set
-///   this to `false` to reduce the the size of your binary and D-Bus traffic.
+///   this to `false` to reduce the size of your binary and D-Bus traffic.
 ///
 /// * `crate` - specify the path to the `zbus` crate if it's renamed or re-exported.
 ///
@@ -284,11 +276,20 @@ pub fn proxy(attr: TokenStream, item: TokenStream) -> TokenStream {
 ///
 /// * `out_args` - When returning multiple values from a method, naming the out arguments become
 ///   important. You can use `out_args` to specify their names.
-///
-/// * `proxy` - Use this to specify the [`macro@proxy`]-specific method sub-attributes (e.g
-///   `object`). The common sub-attributes (e.g `name`) are automatically forworded to the
-///   [`macro@proxy`] macro. Moreover, you can use `visibility` sub-attribute to specify the
-///   visibility of the generated proxy type(s).
+#[cfg_attr(
+    feature = "proxy",
+    doc = "* `proxy` - Use this to specify the [`macro@proxy`]-specific method sub-attributes (e.g",
+    doc = "  `object`). The common sub-attributes (e.g `name`) are automatically forwarded to the",
+    doc = "  [`macro@proxy`] macro. Moreover, you can use `visibility` sub-attribute to specify the",
+    doc = "  visibility of the generated proxy type(s)."
+)]
+#[cfg_attr(
+    not(feature = "proxy"),
+    doc = "* `proxy` - Use this to specify the `proxy` macro-specific method sub-attributes (e.g",
+    doc = "  `object`). The common sub-attributes (e.g `name`) are automatically forwarded to the",
+    doc = "  `proxy` macro. Moreover, you can use `visibility` sub-attribute to specify the",
+    doc = "  visibility of the generated proxy type(s)."
+)]
 ///
 ///   In such case, your method must return a tuple containing
 ///   your out arguments, in the same order as passed to `out_args`.
@@ -391,6 +392,7 @@ pub fn proxy(attr: TokenStream, item: TokenStream) -> TokenStream {
 /// [`SignalEmitter`]: https://docs.rs/zbus/latest/zbus/object_server/struct.SignalEmitter.html
 /// [`Interface`]: https://docs.rs/zbus/latest/zbus/object_server/trait.Interface.html
 /// [dbus_emits_changed_signal]: https://dbus.freedesktop.org/doc/dbus-specification.html#introspection-format
+#[cfg(feature = "service")]
 #[proc_macro_attribute]
 pub fn interface(attr: TokenStream, item: TokenStream) -> TokenStream {
     let args = parse_macro_input!(attr with Punctuated<Meta, Token![,]>::parse_terminated);
@@ -435,12 +437,675 @@ pub fn interface(attr: TokenStream, item: TokenStream) -> TokenStream {
 ///
 /// [`zbus::DBusError`]: https://docs.rs/zbus/latest/zbus/trait.DBusError.html
 /// [`zbus::Error`]: https://docs.rs/zbus/latest/zbus/enum.Error.html
-/// [`zvariant::Type`]: https://docs.rs/zvariant/latest/zvariant/trait.Type.html
 /// [`serde::Serialize`]: https://docs.rs/serde/1.0.132/serde/trait.Serialize.html
+#[cfg(feature = "comms")]
 #[proc_macro_derive(DBusError, attributes(zbus))]
 pub fn derive_dbus_error(input: TokenStream) -> TokenStream {
     let input = parse_macro_input!(input as DeriveInput);
     error::expand_derive(input)
+        .unwrap_or_else(|err| err.to_compile_error())
+        .into()
+}
+
+/// Derive macro to add [`Type`] implementation to structs and enums.
+///
+/// # Examples
+///
+/// For structs it works just like serde's [`Serialize`] and [`Deserialize`] macros:
+///
+/// ```
+/// use zbus::{Type, wire::{serialized::Context, to_bytes, LE}};
+/// use serde::{Deserialize, Serialize};
+///
+/// #[derive(Deserialize, Serialize, Type, PartialEq, Debug)]
+/// struct Struct<'s> {
+///     field1: u16,
+///     field2: i64,
+///     field3: &'s str,
+/// }
+///
+/// assert_eq!(Struct::SIGNATURE, "(qxs)");
+/// let s = Struct {
+///     field1: 42,
+///     field2: i64::MAX,
+///     field3: "hello",
+/// };
+/// let ctxt = Context::new(LE, 0);
+/// let encoded = to_bytes(ctxt, &s).unwrap();
+/// let decoded: Struct = encoded.deserialize().unwrap().0;
+/// assert_eq!(decoded, s);
+/// ```
+///
+/// Same with enum, except that all variants of the enum must have the same number and types of
+/// fields (if any). If you want the encoding size of the (unit-type) enum to be dictated by
+/// `repr` attribute (like in the example below), you'll also need [serde_repr] crate.
+///
+/// ```
+/// use zbus::{Type, wire::{serialized::Context, to_bytes, LE}};
+/// use serde::{Deserialize, Serialize};
+/// use serde_repr::{Deserialize_repr, Serialize_repr};
+///
+/// #[repr(u8)]
+/// #[derive(Deserialize_repr, Serialize_repr, Type, Debug, PartialEq)]
+/// enum Enum {
+///     Variant1,
+///     Variant2,
+/// }
+/// assert_eq!(Enum::SIGNATURE, u8::SIGNATURE);
+/// let ctxt = Context::new(LE, 0);
+/// let encoded = to_bytes(ctxt, &Enum::Variant2).unwrap();
+/// let decoded: Enum = encoded.deserialize().unwrap().0;
+/// assert_eq!(decoded, Enum::Variant2);
+///
+/// #[repr(i64)]
+/// #[derive(Deserialize_repr, Serialize_repr, Type)]
+/// enum Enum2 {
+///     Variant1,
+///     Variant2,
+/// }
+/// assert_eq!(Enum2::SIGNATURE, i64::SIGNATURE);
+///
+/// // w/o repr attribute, u32 representation is chosen
+/// #[derive(Deserialize, Serialize, Type)]
+/// enum NoReprEnum {
+///     Variant1,
+///     Variant2,
+/// }
+/// assert_eq!(NoReprEnum::SIGNATURE, u32::SIGNATURE);
+///
+/// // Not-unit enums are represented as a structure, with the first field being a u32 denoting the
+/// // variant and the second as the actual value.
+/// #[derive(Deserialize, Serialize, Type)]
+/// enum NewType {
+///     Variant1(f64),
+///     Variant2(f64),
+/// }
+/// assert_eq!(NewType::SIGNATURE, "(ud)");
+///
+/// #[derive(Deserialize, Serialize, Type)]
+/// enum StructFields {
+///     Variant1(u16, i64, &'static str),
+///     Variant2 { field1: u16, field2: i64, field3: &'static str },
+/// }
+/// assert_eq!(StructFields::SIGNATURE, "(u(qxs))");
+/// ```
+///
+/// # Custom signatures
+///
+/// There are times when you'd find yourself wanting to specify a hardcoded signature yourself for
+/// the type. The `#[zbus(signature = "...")]` attribute exists for this purpose. The attribute can
+/// also be spelled `#[zvariant(...)]`. A typical use case is when you'd need to encode your type as
+/// a dictionary (signature `a{sv}`) type. For convenience, `dict` is an alias for `a{sv}`. Here is
+/// an example:
+///
+/// ```
+/// use zbus::{
+///     as_variant, Type, wire::{serialized::Context, to_bytes, LE},
+/// };
+/// use serde::{Deserialize, Serialize};
+///
+/// #[derive(Deserialize, Serialize, Type, PartialEq, Debug)]
+/// // `#[zbus(signature = "a{sv}")]` would be the same.
+/// #[zbus(signature = "dict")]
+/// struct Struct {
+///     #[serde(with = "as_variant")]
+///     field1: u16,
+///     #[serde(with = "as_variant")]
+///     field2: i64,
+///     #[serde(with = "as_variant")]
+///     field3: String,
+/// }
+///
+/// assert_eq!(Struct::SIGNATURE, "a{sv}");
+/// let s = Struct {
+///     field1: 42,
+///     field2: i64::MAX,
+///     field3: "hello".to_string(),
+/// };
+/// let ctxt = Context::new(LE, 0);
+/// let encoded = to_bytes(ctxt, &s).unwrap();
+/// let decoded: Struct = encoded.deserialize().unwrap().0;
+/// assert_eq!(decoded, s);
+/// ```
+///
+/// Another common use for custom signatures is (de)serialization of unit enums as strings:
+///
+/// ```
+/// use zbus::{Type, wire::{serialized::Context, to_bytes, LE}};
+/// use serde::{Deserialize, Serialize};
+///
+/// #[derive(Deserialize, Serialize, Type, PartialEq, Debug)]
+/// #[zbus(signature = "s")]
+/// enum StrEnum {
+///     Variant1,
+///     Variant2,
+///     Variant3,
+/// }
+///
+/// assert_eq!(StrEnum::SIGNATURE, "s");
+/// let ctxt = Context::new(LE, 0);
+/// let encoded = to_bytes(ctxt, &StrEnum::Variant2).unwrap();
+/// assert_eq!(encoded.len(), 13);
+/// let decoded: StrEnum = encoded.deserialize().unwrap().0;
+/// assert_eq!(decoded, StrEnum::Variant2);
+/// ```
+///
+/// # Custom crate path
+///
+/// If you've renamed `zbus` in your `Cargo.toml` or are using it through a re-export, point
+/// the derive at the module holding the wire types with the `crate` attribute:
+///
+/// ```
+/// use zbus::Type;
+///
+/// #[derive(Type)]
+/// #[zbus(crate = "zbus::wire")]
+/// struct MyStruct {
+///     field: String,
+/// }
+/// ```
+///
+/// [`Type`]: https://docs.rs/zbus/latest/zbus/trait.Type.html
+/// [`Serialize`]: https://docs.serde.rs/serde/trait.Serialize.html
+/// [`Deserialize`]: https://docs.serde.rs/serde/de/trait.Deserialize.html
+/// [serde_repr]: https://crates.io/crates/serde_repr
+#[proc_macro_derive(Type, attributes(zbus, zvariant))]
+pub fn type_macro_derive(input: TokenStream) -> TokenStream {
+    let ast: DeriveInput = syn::parse(input).unwrap();
+    zbus_utils::derive::expand_type_derive(ast, &utils::derive_config())
+        .unwrap_or_else(|err| err.to_compile_error())
+        .into()
+}
+
+/// Adds [`Serialize`] implementation to structs to be serialized as a D-Bus dictionary type.
+///
+/// The dictionary type is determined by the `#[zbus(signature = "...")]` attribute. The attribute
+/// can also be spelled `#[zvariant(...)]`. The default is `a{sv}` (string keys, variant values),
+/// but nested forms like `a{sa{sv}}` and `a{oa{sv}}` are also supported — fields whose value type
+/// is itself a dict (or any non-`Variant` type) are serialized directly through their own
+/// `Serialize` impl rather than wrapped as a variant.
+///
+/// Such dictionary types are very commonly used in
+/// [D-Bus](https://dbus.freedesktop.org/doc/dbus-specification.html#standard-interfaces-properties)
+/// interfaces.
+///
+/// # Alternative Approaches
+///
+/// There are two approaches to serializing structs as dictionaries:
+///
+/// 1. Using this macro (simpler, but less control).
+/// 2. Using the `Serialize` derive with `zbus::as_variant` (more verbose, but more control).
+///
+/// See the example below and the relevant [FAQ entry] in our book for more details on the
+/// alternative approach.
+///
+/// # Example
+///
+/// ## Approach #1
+///
+/// ```
+/// use zbus::{SerializeDict, Type};
+///
+/// #[derive(Debug, Default, SerializeDict, Type)]
+/// #[zbus(signature = "a{sv}", rename_all = "PascalCase")]
+/// pub struct MyStruct {
+///     field1: Option<u32>,
+///     field2: String,
+/// }
+/// ```
+///
+/// ## Approach #2
+///
+/// ```
+/// use serde::Serialize;
+/// use zbus::{Type, as_variant};
+///
+/// #[derive(Debug, Default, Serialize, Type)]
+/// #[zbus(signature = "a{sv}")]
+/// #[serde(default, rename_all = "PascalCase")]
+/// pub struct MyStruct {
+///     #[serde(with = "as_variant::optional", skip_serializing_if = "Option::is_none")]
+///     field1: Option<u32>,
+///     #[serde(with = "as_variant")]
+///     field2: String,
+/// }
+/// ```
+///
+/// ## Nested dictionaries
+///
+/// To represent shapes like `a{sa{sv}}` (the body type of
+/// `org.freedesktop.DBus.ObjectManager.GetManagedObjects` and similar APIs), nest one
+/// `SerializeDict`/`DeserializeDict` struct inside another:
+///
+/// ```
+/// use zbus::{DeserializeDict, SerializeDict, Type};
+///
+/// #[derive(SerializeDict, DeserializeDict, Type, Default)]
+/// #[zbus(signature = "a{sv}", rename_all = "PascalCase")]
+/// pub struct AdapterProperties {
+///     address: Option<String>,
+///     name: Option<String>,
+/// }
+///
+/// #[derive(SerializeDict, DeserializeDict, Type, Default)]
+/// #[zbus(signature = "a{sa{sv}}")]
+/// pub struct InterfaceProperties {
+///     #[zbus(rename = "org.bluez.Adapter1")]
+///     adapter: Option<AdapterProperties>,
+/// }
+/// ```
+///
+/// # Custom crate path
+///
+/// If you've renamed `zbus` in your `Cargo.toml` or are using it through a re-export, point
+/// the derive at the module holding the wire types with the `crate` attribute:
+///
+/// ```
+/// use zbus::{SerializeDict, Type};
+///
+/// #[derive(SerializeDict, Type)]
+/// #[zbus(signature = "a{sv}", crate = "zbus::wire")]
+/// struct MyStruct {
+///     field: String,
+/// }
+/// ```
+///
+/// [`Serialize`]: https://docs.serde.rs/serde/trait.Serialize.html
+/// [FAQ entry]: https://z-galaxy.github.io/zbus/faq.html#how-to-use-a-struct-as-a-dictionary
+#[proc_macro_derive(SerializeDict, attributes(zbus, zvariant))]
+pub fn serialize_dict_macro_derive(input: TokenStream) -> TokenStream {
+    let input: DeriveInput = syn::parse(input).unwrap();
+    zbus_utils::derive::expand_serialize_dict_derive(input, &utils::derive_config())
+        .unwrap_or_else(|err| err.to_compile_error())
+        .into()
+}
+
+/// Adds [`Deserialize`] implementation to structs to be deserialized from a D-Bus dictionary type.
+///
+/// The dictionary type is determined by the `#[zbus(signature = "...")]` attribute. The attribute
+/// can also be spelled `#[zvariant(...)]`. The default is `a{sv}` (string keys, variant values),
+/// but nested forms like `a{sa{sv}}` and `a{oa{sv}}` are also supported — fields whose value type
+/// is itself a dict (or any non-`Variant` type) are deserialized directly through their own
+/// `Deserialize` impl rather than unwrapped from a variant. See [`SerializeDict`] for a nested
+/// example.
+///
+/// Such dictionary types are very commonly used in
+/// [D-Bus](https://dbus.freedesktop.org/doc/dbus-specification.html#standard-interfaces-properties)
+/// interfaces.
+///
+/// # Alternative Approaches
+///
+/// There are two approaches to deserializing dictionaries as structs:
+///
+/// 1. Using this macro (simpler, but less control).
+/// 2. Using the `Deserialize` derive with `zbus::as_variant` (more verbose, but more control).
+///
+/// See the example below and the relevant [FAQ entry] in our book for more details on the
+/// alternative approach.
+///
+/// # Example
+///
+/// ## Approach #1
+///
+/// ```
+/// use zbus::{DeserializeDict, Type};
+///
+/// #[derive(Debug, Default, DeserializeDict, Type)]
+/// #[zbus(signature = "a{sv}", rename_all = "PascalCase")]
+/// pub struct MyStruct {
+///     field1: Option<u32>,
+///     field2: String,
+/// }
+/// ```
+///
+/// ## Approach #2
+///
+/// ```
+/// use serde::Deserialize;
+/// use zbus::{Type, as_variant};
+///
+/// #[derive(Debug, Default, Deserialize, Type)]
+/// #[zbus(signature = "a{sv}")]
+/// #[serde(default, rename_all = "PascalCase")]
+/// pub struct MyStruct {
+///     #[serde(with = "as_variant::optional")]
+///     field1: Option<u32>,
+///     #[serde(with = "as_variant")]
+///     field2: String,
+/// }
+/// ```
+///
+/// # Custom crate path
+///
+/// If you've renamed `zbus` in your `Cargo.toml` or are using it through a re-export, point
+/// the derive at the module holding the wire types with the `crate` attribute:
+///
+/// ```
+/// use zbus::{DeserializeDict, Type};
+///
+/// #[derive(DeserializeDict, Type)]
+/// #[zbus(signature = "a{sv}", crate = "zbus::wire")]
+/// struct MyStruct {
+///     field: String,
+/// }
+/// ```
+///
+/// [`Deserialize`]: https://docs.serde.rs/serde/de/trait.Deserialize.html
+/// [FAQ entry]: https://z-galaxy.github.io/zbus/faq.html#how-to-use-a-struct-as-a-dictionary
+#[proc_macro_derive(DeserializeDict, attributes(zbus, zvariant))]
+pub fn deserialize_dict_macro_derive(input: TokenStream) -> TokenStream {
+    let input: DeriveInput = syn::parse(input).unwrap();
+    zbus_utils::derive::expand_deserialize_dict_derive(input, &utils::derive_config())
+        .unwrap_or_else(|err| err.to_compile_error())
+        .into()
+}
+
+/// Implements conversions for your type to/from [`Variant`].
+///
+/// Implements `TryFrom<Variant>` and `Into<Variant>` for your type.
+///
+/// The conversions can be adjusted with the `#[zbus(...)]` attribute, as described in the sections
+/// below. The attribute can also be spelled `#[zvariant(...)]`.
+///
+/// # Examples
+///
+/// Simple owned strutures:
+///
+/// ```
+/// use zbus::{OwnedObjectPath, OwnedVariant, Variant};
+///
+/// #[derive(Clone, Variant, OwnedVariant)]
+/// struct OwnedStruct {
+///     owned_str: String,
+///     owned_path: OwnedObjectPath,
+/// }
+///
+/// let s = OwnedStruct {
+///     owned_str: String::from("hi"),
+///     owned_path: OwnedObjectPath::try_from("/blah").unwrap(),
+/// };
+/// let value = Variant::from(s.clone());
+/// let _ = OwnedStruct::try_from(value).unwrap();
+/// let value = OwnedVariant::try_from(s).unwrap();
+/// let s = OwnedStruct::try_from(value).unwrap();
+/// assert_eq!(s.owned_str, "hi");
+/// assert_eq!(s.owned_path.as_str(), "/blah");
+/// ```
+///
+/// Now for the more exciting case of unowned structures:
+///
+/// ```
+/// use zbus::{ObjectPath, Str};
+/// # use zbus::{OwnedVariant, Variant};
+/// #
+/// #[derive(Clone, Variant, OwnedVariant)]
+/// struct UnownedStruct<'a> {
+///     s: Str<'a>,
+///     path: ObjectPath<'a>,
+/// }
+///
+/// let hi = String::from("hi");
+/// let s = UnownedStruct {
+///     s: Str::from(&hi),
+///     path: ObjectPath::try_from("/blah").unwrap(),
+/// };
+/// let value = Variant::from(s.clone());
+/// let s = UnownedStruct::try_from(value).unwrap();
+///
+/// let value = OwnedVariant::try_from(s).unwrap();
+/// let s = UnownedStruct::try_from(value).unwrap();
+/// assert_eq!(s.s, "hi");
+/// assert_eq!(s.path, "/blah");
+/// ```
+///
+/// Generic structures also supported:
+///
+/// ```
+/// # use zbus::{OwnedObjectPath, OwnedVariant, Variant};
+/// #
+/// #[derive(Clone, Variant, OwnedVariant)]
+/// struct GenericStruct<S, O> {
+///     field1: S,
+///     field2: O,
+/// }
+///
+/// let s = GenericStruct {
+///     field1: String::from("hi"),
+///     field2: OwnedObjectPath::try_from("/blah").unwrap(),
+/// };
+/// let value = Variant::from(s.clone());
+/// let _ = GenericStruct::<String, OwnedObjectPath>::try_from(value).unwrap();
+/// let value = OwnedVariant::try_from(s).unwrap();
+/// let s = GenericStruct::<String, OwnedObjectPath>::try_from(value).unwrap();
+/// assert_eq!(s.field1, "hi");
+/// assert_eq!(s.field2.as_str(), "/blah");
+/// ```
+///
+/// Enums also supported but currently only with unit variants:
+///
+/// ```
+/// # use zbus::{OwnedVariant, Variant};
+/// #
+/// #[derive(Debug, PartialEq, Variant, OwnedVariant)]
+/// // Default representation is `u32`.
+/// #[repr(u8)]
+/// enum Enum {
+///     Variant1 = 0,
+///     Variant2,
+/// }
+///
+/// let value = Variant::from(Enum::Variant1);
+/// let e = Enum::try_from(value).unwrap();
+/// assert_eq!(e, Enum::Variant1);
+/// assert_eq!(e as u8, 0);
+/// let value = OwnedVariant::try_from(Enum::Variant2).unwrap();
+/// let e = Enum::try_from(value).unwrap();
+/// assert_eq!(e, Enum::Variant2);
+/// ```
+///
+/// String-encoded enums are also supported:
+///
+/// ```
+/// # use zbus::{OwnedVariant, Variant};
+/// #
+/// #[derive(Debug, PartialEq, Variant, OwnedVariant)]
+/// #[zbus(signature = "s")]
+/// enum StrEnum {
+///     Variant1,
+///     Variant2,
+/// }
+///
+/// let value = Variant::from(StrEnum::Variant1);
+/// let e = StrEnum::try_from(value).unwrap();
+/// assert_eq!(e, StrEnum::Variant1);
+/// let value = OwnedVariant::try_from(StrEnum::Variant2).unwrap();
+/// let e = StrEnum::try_from(value).unwrap();
+/// assert_eq!(e, StrEnum::Variant2);
+/// ```
+///
+/// # Renaming fields
+///
+/// ## Auto Renaming
+///
+/// The macro supports specifying a Serde-like `#[zbus(rename_all = "case")]` attribute on
+/// structures. The attribute allows to rename all the fields from snake case to another case
+/// automatically.
+///
+/// Currently the macro supports the following values for `case`:
+///
+/// * `"lowercase"`
+/// * `"UPPERCASE"`
+/// * `"PascalCase"`
+/// * `"camelCase"`
+/// * `"snake_case"`
+/// * `"kebab-case"`
+///
+/// ## Individual Fields
+///
+/// It's still possible to specify custom names for individual fields using the
+/// `#[zbus(rename = "another-name")]` attribute even when the `rename_all` attribute is
+/// present.
+///
+/// Here is an example using both `rename` and `rename_all`:
+///
+/// ```
+/// # use zbus::{OwnedVariant, Variant, Dict};
+/// # use std::collections::HashMap;
+/// #
+/// #[derive(Clone, Variant, OwnedVariant)]
+/// #[zbus(signature = "dict", rename_all = "PascalCase")]
+/// struct RenamedStruct {
+///     #[zbus(rename = "MyValue")]
+///     field1: String,
+///     field2: String,
+/// }
+///
+/// let s = RenamedStruct {
+///     field1: String::from("hello"),
+///     field2: String::from("world")
+/// };
+/// let v = Variant::from(s);
+/// let d = Dict::try_from(v).unwrap();
+/// let hm: HashMap<String, String> = HashMap::try_from(d).unwrap();
+/// assert_eq!(hm.get("MyValue").unwrap().as_str(), "hello");
+/// assert_eq!(hm.get("Field2").unwrap().as_str(), "world");
+/// ```
+///
+/// # Dictionary encoding
+///
+/// For treating your type as a dictionary, you can use the `signature = "dict"` attribute. See
+/// [`Type`] for more details and an example use. Please note that this macro can only handle
+/// `dict` or `a{sv}` values. All other values will be ignored.
+///
+/// # Custom crate path
+///
+/// If you've renamed `zbus` in your `Cargo.toml` or are using it through a re-export, point
+/// the derive at the module holding the wire types with the `crate` attribute:
+///
+/// ```
+/// use zbus::Variant;
+///
+/// #[derive(Clone, Variant)]
+/// #[zbus(crate = "zbus::wire")]
+/// struct MyStruct {
+///     field: String,
+/// }
+/// ```
+///
+/// [`Variant`]: https://docs.rs/zbus/latest/zbus/enum.Variant.html
+/// [`Type`]: crate::Type#custom-signatures
+#[proc_macro_derive(Variant, attributes(zbus, zvariant))]
+pub fn variant_macro_derive(input: TokenStream) -> TokenStream {
+    let ast: DeriveInput = syn::parse(input).unwrap();
+    zbus_utils::derive::expand_variant_derive(
+        ast,
+        zbus_utils::derive::VariantType::Variant,
+        &utils::derive_config(),
+    )
+    .unwrap_or_else(|err| err.to_compile_error())
+    .into()
+}
+
+/// Implements conversions for your type to/from [`OwnedVariant`].
+///
+/// Implements `TryFrom<OwnedVariant>` and `TryInto<OwnedVariant>` for your type.
+///
+/// See [`Variant`] documentation for examples. The `#[zbus(...)]` attribute described there is
+/// accepted here too, and can also be spelled `#[zvariant(...)]`.
+///
+/// [`OwnedVariant`]: https://docs.rs/zbus/latest/zbus/struct.OwnedVariant.html
+#[proc_macro_derive(OwnedVariant, attributes(zbus, zvariant))]
+pub fn owned_variant_macro_derive(input: TokenStream) -> TokenStream {
+    let ast: DeriveInput = syn::parse(input).unwrap();
+    zbus_utils::derive::expand_variant_derive(
+        ast,
+        zbus_utils::derive::VariantType::OwnedVariant,
+        &utils::derive_config(),
+    )
+    .unwrap_or_else(|err| err.to_compile_error())
+    .into()
+}
+
+/// Constructs a const [`Signature`] with compile-time validation.
+///
+/// This macro creates a `Signature` from a string literal at compile time, validating
+/// that the signature string is valid D-Bus signature. Invalid signatures will cause
+/// a compilation error.
+///
+/// # Examples
+///
+/// ## Basic usage
+///
+/// ```
+/// use zbus::signature;
+///
+/// // Create signatures for basic types
+/// let sig = signature!("s");  // String signature
+/// assert_eq!(sig.to_string(), "s");
+///
+/// let sig = signature!("i");  // 32-bit integer signature
+/// assert_eq!(sig.to_string(), "i");
+/// ```
+///
+/// ## Container types
+///
+/// ```
+/// use zbus::signature;
+///
+/// // Array of strings
+/// let sig = signature!("as");
+/// assert_eq!(sig.to_string(), "as");
+///
+/// // Dictionary mapping strings to variants
+/// let sig = signature!("a{sv}");
+/// assert_eq!(sig.to_string(), "a{sv}");
+///
+/// // Structures
+/// let sig = signature!("(isx)");
+/// assert_eq!(sig.to_string(), "(isx)");
+/// ```
+///
+/// ## Const signatures
+///
+/// The macro can be used to create const signatures, which is especially useful
+/// for defining signatures at compile time:
+///
+/// ```
+/// use zbus::{signature, Signature};
+///
+/// const MY_SIGNATURE: Signature = signature!("a{sv}");
+///
+/// fn process_data(_data: &str) {
+///     assert_eq!(MY_SIGNATURE.to_string(), "a{sv}");
+/// }
+/// ```
+///
+/// ## Using the `dict` alias
+///
+/// For convenience, `dict` is an alias for `a{sv}` (string-to-variant dictionary):
+///
+/// ```
+/// use zbus::signature;
+///
+/// let sig = signature!("dict");
+/// assert_eq!(sig.to_string(), "a{sv}");
+/// ```
+///
+/// ## Compile-time validation
+///
+/// Invalid signatures will be caught at compile time:
+///
+/// ```compile_fail
+/// use zbus::signature;
+///
+/// // This will fail to compile because 'z' is not a valid D-Bus type
+/// let sig = signature!("z");
+/// ```
+///
+/// [`Signature`]: https://docs.rs/zbus/latest/zbus/enum.Signature.html
+#[proc_macro]
+pub fn signature(input: TokenStream) -> TokenStream {
+    zbus_utils::derive::expand_signature_macro(input.into(), &utils::wire_path())
         .unwrap_or_else(|err| err.to_compile_error())
         .into()
 }

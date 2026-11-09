@@ -105,6 +105,11 @@ fn run_pair(cli: &Cli, args: &SyncPairArgs) -> Result<(), CliExit> {
         None => LocalSyncConfig::configure(&mut registry, &name, SyncRole::Client, &master)
             .map_err(|error| CliExit::from(hidlins_sync::SyncError::from(error)))?,
     };
+    if config.expire_provisional(epoch_seconds()?) {
+        config
+            .persist(&mut registry, &name)
+            .map_err(|error| CliExit::from(hidlins_sync::SyncError::from(error)))?;
+    }
     let recovering = config.provisional().is_some();
     let routes = candidates(
         args.address.as_deref(),
@@ -181,6 +186,11 @@ fn run_import(cli: &Cli, args: &SyncImportArgs) -> Result<(), CliExit> {
         None => LocalSyncConfig::create(&args.id, SyncRole::Client, &master)
             .map_err(|error| CliExit::from(hidlins_sync::SyncError::from(error)))?,
     };
+    if config.expire_provisional(epoch_seconds()?) {
+        pending_store
+            .save(&config)
+            .map_err(|error| CliExit::from(hidlins_sync::SyncError::from(error)))?;
+    }
     let recovering = config.provisional().is_some();
     let routes = candidates(
         args.address.as_deref(),
@@ -322,10 +332,15 @@ fn import_target(
 }
 
 fn run_serve(cli: &Cli, args: &SyncServeArgs) -> Result<(), CliExit> {
+    // Construct first so unlocked state is dropped before source shutdown/join.
+    #[cfg(feature = "desktop")]
+    let mut lock_monitor = super::foreground_lock::ForegroundLock::start()?;
     let paths = resolve_paths(cli)?;
     let mut registry = VaultRegistry::load(paths.clone()).map_err(CliExit::from)?;
     let name = resolve_vault_name(&registry, args.vault.as_deref())?;
     let (mut vault, master, keyfile) = unlock(&registry, &name)?;
+    #[cfg(feature = "desktop")]
+    lock_monitor.check_before_serve()?;
     let config = match registry
         .get(&name)
         .and_then(LocalSyncConfig::from_vault_entry)
@@ -359,6 +374,8 @@ fn run_serve(cli: &Cli, args: &SyncServeArgs) -> Result<(), CliExit> {
     let (queue, mut processor) = HostQueue::new();
     let authority: Arc<dyn PairingAuthority> =
         Arc::new(CliPairingAuthority::new(paths, name.clone()));
+    #[cfg(feature = "desktop")]
+    lock_monitor.check_before_serve()?;
     let mut controller = ServerController::start_with_pairing_authority(
         endpoint,
         identity,
@@ -367,46 +384,77 @@ fn run_serve(cli: &Cli, args: &SyncServeArgs) -> Result<(), CliExit> {
         Some(authority),
     )
     .map_err(|error| CliExit::Internal(error.to_string()))?;
-    controller.replace_pairing_recovery(
-        config
-            .provisional()
-            .map(|record| record.peer_key().into_bytes()),
-    );
-    if args.pairing_window {
-        controller
-            .open_pairing()
-            .map_err(|error| CliExit::Internal(error.to_string()))?;
-    }
-    let bound = controller.endpoint();
-    success(
-        cli,
-        &ServeView {
-            status: "serving",
-            endpoint: bound.to_string(),
-            pairing_window: args.pairing_window,
-        },
-    )?;
-    let signals = signals::SignalGuard::install()?;
-    let mut host = AuthoritativeVault::new(&mut vault, &master, keyfile.as_ref());
-    while !signals.interrupted() {
-        match processor.process_one(&mut host) {
+    let result = (|| {
+        #[cfg(feature = "desktop")]
+        lock_monitor.check_before_serve()?;
+        controller.replace_pairing_recovery(
+            config
+                .provisional()
+                .map(|record| record.peer_key().into_bytes()),
+        );
+        if args.pairing_window {
+            controller
+                .open_pairing()
+                .map_err(|error| CliExit::Internal(error.to_string()))?;
+        }
+        // Signals must already be handled when readiness becomes observable.
+        let signals = signals::SignalGuard::install()?;
+        let bound = controller.endpoint();
+        success(
+            cli,
+            &ServeView {
+                status: "serving",
+                endpoint: bound.to_string(),
+                pairing_window: args.pairing_window,
+            },
+        )?;
+        let mut host = AuthoritativeVault::new(&mut vault, &master, keyfile.as_ref());
+        process_foreground_requests(
+            &mut processor,
+            &mut controller,
+            &registry,
+            &name,
+            &mut host,
+            || {
+                #[cfg(feature = "desktop")]
+                if lock_monitor.is_locked() {
+                    return true;
+                }
+                signals.interrupted()
+            },
+        )
+    })();
+    // Every setup/output/host error follows the same cleanup order as a lock.
+    processor.shutdown();
+    controller.stop();
+    result
+}
+
+fn process_foreground_requests(
+    processor: &mut hidlins_sync::server::HostProcessor,
+    controller: &mut ServerController,
+    registry: &VaultRegistry,
+    name: &str,
+    host: &mut AuthoritativeVault<'_>,
+    mut should_stop: impl FnMut() -> bool,
+) -> Result<(), CliExit> {
+    while !should_stop() {
+        match processor.process_one(host) {
             Ok(true) => {}
             Ok(false) => std::thread::sleep(POLL),
             Err(hidlins_sync::server::ServerError::Stopped) => break,
             Err(error) => return Err(CliExit::Internal(error.to_string())),
         }
+        if should_stop() {
+            break;
+        }
         let _ = controller.advertisements();
         if let Ok(latest) = VaultRegistry::load(registry.paths().clone()) {
-            if let Some(config) = latest
-                .get(&name)
-                .and_then(LocalSyncConfig::from_vault_entry)
-            {
+            if let Some(config) = latest.get(name).and_then(LocalSyncConfig::from_vault_entry) {
                 controller.replace_trusted(active_peer_keys(&config));
             }
         }
     }
-    processor.shutdown();
-    controller.stop();
     Ok(())
 }
 
@@ -854,6 +902,8 @@ impl PairingAuthority for CliPairingAuthority {
         &self,
         transaction: &hidlins_sync::pairing::PairingTransaction,
     ) -> Result<(), PairingAuthorityError> {
+        #[cfg(test)]
+        pairing_activation_regressions::before_lock();
         let mut registry = VaultRegistry::load(self.paths.clone())
             .map_err(|_| PairingAuthorityError::Persistence)?;
         let now = epoch_seconds().map_err(|_| PairingAuthorityError::Persistence)?;
@@ -877,6 +927,26 @@ impl PairingAuthority for CliPairingAuthority {
             .recover_pairing_transaction(peer, now)
             .map_err(|_| PairingAuthorityError::Persistence)
     }
+
+    fn activate_authorized(
+        &self,
+        transaction: &hidlins_sync::pairing::PairingTransaction,
+        authorization: &hidlins_sync::server::PairingAuthorization,
+    ) -> Result<(), PairingAuthorityError> {
+        #[cfg(test)]
+        pairing_activation_regressions::before_lock();
+        let mut registry = VaultRegistry::load(self.paths.clone())
+            .map_err(|_| PairingAuthorityError::Persistence)?;
+        let now = epoch_seconds().map_err(|_| PairingAuthorityError::Persistence)?;
+        LocalSyncConfig::transactional_update(&mut registry, &self.vault, |config| {
+            authorization
+                .check()
+                .map_err(|_| hidlins_sync::trust::TrustError::Expired)?;
+            config.activate_client(transaction, now)
+        })
+        .map_err(|_| PairingAuthorityError::Persistence)
+    }
+
     fn shutdown(&self) {
         self.stopped.store(true, Ordering::Release);
     }
@@ -885,6 +955,10 @@ impl PairingAuthority for CliPairingAuthority {
         self.cancellation.fetch_add(1, Ordering::AcqRel);
     }
 }
+
+#[cfg(test)]
+#[path = "pairing_activation_regressions.rs"]
+mod pairing_activation_regressions;
 
 #[cfg(unix)]
 #[allow(clippy::borrow_as_ptr, clippy::unused_self)]

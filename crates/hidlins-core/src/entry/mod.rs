@@ -196,6 +196,17 @@ pub(crate) mod totp;
 mod types;
 mod view;
 
+// KDBX standard fields have dedicated setters and protection policies. The
+// case-sensitive names alone are reserved; ordinary custom fields and otp
+// remain interoperable with other KDBX clients.
+fn is_standard_field(name: &str) -> bool {
+    use keepass::db::fields;
+    matches!(
+        name,
+        fields::TITLE | fields::USERNAME | fields::PASSWORD | fields::URL | fields::NOTES
+    )
+}
+
 pub use attachment::{
     DEFAULT_MAX_ATTACHMENT_BYTES, MAX_ATTACHMENT_BYTES_KEY, MAX_ATTACHMENT_BYTES_UPPER_BOUND,
 };

@@ -6,6 +6,7 @@ import os
 from pathlib import Path
 import platform
 import re
+import shlex
 import shutil
 import subprocess
 import tempfile
@@ -99,12 +100,20 @@ class CiToolchainTests(unittest.TestCase):
                                 job.index('- name: Disable telemetry'))
 
     def test_performance_gate_builds_and_loads_optimized_native_code(self):
+        artifact_root = self.temp / 'native outputs'
+        metadata = json.dumps({'target_directory': str(artifact_root)})
+        self.executable(self.bin / 'cargo',
+                        '[[ "$1" == metadata ]]\nprintf \'%s\\n\' ' + shlex.quote(metadata) + '\n')
+        # This is a controlled dry-run: preserve both optimized-build and
+        # optimized-library assertions without requiring a real Rust build.
+        self.env.pop('MAKEFLAGS', None)
+        self.env.pop('HIDLINS_API_RELEASE_LIB', None)
         result = self.run_command(['make', '--no-print-directory', '--dry-run',
                                    'app-test-integration-performance'])
         self.assertEqual(result.returncode, 0, result.stdout + result.stderr)
-        self.assertIn('cargo build -p hidlins-api --release --offline --locked', result.stdout)
+        self.assertIn('cargo_artifacts.py run cargo -- build -p hidlins-api --release --offline --locked', result.stdout)
         suffix = 'dylib' if platform.system() == 'Darwin' else 'so'
-        self.assertIn(f'HIDLINS_API_LIB={ROOT}/target/release/libhidlins_api.{suffix}', result.stdout)
+        self.assertIn(f'HIDLINS_API_LIB="{artifact_root}/release/libhidlins_api.{suffix}"', result.stdout)
 
     def test_emulator_startup_failure_exposes_the_boot_diagnostic(self):
         source = (ROOT / 'tools/android-native/run_emulator_suite.sh').read_text()
@@ -295,7 +304,14 @@ done
             self.executable(binary_dir / f'{target}{CONTRACT["android_api_level"]}-clang', 'exit 0\n')
         self.executable(binary_dir / 'llvm-ar', 'exit 0\n')
         (self.ndk / 'source.properties').write_text('Pkg.Desc = Android NDK\n' + revision_line + '\n')
-        self.executable(self.bin / 'cargo', 'printf "%s\\n" "$*" >> "$TEST_TOOL_LOG"\n')
+        # Keep the two target-compile admissions observable; the cache guard
+        # also performs a read-only metadata query before each compile.
+        metadata = json.dumps({'target_directory': str(self.temp / 'ndk outputs'),
+                               'build_directory': str(self.temp / 'ndk outputs'),
+                               'packages': [{'dependencies': []}]})
+        self.executable(self.bin / 'cargo',
+                        'if [[ "$1" == metadata ]]; then printf \'%s\\n\' ' + shlex.quote(metadata) +
+                        '; exit 0; fi\nprintf "%s\\n" "$*" >> "$TEST_TOOL_LOG"\n')
         return self.run_command(['bash', 'tools/android-native/build.sh', 'check'])
 
     def test_ndk_build_accepts_the_real_revision_property(self):

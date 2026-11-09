@@ -19,7 +19,7 @@ pub(crate) fn add(vault: &mut Vault, group: Uuid, values: &EditValues) -> Result
         builder = builder.password(values.password.as_str());
     }
     builder = builder
-        .notes(values.notes.clone())
+        .notes(values.notes.as_str())
         .tags(values.tags.clone());
     for (name, value, protected) in &values.custom {
         builder = builder.custom_field(name.clone(), value.as_str().to_string(), *protected);
@@ -42,7 +42,7 @@ pub(crate) fn update(vault: &mut Vault, uuid: Uuid, values: &EditValues) -> Resu
             }
             EntryKind::SecureNote => {}
         }
-        view.set_notes(values.notes.clone());
+        view.set_notes(values.notes.as_str());
         view.set_tags(values.tags.clone());
         for (name, value, protected) in &values.custom {
             view.set_custom_field(name.clone(), value.as_str().to_string(), *protected);

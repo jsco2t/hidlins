@@ -5,8 +5,10 @@ import 'package:flutter_riverpod/flutter_riverpod.dart';
 
 import '../../data/models.dart';
 import '../../l10n/app_localizations.dart';
+import '../../providers/lock_state_provider.dart';
 import '../../providers/providers.dart';
 import '../../ui/activity_capture.dart';
+import '../../ui/lock_guard.dart';
 import '../../ui/tokens.dart';
 import '../generator/generator_page.dart';
 import '../sync/sync_controller.dart';
@@ -40,12 +42,15 @@ class _EntryEditDialogState extends ConsumerState<EntryEditDialog> {
   bool _staleAfterSync = false;
   bool _dirty = false;
   bool _saving = false;
+  bool _pickingDate = false;
+  int? _expiryTime;
   final Set<TextEditingController> _secretReentry = {};
 
   @override
   void initState() {
     super.initState();
     final d = widget.detail;
+    _expiryTime = d?.expiryTime;
     _titleCtrl = TextEditingController(text: d?.title ?? '');
     _usernameCtrl = TextEditingController(text: d?.username ?? '');
     _passwordCtrl = TextEditingController();
@@ -85,18 +90,21 @@ class _EntryEditDialogState extends ConsumerState<EntryEditDialog> {
     final syncState = ref.watch(syncControllerProvider);
     final syncUnavailable = syncState.asData == null;
     final syncInFlight = syncState.valueOrNull?.inFlight ?? false;
+    final lock = ref.watch(lockStateProvider).asData?.value;
     ref.listen(syncEventsProvider, (_, next) {
       if (next.valueOrNull is! SyncEvent_Done || !mounted || _saving) return;
       setState(() => _staleAfterSync = true);
     });
     final saveBlocked =
         _saving ||
+        _pickingDate ||
         _secretReentry.isNotEmpty ||
         _loadingCustomFields ||
         _customFieldLoadFailed ||
         syncUnavailable ||
         syncInFlight ||
         _staleAfterSync;
+    final expirationEnabled = !saveBlocked && lock == LockEvent.unlocked;
     final blockedMessage = _staleAfterSync
         ? l10n.entryEditReloadAfterSync
         : _secretReentry.isNotEmpty
@@ -278,6 +286,39 @@ class _EntryEditDialogState extends ConsumerState<EntryEditDialog> {
                               const SizedBox(height: HidlinsSpacing.md),
                             ],
 
+                            Text(
+                              l10n.expirationLabel,
+                              style: Theme.of(context).textTheme.labelLarge,
+                            ),
+                            Text(
+                              _expiryTime == null
+                                  ? l10n.expirationNever
+                                  : DateTime.fromMillisecondsSinceEpoch(
+                                      _expiryTime! * 1000,
+                                      isUtc: true,
+                                    ).toIso8601String(),
+                            ),
+                            Wrap(
+                              spacing: HidlinsSpacing.sm,
+                              children: [
+                                TextButton.icon(
+                                  onPressed: expirationEnabled
+                                      ? _pickExpiration
+                                      : null,
+                                  icon: const Icon(Icons.event),
+                                  label: Text(l10n.expirationSet),
+                                ),
+                                if (_expiryTime != null)
+                                  TextButton(
+                                    onPressed: expirationEnabled
+                                        ? _clearExpiration
+                                        : null,
+                                    child: Text(l10n.expirationClear),
+                                  ),
+                              ],
+                            ),
+                            const SizedBox(height: HidlinsSpacing.md),
+
                             // Tags
                             TextFormField(
                               controller: _tagsCtrl,
@@ -305,6 +346,76 @@ class _EntryEditDialogState extends ConsumerState<EntryEditDialog> {
         ),
       ),
     );
+  }
+
+  bool _canChangeExpiration([int? revision]) {
+    if (!mounted ||
+        _saving ||
+        _secretReentry.isNotEmpty ||
+        _loadingCustomFields ||
+        _customFieldLoadFailed ||
+        _staleAfterSync ||
+        ref.read(lockStateProvider).asData?.value != LockEvent.unlocked) {
+      return false;
+    }
+    final sync = ref.read(syncControllerProvider).asData?.value;
+    return sync != null &&
+        !sync.inFlight &&
+        (revision == null || sync.terminalRevision == revision);
+  }
+
+  Future<void> _pickExpiration() async {
+    if (_pickingDate || !_canChangeExpiration()) return;
+    final revision = ref
+        .read(syncControllerProvider)
+        .asData!
+        .value
+        .terminalRevision;
+    final l10n = AppLocalizations.of(context)!;
+    final first = DateTime.utc(1);
+    final last = DateTime.utc(9999, 12, 31);
+    var initial = _expiryTime == null
+        ? DateTime.now().toUtc()
+        : DateTime.fromMillisecondsSinceEpoch(_expiryTime! * 1000, isUtc: true);
+    // Only the picker's initial view is clamped. Cancel and an untouched Save
+    // preserve any stored instant, including dates outside the picker range.
+    if (initial.isBefore(first)) initial = first;
+    if (initial.isAfter(last)) initial = last;
+    setState(() => _pickingDate = true);
+    try {
+      final chosen = await showDatePicker(
+        context: context,
+        initialDate: initial,
+        firstDate: first,
+        lastDate: last,
+        helpText: l10n.expirationPickerHelp,
+        builder: (_, child) => LockGuard(child: child!),
+      );
+      if (chosen == null || !_canChangeExpiration(revision)) return;
+      final epoch =
+          DateTime.utc(
+            chosen.year,
+            chosen.month,
+            chosen.day,
+          ).millisecondsSinceEpoch ~/
+          1000;
+      if (epoch != _expiryTime) {
+        setState(() {
+          _expiryTime = epoch;
+          _dirty = true;
+        });
+      }
+    } finally {
+      if (mounted) setState(() => _pickingDate = false);
+    }
+  }
+
+  void _clearExpiration() {
+    if (_pickingDate || !_canChangeExpiration() || _expiryTime == null) return;
+    setState(() {
+      _expiryTime = null;
+      _dirty = true;
+    });
   }
 
   Future<void> _loadExistingCustomFields(EntryDetail detail) async {
@@ -469,6 +580,7 @@ class _EntryEditDialogState extends ConsumerState<EntryEditDialog> {
   Future<void> _save() async {
     final syncState = ref.read(syncControllerProvider);
     if (_saving ||
+        _pickingDate ||
         _secretReentry.isNotEmpty ||
         _loadingCustomFields ||
         _customFieldLoadFailed ||
@@ -520,7 +632,11 @@ class _EntryEditDialogState extends ConsumerState<EntryEditDialog> {
           totpUri: _totpUriCtrl.text.isEmpty ? null : _totpUriCtrl.text,
         );
         _clearSecretControllers();
-        await repo.createEntry(widget.groupUuid ?? 'root-uuid', draft);
+        await repo.createEntry(
+          widget.groupUuid ?? 'root-uuid',
+          draft,
+          expiryTime: _expiryTime,
+        );
       } else {
         final edit = EntryEditDto(
           title: _titleCtrl.text,
@@ -533,7 +649,15 @@ class _EntryEditDialogState extends ConsumerState<EntryEditDialog> {
           totpUri: _totpUriCtrl.text.isEmpty ? null : _totpUriCtrl.text,
         );
         _clearSecretControllers();
-        await repo.updateEntry(widget.detail!.uuid, edit);
+        await repo.updateEntry(
+          widget.detail!.uuid,
+          edit,
+          expiration: _expiryTime == widget.detail!.expiryTime
+              ? null
+              : _expiryTime == null
+              ? const EntryExpirationChange.clear()
+              : EntryExpirationChange.set(_expiryTime!),
+        );
       }
       if (mounted) Navigator.of(context).pop(true);
     } on Exception {

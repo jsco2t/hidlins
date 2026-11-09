@@ -2,7 +2,7 @@
 
 use ratatui::layout::{Constraint, Layout};
 use ratatui::text::{Line, Span};
-use ratatui::widgets::{Block, Borders, Paragraph};
+use ratatui::widgets::{Block, Borders, List, ListItem, ListState, Paragraph};
 use ratatui::Frame;
 use tui_input::Input;
 
@@ -176,17 +176,34 @@ pub(crate) fn render_peers(state: &PeersState, frame: &mut Frame, theme: &Theme)
         .title("Sync peers")
         .title_style(theme.header());
     let inner = block.inner(area);
-    let mut lines = vec![Line::from("Peer identifiers are intentionally opaque.")];
+    frame.render_widget(block, area);
+    let [intro, peers, actions] = Layout::vertical([
+        Constraint::Length(1),
+        Constraint::Min(1),
+        Constraint::Length(1),
+    ])
+    .areas(inner);
+    frame.render_widget(
+        Paragraph::new("Peer identifiers are intentionally opaque."),
+        intro,
+    );
     if state.names.is_empty() {
-        lines.push(Line::from("No paired peers."));
+        frame.render_widget(Paragraph::new("No paired peers."), peers);
     } else {
-        lines.extend(state.names.iter().enumerate().map(|(index, name)| {
-            Line::from(format!(
-                "{} peer-{index}: {name}",
-                if state.selected == index { ">" } else { " " }
-            ))
-        }));
+        let items = state
+            .names
+            .iter()
+            .enumerate()
+            .map(|(index, name)| ListItem::new(format!("peer-{index}: {name}")));
+        let list = List::new(items)
+            .highlight_style(theme.selected())
+            .highlight_symbol("> ");
+        let mut selection = ListState::default();
+        selection.select(Some(state.selected.min(state.names.len() - 1)));
+        frame.render_stateful_widget(list, peers, &mut selection);
     }
-    lines.push(Line::from("↑/↓: select   r: Revoke peer   Esc: close"));
-    frame.render_widget(Paragraph::new(lines), inner);
+    frame.render_widget(
+        Paragraph::new("↑/↓ select  r: Revoke peer  Esc close"),
+        actions,
+    );
 }

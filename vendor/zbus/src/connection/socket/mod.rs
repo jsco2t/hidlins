@@ -1,3 +1,8 @@
+//! The transport layer of a connection.
+//!
+//! Implement [`Socket`], and the [`ReadHalf`] and [`WriteHalf`] that it splits into, to run a
+//! connection over a transport of your own.
+
 #[cfg(feature = "p2p")]
 pub mod channel;
 #[cfg(feature = "p2p")]
@@ -6,43 +11,34 @@ pub use channel::Channel;
 mod split;
 pub use split::{BoxedSplit, Split};
 
-#[cfg(unix)]
-pub(crate) mod command;
-#[cfg(unix)]
-pub(crate) use command::Command;
-mod tcp;
-mod unix;
-mod vsock;
-
-#[cfg(not(feature = "tokio"))]
-use async_io::Async;
-#[cfg(not(feature = "tokio"))]
-use std::sync::Arc;
-use std::{io, mem};
-use tracing::trace;
+use std::io;
 
 use crate::{
     Message,
     conn::AuthMechanism,
     fdo::ConnectionCredentials,
+    log::trace,
     message::{
         PrimaryHeader,
         header::{MAX_MESSAGE_SIZE, MIN_MESSAGE_SIZE},
     },
     padding_for_8_bytes,
+    wire::{
+        Endian,
+        serialized::{self, Context},
+    },
 };
 #[cfg(unix)]
-use std::os::fd::{AsFd, BorrowedFd, OwnedFd};
-use zvariant::{
-    Endian,
-    serialized::{self, Context},
+use std::{
+    mem,
+    os::fd::{AsFd, BorrowedFd, OwnedFd},
 };
 
 #[cfg(unix)]
-type RecvmsgResult = io::Result<(usize, Vec<OwnedFd>)>;
+pub(crate) type RecvmsgResult = io::Result<(usize, Vec<OwnedFd>)>;
 
 #[cfg(not(unix))]
-type RecvmsgResult = io::Result<usize>;
+pub(crate) type RecvmsgResult = io::Result<usize>;
 
 /// Trait representing some transport layer over which the DBus protocol can be used.
 ///
@@ -50,15 +46,137 @@ type RecvmsgResult = io::Result<usize>;
 /// into a read half and a write half. The reader and writer halves can be any types that implement
 /// [`ReadHalf`] and [`WriteHalf`] respectively.
 ///
-/// The crate provides implementations for `async_io` and `tokio`'s `UnixStream` wrappers if you
-/// enable the corresponding crate features (`async_io` is enabled by default).
+/// A unix or TCP stream needs none of this: hand the socket itself to [`Builder::unix_stream`] or
+/// [`Builder::tcp_stream`] and the connection drives it on its own runtime. Implement this trait
+/// for a transport that is neither, such as a VSOCK stream, an in-process channel or a tunnel of
+/// your own, and hand it to [`Builder::socket`] or [`Builder::authenticated_socket`].
 ///
-/// You can implement it manually to integrate with other runtimes or other dbus transports.  Feel
-/// free to submit pull requests to add support for more runtimes to zbus itself so rust's orphan
-/// rules don't force the use of a wrapper struct (and to avoid duplicating the work across many
-/// projects).
+/// # Example
+///
+/// An implementation for any stream of Tokio's, the `VsockStream` of the [tokio-vsock] crate
+/// among them:
+///
+/// ```
+/// # #[cfg(unix)]
+/// # mod example {
+/// use std::{
+///     fmt::Debug,
+///     io,
+///     os::fd::{BorrowedFd, OwnedFd},
+/// };
+///
+/// use tokio::io::{AsyncRead, AsyncReadExt, AsyncWrite, AsyncWriteExt};
+/// use zbus::{
+///     connection::{
+///         AuthMechanism,
+///         socket::{ReadHalf, Socket, Split, WriteHalf},
+///     },
+///     export::async_trait::async_trait,
+/// };
+///
+/// /// A stream of Tokio's, as a socket for a connection to run over.
+/// #[derive(Debug)]
+/// pub struct Stream<S>(pub S);
+///
+/// impl<S> Socket for Stream<S>
+/// where
+///     S: AsyncRead + AsyncWrite + Debug + Send + Sync + 'static,
+/// {
+///     type ReadHalf = Reader<S>;
+///     type WriteHalf = Writer<S>;
+///
+///     fn split(self) -> Split<Reader<S>, Writer<S>> {
+///         let (read, write) = tokio::io::split(self.0);
+///
+///         Split::new(Reader(read), Writer(write))
+///     }
+/// }
+///
+/// /// The half of a `Stream` that a connection receives through.
+/// #[derive(Debug)]
+/// pub struct Reader<S>(tokio::io::ReadHalf<S>);
+///
+/// #[async_trait]
+/// impl<S> ReadHalf for Reader<S>
+/// where
+///     S: AsyncRead + Debug + Send + Sync + 'static,
+/// {
+///     async fn recvmsg(&mut self, buffer: &mut [u8]) -> io::Result<(usize, Vec<OwnedFd>)> {
+///         let read = self.0.read(buffer).await?;
+///
+///         // Only bytes come over the stream, never file descriptors.
+///         Ok((read, vec![]))
+///     }
+///
+///     fn auth_mechanism(&self) -> AuthMechanism {
+///         // The peer has no credentials to check.
+///         AuthMechanism::Anonymous
+///     }
+/// }
+///
+/// /// The half of a `Stream` that a connection sends through.
+/// #[derive(Debug)]
+/// pub struct Writer<S>(tokio::io::WriteHalf<S>);
+///
+/// #[async_trait]
+/// impl<S> WriteHalf for Writer<S>
+/// where
+///     S: AsyncWrite + Debug + Send + Sync + 'static,
+/// {
+///     async fn sendmsg(&mut self, buffer: &[u8], _fds: &[BorrowedFd<'_>]) -> io::Result<usize> {
+///         // There are never any file descriptors to send: neither half says it can pass them,
+///         // so the connection turns away any message that carries some.
+///         self.0.write(buffer).await
+///     }
+///
+///     async fn flush(&mut self) -> io::Result<()> {
+///         // zbus calls this once it has handed over a whole message, so that a stream that
+///         // buffers sends it on.
+///         self.0.flush().await
+///     }
+///
+///     async fn close(&mut self) -> io::Result<()> {
+///         self.0.shutdown().await
+///     }
+/// }
+/// # }
+/// #
+/// # // Any stream of Tokio's carries a connection through the halves above, a buffered one too.
+/// # #[cfg(all(unix, feature = "p2p"))]
+/// # #[tokio::main]
+/// # async fn main() -> zbus::Result<()> {
+/// #     use tokio::io::BufStream;
+/// #     use zbus::{Guid, connection::Builder};
+/// #
+/// #     let (p0, p1) = tokio::net::UnixStream::pair()?;
+/// #     let (p0, p1) = (BufStream::new(p0), BufStream::new(p1));
+/// #     let (_client, _server) = futures_util::try_join!(
+/// #         Builder::socket(example::Stream(p0)).p2p().build(),
+/// #         Builder::socket(example::Stream(p1)).server(Guid::generate()).p2p().build(),
+/// #     )?;
+/// #
+/// #     Ok(())
+/// # }
+/// #
+/// # #[cfg(not(all(unix, feature = "p2p")))]
+/// # fn main() {}
+/// ```
+///
+/// `Builder::socket(Stream(stream))` then builds a connection over `stream`. A stream of Tokio's
+/// is driven by the Tokio runtime it was created in, so create the stream and build the
+/// connection inside that runtime; with the `tokio` feature, the connection runs on that runtime
+/// as well. As the peer on such a stream has no credentials to check, the read half asks for the
+/// `ANONYMOUS` authentication mechanism, which a bus at the other end has to allow.
+///
+/// [`Builder::unix_stream`]: crate::connection::Builder::unix_stream
+/// [`Builder::tcp_stream`]: crate::connection::Builder::tcp_stream
+/// [`Builder::socket`]: crate::connection::Builder::socket
+/// [`Builder::authenticated_socket`]: crate::connection::Builder::authenticated_socket
+/// [tokio-vsock]: https://docs.rs/tokio-vsock
 pub trait Socket {
+    /// The type of the read half that [`Socket::split`] returns.
     type ReadHalf: ReadHalf;
+    /// The type of the write half that [`Socket::split`] returns.
     type WriteHalf: WriteHalf;
 
     /// Split the socket into a read half and a write half.
@@ -98,64 +216,40 @@ pub trait ReadHalf: std::fmt::Debug + Send + Sync + 'static {
     ) -> crate::Result<Message> {
         #[cfg(unix)]
         let mut fds = vec![];
-        let mut bytes = if already_received_bytes.len() < MIN_MESSAGE_SIZE {
-            let mut bytes = vec![];
-            if !already_received_bytes.is_empty() {
-                mem::swap(already_received_bytes, &mut bytes);
-            }
-            let mut pos = bytes.len();
-            bytes.resize(MIN_MESSAGE_SIZE, 0);
-            // We don't have enough data to make a proper message header yet.
-            // Some partial read may be in raw_in_buffer, so we try to complete it
-            // until we have MIN_MESSAGE_SIZE bytes
-            //
-            // Given that MIN_MESSAGE_SIZE is 16, this codepath is actually extremely unlikely
-            // to be taken more than once
-            while pos < MIN_MESSAGE_SIZE {
-                let res = self.recvmsg(&mut bytes[pos..]).await?;
-                let len = {
-                    #[cfg(unix)]
-                    {
-                        fds.extend(res.1);
-                        res.0
-                    }
-                    #[cfg(not(unix))]
-                    {
-                        res
-                    }
-                };
-                pos += len;
-                if len == 0 {
-                    return Err(std::io::Error::new(
-                        std::io::ErrorKind::UnexpectedEof,
-                        "failed to receive message",
-                    )
-                    .into());
+        // The primary header says how long the whole message is, so it is read on its own first,
+        // and the message gets an allocation of its exact length once it is in.
+        let mut header = [0; MIN_MESSAGE_SIZE];
+        let mut pos = already_received_bytes.len().min(MIN_MESSAGE_SIZE);
+        header[..pos].copy_from_slice(&already_received_bytes[..pos]);
+        already_received_bytes.drain(..pos);
+        while pos < MIN_MESSAGE_SIZE {
+            let res = self.recvmsg(&mut header[pos..]).await?;
+            let len = {
+                #[cfg(unix)]
+                {
+                    fds.extend(res.1);
+                    res.0
                 }
+                #[cfg(not(unix))]
+                {
+                    res
+                }
+            };
+            pos += len;
+            if len == 0 {
+                return Err(std::io::Error::new(
+                    std::io::ErrorKind::UnexpectedEof,
+                    "failed to receive message",
+                )
+                .into());
             }
-
-            bytes
-        } else {
-            already_received_bytes.drain(..MIN_MESSAGE_SIZE).collect()
-        };
-
-        let (primary_header, fields_len) = PrimaryHeader::read(&bytes)?;
-        let header_len = MIN_MESSAGE_SIZE + fields_len as usize;
-        let body_padding = padding_for_8_bytes(header_len);
-        let body_len = primary_header.body_len() as usize;
-        let total_len = header_len + body_padding + body_len;
-        if total_len > MAX_MESSAGE_SIZE {
-            return Err(crate::Error::ExcessData);
         }
 
-        // By this point we have a full primary header, so we know the exact length of the complete
-        // message.
-        if !already_received_bytes.is_empty() {
-            // still have some bytes buffered.
-            let pending = total_len - bytes.len();
-            let to_take = std::cmp::min(pending, already_received_bytes.len());
-            bytes.extend(already_received_bytes.drain(..to_take));
-        }
+        let (primary_header, total_len) = read_primary_header(&header)?;
+        let mut bytes = Vec::with_capacity(total_len);
+        bytes.extend_from_slice(&header);
+        let to_take = std::cmp::min(total_len - bytes.len(), already_received_bytes.len());
+        bytes.extend(already_received_bytes.drain(..to_take));
         let mut pos = bytes.len();
         bytes.resize(total_len, 0);
 
@@ -190,16 +284,8 @@ pub trait ReadHalf: std::fmt::Debug + Send + Sync + 'static {
 
         #[cfg(unix)]
         if !already_received_fds.is_empty() {
-            use crate::message::header::PRIMARY_HEADER_SIZE;
-
-            let ctxt = Context::new_dbus(endian, PRIMARY_HEADER_SIZE);
-            let encoded_fields =
-                serialized::Data::new(&bytes[PRIMARY_HEADER_SIZE..header_len], ctxt);
-            let fields: crate::message::Fields<'_> = encoded_fields.deserialize()?.0;
-            let num_required_fds = match fields.unix_fds {
-                Some(num_fds) => num_fds as usize,
-                _ => 0,
-            };
+            let (_, _, fields) = crate::message::parser::parse(&bytes)?;
+            let num_required_fds = fields.unix_fds().unwrap_or(0) as usize;
             let num_pending = num_required_fds
                 .checked_sub(fds.len())
                 .ok_or_else(|| crate::Error::ExcessData)?;
@@ -213,7 +299,7 @@ pub trait ReadHalf: std::fmt::Debug + Send + Sync + 'static {
             fds.extend(already_received);
         }
 
-        let ctxt = Context::new_dbus(endian, 0);
+        let ctxt = Context::new(endian, 0);
         #[cfg(unix)]
         let bytes = serialized::Data::new_fds(bytes, ctxt, fds);
         #[cfg(not(unix))]
@@ -261,8 +347,8 @@ pub trait WriteHalf: std::fmt::Debug + Send + Sync + 'static {
     ///
     /// This is the higher-level method to send a full D-Bus message.
     ///
-    /// The default implementation uses `sendmsg` to send the message. Implementers should override
-    /// either this or `sendmsg`.
+    /// The default implementation uses `sendmsg` to send the message, and then `flush`.
+    /// Implementers should override either this or `sendmsg`.
     async fn send_message(&mut self, msg: &Message) -> crate::Result<()> {
         let data = msg.data();
         let serial = msg.primary_header().serial_num();
@@ -284,7 +370,28 @@ pub trait WriteHalf: std::fmt::Debug + Send + Sync + 'static {
                 )
                 .await?;
         }
+        self.flush().await?;
         trace!("Sent message with serial: {}", serial);
+
+        Ok(())
+    }
+
+    /// Send several messages on the socket, in order.
+    ///
+    /// This is the higher-level method to send several full D-Bus messages, which a socket may hand
+    /// over with fewer writes than it takes to send them one by one.
+    ///
+    /// The default implementation sends them one by one with `send_message`. Implementers that can
+    /// write several messages at once should override it. File descriptors travel with the first
+    /// byte of the write they are sent with, so a message with file descriptors has to start a
+    /// write of its own, and the write sends them along.
+    ///
+    /// If this fails, the messages before the one that it failed on have been sent in full, and
+    /// that one may have been sent in part.
+    async fn send_messages(&mut self, msgs: &[Message]) -> crate::Result<()> {
+        for msg in msgs {
+            self.send_message(msg).await?;
+        }
 
         Ok(())
     }
@@ -309,6 +416,20 @@ pub trait WriteHalf: std::fmt::Debug + Send + Sync + 'static {
         #[cfg(unix)] _fds: &[BorrowedFd<'_>],
     ) -> io::Result<usize> {
         unimplemented!("`WriteHalf` implementers must either override `send_message` or `sendmsg`");
+    }
+
+    /// Flush whatever the socket holds on to of the bytes `sendmsg` was given.
+    ///
+    /// The default `send_message` calls this once it has handed a whole message to `sendmsg`. The
+    /// authentication handshake calls it each time before it waits for the peer to answer, so the
+    /// commands it pipelines go out together. A socket that holds on to what it is given, such as
+    /// one over a buffered or encrypted stream, has to send it on here: zbus has no other way to
+    /// flush it, and the peer would never see it otherwise.
+    ///
+    /// The default implementation does nothing, which suits a socket that sends what it is given
+    /// right away.
+    async fn flush(&mut self) -> io::Result<()> {
+        Ok(())
     }
 
     /// The dbus daemon on `freebsd` and `dragonfly` currently requires sending the zero byte
@@ -336,6 +457,22 @@ pub trait WriteHalf: std::fmt::Debug + Send + Sync + 'static {
     async fn peer_credentials(&mut self) -> io::Result<ConnectionCredentials> {
         Ok(ConnectionCredentials::default())
     }
+}
+
+/// The primary header that `bytes` start with, and the length of the whole message it opens.
+///
+/// A message longer than the D-Bus specification allows is an error.
+pub(crate) fn read_primary_header(bytes: &[u8]) -> crate::Result<(PrimaryHeader, usize)> {
+    let (primary_header, fields_len) = PrimaryHeader::read(bytes)?;
+    let header_len = MIN_MESSAGE_SIZE + fields_len as usize;
+    let body_padding = padding_for_8_bytes(header_len);
+    let body_len = primary_header.body_len() as usize;
+    let total_len = header_len + body_padding + body_len;
+    if total_len > MAX_MESSAGE_SIZE {
+        return Err(crate::Error::ExcessData);
+    }
+
+    Ok((primary_header, total_len))
 }
 
 #[async_trait::async_trait]
@@ -379,6 +516,10 @@ impl WriteHalf for Box<dyn WriteHalf> {
         (**self).send_message(msg).await
     }
 
+    async fn send_messages(&mut self, msgs: &[Message]) -> crate::Result<()> {
+        (**self).send_messages(msgs).await
+    }
+
     async fn sendmsg(
         &mut self,
         buffer: &[u8],
@@ -391,6 +532,10 @@ impl WriteHalf for Box<dyn WriteHalf> {
                 fds,
             )
             .await
+    }
+
+    async fn flush(&mut self) -> io::Result<()> {
+        (**self).flush().await
     }
 
     #[cfg(any(target_os = "freebsd", target_os = "dragonfly"))]
@@ -408,24 +553,5 @@ impl WriteHalf for Box<dyn WriteHalf> {
 
     async fn peer_credentials(&mut self) -> io::Result<ConnectionCredentials> {
         (**self).peer_credentials().await
-    }
-}
-
-#[cfg(not(feature = "tokio"))]
-impl<T> Socket for Async<T>
-where
-    T: std::fmt::Debug + Send + Sync,
-    Arc<Async<T>>: ReadHalf + WriteHalf,
-{
-    type ReadHalf = Arc<Async<T>>;
-    type WriteHalf = Arc<Async<T>>;
-
-    fn split(self) -> Split<Self::ReadHalf, Self::WriteHalf> {
-        let arc = Arc::new(self);
-
-        Split {
-            read: arc.clone(),
-            write: arc,
-        }
     }
 }

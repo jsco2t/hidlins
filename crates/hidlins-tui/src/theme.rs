@@ -427,7 +427,7 @@ impl ThemePatch {
         for (slot, value) in &self.slots {
             let Some(setter) = slot_setter(slot) else {
                 warnings.push(ThemeWarning {
-                    message: format!("unknown theme slot `{slot}` (ignored)"),
+                    message: "unknown theme slot (ignored)".to_string(),
                 });
                 continue;
             };
@@ -760,7 +760,7 @@ pub(crate) fn resolve_theme(
         def
     } else {
         warnings.push(ThemeWarning {
-            message: format!("unknown theme `{name}` — using default-dark"),
+            message: "unknown theme selection — using default-dark".to_string(),
         });
         ThemeDef::builtin("default-dark").expect("built-in base always resolves")
     };
@@ -1264,11 +1264,8 @@ mod tests {
             1,
             "one warning for the unknown slot: {warnings:?}"
         );
-        assert!(
-            warnings[0].message.contains("bogus-slot"),
-            "{:?}",
-            warnings[0]
-        );
+        assert_eq!(warnings[0].message, "unknown theme slot (ignored)");
+        assert!(!warnings[0].message.contains("bogus-slot"));
         // The valid slot still applied.
         assert_eq!(def.truecolor.accent, Color::Rgb(0x65, 0x43, 0x21));
     }
@@ -1412,7 +1409,8 @@ mod tests {
             "unknown name falls back to default-dark"
         );
         assert_eq!(w.len(), 1);
-        assert!(w[0].message.contains("no-such-theme"), "{:?}", w[0]);
+        assert_eq!(w[0].message, "unknown theme selection — using default-dark");
+        assert!(!w[0].message.contains("no-such-theme"));
     }
 
     #[test]

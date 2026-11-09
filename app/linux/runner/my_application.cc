@@ -61,7 +61,39 @@ static void attachment_export_method_call_cb(FlMethodChannel*,
                                              gpointer user_data) {
   g_autoptr(FlMethodResponse) response = nullptr;
   const gchar* method = fl_method_call_get_name(method_call);
-  if (g_strcmp0(method, "chooseDestination") != 0) {
+  if (g_strcmp0(method, "chooseSource") == 0) {
+    FlValue* arguments = fl_method_call_get_args(method_call);
+    if (arguments != nullptr &&
+        fl_value_get_type(arguments) != FL_VALUE_TYPE_NULL) {
+      response = attachment_export_response("failure", nullptr,
+                                            "invalid-source-arguments");
+    } else {
+      MyApplication* self = MY_APPLICATION(user_data);
+      GtkWindow* parent = gtk_application_get_active_window(
+          GTK_APPLICATION(self));
+      GtkWidget* dialog = gtk_file_chooser_dialog_new(
+          "Attach file", parent, GTK_FILE_CHOOSER_ACTION_OPEN, "_Cancel",
+          GTK_RESPONSE_CANCEL, "_Open", GTK_RESPONSE_ACCEPT, nullptr);
+      GtkFileChooser* chooser = GTK_FILE_CHOOSER(dialog);
+      gtk_file_chooser_set_local_only(chooser, TRUE);
+      gtk_file_chooser_set_select_multiple(chooser, FALSE);
+      gtk_file_chooser_set_create_folders(chooser, FALSE);
+
+      if (gtk_dialog_run(GTK_DIALOG(dialog)) == GTK_RESPONSE_ACCEPT) {
+        g_autofree gchar* source = gtk_file_chooser_get_filename(chooser);
+        if (source != nullptr && source[0] != '\0' &&
+            g_path_is_absolute(source) && g_utf8_validate(source, -1, nullptr)) {
+          response = attachment_export_response("success", source, nullptr);
+        } else {
+          response = attachment_export_response("failure", nullptr,
+                                                "source-dialog-failed");
+        }
+      } else {
+        response = attachment_export_response("canceled", nullptr, nullptr);
+      }
+      gtk_widget_destroy(dialog);
+    }
+  } else if (g_strcmp0(method, "chooseDestination") != 0) {
     response = FL_METHOD_RESPONSE(fl_method_not_implemented_response_new());
   } else {
     FlValue* arguments = fl_method_call_get_args(method_call);

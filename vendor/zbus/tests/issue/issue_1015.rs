@@ -1,7 +1,7 @@
 use ntest::timeout;
 use serde::{Deserialize, Serialize};
 use tracing::instrument;
-use zbus::{connection::Builder, proxy::Defaults, zvariant::Type};
+use zbus::{Type, connection::Builder, proxy::Defaults};
 
 #[derive(Clone, Debug, PartialEq, Serialize, Deserialize, Type)]
 struct SingleFieldStruct {
@@ -35,11 +35,8 @@ fn issue_1015() {
 
 async fn issue_1015_async() {
     let conn = Builder::session()
-        .unwrap()
         .serve_at(IfaceProxy::PATH.as_ref().unwrap(), Iface)
-        .unwrap()
         .name(IfaceProxy::DESTINATION.clone().unwrap())
-        .unwrap()
         .build()
         .await
         .unwrap();

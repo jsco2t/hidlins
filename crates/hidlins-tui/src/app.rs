@@ -26,8 +26,8 @@ use crossterm::event::{
     Event, KeyCode, KeyEvent, KeyEventKind, KeyModifiers, MouseButton, MouseEvent, MouseEventKind,
 };
 use hidlins_core::{
-    EntryKind, HidlinsPaths, MasterPassword, MatchedField, RegisteredVault, SearchOptions,
-    SearchResult, SearchScope, Uuid, Vault, VaultError, VaultRegistry,
+    EntryKind, HidlinsPaths, Keyfile, MasterPassword, MatchedField, RegisteredVault, SearchOptions,
+    SearchResult, SearchScope, Uuid, Vault, VaultError, VaultReadOnly, VaultRegistry,
 };
 use hidlins_security::vault_lock::VaultLockConfig;
 use hidlins_security::{AutoLockConfig, AutoLockController, LockState};
@@ -47,6 +47,7 @@ use crate::config::{self, TuiConfig};
 use crate::entry_actions;
 use crate::error::TuiError;
 use crate::jump_history::JumpHistory;
+use crate::native_lock::NativeEvents;
 use crate::overlay::bulk::{GroupChoice, GroupPickerState, TagInputState};
 #[cfg(test)]
 use crate::overlay::edit::EditValues;
@@ -58,14 +59,19 @@ use crate::overlay::search::{self, SearchState};
 use crate::overlay::{self, Overlay, PeersState, TagAction};
 use crate::pairing_runtime::{PairingEvent, PairingRuntime};
 use crate::persistence;
+
+#[cfg(all(test, target_os = "linux"))]
+#[path = "../../hidlins-security/tests/common/logind_bus.rs"]
+mod native_test_bus;
 use crate::recents::Recents;
 use crate::screens;
 use crate::server_runtime::{AuthorityRequest, ServerRuntime};
-use crate::session::SessionResources;
+use crate::session::{OpenVault, SessionResources};
 use crate::sync_runtime::{SyncMsg, SyncResult, SyncRuntime, SyncTrigger};
 use crate::tabs::{PinChange, Tab, TabBar, MAX_PINS};
 use crate::theme::{self, EnvParts, Theme, UserThemeFile, BUILTIN_NAMES};
 use crate::user_config::UserConfig;
+use crate::vault_view::VaultView;
 use crate::widgets::entry_detail;
 use crate::widgets::entry_tree::{self, TreeState};
 use crate::widgets::password_input::{InputAction, PasswordInput};
@@ -302,6 +308,11 @@ struct ServerWorkResult {
     outcome: Result<(), String>,
 }
 
+struct ServerWork {
+    receiver: Receiver<ServerWorkResult>,
+    handle: std::thread::JoinHandle<()>,
+}
+
 // Several independent UI flags (reveal, pending-g, lock-pending, should-quit)
 // legitimately live as separate booleans on this central state struct; grouping
 // them into a sub-struct would obscure more than it clarifies.
@@ -333,6 +344,8 @@ pub(crate) struct App {
     /// unlock (U.5 / R-14). Drained by [`Self::reset_secrets_view`].
     startup_notices: Vec<String>,
     pub(crate) controller: AutoLockController,
+    frontend_lock_config: AutoLockConfig,
+    native_events: Option<NativeEvents>,
     pub(crate) keys: Keymap,
     pub(crate) theme: Theme,
     /// CLI `--theme NAME` override, consumed by theme resolution (T3.4). `None`
@@ -421,7 +434,14 @@ pub(crate) struct App {
     pending_server_pairing: Option<mpsc::SyncSender<Option<String>>>,
     /// One incoming authoritative operation running with exclusive vault
     /// ownership away from the render/input thread.
-    server_work: Option<Receiver<ServerWorkResult>>,
+    server_work: Option<ServerWork>,
+    /// Pairing can update durable trust while background work owns the registry.
+    /// Retain the reload request until resources return and a read succeeds.
+    registry_reload_pending: bool,
+    #[cfg(test)]
+    server_work_test_hook: Option<Box<dyn FnOnce() + Send>>,
+    #[cfg(test)]
+    before_unlock_test_hook: Option<Box<dyn FnOnce() + Send>>,
     /// Visible deadline for the bounded pairing-admission window.
     pairing_deadline: Option<Instant>,
     pub(crate) should_quit: bool,
@@ -463,6 +483,7 @@ impl App {
         // over the defaults `from_registry` installed. Done post-build (like the
         // clipboard upgrade) so the `from_registry` test seam stays file-free.
         app.apply_args(args)?;
+        app.native_events = Some(NativeEvents::start(&mut app.controller));
         Ok(app)
     }
 
@@ -595,7 +616,7 @@ impl App {
             .as_ref()
             .and_then(|name| self.registry().get(name))
             .and_then(|v| VaultLockConfig::idle_timeout_seconds_from_extra(&v.extra))
-            .unwrap_or_else(|| AutoLockConfig::default().idle_timeout.as_secs())
+            .unwrap_or(self.frontend_lock_config.idle_timeout.as_secs())
     }
 
     /// The active vault's *explicit* per-vault auto-lock override, if any.
@@ -617,21 +638,16 @@ impl App {
     }
 
     /// Arm the idle-lock controller for the active vault at `now` (called on
-    /// unlock and after an auto-lock change). If the vault carries an explicit
-    /// `[vault.lock]` override, the controller is recreated with it (the TUI
-    /// attaches no OS event source, so recreating loses nothing); otherwise the
-    /// existing controller — carrying the frontend default — is simply re-armed.
+    /// unlock and after an auto-lock change). Restore the frontend default when
+    /// no valid per-vault override exists, preserving attached event sources.
     fn arm_auto_lock_for_current_vault(&mut self, now: Instant) {
-        match self.vault_auto_lock_override() {
-            Some(cfg) => match AutoLockController::new(cfg) {
-                Ok(mut controller) => {
-                    controller.unlock(now);
-                    self.controller = controller;
-                }
-                Err(_) => self.controller.unlock(now),
-            },
-            None => self.controller.unlock(now),
-        }
+        let config = self
+            .vault_auto_lock_override()
+            .unwrap_or(self.frontend_lock_config);
+        self.controller
+            .set_config(config)
+            .expect("frontend and per-vault lock configs are validated");
+        self.controller.unlock(now);
     }
 
     /// Persist a new idle auto-lock timeout for the active vault and re-arm the
@@ -746,6 +762,8 @@ impl App {
             recents: Recents::new(),
             startup_notices: config_warning.into_iter().collect(),
             controller: AutoLockController::new(lock_config)?,
+            frontend_lock_config: lock_config,
+            native_events: None,
             keys: Keymap::preset(Preset::Vim),
             theme: Theme::auto(),
             // CLI/config overrides are applied post-build in `apply_args`
@@ -782,6 +800,11 @@ impl App {
             server: None,
             pending_server_pairing: None,
             server_work: None,
+            registry_reload_pending: false,
+            #[cfg(test)]
+            server_work_test_hook: None,
+            #[cfg(test)]
+            before_unlock_test_hook: None,
             pairing_deadline: None,
             should_quit: false,
             #[cfg(test)]
@@ -801,7 +824,7 @@ impl App {
         self.session.registry_mut()
     }
 
-    pub(crate) fn vault(&self) -> Option<&Vault> {
+    pub(crate) fn vault(&self) -> Option<VaultView<'_>> {
         self.session.vault()
     }
 
@@ -835,10 +858,22 @@ impl App {
     /// progressing sync's `Activity` pings reset the idle deadline *before* the
     /// lock check — otherwise a healthy sync would still trip the deadline.
     /// While a sync owns the vault (`vault == None`), the idle clock still runs
-    /// but a fired lock is *deferred* (no `sync_now` cancel hook): the worker
-    /// drops+zeroizes the vault on return and the App goes to `LockScreen`.
+    /// but a fired lock cancels client discovery/network work immediately.
+    /// Presentation waits for worker handback; an incoming host operation
+    /// finishes its atomic boundary before the vault drops into `LockScreen`.
     pub(crate) fn tick(&mut self, now: Instant) {
         self.status_bar.tick(now);
+        let notices = self
+            .native_events
+            .as_ref()
+            .map_or_else(Vec::new, NativeEvents::notices);
+        for message in notices {
+            if !matches!(self.phase, Phase::Workspace) {
+                self.startup_notices.push(message.clone());
+            }
+            self.status = Some(message.clone());
+            self.status_bar.set_warning(message, now);
+        }
 
         for msg in self.sync.drain() {
             self.on_sync_message(msg, now);
@@ -846,12 +881,16 @@ impl App {
 
         self.tick_server(now);
 
-        if self.vault().is_some() {
-            if self.controller.tick(now) == LockState::Locked {
+        let state = self.controller.tick(now);
+        let os_lock = self.controller.take_lock_event_observed();
+        if os_lock || (state == LockState::Locked && (self.vault().is_some() || self.is_syncing()))
+        {
+            if self.is_syncing() {
+                self.lock_pending = true;
+                self.sync.cancel();
+            } else {
                 self.lock_app();
             }
-        } else if self.is_syncing() && self.controller.tick(now) == LockState::Locked {
-            self.lock_pending = true;
         }
     }
 
@@ -908,7 +947,7 @@ impl App {
                 let valid_marks: std::collections::HashSet<_> = self
                     .vault()
                     .into_iter()
-                    .flat_map(Vault::entry_summaries)
+                    .flat_map(VaultView::entry_summaries)
                     .map(|entry| entry.uuid())
                     .collect();
                 self.marks.retain(|uuid| valid_marks.contains(uuid));
@@ -926,6 +965,11 @@ impl App {
             }
             Err(e) if trigger == SyncTrigger::Startup => {
                 self.session.finish_sync(vault, registry);
+                if self.lock_pending {
+                    self.lock_pending = false;
+                    self.lock_app();
+                    return;
+                }
                 self.lock_pending = false;
                 let message = sync_error_message(&e);
                 self.sync_status = Some(message.clone());
@@ -1333,7 +1377,12 @@ impl App {
                     .saturating_add(1)
                     .min(self.max_scroll_for(uuid));
             }
-            Command::Prev => self.detail_scroll = self.detail_scroll.saturating_sub(1),
+            Command::Prev => {
+                self.detail_scroll = self
+                    .detail_scroll
+                    .min(self.max_scroll_for(uuid))
+                    .saturating_sub(1);
+            }
             _ => {}
         }
     }
@@ -2059,7 +2108,7 @@ impl App {
     /// warns in the status bar and the UI keeps running on in-memory state. Used
     /// by [`Self::persist_ui_state`] (pins/recents).
     fn save_ui_config(&mut self) {
-        if let Err(e) = persistence::save_ui_state(&self.paths, &self.ui_config) {
+        if let Err(e) = persistence::save_ui_state(&self.paths, &mut self.ui_config) {
             self.status_bar
                 .set_error(format!("Could not save tui.toml: {e}"), Instant::now());
         }
@@ -2149,15 +2198,18 @@ impl App {
                     .saturating_add(1)
                     .min(self.max_detail_scroll());
             }
-            Command::Prev => self.detail_scroll = self.detail_scroll.saturating_sub(1),
+            Command::Prev => {
+                self.detail_scroll = self
+                    .detail_scroll
+                    .min(self.max_detail_scroll())
+                    .saturating_sub(1);
+            }
             Command::Parent | Command::Cancel => self.focus = Focus::Tree,
             _ => {}
         }
     }
 
-    /// Upper bound for `detail_scroll`: the detail content's line count. The
-    /// render adapter clamps further to `lines - viewport`; this only keeps the
-    /// stored offset from running away past the content while holding `j`.
+    /// Upper bound from the same wrapped content and viewport as rendering.
     fn max_detail_scroll(&self) -> u16 {
         self.tree
             .selected()
@@ -2166,12 +2218,26 @@ impl App {
 
     /// [`Self::max_detail_scroll`] for an explicit entry (pinned tabs).
     fn max_scroll_for(&self, uuid: Uuid) -> u16 {
+        // These rectangles are registered even when mouse input is disabled.
+        // Before the first render, retain a conservative logical-row bound;
+        // the actual event loop always draws before accepting input.
+        let inner = self
+            .mouse_regions
+            .borrow()
+            .iter()
+            .find_map(|(area, target)| {
+                matches!(target, MouseTarget::DetailPane).then_some(Rect::new(
+                    0,
+                    0,
+                    area.width.saturating_sub(2),
+                    area.height.saturating_sub(2),
+                ))
+            })
+            .unwrap_or(Rect::new(0, 0, u16::MAX, 0));
         self.vault()
             .and_then(|vault| entry_detail::detail_data_for(vault, uuid, Utc::now()))
             .map_or(0, |data| {
-                let count =
-                    entry_detail::detail_lines(&data, self.reveal_password, &self.theme).len();
-                u16::try_from(count).unwrap_or(u16::MAX)
+                entry_detail::detail_scroll_limit(&data, self.reveal_password, &self.theme, inner)
             })
     }
 
@@ -2300,7 +2366,7 @@ impl App {
 
     /// Resolve a core [`SearchResult`] into a display [`search::SearchRow`],
     /// carrying the title's matched-char positions for highlighting.
-    fn build_search_row(vault: &Vault, result: &SearchResult) -> search::SearchRow {
+    fn build_search_row(vault: VaultView<'_>, result: &SearchResult) -> search::SearchRow {
         let (title, username, url_host, tags) = vault.get_entry(result.uuid).map_or_else(
             |_| {
                 (
@@ -2548,7 +2614,7 @@ impl App {
     }
 
     fn walk_group_choices(
-        vault: &Vault,
+        vault: VaultView<'_>,
         group: Uuid,
         depth: usize,
         recycle: Option<Uuid>,
@@ -2775,11 +2841,19 @@ impl App {
         );
     }
 
-    /// History overlay keys: `↑`/`↓` (or `j`/`k`) browse versions; `Esc` closes.
+    /// History: `↑`/`↓` (or `j`/`k`) browse versions, PgUp/PgDn page detail.
     /// Stateless w.r.t. `self` — `&mut state` is all it needs.
     fn on_history_key(state: &mut HistoryState, key: &KeyEvent) -> bool {
         match key.code {
             KeyCode::Esc => false,
+            KeyCode::PageDown => {
+                state.page_detail(true);
+                true
+            }
+            KeyCode::PageUp => {
+                state.page_detail(false);
+                true
+            }
             KeyCode::Down | KeyCode::Char('j') => {
                 state.select_next();
                 true
@@ -2882,15 +2956,13 @@ impl App {
             return false;
         }
         let ctrl = key.modifiers.contains(KeyModifiers::CONTROL);
-        if ctrl && matches!(key.code, KeyCode::Char('s')) {
+        if crate::command::edit_save_key(key) {
             // `perform_save` returns true on success → close the overlay.
             return !self.perform_save(state);
         }
         // Generate only fills the password field, which only credentials carry,
         // so gate it to that kind (avoids a dead panel on notes/TOTP edits).
-        if ctrl
-            && matches!(key.code, KeyCode::Char('g'))
-            && matches!(state.kind, EntryKind::Credential)
+        if self.keys.matches(Command::Generate, key) && matches!(state.kind, EntryKind::Credential)
         {
             state.generating = Some(GenState::new());
             return true;
@@ -2946,6 +3018,12 @@ impl App {
             EditField::Custom(i, col) => {
                 if ctrl && matches!(key.code, KeyCode::Char('d')) {
                     state.remove_custom_row(i);
+                } else if ctrl
+                    && matches!(key.code, KeyCode::Char('r'))
+                    && col == Col::Value
+                    && state.custom.get(i).is_some_and(|row| row.protected)
+                {
+                    state.reveal_password = !state.reveal_password;
                 } else if let Some(row) = state.custom.get_mut(i) {
                     match col {
                         Col::Name => feed_input(&mut row.name, ev),
@@ -2971,6 +3049,13 @@ impl App {
                 return true;
             }
             KeyCode::Enter => {
+                if state
+                    .generating
+                    .as_ref()
+                    .is_some_and(|gen| gen.error.is_some() || gen.preview.is_empty())
+                {
+                    return true;
+                }
                 if let Some(gen) = state.generating.take() {
                     state.password.set_value(&gen.preview);
                     state.reveal_password = false;
@@ -3403,6 +3488,11 @@ impl App {
 
     /// Take the typed password out of the prompt and attempt to open the vault.
     fn try_unlock(&mut self) {
+        self.controller.tick(Instant::now());
+        if self.controller.take_lock_event_observed() {
+            self.lock_app();
+            return;
+        }
         // Move the prompt's fields out; `self.phase` is a temporary sentinel and
         // overwritten below on every path.
         let (origin, input, attempts) = match std::mem::replace(&mut self.phase, Phase::LockScreen)
@@ -3437,11 +3527,19 @@ impl App {
 
         // The typed buffer (`Zeroizing`) lives until this scope ends; it builds
         // the open password and, for local sync, a short-lived worker password.
-        // TODO(DI-2): pass `registered.keyfile_path` as a `Keyfile` once the
-        // keyfile-unlock follow-up lands (impl-plan §5.4 #7). MVP passes None.
         let typed = input.take();
         let password = MasterPassword::new(typed.to_string());
-        match Vault::open(&registered.path, &password, None) {
+        let keyfile = registered.keyfile_path.clone().map(Keyfile::Path);
+        #[cfg(test)]
+        if let Some(hook) = self.before_unlock_test_hook.take() {
+            hook();
+        }
+        let opened = if self.read_only {
+            VaultReadOnly::open(&registered.path, &password, keyfile.as_ref()).map(OpenVault::from)
+        } else {
+            Vault::open(&registered.path, &password, keyfile.as_ref()).map(OpenVault::from)
+        };
+        match opened {
             Ok(vault) => self.complete_unlock(vault, &origin, typed.as_str()),
             // Only a genuine authentication failure consumes an attempt and
             // re-prompts — telling the user their password was wrong.
@@ -3471,7 +3569,14 @@ impl App {
         }
     }
 
-    fn complete_unlock(&mut self, vault: Vault, origin: &UnlockOrigin, typed: &str) {
+    fn complete_unlock(&mut self, vault: impl Into<OpenVault>, origin: &UnlockOrigin, typed: &str) {
+        let vault = vault.into();
+        self.controller.tick(Instant::now());
+        if self.controller.take_lock_event_observed() {
+            drop(vault);
+            self.lock_app();
+            return;
+        }
         if let UnlockOrigin::Onboarding {
             registration: pending,
             origin: onboarding_origin,
@@ -3628,6 +3733,7 @@ impl App {
     fn request_lock(&mut self) {
         if self.is_syncing() {
             self.lock_pending = true;
+            self.sync.cancel();
             self.status_bar
                 .set_info("Will lock when the sync finishes.", Instant::now());
             return;
@@ -3653,8 +3759,8 @@ impl App {
     /// Execute the quit and synchronously stop the process-local listener.
     fn do_quit(&mut self) {
         self.server_requested = false;
-        self.stop_server_runtime();
-        self.pairing.cancel();
+        self.sync.shutdown();
+        self.lock_app();
         self.should_quit = true;
     }
 
@@ -3785,18 +3891,23 @@ impl App {
                     .set_warning("Read-only session — sync is disabled.", Instant::now());
             }
             3 | 6 if self.server.is_none() => {
-                self.open_local_sync(LocalSyncAction::StartServer);
+                self.execute_command(Command::LocalServer, None);
             }
-            4 => self.open_local_sync(LocalSyncAction::PairExisting),
-            5 => self.open_local_sync(LocalSyncAction::Import),
-            6 => self.stop_server_by_user(),
-            7 => self.allow_pairing(),
-            8 => self.open_peers(),
+            4 => self.execute_command(Command::PairVault, None),
+            5 => self.execute_command(Command::ImportVault, None),
+            6 => self.execute_command(Command::LocalServer, None),
+            7 => self.execute_command(Command::PairingWindow, None),
+            8 => self.execute_command(Command::ManagePeers, None),
             _ => {}
         }
     }
 
     fn open_local_sync(&mut self, action: LocalSyncAction) {
+        if self.read_only {
+            self.status_bar
+                .set_warning("Read-only session — sync is disabled.", Instant::now());
+            return;
+        }
         if action != LocalSyncAction::Import && self.vault().is_none() {
             self.status_bar
                 .set_warning("Unlock a vault to configure sync.", Instant::now());
@@ -3838,6 +3949,10 @@ impl App {
     }
 
     fn perform_local_sync_action(&mut self, state: &mut LocalSyncState) -> bool {
+        if self.read_only {
+            state.error = Some("Read-only session — sync is disabled.".to_string());
+            return false;
+        }
         if state.master.len_chars() == 0 {
             state.error = Some("Enter the vault master password.".to_string());
             return false;
@@ -3864,21 +3979,17 @@ impl App {
     }
 
     fn authenticate_sync_password(&self, master: &MasterPassword) -> Result<(), String> {
-        let name = self
-            .selected_vault
-            .as_deref()
-            .ok_or_else(|| "No vault is selected.".to_string())?;
-        let registered = self
-            .session
-            .registry()
-            .and_then(|registry| registry.get(name))
-            .ok_or_else(|| "The selected vault is no longer registered.".to_string())?;
-        Vault::open(&registered.path, master, None)
-            .map(drop)
+        self.session
+            .writable_vault()
+            .ok_or_else(|| "Unlock a vault before configuring sync.".to_string())?
+            .verify_master_password(master)
             .map_err(|_| "Master password authentication failed.".to_string())
     }
 
     fn start_server(&mut self, master: MasterPassword) -> Result<(), String> {
+        if self.read_only {
+            return Err("Read-only session — sync is disabled.".to_string());
+        }
         self.authenticate_sync_password(&master)?;
         let name = self
             .selected_vault
@@ -3913,6 +4024,18 @@ impl App {
         if let Some(mut runtime) = self.server.take() {
             runtime.stop();
         }
+        if let Some(work) = self.server_work.take() {
+            // Admission/queued work is stopped first. An already executing
+            // atomic operation must finish before its vault/master can drop.
+            let _ = work.handle.join();
+            match work.receiver.recv() {
+                Ok(result) => {
+                    self.session.finish_sync(result.vault, result.registry);
+                    drop(result.master);
+                }
+                Err(_) => self.recover_from_lost_worker(),
+            }
+        }
         self.pairing_deadline = None;
     }
 
@@ -3924,6 +4047,11 @@ impl App {
     }
 
     fn allow_pairing(&mut self) {
+        if self.read_only {
+            self.status_bar
+                .set_warning("Read-only session — sync is disabled.", Instant::now());
+            return;
+        }
         let Some(server) = self.server.as_ref() else {
             self.status_bar
                 .set_warning("Start sync server before allowing pairing.", Instant::now());
@@ -3947,6 +4075,9 @@ impl App {
         master: &MasterPassword,
         peer_name: String,
     ) -> Result<(), String> {
+        if self.read_only {
+            return Err("Read-only session — sync is disabled.".to_string());
+        }
         self.authenticate_sync_password(master)?;
         let name = self
             .selected_vault
@@ -4014,6 +4145,11 @@ impl App {
     }
 
     fn revoke_peer(&mut self, index: usize) {
+        if self.read_only {
+            self.status_bar
+                .set_warning("Read-only session — peers unchanged.", Instant::now());
+            return;
+        }
         let Some(name) = self.selected_vault.clone() else {
             return;
         };
@@ -4036,13 +4172,13 @@ impl App {
             &name,
             |config| config.revoke_peer(key),
         );
+        // A durability failure may follow the committed rename. Enforce the
+        // installed registry's trust while retaining the original error.
+        if let (Some(server), Some(config)) = (self.server.as_ref(), self.selected_local_config()) {
+            server.replace_trusted(&config);
+        }
         match result {
             Ok(()) => {
-                if let (Some(server), Some(config)) =
-                    (self.server.as_ref(), self.selected_local_config())
-                {
-                    server.replace_trusted(&config);
-                }
                 self.status_bar.set("Peer revoked.", Instant::now());
             }
             Err(_) => self
@@ -4074,6 +4210,7 @@ impl App {
 
     fn tick_server(&mut self, now: Instant) {
         self.finish_server_work(now);
+        self.reload_registry_if_ready(now);
         if self
             .pairing_deadline
             .is_some_and(|deadline| now >= deadline)
@@ -4095,9 +4232,8 @@ impl App {
                     })));
                 }
                 PairingEvent::Complete { imported } => {
-                    if let Ok(registry) = VaultRegistry::load(self.paths.clone()) {
-                        self.session.replace_registry(registry);
-                    }
+                    self.registry_reload_pending = true;
+                    self.reload_registry_if_ready(now);
                     let message = imported.map_or_else(
                         || "Pairing complete.".to_string(),
                         |name| format!("Imported paired vault {name}."),
@@ -4135,19 +4271,34 @@ impl App {
                     })));
                 }
                 AuthorityRequest::ReloadTrust => {
-                    if let Ok(registry) = VaultRegistry::load(self.paths.clone()) {
-                        self.session.replace_registry(registry);
-                    }
-                    if let (Some(server), Some(config)) =
-                        (self.server.as_ref(), self.selected_local_config())
-                    {
-                        server.replace_trusted(&config);
-                    }
+                    self.registry_reload_pending = true;
+                    self.reload_registry_if_ready(now);
                 }
             }
         }
 
         self.start_server_work(now);
+    }
+
+    fn reload_registry_if_ready(&mut self, now: Instant) {
+        if !self.registry_reload_pending || self.is_syncing() {
+            return;
+        }
+        match VaultRegistry::load(self.paths.clone()) {
+            Ok(registry) => {
+                self.session.replace_registry(registry);
+                self.registry_reload_pending = false;
+                if let (Some(server), Some(config)) =
+                    (self.server.as_ref(), self.selected_local_config())
+                {
+                    server.replace_trusted(&config);
+                }
+            }
+            Err(_) => self.status_bar.set_warning(
+                "Could not refresh sync peers; retrying when the registry is readable.",
+                now,
+            ),
+        }
     }
 
     fn start_server_work(&mut self, now: Instant) {
@@ -4170,10 +4321,26 @@ impl App {
             return;
         };
         let (operation, master) = work;
+        let keyfile = self
+            .selected_vault
+            .as_deref()
+            .and_then(|name| registry.get(name))
+            .and_then(|registered| registered.keyfile_path.clone())
+            .map(Keyfile::Path);
         let (sender, receiver) = mpsc::channel();
-        std::thread::spawn(move || {
+        #[cfg(test)]
+        let test_hook = self.server_work_test_hook.take();
+        let handle = std::thread::spawn(move || {
+            #[cfg(test)]
+            if let Some(hook) = test_hook {
+                hook();
+            }
             let mut vault = vault;
-            let mut host = hidlins_sync::server::AuthoritativeVault::new(&mut vault, &master, None);
+            let mut host = hidlins_sync::server::AuthoritativeVault::new(
+                &mut vault,
+                &master,
+                keyfile.as_ref(),
+            );
             let outcome = operation
                 .execute(&mut host)
                 .map_err(|_| "An incoming sync request failed safely.".to_string());
@@ -4184,21 +4351,29 @@ impl App {
                 outcome,
             });
         });
-        self.server_work = Some(receiver);
+        self.server_work = Some(ServerWork { receiver, handle });
         self.sync_status = Some("Processing an incoming local sync…".to_string());
     }
 
     fn finish_server_work(&mut self, now: Instant) {
-        let result = match self.server_work.as_ref().map(Receiver::try_recv) {
+        let result = match self
+            .server_work
+            .as_ref()
+            .map(|work| work.receiver.try_recv())
+        {
             None | Some(Err(TryRecvError::Empty)) => return,
             Some(Err(TryRecvError::Disconnected)) => {
-                self.server_work = None;
+                if let Some(work) = self.server_work.take() {
+                    let _ = work.handle.join();
+                }
                 self.recover_from_lost_worker();
                 return;
             }
             Some(Ok(result)) => result,
         };
-        self.server_work = None;
+        if let Some(work) = self.server_work.take() {
+            let _ = work.handle.join();
+        }
         self.session.finish_sync(result.vault, result.registry);
         if let Some(server) = self.server.as_mut() {
             server.restore_master(result.master);
@@ -4232,6 +4407,17 @@ impl App {
     }
 }
 
+impl Drop for App {
+    fn drop(&mut self) {
+        self.sync.shutdown();
+        self.stop_server_runtime();
+        self.pairing.cancel();
+        if let Some(native_events) = self.native_events.take() {
+            native_events.shutdown(&mut self.controller);
+        }
+    }
+}
+
 #[cfg(test)]
 mod tests {
     //! Unlock/lock state-machine tests (the redesign-aligned T-IT-1/2/3). They
@@ -4254,6 +4440,71 @@ mod tests {
     use tempfile::TempDir;
 
     use super::*;
+
+    mod lock_regressions {
+        include!("app_lock_regressions.rs");
+    }
+
+    mod reauthentication_regressions {
+        include!("app_reauthentication_regressions.rs");
+    }
+
+    mod readonly_sync_regressions {
+        include!("app_readonly_sync_regressions.rs");
+    }
+
+    mod readonly_lock_regressions {
+        include!("app_readonly_lock_regressions.rs");
+    }
+
+    mod configuration_regressions {
+        include!("app_configuration_regressions.rs");
+    }
+
+    mod peers_visibility_regressions {
+        include!("app_peers_visibility_regressions.rs");
+    }
+
+    #[cfg(debug_assertions)]
+    mod revoke_reconciliation_regressions {
+        include!("app_revoke_reconciliation_regressions.rs");
+    }
+
+    mod detail_scrolling_regressions {
+        include!("app_detail_scrolling_regressions.rs");
+    }
+
+    mod history_scrolling_regressions {
+        include!("app_history_scrolling_regressions.rs");
+    }
+
+    mod edit_viewport_regressions {
+        include!("app_edit_viewport_regressions.rs");
+    }
+
+    mod reserved_binding_regressions {
+        include!("app_reserved_binding_regressions.rs");
+    }
+
+    mod keyfile_regressions {
+        include!("app_keyfile_regressions.rs");
+    }
+
+    mod registry_refresh_regressions {
+        include!("app_registry_refresh_regressions.rs");
+    }
+
+    mod worker_lifetime_regressions {
+        include!("app_worker_lifetime_regressions.rs");
+    }
+
+    mod host_lifetime_regressions {
+        include!("app_host_lifetime_regressions.rs");
+    }
+
+    mod native_lock_regressions {
+        include!("app_native_lock_regressions.rs");
+    }
 
     const PASSWORD: &str = "test123";
 
@@ -7237,7 +7488,7 @@ mod tests {
             password: hidlins_core::Zeroizing::new(String::new()),
             url: String::new(),
             totp_uri: hidlins_core::Zeroizing::new(String::new()),
-            notes: String::new(),
+            notes: String::new().into(),
             tags: Vec::new(),
             custom: Vec::new(),
             removed_custom: Vec::new(),

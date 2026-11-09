@@ -2,7 +2,13 @@
 
 mod runtime;
 
-pub use runtime::{PairingAuthority, PairingAuthorityError, ServerController, ServerRuntimeError};
+#[cfg(test)]
+mod shutdown_regressions;
+
+pub use runtime::{
+    PairingAuthority, PairingAuthorityError, PairingAuthorization, ServerController,
+    ServerRuntimeError,
+};
 
 use std::{
     collections::BTreeSet,
@@ -15,7 +21,7 @@ use std::{
         mpsc::{self, Receiver, SyncSender, TryRecvError, TrySendError},
         Arc, RwLock,
     },
-    time::Duration,
+    time::{Duration, Instant},
 };
 
 /// Deterministic storage boundaries used by the security fault suite.
@@ -63,7 +69,7 @@ impl fmt::Debug for ServerFaultPlan {
     }
 }
 
-use hidlins_core::{Keyfile, MasterPassword, Vault};
+use hidlins_core::{Database, Keyfile, MasterPassword, Vault};
 use sha2::{Digest, Sha256};
 use tempfile::{Builder as TempFileBuilder, NamedTempFile};
 
@@ -271,6 +277,7 @@ pub struct AuthoritativeVault<'a> {
     master: &'a MasterPassword,
     keyfile: Option<&'a Keyfile>,
     faults: ServerFaultPlan,
+    committed: bool,
 }
 
 impl<'a> AuthoritativeVault<'a> {
@@ -286,6 +293,7 @@ impl<'a> AuthoritativeVault<'a> {
             master,
             keyfile,
             faults: ServerFaultPlan::default(),
+            committed: false,
         }
     }
 
@@ -302,18 +310,27 @@ impl<'a> AuthoritativeVault<'a> {
             master,
             keyfile,
             faults,
+            committed: false,
         }
     }
 
     /// Return the path only so the host can create a sibling encrypted stage.
     #[must_use]
     pub fn path(&self) -> &Path {
-        self.vault.path()
+        self.vault.backing_path()
+    }
+
+    /// Whether this adapter installed a replacement during its lifetime,
+    /// including a commit followed by a durability or response error.
+    #[doc(hidden)]
+    #[must_use]
+    pub fn has_committed(&self) -> bool {
+        self.committed
     }
 
     /// Hash the currently saved canonical encrypted KDBX bytes.
     pub fn head(&self) -> Result<RemoteVersion, ServerError> {
-        let bytes = std::fs::read(self.vault.path()).map_err(|_| ServerError::Internal)?;
+        let bytes = std::fs::read(self.vault.backing_path()).map_err(|_| ServerError::Internal)?;
         Ok(version_of(&bytes))
     }
 
@@ -322,7 +339,7 @@ impl<'a> AuthoritativeVault<'a> {
         &self,
         known: Option<RemoteVersion>,
     ) -> Result<Option<CanonicalSnapshot>, ServerError> {
-        let mut file = File::open(self.vault.path()).map_err(|_| ServerError::Internal)?;
+        let mut file = File::open(self.vault.backing_path()).map_err(|_| ServerError::Internal)?;
         let length = file.metadata().map_err(|_| ServerError::Internal)?.len();
         if length == 0 || length > MAX_ENCRYPTED_VAULT {
             return Err(ServerError::TooLarge);
@@ -357,6 +374,11 @@ impl<'a> AuthoritativeVault<'a> {
         }
         let bytes = upload.read_bytes()?;
         self.faults.check(ServerFaultPoint::Validation)?;
+        let uploaded_kdf =
+            Database::kdbx4_kdf_config(&bytes).map_err(|_| ServerError::InvalidUpload)?;
+        if uploaded_kdf != self.vault.database().config.kdf_config {
+            return Err(ServerError::InvalidUpload);
+        }
         let database = Vault::open_from_bytes(&bytes, self.master, self.keyfile)
             .map_err(|_| ServerError::InvalidUpload)?;
         if self.vault.database().root().id().uuid() != database.root().id().uuid()
@@ -366,12 +388,12 @@ impl<'a> AuthoritativeVault<'a> {
         }
 
         self.faults.check(ServerFaultPoint::Backup)?;
-        backup::snapshot_pre_merge(self.vault.path()).map_err(|_| ServerError::Internal)?;
+        backup::snapshot_pre_merge(self.vault.backing_path()).map_err(|_| ServerError::Internal)?;
         self.faults.check(ServerFaultPoint::DatabaseReplacement)?;
         self.faults.check(ServerFaultPoint::Save)?;
-        self.vault
-            .replace_database_and_save(database)
-            .map_err(|_| ServerError::Internal)?;
+        let outcome = self.vault.replace_database_and_save_with_outcome(database);
+        self.committed |= outcome.committed;
+        outcome.result.map_err(|_| ServerError::Internal)?;
         self.head()
     }
 }
@@ -479,7 +501,40 @@ impl AuthorizationPermit {
 #[derive(Clone)]
 pub struct HostQueue {
     sender: SyncSender<HostRequest>,
-    stopped: Arc<AtomicBool>,
+    shutdown: Arc<HostShutdown>,
+}
+
+/// Shared independently of the exclusive processor/vault loan. The gate lets
+/// an operation already executing finish its atomic transaction before stop
+/// returns; later operations observe the stop flag under the same gate.
+struct HostShutdown {
+    stopped: AtomicBool,
+    execution: RwLock<()>,
+}
+
+impl HostShutdown {
+    fn stop(&self) {
+        self.stopped.store(true, Ordering::Release);
+        let _execution = self
+            .execution
+            .write()
+            .unwrap_or_else(std::sync::PoisonError::into_inner);
+    }
+
+    fn is_stopped(&self) -> bool {
+        self.stopped.load(Ordering::Acquire)
+    }
+
+    fn execute(
+        &self,
+        operation: impl FnOnce() -> Result<HostResponse, ServerError>,
+    ) -> Result<HostResponse, ServerError> {
+        let _execution = self.execution.read().map_err(|_| ServerError::Stopped)?;
+        if self.is_stopped() {
+            return Err(ServerError::Stopped);
+        }
+        operation()
+    }
 }
 
 impl HostQueue {
@@ -487,13 +542,16 @@ impl HostQueue {
     #[must_use]
     pub fn new() -> (Self, HostProcessor) {
         let (sender, receiver) = mpsc::sync_channel(MAX_PENDING_HOST_OPERATIONS);
-        let stopped = Arc::new(AtomicBool::new(false));
+        let shutdown = Arc::new(HostShutdown {
+            stopped: AtomicBool::new(false),
+            execution: RwLock::new(()),
+        });
         (
             Self {
                 sender,
-                stopped: Arc::clone(&stopped),
+                shutdown: Arc::clone(&shutdown),
             },
-            HostProcessor { receiver, stopped },
+            HostProcessor { receiver, shutdown },
         )
     }
 
@@ -518,7 +576,7 @@ impl HostQueue {
         operation: HostOperation,
         authorization: Option<AuthorizationPermit>,
     ) -> Result<HostTicket, ServerError> {
-        if self.stopped.load(Ordering::Acquire) {
+        if self.shutdown.is_stopped() {
             return Err(ServerError::Stopped);
         }
         let cancelled = Arc::new(AtomicBool::new(false));
@@ -533,6 +591,7 @@ impl HostQueue {
             Ok(()) => Ok(HostTicket {
                 receiver,
                 cancelled,
+                shutdown: Arc::clone(&self.shutdown),
             }),
             Err(TrySendError::Full(_)) => Err(ServerError::Busy),
             Err(TrySendError::Disconnected(_)) => Err(ServerError::Stopped),
@@ -544,6 +603,7 @@ impl HostQueue {
 pub struct HostTicket {
     receiver: Receiver<Result<HostResponse, ServerError>>,
     cancelled: Arc<AtomicBool>,
+    shutdown: Arc<HostShutdown>,
 }
 
 impl HostTicket {
@@ -554,12 +614,27 @@ impl HostTicket {
 
     /// Wait only for the caller's remaining idle/session budget.
     pub fn wait_timeout(&self, timeout: Duration) -> Result<HostResponse, ServerError> {
-        self.receiver
-            .recv_timeout(timeout)
-            .unwrap_or_else(|error| match error {
-                mpsc::RecvTimeoutError::Timeout => Err(ServerError::TimedOut),
-                mpsc::RecvTimeoutError::Disconnected => Err(ServerError::Stopped),
-            })
+        let started = Instant::now();
+        loop {
+            if self.shutdown.is_stopped() {
+                return Err(ServerError::Stopped);
+            }
+            // The processor can be owned by a host worker during stop. A
+            // bounded wait observes shared shutdown without needing to drain
+            // that worker's receiver or waiting out the whole host deadline.
+            let remaining = timeout.saturating_sub(started.elapsed());
+            match self
+                .receiver
+                .recv_timeout(remaining.min(Duration::from_millis(100)))
+            {
+                Ok(result) => return result,
+                Err(mpsc::RecvTimeoutError::Disconnected) => return Err(ServerError::Stopped),
+                Err(mpsc::RecvTimeoutError::Timeout) if started.elapsed() >= timeout => {
+                    return Err(ServerError::TimedOut);
+                }
+                Err(mpsc::RecvTimeoutError::Timeout) => {}
+            }
+        }
     }
 }
 
@@ -572,25 +647,30 @@ impl Drop for HostTicket {
 /// Single consumer driven only while the process owns the unlocked vault.
 pub struct HostProcessor {
     receiver: Receiver<HostRequest>,
-    stopped: Arc<AtomicBool>,
+    shutdown: Arc<HostShutdown>,
 }
 
 /// One dequeued authenticated host operation. Applications may move this
 /// opaque value to a worker together with exclusive vault ownership so KDBX
 /// validation and commits never block an event loop.
-pub struct PendingHostOperation(HostRequest);
+pub struct PendingHostOperation {
+    request: HostRequest,
+    shutdown: Arc<HostShutdown>,
+}
 
 impl PendingHostOperation {
     /// Execute and answer the waiting network worker exactly once.
     pub fn execute(self, host: &mut AuthoritativeVault<'_>) -> Result<(), ServerError> {
-        let request = self.0;
-        let result = if request.cancelled.load(Ordering::Acquire) {
-            Err(ServerError::Cancelled)
-        } else if let Some(authorization) = request.authorization {
-            authorization.execute(|| execute_operation(host, request.operation))
-        } else {
-            execute_operation(host, request.operation)
-        };
+        let request = self.request;
+        let result = self.shutdown.execute(|| {
+            if request.cancelled.load(Ordering::Acquire) {
+                Err(ServerError::Cancelled)
+            } else if let Some(authorization) = request.authorization {
+                authorization.execute(|| execute_operation(host, request.operation))
+            } else {
+                execute_operation(host, request.operation)
+            }
+        });
         let _ = request.response.try_send(result);
         Ok(())
     }
@@ -599,11 +679,14 @@ impl PendingHostOperation {
 impl HostProcessor {
     /// Dequeue at most one request without performing vault work.
     pub fn take_one(&mut self) -> Result<Option<PendingHostOperation>, ServerError> {
-        if self.stopped.load(Ordering::Acquire) {
+        if self.shutdown.is_stopped() {
             return Err(ServerError::Stopped);
         }
         match self.receiver.try_recv() {
-            Ok(request) => Ok(Some(PendingHostOperation(request))),
+            Ok(request) => Ok(Some(PendingHostOperation {
+                request,
+                shutdown: Arc::clone(&self.shutdown),
+            })),
             Err(TryRecvError::Empty) => Ok(None),
             Err(TryRecvError::Disconnected) => Err(ServerError::Stopped),
         }
@@ -620,7 +703,7 @@ impl HostProcessor {
 
     /// Reject queued/future work during lock, stop, signal, or host death.
     pub fn shutdown(&mut self) {
-        self.stopped.store(true, Ordering::Release);
+        self.shutdown.stop();
         while let Ok(request) = self.receiver.try_recv() {
             let _ = request.response.try_send(Err(ServerError::Stopped));
         }
@@ -637,6 +720,8 @@ fn execute_operation(
     host: &mut AuthoritativeVault<'_>,
     operation: HostOperation,
 ) -> Result<HostResponse, ServerError> {
+    #[cfg(test)]
+    shutdown_regressions::before_operation();
     match operation {
         HostOperation::Head => host.head().map(HostResponse::Head),
         HostOperation::Fetch { known } => host.fetch(known).map(HostResponse::Fetch),

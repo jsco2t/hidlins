@@ -1,11 +1,17 @@
+#[cfg(any(feature = "proxy", feature = "service"))]
 use std::fmt::Display;
 
-use proc_macro_crate::{FoundCrate, crate_name};
-use proc_macro2::{Span, TokenStream};
-use quote::{format_ident, quote};
-use syn::{Attribute, FnArg, Ident, Pat, PatIdent, PatType};
+#[cfg(any(feature = "proxy", feature = "service"))]
+use proc_macro2::Span;
+use proc_macro2::TokenStream;
+use quote::quote;
+#[cfg(feature = "service")]
+use syn::Attribute;
+#[cfg(any(feature = "proxy", feature = "service"))]
+use syn::{FnArg, Ident, Pat, PatIdent, PatType};
 
 /// Parses the `crate` attribute value into a path.
+#[cfg(feature = "comms")]
 pub fn parse_crate_path(crate_attr: Option<&str>) -> Result<Option<syn::Path>, syn::Error> {
     crate_attr.map(syn::parse_str).transpose()
 }
@@ -13,18 +19,33 @@ pub fn parse_crate_path(crate_attr: Option<&str>) -> Result<Option<syn::Path>, s
 /// Returns the path to the zbus crate.
 ///
 /// If a custom crate path is provided via the `crate` attribute, it will be used.
-/// Otherwise, uses `proc-macro-crate` to detect the crate name.
+/// Otherwise, defaults to `::zbus`.
 pub fn zbus_path(crate_path: Option<&syn::Path>) -> TokenStream {
     if let Some(path) = crate_path {
         quote! { ::#path }
-    } else if let Ok(FoundCrate::Name(name)) = crate_name("zbus") {
-        let ident = format_ident!("{}", name);
-        quote! { ::#ident }
     } else {
         quote! { ::zbus }
     }
 }
 
+/// Shared-codegen configuration for the wire derives.
+///
+/// `#[zvariant(...)]` stays accepted next to `#[zbus(...)]`: code written against zvariant 5
+/// keeps compiling unchanged.
+pub fn derive_config() -> zbus_utils::derive::Config {
+    zbus_utils::derive::Config {
+        attr_lists: &["zbus", "zvariant"],
+        default_path: wire_path(),
+    }
+}
+
+/// Path of the wire-format module for generated code.
+pub fn wire_path() -> TokenStream {
+    let zbus = zbus_path(None);
+    quote! { #zbus::wire }
+}
+
+#[cfg(any(feature = "proxy", feature = "service"))]
 pub fn typed_arg(arg: &FnArg) -> Option<&PatType> {
     match arg {
         FnArg::Typed(t) => Some(t),
@@ -32,6 +53,7 @@ pub fn typed_arg(arg: &FnArg) -> Option<&PatType> {
     }
 }
 
+#[cfg(any(feature = "proxy", feature = "service"))]
 pub fn pat_ident(pat: &PatType) -> Option<&Ident> {
     match &*pat.pat {
         Pat::Ident(PatIdent { ident, .. }) => Some(ident),
@@ -39,12 +61,14 @@ pub fn pat_ident(pat: &PatType) -> Option<&Ident> {
     }
 }
 
+#[cfg(feature = "service")]
 pub fn get_doc_attrs(attrs: &[Attribute]) -> Vec<&Attribute> {
     attrs.iter().filter(|x| x.path().is_ident("doc")).collect()
 }
 
 // Convert to pascal case, assuming snake case.
 // If `s` is already in pascal case, should yield the same result.
+#[cfg(feature = "service")]
 pub fn pascal_case(s: &str) -> String {
     let mut pascal = String::new();
     let mut capitalize = true;
@@ -61,6 +85,7 @@ pub fn pascal_case(s: &str) -> String {
     pascal
 }
 
+#[cfg(feature = "service")]
 pub fn is_blank(s: &str) -> bool {
     s.trim().is_empty()
 }
@@ -68,6 +93,7 @@ pub fn is_blank(s: &str) -> bool {
 /// Standard annotation `org.freedesktop.DBus.Property.EmitsChangedSignal`.
 ///
 /// See <https://dbus.freedesktop.org/doc/dbus-specification.html#introspection-format>.
+#[cfg(any(feature = "proxy", feature = "service"))]
 #[derive(Debug, Default, Clone, PartialEq)]
 pub enum PropertyEmitsChangedSignal {
     #[default]
@@ -77,6 +103,7 @@ pub enum PropertyEmitsChangedSignal {
     False,
 }
 
+#[cfg(any(feature = "proxy", feature = "service"))]
 impl Display for PropertyEmitsChangedSignal {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         let emits_changed_signal = match self {
@@ -89,6 +116,7 @@ impl Display for PropertyEmitsChangedSignal {
     }
 }
 
+#[cfg(any(feature = "proxy", feature = "service"))]
 impl PropertyEmitsChangedSignal {
     pub fn parse(s: &str, span: Span) -> syn::Result<Self> {
         use PropertyEmitsChangedSignal::*;

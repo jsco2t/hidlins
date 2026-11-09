@@ -34,7 +34,7 @@ esac
 
 cd "$(dirname "$0")/../.."
 
-output=$(cargo bench -p hidlins-core --bench bench_search --offline --locked 2>&1)
+output=$(python3 tools/dev/cargo_artifacts.py run cargo -- bench -p hidlins-core --bench bench_search --offline --locked 2>&1)
 
 extract() {
     local prefix="$1"

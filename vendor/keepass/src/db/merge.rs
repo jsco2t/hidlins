@@ -4,13 +4,13 @@
 //! types in this module describe what a merge changed, via the returned
 //! [`MergeLog`].
 
-use std::{collections::HashSet, ops::Deref};
+use std::{collections::{HashMap, HashSet}, ops::Deref};
 
 use chrono::NaiveDateTime;
 use thiserror::Error;
 
 use crate::{
-    db::{CustomIconId, Entry, EntryId, Group, GroupId, GroupRef, History, MoveGroupError, Times},
+    db::{Attachment, AttachmentId, CustomIconId, Entry, EntryId, Group, GroupId, GroupRef, History, MoveGroupError, Times},
     Database,
 };
 
@@ -65,6 +65,10 @@ pub enum MergeError {
     #[error("Found history entries with the same timestamp ({0}) for entry {1}.")]
     DuplicateHistoryEntries(NaiveDateTime, EntryId),
 
+    /// An entry history references attachment bytes absent from the source.
+    #[error("Entry {0} has an unresolved historical attachment.")]
+    HistoryAttachmentMissing(EntryId),
+
     /// A group could not be moved to its merged location.
     #[error(transparent)]
     MoveGroupError(#[from] MoveGroupError),
@@ -85,6 +89,14 @@ impl Database {
     /// This function will use the UUIDs to detect what entries and groups are the same.
     pub fn merge(&mut self, other: &Database) -> Result<MergeLog, MergeError> {
         let mut log = MergeLog::default();
+        // Hidlins: propagate deletions even when neither side has the object.
+        // Concrete timestamps supersede unknown dates; never move a marker back.
+        for (id, deleted_at) in &other.deleted_objects {
+            self.deleted_objects.entry(*id)
+                .and_modify(|existing| *existing = (*existing).max(*deleted_at))
+                .or_insert(*deleted_at);
+        }
+
         merge_icons(self, other, &mut log)?;
         merge_groups(self, other, &mut log)?;
         self.rebuild_attachment_references();
@@ -94,19 +106,24 @@ impl Database {
 }
 
 /// Get the last update time (modification or location change) of a group, considering its entries and subgroups.
-fn get_last_update(group: GroupRef<'_>) -> Option<NaiveDateTime> {
-    let last_update = group.times.last_modification.or(group.times.location_changed);
+fn get_last_update(
+    group: GroupRef<'_>,
+    cache: &mut HashMap<crate::db::GroupId, Option<NaiveDateTime>>,
+) -> Option<NaiveDateTime> {
+    let id = group.id();
+    if let Some(update) = cache.get(&id) {
+        return *update;
+    }
+    let last_update = group.times.last_modification.max(group.times.location_changed);
 
-    group
+    let latest = group
         .entries()
-        .filter_map(|e| e.times.last_modification.or(e.times.location_changed))
-        .chain(
-            group
-                .groups()
-                .filter_map(|g| g.times.last_modification.or(g.times.location_changed)),
-        )
+        .filter_map(|e| e.times.last_modification.max(e.times.location_changed))
+        .chain(group.groups().filter_map(|child| get_last_update(child, cache)))
         .chain(last_update)
-        .max()
+        .max();
+    cache.insert(id, latest);
+    latest
 }
 
 /// Merge groups from `source` into `dest`, appending to a log of the merge process.
@@ -115,6 +132,9 @@ fn get_last_update(group: GroupRef<'_>) -> Option<NaiveDateTime> {
 fn merge_groups(dest_db: &mut Database, source_db: &Database, log: &mut MergeLog) -> Result<(), MergeError> {
     let dest_groups = dest_db.groups.keys().cloned().collect::<HashSet<_>>();
     let source_groups = source_db.groups.keys().cloned().collect::<HashSet<_>>();
+    // Visit each requested subtree only once, even when ancestors overlap.
+    let mut source_updates = HashMap::new();
+    let mut dest_updates = HashMap::new();
 
     // Handle groups that exist only in source and might need to be added.
     let mut groups_to_add = HashSet::new();
@@ -125,7 +145,7 @@ fn merge_groups(dest_db: &mut Database, source_db: &Database, log: &mut MergeLog
         // was the group deleted in dest?
         if let Some(deletion_time) = dest_db.deleted_objects.get(&id.uuid()) {
             // get the last modification time of the group in source.
-            let source_last_update = get_last_update(source);
+            let source_last_update = get_last_update(source, &mut source_updates);
 
             // compare deletion time and last update time to decide whether to re-add the group
             match (deletion_time, source_last_update) {
@@ -188,6 +208,7 @@ fn merge_groups(dest_db: &mut Database, source_db: &Database, log: &mut MergeLog
                 .add_group_with_id(id)
                 .expect("group to be re-added should not exist yet");
             dest_group.times = source.times.clone();
+            dest_group.previous_parent_group = source.previous_parent_group;
             dest_group.name = source.name.clone();
             dest_group.notes = source.notes.clone();
             dest_group.icon = source.icon.clone();
@@ -222,7 +243,7 @@ fn merge_groups(dest_db: &mut Database, source_db: &Database, log: &mut MergeLog
 
         // was the group deleted in source?
         if let Some(deletion_time) = source_db.deleted_objects.get(&id.uuid()) {
-            let dest_last_updated = get_last_update(dest.as_ref());
+            let dest_last_updated = get_last_update(dest.as_ref(), &mut dest_updates);
             if let (Some(deletion_time), Some(dest_last_updated)) = (deletion_time, dest_last_updated) {
                 // if the group was deleted and then later modified in dest, do not delete it
                 if *deletion_time < dest_last_updated {
@@ -232,7 +253,9 @@ fn merge_groups(dest_db: &mut Database, source_db: &Database, log: &mut MergeLog
 
             // queue the deletion so that all subgroups will also emit a deletion event
             to_delete.push(id);
-            dest_db.deleted_objects.insert(id.uuid(), *deletion_time);
+            dest_db.deleted_objects.entry(id.uuid())
+                .and_modify(|existing| *existing = (*existing).max(*deletion_time))
+                .or_insert(*deletion_time);
 
             log.events.push(MergeEvent {
                 target: MergeEventTarget::Group(id),
@@ -387,7 +410,7 @@ fn merge_entries(dest_db: &mut Database, source_db: &Database, log: &mut MergeLo
             let source_update_time = source_entry
                 .times
                 .last_modification
-                .or(source_entry.times.location_changed);
+                .max(source_entry.times.location_changed);
 
             match (deletion_time, source_update_time) {
                 (Some(deletion_time), Some(source_update_time)) => {
@@ -447,7 +470,7 @@ fn merge_entries(dest_db: &mut Database, source_db: &Database, log: &mut MergeLo
             let dest_update_time = dest_entry
                 .times
                 .last_modification
-                .or(dest_entry.times.location_changed);
+                .max(dest_entry.times.location_changed);
 
             if let (Some(deletion_time), Some(dest_update_time)) = (deletion_time, dest_update_time) {
                 // if the entry was deleted and then later modified in dest, do not delete it
@@ -457,7 +480,9 @@ fn merge_entries(dest_db: &mut Database, source_db: &Database, log: &mut MergeLo
             }
 
             dest_entry.remove();
-            dest_db.deleted_objects.insert(id.uuid(), *deletion_time);
+            dest_db.deleted_objects.entry(id.uuid())
+                .and_modify(|existing| *existing = (*existing).max(*deletion_time))
+                .or_insert(*deletion_time);
 
             log.events.push(MergeEvent {
                 target: MergeEventTarget::Entry(id),
@@ -469,10 +494,11 @@ fn merge_entries(dest_db: &mut Database, source_db: &Database, log: &mut MergeLo
     // Handle entries that exist in both source and destination.
     for &id in dest_entries.intersection(&source_entries) {
         #[allow(clippy::unwrap_used)] // id is guaranteed to exist in both dest and source
-        let mut dest_entry = dest_db.entry_mut(id).unwrap();
+        let source_entry = source_db.entry(id).unwrap();
+        let source_history = import_history(dest_db, source_db, &source_entry)?;
 
         #[allow(clippy::unwrap_used)] // id is guaranteed to exist in both dest and source
-        let source_entry = source_db.entry(id).unwrap();
+        let mut dest_entry = dest_db.entry_mut(id).unwrap();
 
         let dest_parent_id = dest_entry.as_ref().parent().id();
         let source_parent_id = source_entry.parent().id();
@@ -532,10 +558,19 @@ fn merge_entries(dest_db: &mut Database, source_db: &Database, log: &mut MergeLo
                 // An entry was updated without updating the last modification timestamp.
                 return Err(MergeError::EntryModificationTimeNotUpdated(id));
             }
+            // Hidlins: equal current versions can carry different prior secrets.
+            if dest_entry.history != source_history {
+                let empty_history = History::default();
+                dest_entry.history = Some(merge_history(
+                    dest_entry.history.as_ref().unwrap_or(&empty_history),
+                    source_history.as_ref().unwrap_or(&empty_history),
+                    log,
+                )?);
+            }
             continue;
         }
 
-        let source_history = source_entry.history.clone().unwrap_or_else(|| {
+        let source_history = source_history.unwrap_or_else(|| {
             log.warnings.push(format!("Source entry {} had no history.", id));
             History::default()
         });
@@ -564,6 +599,8 @@ fn merge_entries(dest_db: &mut Database, source_db: &Database, log: &mut MergeLo
 
             // The source entry is more recent than the destination entry. Replace dest with source.
             dest_entry.times.last_modification = source_entry.times.last_modification;
+            dest_entry.times.expires = source_entry.times.expires;
+            dest_entry.times.expiry = source_entry.times.expiry;
             dest_entry.fields = source_entry.fields.clone();
             dest_entry.autotype = source_entry.autotype.clone();
             dest_entry.tags = source_entry.tags.clone();
@@ -587,6 +624,55 @@ fn merge_entries(dest_db: &mut Database, source_db: &Database, log: &mut MergeLo
     }
 
     Ok(())
+}
+
+// Hidlins: historical attachment ids belong to the source pool.
+// Import their bytes before history comparison, reusing an equal destination
+// value (including its protection flag). This makes repeated unions idempotent
+// instead of treating equal bytes at different pool ids as distinct versions.
+fn import_history(
+    dest_db: &mut Database,
+    source_db: &Database,
+    source: &Entry,
+) -> Result<Option<History>, MergeError> {
+    let Some(mut history) = source.history.clone() else {
+        return Ok(None);
+    };
+    for past in &mut history.entries {
+        // Prefer the pool ids already used by this exact destination version.
+        // Other versions or entries can own equal bytes at different ids.
+        let corresponding = dest_db.entries.get(&source.id())
+            .and_then(|entry| entry.history.as_ref())
+            .and_then(|existing| existing.entries.iter().find_map(|candidate| {
+                (past.times == candidate.times
+                    && same_entry_properties(past, candidate)
+                    && past.history == candidate.history)
+                    .then(|| candidate.attachments.clone())
+            }));
+        for (name, source_id) in &mut past.attachments {
+            let source_attachment = source_db.attachments.get(source_id)
+                .ok_or(MergeError::HistoryAttachmentMissing(source.id()))?;
+            let preferred = corresponding.as_ref().and_then(|ids| ids.get(name))
+                .copied().filter(|id| dest_db.attachments.get(id)
+                    .is_some_and(|attachment| attachment.data == source_attachment.data));
+            let existing = preferred.or_else(|| dest_db.attachments.values()
+                .filter(|attachment| attachment.data == source_attachment.data)
+                .map(Attachment::id).min_by_key(AttachmentId::id));
+            let destination_id = if let Some(id) = existing {
+                id
+            } else {
+                let id = AttachmentId::next_free(dest_db);
+                dest_db.attachments.insert(id, Attachment {
+                    id,
+                    entries: HashSet::new(),
+                    data: source_attachment.data.clone(),
+                });
+                id
+            };
+            *source_id = destination_id;
+        }
+    }
+    Ok(Some(history))
 }
 
 /// Merge two histories together, returning the merged history.
@@ -668,7 +754,27 @@ fn merge_history(dest: &History, source: &History, log: &mut MergeLog) -> Result
         }
     }
 
-    Ok(History { entries })
+    // Hidlins: a timestamp can contain several distinct secret versions.
+    // Pairwise merging can repeat one of them when one replica has a subset.
+    // Remove only exact duplicates, retaining all different metadata/content.
+    // Distinct timestamps cannot contain exact duplicate versions.
+    if entries.windows(2).all(|pair| {
+        pair[0].times.last_modification != pair[1].times.last_modification
+    }) {
+        return Ok(History { entries });
+    }
+    let mut unique: Vec<Entry> = Vec::with_capacity(entries.len());
+    for entry in entries {
+        // The merge emits descending timestamps. Compare only the equal-time
+        // suffix so ordinary histories retain linear deduplication cost.
+        let duplicate = unique.iter().rev()
+            .take_while(|prior| prior.times.last_modification == entry.times.last_modification)
+            .any(|prior| prior == &entry);
+        if !duplicate {
+            unique.push(entry);
+        }
+    }
+    Ok(History { entries: unique })
 }
 
 /// Merge custom icons, returning the merged history
@@ -728,7 +834,9 @@ fn merge_icons(dest_db: &mut Database, source_db: &Database, log: &mut MergeLog)
             }
 
             dest_db.custom_icons.remove(&id);
-            dest_db.deleted_objects.insert(id.uuid(), *deletion_time);
+            dest_db.deleted_objects.entry(id.uuid())
+                .and_modify(|existing| *existing = (*existing).max(*deletion_time))
+                .or_insert(*deletion_time);
 
             log.events.push(MergeEvent {
                 target: MergeEventTarget::Icon(id),
@@ -805,19 +913,30 @@ fn have_groups_diverged(a: &Group, b: &Group) -> bool {
     !a.eq(&b)
 }
 
-/// Check if two entries are dissimilar, ignoring their timestamps.
+// Hidlins: compare borrowed Entry properties without cloning secrets/history.
+// This is the complete keepass 0.13.25 Entry field set except times, history
+// and attachment references, which each caller compares with its own mask.
+fn same_entry_properties(a: &Entry, b: &Entry) -> bool {
+    a.id == b.id
+        && a.parent == b.parent
+        && a.fields == b.fields
+        && a.autotype == b.autotype
+        && a.tags == b.tags
+        && a.custom_data == b.custom_data
+        && a.icon == b.icon
+        && a.foreground_color == b.foreground_color
+        && a.background_color == b.background_color
+        && a.override_url == b.override_url
+        && a.quality_check == b.quality_check
+        && a.previous_parent_group == b.previous_parent_group
+}
+
+/// Check entry content, ignoring ordering/access times but retaining expiration.
 fn have_entries_diverged(a: &Entry, b: &Entry) -> bool {
-    let new_times = Times::default();
-
-    let mut a = a.clone();
-    a.times = new_times.clone();
-    a.history = None;
-
-    let mut b = b.clone();
-    b.times = new_times.clone();
-    b.history = None;
-
-    !a.eq(&b)
+    !same_entry_properties(a, b)
+        || a.times.expires != b.times.expires
+        || a.times.expiry != b.times.expiry
+        || a.attachments != b.attachments
 }
 
 #[allow(clippy::indexing_slicing, clippy::unwrap_used, clippy::expect_used)]

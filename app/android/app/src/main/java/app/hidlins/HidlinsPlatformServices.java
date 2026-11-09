@@ -2,18 +2,31 @@ package app.hidlins;
 
 import android.app.Activity;
 import android.content.ContentResolver;
+import android.content.res.AssetFileDescriptor;
 import android.content.Intent;
 import android.database.Cursor;
 import android.net.Uri;
+import android.os.CancellationSignal;
+import android.os.Handler;
+import android.os.Looper;
+import android.os.OperationCanceledException;
 import android.provider.OpenableColumns;
 import io.flutter.plugin.common.BinaryMessenger;
 import io.flutter.plugin.common.MethodCall;
 import io.flutter.plugin.common.MethodChannel;
 import java.io.File;
+import java.io.FilterInputStream;
 import java.io.IOException;
 import java.io.InputStream;
+import java.lang.ref.WeakReference;
 import java.util.HashMap;
 import java.util.Map;
+import java.util.UUID;
+import java.util.concurrent.CountDownLatch;
+import java.util.concurrent.ExecutorService;
+import java.util.concurrent.Executors;
+import java.util.concurrent.atomic.AtomicBoolean;
+import java.util.concurrent.atomic.AtomicReference;
 
 /** Narrow Android mechanism adapter. Vault and lock policy remain in Rust. */
 final class HidlinsPlatformServices {
@@ -26,15 +39,20 @@ final class HidlinsPlatformServices {
     private final SnapshotCoverController cover;
     private final LocalDiscoveryController localDiscovery;
     private MethodChannel lifecycle;
+    private String lifecycleState = "inactive";
+    private String lifecycleObservationToken = UUID.randomUUID().toString();
     private MethodChannel.Result pendingPicker;
     private int pendingRequest;
+    private final ExecutorService providerWorker = Executors.newSingleThreadExecutor();
+    private DocumentWork activeWork;
+    private boolean closed;
 
     HidlinsPlatformServices(MainActivity activity, SnapshotCoverController cover) {
         this.activity = activity;
         this.cover = cover;
-        storage = new AppStorage(activity);
+        storage = new AppStorage(activity.getApplicationContext());
         clipboard = new ClipboardController(activity);
-        keyfiles = new KeyfileReferenceStore(activity);
+        keyfiles = new KeyfileReferenceStore(activity.getApplicationContext());
         localDiscovery = new LocalDiscoveryController(activity);
     }
 
@@ -54,11 +72,20 @@ final class HidlinsPlatformServices {
     }
 
     void reportLifecycle(String state) {
+        // Observe before publishing or changing the cover. A reply for any
+        // preceding observation must never remove this observation's cover.
+        lifecycleState = state;
+        lifecycleObservationToken = UUID.randomUUID().toString();
         if (!"resumed".equals(state)) cover.show(activity);
         if (!"resumed".equals(state)) localDiscovery.stop();
+        sendLifecycleObservation();
+    }
+
+    private void sendLifecycleObservation() {
         if (lifecycle != null) {
             Map<String, Object> arguments = new HashMap<>();
-            arguments.put("state", state);
+            arguments.put("state", lifecycleState);
+            arguments.put("observationToken", lifecycleObservationToken);
             lifecycle.invokeMethod("reportState", arguments);
         }
     }
@@ -92,6 +119,13 @@ final class HidlinsPlatformServices {
 
     private void handleLifecycle(MethodCall call, MethodChannel.Result result) {
         Map<?, ?> arguments = call.arguments instanceof Map<?, ?> map ? map : null;
+        if ("reportState".equals(call.method) && arguments != null
+                && Boolean.TRUE.equals(arguments.get("requestObservation"))) {
+            // Startup replay keeps the current token. It cannot remove a cover.
+            sendLifecycleObservation();
+            result.success(PlatformEnvelope.success(null).envelope());
+            return;
+        }
         Object state = arguments == null ? null : arguments.get("state");
         Object acknowledged = arguments == null ? null : arguments.get("acknowledged");
         Object lockState = arguments == null ? null : arguments.get("lockState");
@@ -100,6 +134,12 @@ final class HidlinsPlatformServices {
                 || !(state instanceof String)
                 || !("locked".equals(lockState) || "unlocked".equals(lockState))) {
             result.success(PlatformEnvelope.failure("invalid-lifecycle-ack").envelope());
+            return;
+        }
+        Object token = arguments.get("observationToken");
+        if (!lifecycleObservationToken.equals(token) || !lifecycleState.equals(state)) {
+            sendLifecycleObservation();
+            result.success(PlatformEnvelope.stale().envelope());
             return;
         }
         if ("resumed".equals(state)) cover.hide();
@@ -175,7 +215,7 @@ final class HidlinsPlatformServices {
     }
 
     boolean beginPicker(int request, MethodChannel.Result result) {
-        if (pendingPicker != null) return false;
+        if (closed || pendingPicker != null) return false;
         pendingPicker = result;
         pendingRequest = request;
         return true;
@@ -183,34 +223,176 @@ final class HidlinsPlatformServices {
 
     boolean onActivityResult(int requestCode, int resultCode, Intent data) {
         if (pendingPicker == null || requestCode != pendingRequest) return false;
+        if (activeWork != null) return true;
         if (resultCode != Activity.RESULT_OK || data == null || data.getData() == null) {
             completePending(PlatformEnvelope.canceled());
             return true;
         }
-        MethodChannel.Result result = takePending();
-        Uri uri = data.getData();
-        String displayName = displayName(uri);
-        if (requestCode == PICK_KEYFILE) {
-            result.success(keyfiles.save(uri, displayName).envelope());
-            return true;
-        }
+        DocumentWork work = new DocumentWork(this, requestCode, data.getData());
+        activeWork = work;
         try {
-            InputStream input = activity.getContentResolver().openInputStream(uri);
-            if (input == null) {
-                result.success(PlatformEnvelope.stale().envelope());
-            } else {
-                File imported = storage.importVault(input, displayName);
-                Map<String, Object> value = new HashMap<>();
-                value.put("sourceReference", imported.getAbsolutePath());
-                value.put("displayName", imported.getName().replaceFirst("\\.kdbx$", ""));
-                result.success(PlatformEnvelope.success(value).envelope());
-            }
-        } catch (SecurityException error) {
-            result.success(PlatformEnvelope.denied().envelope());
-        } catch (IOException | RuntimeException error) {
-            result.success(PlatformEnvelope.failure("document-access-failed").envelope());
+            providerWorker.execute(work);
+        } catch (RuntimeException error) {
+            activeWork = null;
+            work.cancel();
+            completePending(PlatformEnvelope.failure("document-access-failed"));
         }
         return true;
+    }
+
+    private void completeWork(DocumentWork work, DocumentResult outcome) {
+        if (closed || activeWork != work || pendingPicker == null || work.canceled.get()) {
+            work.decision.countDown();
+            return;
+        }
+        activeWork = null;
+        MethodChannel.Result result = takePending();
+        try {
+            result.success(outcome.envelope.envelope());
+            work.delivered.set(true);
+        } catch (RuntimeException ignored) {
+            // A destroyed engine cannot accept ownership of an imported file.
+        } finally {
+            work.decision.countDown();
+        }
+    }
+
+    private static final class DocumentResult {
+        final PlatformEnvelope.Result envelope;
+        final File imported;
+        final KeyfileReferenceStore.PendingReference reference;
+
+        DocumentResult(PlatformEnvelope.Result envelope, File imported,
+                       KeyfileReferenceStore.PendingReference reference) {
+            this.envelope = envelope;
+            this.imported = imported;
+            this.reference = reference;
+        }
+
+        void complete(boolean delivered) {
+            if (reference != null) reference.complete(delivered);
+            if (!delivered && imported != null && !imported.delete()) imported.deleteOnExit();
+        }
+    }
+
+    /** Contains application context resources and a weak owner, never a result or activity. */
+    private static final class DocumentWork implements Runnable {
+        final WeakReference<HidlinsPlatformServices> owner;
+        final ContentResolver resolver;
+        final AppStorage storage;
+        final KeyfileReferenceStore keyfiles;
+        final Handler main = new Handler(Looper.getMainLooper());
+        final int request;
+        final Uri uri;
+        final CancellationSignal cancellation = new CancellationSignal();
+        final AtomicBoolean canceled = new AtomicBoolean();
+        final AtomicBoolean delivered = new AtomicBoolean();
+        final CountDownLatch decision = new CountDownLatch(1);
+        final AtomicReference<InputStream> input = new AtomicReference<>();
+
+        DocumentWork(HidlinsPlatformServices services, int request, Uri uri) {
+            owner = new WeakReference<>(services);
+            resolver = services.activity.getApplicationContext().getContentResolver();
+            storage = services.storage;
+            keyfiles = services.keyfiles;
+            this.request = request;
+            this.uri = uri;
+        }
+
+        void cancel() {
+            if (!canceled.compareAndSet(false, true)) return;
+            decision.countDown();
+            // Provider cancellation itself may block in Binder. Neither it nor
+            // stream closure may hold up activity destruction on the main loop.
+            Thread canceler = new Thread(() -> {
+                InputStream opened = input.get();
+                if (opened != null) {
+                    try { opened.close(); } catch (IOException | RuntimeException ignored) { }
+                }
+                try { cancellation.cancel(); } catch (RuntimeException ignored) { }
+            }, "hidlins-document-cancel");
+            canceler.setDaemon(true);
+            canceler.start();
+        }
+
+        void checkCanceled() {
+            if (canceled.get()) throw new OperationCanceledException();
+        }
+
+        @Override public void run() {
+            DocumentResult outcome;
+            try {
+                outcome = readDocument();
+            } catch (SecurityException error) {
+                outcome = new DocumentResult(PlatformEnvelope.denied(), null, null);
+            } catch (IOException | RuntimeException error) {
+                outcome = new DocumentResult(PlatformEnvelope.failure("document-access-failed"), null, null);
+            }
+            try {
+                if (!canceled.get()) {
+                    DocumentResult completed = outcome;
+                    if (main.post(() -> {
+                        HidlinsPlatformServices services = owner.get();
+                        if (services == null) decision.countDown();
+                        else services.completeWork(this, completed);
+                    })) decision.await();
+                }
+            } catch (InterruptedException error) {
+                Thread.currentThread().interrupt();
+            } finally {
+                outcome.complete(delivered.get());
+            }
+        }
+
+        private DocumentResult readDocument() throws IOException {
+            checkCanceled();
+            String name = displayName();
+            checkCanceled();
+            if (request == PICK_KEYFILE) {
+                KeyfileReferenceStore.PendingReference saved = keyfiles.savePending(uri, name);
+                return new DocumentResult(saved.result, null, saved);
+            }
+            File imported = null;
+            try {
+                try (AssetFileDescriptor descriptor = resolver.openAssetFileDescriptor(uri, "r", cancellation)) {
+                    if (descriptor == null) return new DocumentResult(PlatformEnvelope.stale(), null, null);
+                    try (InputStream stream = descriptor.createInputStream()) {
+                        input.set(stream);
+                        checkCanceled();
+                        InputStream checked = new FilterInputStream(stream) {
+                            @Override public int read(byte[] bytes, int offset, int length) throws IOException {
+                                checkCanceled();
+                                int count = super.read(bytes, offset, length);
+                                checkCanceled();
+                                return count;
+                            }
+                        };
+                        imported = storage.importVault(checked, name);
+                        Map<String, Object> value = new HashMap<>();
+                        value.put("sourceReference", imported.getAbsolutePath());
+                        value.put("displayName", imported.getName().replaceFirst("\\.kdbx$", ""));
+                        return new DocumentResult(PlatformEnvelope.success(value), imported, null);
+                    } finally {
+                        input.set(null);
+                    }
+                }
+            } catch (IOException | RuntimeException error) {
+                if (imported != null && !imported.delete()) imported.deleteOnExit();
+                throw error;
+            }
+        }
+
+        private String displayName() {
+            try (Cursor cursor = resolver.query(uri, new String[]{OpenableColumns.DISPLAY_NAME},
+                    null, null, null, cancellation)) {
+                if (cursor != null && cursor.moveToFirst()) {
+                    String name = cursor.getString(0);
+                    if (name != null && !name.isEmpty()) return name;
+                }
+            } catch (RuntimeException ignored) { }
+            String fallback = uri.getLastPathSegment();
+            return fallback == null || fallback.isEmpty() ? "document" : fallback;
+        }
     }
 
     private MethodChannel.Result takePending() {
@@ -225,22 +407,18 @@ final class HidlinsPlatformServices {
         if (result != null) result.success(envelope.envelope());
     }
 
-    private String displayName(Uri uri) {
-        ContentResolver resolver = activity.getContentResolver();
-        try (Cursor cursor = resolver.query(uri, new String[]{OpenableColumns.DISPLAY_NAME},
-                null, null, null)) {
-            if (cursor != null && cursor.moveToFirst()) {
-                String name = cursor.getString(0);
-                if (name != null && !name.isEmpty()) return name;
-            }
-        } catch (RuntimeException ignored) { }
-        String fallback = uri.getLastPathSegment();
-        return fallback == null || fallback.isEmpty() ? "document" : fallback;
-    }
-
     void close() {
-        localDiscovery.stop();
-        completePending(PlatformEnvelope.failure("activity-destroyed"));
-        keyfiles.closeAll();
+        if (closed) return;
+        closed = true;
+        DocumentWork work = activeWork;
+        activeWork = null;
+        if (work != null) work.cancel();
+        providerWorker.shutdownNow();
+        try {
+            completePending(PlatformEnvelope.failure("activity-destroyed"));
+        } finally {
+            localDiscovery.stop();
+            keyfiles.closeAll();
+        }
     }
 }

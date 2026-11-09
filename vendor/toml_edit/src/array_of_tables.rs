@@ -34,7 +34,7 @@ impl ArrayOfTables {
 
     /// The location within the original document
     ///
-    /// This generally requires a [`Document`][crate::Document].
+    /// This generally requires an [`ImDocument`][crate::ImDocument].
     pub fn span(&self) -> Option<std::ops::Range<usize>> {
         self.span.clone()
     }
@@ -89,45 +89,9 @@ impl ArrayOfTables {
         self.values.push(Item::Table(table));
     }
 
-    /// Inserts a table at the given index within the array, shifting all
-    /// tables after it to the right.
-    ///
-    /// # Panics
-    ///
-    /// Panics if `index > len`.
-    pub fn insert(&mut self, index: usize, table: Table) {
-        self.values.insert(index, Item::Table(table));
-    }
-
-    /// Replaces a table at the given index within the array, returning the old table.
-    ///
-    /// # Panics
-    ///
-    /// Panics if `index >= len`.
-    ///
-    /// # Examples
-    ///
-    /// ```rust
-    /// use toml_edit::{ArrayOfTables, Table, value};
-    ///
-    /// let mut arr = ArrayOfTables::new();
-    /// arr.push(Table::from_iter([("name", value("apple"))]));
-    ///
-    /// arr.replace(0, Table::from_iter([("name", value("banana"))]));
-    /// ```
-    pub fn replace(&mut self, index: usize, table: Table) -> Table {
-        match std::mem::replace(&mut self.values[index], Item::Table(table)) {
-            Item::Table(old) => old,
-            x => panic!("non-table item {x:?} in an array of tables"),
-        }
-    }
-
     /// Removes a table with the given index.
-    pub fn remove(&mut self, index: usize) -> Table {
-        self.values
-            .remove(index)
-            .into_table()
-            .expect("cannot have any other item in an array-of-tables")
+    pub fn remove(&mut self, index: usize) {
+        self.values.remove(index);
     }
 
     /// Retains only the elements specified by the `keep` predicate.
@@ -166,7 +130,7 @@ impl FromIterator<Table> for ArrayOfTables {
         I: IntoIterator<Item = Table>,
     {
         let v = iter.into_iter().map(Item::Table);
-        Self {
+        ArrayOfTables {
             values: v.collect(),
             span: None,
         }

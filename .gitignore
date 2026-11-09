@@ -1,5 +1,7 @@
 # Cargo
 /target/
+# Cross-frontend cache locks live outside roots that cargo clean removes.
+.*.hidlins-vendor.lock
 **/*.rs.bk
 /tools/build-policy/rust-warning-fixture/target/
 

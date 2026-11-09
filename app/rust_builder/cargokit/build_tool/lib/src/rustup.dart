@@ -77,9 +77,9 @@ class Rustup {
 
     final res = runCommand("rustup", ['toolchain', 'list']);
 
-    // To list all non-custom toolchains, we need to filter out lines that
-    // don't start with "stable", "beta", or "nightly".
-    Pattern nonCustom = RegExp(r"^(stable|beta|nightly)");
+    // Hidlins patch: exact official release pins are installed toolchains too;
+    // otherwise an installed 1.95.0 is mistaken for a missing compiler.
+    Pattern nonCustom = RegExp(r"^(stable|beta|nightly|\d+\.\d+\.\d+)(-|$)");
     final lines = res.stdout
         .toString()
         .split('\n')

@@ -25,7 +25,8 @@ use std::os::unix::fs::{MetadataExt as _, PermissionsExt as _};
 use std::path::Path;
 
 use rustix::fs::{
-    mkdirat, openat, renameat, statat, unlinkat, AtFlags, Dir, FileType, Mode, OFlags,
+    mkdirat, openat, renameat, renameat_with, statat, unlinkat, AtFlags, Dir, FileType, Mode,
+    OFlags, RenameFlags,
 };
 use tempfile::Builder as TempFileBuilder;
 
@@ -55,6 +56,30 @@ pub fn write_atomic(target: &Path, bytes: &[u8]) -> Result<(), VaultError> {
             path: target.to_path_buf(),
         })
     })
+}
+
+/// Atomically install a new file, refusing to replace any existing file or link.
+///
+/// Uses the same private sibling stage and durability protocol as
+/// [`write_atomic`], with an exclusive rename at the installation point.
+/// Callers coordinating a larger transaction must also hold the target lock.
+///
+/// # Errors
+///
+/// Returns [`VaultError::Io`] on staging, installation or durability failure,
+/// including when another writer has already installed the destination.
+pub fn write_atomic_new(target: &Path, bytes: &[u8]) -> Result<(), VaultError> {
+    write_atomic_with_mode(
+        target,
+        |file| {
+            file.write_all(bytes).map_err(|source| VaultError::Io {
+                source,
+                path: target.to_path_buf(),
+            })
+        },
+        || {},
+        InstallMode::CreateNew,
+    )
 }
 
 /// Streaming variant of [`write_atomic`].
@@ -90,6 +115,25 @@ where
     F: FnOnce(&mut File) -> Result<(), VaultError>,
     C: FnOnce(),
 {
+    write_atomic_with_mode(target, write, committed, InstallMode::Replace)
+}
+
+#[derive(Clone, Copy)]
+enum InstallMode {
+    Replace,
+    CreateNew,
+}
+
+fn write_atomic_with_mode<F, C>(
+    target: &Path,
+    write: F,
+    committed: C,
+    mode: InstallMode,
+) -> Result<(), VaultError>
+where
+    F: FnOnce(&mut File) -> Result<(), VaultError>,
+    C: FnOnce(),
+{
     let mut stage = AtomicStage::new(target).map_err(|source| VaultError::Io {
         source,
         path: target.to_path_buf(),
@@ -108,12 +152,17 @@ where
 
     // Both names are relative to held directory descriptors. A pathname
     // rebind cannot redirect this replacement or subsequent source cleanup.
-    renameat(
-        &stage.files.directory,
-        PAYLOAD,
-        &stage.parent,
-        target.file_name().expect("validated filename"),
-    )
+    let name = target.file_name().expect("validated filename");
+    match mode {
+        InstallMode::Replace => renameat(&stage.files.directory, PAYLOAD, &stage.parent, name),
+        InstallMode::CreateNew => renameat_with(
+            &stage.files.directory,
+            PAYLOAD,
+            &stage.parent,
+            name,
+            RenameFlags::NOREPLACE,
+        ),
+    }
     .map_err(|source| VaultError::Io {
         source: source.into(),
         path: target.to_path_buf(),

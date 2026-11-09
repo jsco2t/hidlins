@@ -43,11 +43,12 @@ and sync traffic. No endpoint, `10.0.2.2` data route, ADB forwarding, proxy, or
 synthetic discovery result is supplied to the client. API 30 and API 36 use
 shared emulator Wi-Fi with platform-default cellular state. The runner explicitly
 selects `VirtioWifi,WiFiPacketStream` because API 30 otherwise defaults to the
-isolated legacy backend. Each scenario guest has an explicit 1536 MiB RAM
-budget using `-lowram -memory 1536`, so three guests fit on CI and developer
-hosts without automatic 4 GiB-per-guest expansion. The API 29 default image cannot provide this shared
-LAN; forcing the modern
-backend leaves it without a Wi-Fi address. API 29 remains a required native/UI
+isolated legacy backend. The runner requests 1536 MiB of guest RAM with
+`-lowram -memory 1536`. SDK versions may adjust requested memory; the guest
+setting also does not cap host RSS, which includes emulator and renderer
+overhead. Measure effective guest RAM and aggregate host headroom before
+running three guests concurrently. The API 29 default image cannot provide
+this shared LAN; forcing the modern backend leaves it without a Wi-Fi address. API 29 remains a required native/UI
 and bridge gate and remains the application minimum, but its cross-device LAN
 acceptance is not claimed by this emulator gate.
 

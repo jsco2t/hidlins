@@ -82,8 +82,9 @@ pub(crate) fn render(app: &App, frame: &mut Frame, now: Instant) {
     } else {
         Vec::new()
     };
-    let hints = if let Some(overlay) = app.overlay.as_ref() {
-        HintContent::Text(overlay.hints())
+    let overlay_hints = app.overlay.as_ref().map(|overlay| overlay.hints(&app.keys));
+    let hints = if let Some(hints) = overlay_hints.as_ref() {
+        HintContent::Text(hints.as_ref())
     } else {
         HintContent::Cells(&cells)
     };

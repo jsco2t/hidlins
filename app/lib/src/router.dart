@@ -14,6 +14,7 @@ import 'features/settings/settings_page.dart';
 import 'features/sync/sync_controller.dart';
 import 'features/sync/sync_page.dart';
 import 'features/sync/sync_event_listener.dart';
+import 'features/vaults/vault_management_page.dart';
 import 'providers/lock_state_provider.dart';
 import 'providers/providers.dart';
 import 'ui/adaptive_scaffold.dart';
@@ -51,7 +52,12 @@ final routerProvider = Provider<GoRouter>((ref) {
     redirect: (context, state) {
       final isLocked = lockNotifier.locked;
       final goingToLock = state.matchedLocation == '/lock';
-      if (isLocked && !goingToLock) return '/lock';
+      final goingToVaults = state.matchedLocation == '/vaults';
+      if (isLocked && !goingToLock && !goingToVaults) {
+        // A pushed metadata page can be above a protected base location.
+        // On lock, discard that base while retaining the public page.
+        return state.topRoute?.path == '/vaults' ? '/vaults' : '/lock';
+      }
       if (!isLocked && goingToLock) return '/entries';
       return null;
     },
@@ -82,6 +88,11 @@ final routerProvider = Provider<GoRouter>((ref) {
         path: '/lock',
         pageBuilder: (context, state) =>
             _materialPage(state, const UnlockScreen()),
+      ),
+      GoRoute(
+        path: '/vaults',
+        pageBuilder: (context, state) =>
+            _materialPage(state, const VaultManagementPage()),
       ),
       ShellRoute(
         pageBuilder: (context, state, child) => _materialPage(
@@ -154,6 +165,7 @@ class _ShellWrapper extends ConsumerWidget {
 
   @override
   Widget build(BuildContext context, WidgetRef ref) {
+    final l10n = AppLocalizations.of(context)!;
     final index = _indexForLocation(location);
     final prefs = ref.watch(prefsProvider).valueOrNull;
     final selectedEntry = ref.watch(selectedEntryProvider);
@@ -182,7 +194,21 @@ class _ShellWrapper extends ConsumerWidget {
               final path = _locationForIndex(i);
               context.go(path);
             },
-            body: child,
+            body: Column(
+              children: [
+                Align(
+                  alignment: Alignment.centerRight,
+                  child: IconButton(
+                    tooltip: l10n.actionLock,
+                    icon: const Icon(Icons.lock_outline),
+                    onPressed: () => unawaited(
+                      ref.read(sessionRepositoryProvider).lockNow(),
+                    ),
+                  ),
+                ),
+                Expanded(child: child),
+              ],
+            ),
             initialListPaneWidth: prefs?.listPaneWidth,
             onListPaneWidthChanged: (width) {
               unawaited(

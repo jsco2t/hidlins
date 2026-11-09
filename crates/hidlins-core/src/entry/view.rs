@@ -3,8 +3,9 @@
 use chrono::{DateTime, Utc};
 use keepass::db::{fields, EntryMut, EntryRef, Times, Value};
 use sha2::{Digest, Sha256};
+use zeroize::Zeroizing;
 
-use crate::{Attachment, EntryKind, Tag};
+use crate::{Attachment, EntryKind, Tag, VaultError};
 
 /// Read-only view of a KDBX entry.
 pub struct EntryView<'a> {
@@ -14,6 +15,7 @@ pub struct EntryView<'a> {
 /// Mutable view of a KDBX entry.
 pub struct EntryViewMut<'a> {
     entry: EntryMut<'a>,
+    rejected_custom_field: bool,
 }
 
 /// Read-only view of a historical entry snapshot.
@@ -161,7 +163,10 @@ impl<'a> EntryView<'a> {
 impl<'a> EntryViewMut<'a> {
     /// Wrap a mutable `keepass-rs` entry reference.
     pub fn new(entry: EntryMut<'a>) -> Self {
-        Self { entry }
+        Self {
+            entry,
+            rejected_custom_field: false,
+        }
     }
 
     /// Return the entry UUID.
@@ -272,13 +277,23 @@ impl<'a> EntryViewMut<'a> {
     }
 
     /// Set a custom string field.
+    ///
+    /// Standard field names are rejected without changing the entry. Within
+    /// [`crate::Vault::update_entry`], any such attempt fails the whole edit
+    /// with [`VaultError::ReservedCustomField`], including earlier changes.
     pub fn set_custom_field(
         &mut self,
         name: impl Into<String>,
         value: impl Into<String>,
         protected: bool,
     ) {
-        let value = value.into();
+        let name = name.into();
+        let mut value = Zeroizing::new(value.into());
+        if super::is_standard_field(&name) {
+            self.rejected_custom_field = true;
+            return;
+        }
+        let value = std::mem::take(&mut *value);
         if protected {
             self.entry.set(name, Value::protected(value));
         } else {
@@ -288,9 +303,24 @@ impl<'a> EntryViewMut<'a> {
     }
 
     /// Remove a custom field.
+    ///
+    /// Standard field names are rejected with the same transaction behavior
+    /// as [`Self::set_custom_field`]. Use dedicated setters to clear them.
     pub fn remove_custom_field(&mut self, name: &str) {
+        if super::is_standard_field(name) {
+            self.rejected_custom_field = true;
+            return;
+        }
         if self.entry.fields.remove(name).is_some() {
             self.touch();
+        }
+    }
+
+    pub(super) fn validate_custom_fields(&self) -> Result<(), VaultError> {
+        if self.rejected_custom_field {
+            Err(VaultError::ReservedCustomField)
+        } else {
+            Ok(())
         }
     }
 

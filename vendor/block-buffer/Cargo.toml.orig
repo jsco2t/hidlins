@@ -16,6 +16,9 @@ description = "Buffer types for block processing of data"
 hybrid-array = "0.4"
 zeroize = { version = "1.4", optional = true, default-features = false }
 
+[features]
+zeroize = ["dep:zeroize", "hybrid-array/zeroize"]
+
 [dev-dependencies]
 hex-literal = "1"
 

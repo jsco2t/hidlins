@@ -67,7 +67,7 @@ void main() {
       final session = await api.initApp(cfg: cfg());
       expect(session.droppedLockEvents(), BigInt.zero);
       session.reportActivity();
-      session.reportLifecycleState(state: LifecycleStateDto.resumed);
+      await session.reportLifecycleState(state: LifecycleStateDto.resumed);
       await session.shutdown();
       await session.shutdown();
     },

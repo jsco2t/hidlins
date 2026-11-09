@@ -1,41 +1,44 @@
-use std::{
-    borrow::Cow,
-    io::{Cursor, Write},
-    num::NonZeroU32,
-    sync::Arc,
-};
 #[cfg(unix)]
-use zvariant::OwnedFd;
-
-use enumflags2::BitFlags;
-use zbus_names::{BusName, ErrorName, InterfaceName, MemberName, UniqueName};
-use zvariant::{Endian, Signature, serialized};
+use crate::OwnedFd;
+use std::{borrow::Cow, io::Cursor, num::NonZeroU32, sync::Arc};
 
 use crate::{
-    Error, Result,
+    DynamicType, Error, ObjectPath, Result, Signature,
     message::{EndianSig, Fields, Flags, Header, Message, PrimaryHeader, Sequence, Type},
+    names::{BusName, ErrorName, InterfaceName, MemberName, UniqueName},
     utils::padding_for_8_bytes,
-    zvariant::{DynamicType, ObjectPath, serialized::Context},
+    wire::{Endian, serialized, serialized::Context},
 };
 
 use crate::message::header::MAX_MESSAGE_SIZE;
 
-#[cfg(unix)]
-type BuildGenericResult = Vec<OwnedFd>;
-
-#[cfg(not(unix))]
-type BuildGenericResult = ();
-
 macro_rules! dbus_context {
     ($self:ident, $n_bytes_before: expr) => {
-        Context::new_dbus($self.header.primary().endian_sig().into(), $n_bytes_before)
+        Context::new($self.header.primary().endian_sig().into(), $n_bytes_before)
     };
 }
 
+/// Convert `$value` into the header field `$field`, recording a failure to convert it.
+macro_rules! set_field {
+    ($self:ident, $field:ident, $value:expr) => {{
+        match $value.try_into() {
+            Ok(value) => $self.header.fields_mut().$field = Some(value),
+            Err(e) => $self.record(e.into()),
+        }
+
+        $self
+    }};
+}
+
 /// A builder for a [`Message`].
+///
+/// The setters take the same loosely typed values as the rest of the API and convert them right
+/// away, but they never fail: the first error a setter hits is recorded — a later call doesn't
+/// clear it — and reported by [`Builder::build`].
 #[derive(Debug, Clone)]
 pub struct Builder<'a> {
     header: Header<'a>,
+    error: Option<Error>,
 }
 
 impl<'a> Builder<'a> {
@@ -43,82 +46,103 @@ impl<'a> Builder<'a> {
         let primary = PrimaryHeader::new(msg_type, 0);
         let fields = Fields::new();
         let header = Header::new(primary, fields);
-        Self { header }
+        Self {
+            header,
+            error: None,
+        }
     }
 
-    /// Add flags to the message.
+    /// Add flags to the message, on top of any already added.
     ///
-    /// See [`Flags`] documentation for the meaning of the flags.
+    /// See [`Flags`] documentation for the meaning of the flags. Combine them with `|` to add
+    /// several in one call.
     ///
-    /// The function will return an error if invalid flags are given for the message type.
-    pub fn with_flags(mut self, flag: Flags) -> Result<Self> {
+    /// Flags that are invalid for the message type are reported by [`Builder::build`].
+    #[must_use]
+    pub fn with_flags(mut self, flags: Flags) -> Self {
         if self.header.message_type() != Type::MethodCall
-            && BitFlags::from_flag(flag).contains(Flags::NoReplyExpected)
+            && flags.contains(Flags::NO_REPLY_EXPECTED)
         {
-            return Err(Error::InvalidField);
+            self.record(Error::InvalidField);
+
+            return self;
         }
-        let flags = self.header.primary().flags() | flag;
+        let flags = self.header.primary().flags() | flags;
         self.header.primary_mut().set_flags(flags);
-        Ok(self)
+
+        self
     }
 
     /// Set the unique name of the sending connection.
-    pub fn sender<'s: 'a, S>(mut self, sender: S) -> Result<Self>
+    ///
+    /// An invalid sender name is reported by [`Builder::build`].
+    #[must_use]
+    pub fn sender<'s: 'a, S>(mut self, sender: S) -> Self
     where
         S: TryInto<UniqueName<'s>>,
         S::Error: Into<Error>,
     {
-        self.header.fields_mut().sender = Some(sender.try_into().map_err(Into::into)?);
-        Ok(self)
+        set_field!(self, sender, sender)
     }
 
     /// Set the object to send a call to, or the object a signal is emitted from.
-    pub fn path<'p: 'a, P>(mut self, path: P) -> Result<Self>
+    ///
+    /// An invalid path is reported by [`Builder::build`].
+    #[must_use]
+    pub fn path<'p: 'a, P>(mut self, path: P) -> Self
     where
         P: TryInto<ObjectPath<'p>>,
         P::Error: Into<Error>,
     {
-        self.header.fields_mut().path = Some(path.try_into().map_err(Into::into)?);
-        Ok(self)
+        set_field!(self, path, path)
     }
 
     /// Set the interface to invoke a method call on, or that a signal is emitted from.
-    pub fn interface<'i: 'a, I>(mut self, interface: I) -> Result<Self>
+    ///
+    /// An invalid interface name is reported by [`Builder::build`].
+    #[must_use]
+    pub fn interface<'i: 'a, I>(mut self, interface: I) -> Self
     where
         I: TryInto<InterfaceName<'i>>,
         I::Error: Into<Error>,
     {
-        self.header.fields_mut().interface = Some(interface.try_into().map_err(Into::into)?);
-        Ok(self)
+        set_field!(self, interface, interface)
     }
 
     /// Set the member, either the method name or signal name.
-    pub fn member<'m: 'a, M>(mut self, member: M) -> Result<Self>
+    ///
+    /// An invalid member name is reported by [`Builder::build`].
+    #[must_use]
+    pub fn member<'m: 'a, M>(mut self, member: M) -> Self
     where
         M: TryInto<MemberName<'m>>,
         M::Error: Into<Error>,
     {
-        self.header.fields_mut().member = Some(member.try_into().map_err(Into::into)?);
-        Ok(self)
+        set_field!(self, member, member)
     }
 
-    pub(super) fn error_name<'e: 'a, E>(mut self, error: E) -> Result<Self>
+    /// Set the name of the error this message reports.
+    ///
+    /// An invalid error name is reported by [`Builder::build`].
+    #[must_use]
+    pub(super) fn error_name<'e: 'a, E>(mut self, error: E) -> Self
     where
         E: TryInto<ErrorName<'e>>,
         E::Error: Into<Error>,
     {
-        self.header.fields_mut().error_name = Some(error.try_into().map_err(Into::into)?);
-        Ok(self)
+        set_field!(self, error_name, error)
     }
 
     /// Set the name of the connection this message is intended for.
-    pub fn destination<'d: 'a, D>(mut self, destination: D) -> Result<Self>
+    ///
+    /// An invalid destination name is reported by [`Builder::build`].
+    #[must_use]
+    pub fn destination<'d: 'a, D>(mut self, destination: D) -> Self
     where
         D: TryInto<BusName<'d>>,
         D::Error: Into<Error>,
     {
-        self.header.fields_mut().destination = Some(destination.try_into().map_err(Into::into)?);
-        Ok(self)
+        set_field!(self, destination, destination)
     }
 
     /// Override the generated or inherited serial.  This is a low level modification,
@@ -135,15 +159,15 @@ impl<'a> Builder<'a> {
         self
     }
 
-    pub(super) fn reply_to(mut self, reply_to: &Header<'_>) -> Result<Self> {
+    #[must_use]
+    pub(super) fn reply_to(mut self, reply_to: &Header<'_>) -> Self {
         let serial = reply_to.primary().serial_num();
         self.header.fields_mut().reply_serial = Some(serial);
         self = self.endian(reply_to.primary().endian_sig().into());
 
-        if let Some(sender) = reply_to.sender() {
-            self.destination(sender.to_owned())
-        } else {
-            Ok(self)
+        match reply_to.sender() {
+            Some(sender) => self.destination(sender.to_owned()),
+            None => self,
         }
     }
 
@@ -167,43 +191,57 @@ impl<'a> Builder<'a> {
     ///
     /// [specification]:
     /// https://dbus.freedesktop.org/doc/dbus-specification.html#message-protocol-header-fields
-    pub fn build<B>(self, body: &B) -> Result<Message>
+    ///
+    /// # Errors
+    ///
+    /// Returns the first error recorded by a setter, then any error from serializing the body or
+    /// from the message exceeding the maximum message size.
+    pub fn build<B>(mut self, body: &B) -> Result<Message>
     where
         B: serde::ser::Serialize + DynamicType,
     {
+        if let Some(error) = self.error.take() {
+            return Err(error);
+        }
+
         let ctxt = dbus_context!(self, 0);
-
-        // Note: this iterates the body twice, but we prefer efficient handling of large messages
-        // to efficient handling of ones that are complex to serialize.
-        let body_size = zvariant::serialized_size(ctxt, body)?;
-
         let signature = body.signature();
 
-        self.build_generic(signature, body_size, move |cursor| {
-            // SAFETY: build_generic puts FDs and the body in the same Message.
-            unsafe { zvariant::to_writer(cursor, ctxt, body) }
-                .map(|s| {
-                    #[cfg(unix)]
-                    {
-                        s.into_fds()
-                    }
-                    #[cfg(not(unix))]
-                    {
-                        let _ = s;
-                    }
-                })
-                .map_err(Into::into)
-        })
+        // The header carries the body's length and FD count, so the body is serialized first,
+        // into its own buffer, and copied into place behind the header. One pass over the body
+        // plus a copy of its bytes beats the extra serialization pass that measuring it first
+        // would cost, and keeps this generic function down to the serialization itself.
+        let mut body_bytes = Vec::new();
+        let mut cursor = Cursor::new(&mut body_bytes);
+        // SAFETY: The FDs end up in the same Message as the body.
+        let written =
+            unsafe { crate::wire::to_writer_for_signature(&mut cursor, ctxt, &signature, body) }?;
+        #[cfg(unix)]
+        let fds = written.into_fds();
+        #[cfg(not(unix))]
+        let _ = written;
+
+        self.build_from_bytes(
+            signature,
+            &body_bytes,
+            #[cfg(unix)]
+            fds,
+        )
     }
 
     /// Create a new message from a raw slice of bytes to populate the body with, rather than by
     /// serializing a value. The message body will be the exact bytes.
     ///
+    /// # Errors
+    ///
+    /// The same errors as [`Builder::build`], except that the body is taken as is instead of
+    /// being serialized, and an invalid `signature` is reported here.
+    ///
     /// # Safety
     ///
     /// This method is unsafe because it can be used to build an invalid message.
     pub unsafe fn build_raw_body<S>(
-        self,
+        mut self,
         body_bytes: &[u8],
         signature: S,
         #[cfg(unix)] fds: Vec<OwnedFd>,
@@ -212,72 +250,57 @@ impl<'a> Builder<'a> {
         S: TryInto<Signature>,
         S::Error: Into<Error>,
     {
+        if let Some(error) = self.error.take() {
+            return Err(error);
+        }
+
         let signature = signature.try_into().map_err(Into::into)?;
-        let body_size = serialized::Size::new(body_bytes.len(), dbus_context!(self, 0));
-        #[cfg(unix)]
-        let body_size = {
-            let num_fds = fds.len().try_into().map_err(|_| Error::ExcessData)?;
-            body_size.set_num_fds(num_fds)
-        };
 
-        self.build_generic(
+        self.build_from_bytes(
             signature,
-            body_size,
-            move |cursor: &mut Cursor<&mut Vec<u8>>| {
-                cursor.write_all(body_bytes)?;
-
-                #[cfg(unix)]
-                return Ok::<Vec<OwnedFd>, Error>(fds);
-
-                #[cfg(not(unix))]
-                return Ok::<(), Error>(());
-            },
+            body_bytes,
+            #[cfg(unix)]
+            fds,
         )
     }
 
-    fn build_generic<WriteFunc>(
+    /// Build the message around an already serialized body.
+    fn build_from_bytes(
         self,
         signature: Signature,
-        body_size: serialized::Size,
-        write_body: WriteFunc,
-    ) -> Result<Message>
-    where
-        WriteFunc: FnOnce(&mut Cursor<&mut Vec<u8>>) -> Result<BuildGenericResult>,
-    {
+        body: &[u8],
+        #[cfg(unix)] fds: Vec<OwnedFd>,
+    ) -> Result<Message> {
         let ctxt = dbus_context!(self, 0);
         let mut header = self.header;
 
         header.fields_mut().signature = Cow::Owned(signature);
 
-        let body_len_u32 = body_size.size().try_into().map_err(|_| Error::ExcessData)?;
+        let body_len_u32 = body.len().try_into().map_err(|_| Error::ExcessData)?;
         header.primary_mut().set_body_len(body_len_u32);
 
         #[cfg(unix)]
         {
-            let fds_len = body_size.num_fds();
+            let fds_len: u32 = fds.len().try_into().map_err(|_| Error::ExcessData)?;
             if fds_len != 0 {
                 header.fields_mut().unix_fds = Some(fds_len);
             }
         }
 
-        let hdr_len = *zvariant::serialized_size(ctxt, &header)?;
+        let mut bytes = Vec::new();
+        let mut cursor = Cursor::new(&mut bytes);
+        // SAFETY: There are no FDs involved.
+        unsafe { crate::wire::to_writer(&mut cursor, ctxt, &header) }?;
+        let hdr_len = bytes.len();
         // We need to align the body to 8-byte boundary.
-        let body_padding = padding_for_8_bytes(hdr_len);
-        let body_offset = hdr_len + body_padding;
-        let total_len = body_offset + body_size.size();
+        let body_offset = hdr_len + padding_for_8_bytes(hdr_len);
+        let total_len = body_offset + body.len();
         if total_len > MAX_MESSAGE_SIZE {
             return Err(Error::ExcessData);
         }
-        let mut bytes: Vec<u8> = Vec::with_capacity(total_len);
-        let mut cursor = Cursor::new(&mut bytes);
-
-        // SAFETY: There are no FDs involved.
-        unsafe { zvariant::to_writer(&mut cursor, ctxt, &header) }?;
-        cursor.write_all(&[0u8; 8][..body_padding])?;
-        #[cfg(unix)]
-        let fds: Vec<_> = write_body(&mut cursor)?.into_iter().collect();
-        #[cfg(not(unix))]
-        write_body(&mut cursor)?;
+        bytes.reserve_exact(total_len - hdr_len);
+        bytes.resize(body_offset, 0);
+        bytes.extend_from_slice(body);
 
         let primary_header = header.into_primary();
         #[cfg(unix)]
@@ -295,6 +318,13 @@ impl<'a> Builder<'a> {
             }),
         })
     }
+
+    /// Record `error`, unless an earlier setter already recorded one.
+    fn record(&mut self, error: Error) {
+        if self.error.is_none() {
+            self.error = Some(error);
+        }
+    }
 }
 
 impl<'m> From<Header<'m>> for Builder<'m> {
@@ -304,20 +334,78 @@ impl<'m> From<Header<'m>> for Builder<'m> {
         fields.signature = Cow::Owned(Signature::Unit);
         fields.unix_fds = None;
 
-        Self { header }
+        Self {
+            header,
+            error: None,
+        }
     }
 }
 
 #[cfg(test)]
 mod tests {
     use super::{Endian, Message};
-    use crate::Error;
+    use crate::{
+        Error, ObjectPath,
+        message::Flags,
+        names::{BusName, InterfaceName},
+    };
     use test_log::test;
 
     #[test]
-    fn test_raw() -> Result<(), Error> {
+    fn strings() {
+        let message = Message::method_call("/org/zbus/Test", "Test")
+            .destination("org.zbus.Test")
+            .interface("org.zbus.Test")
+            .build(&())
+            .unwrap();
+        assert_eq!(message.header().path().unwrap().as_str(), "/org/zbus/Test");
+
+        // An invalid string is only reported by `build`.
+        let error = Message::method_call("not a path", "Test")
+            .build(&())
+            .unwrap_err();
+        assert_eq!(error, ObjectPath::try_from("not a path").unwrap_err());
+
+        let error = Message::method_call("/org/zbus/Test", "Test")
+            .destination("not a bus name")
+            .build(&())
+            .unwrap_err();
+        assert_eq!(error, BusName::try_from("not a bus name").unwrap_err());
+    }
+
+    #[test]
+    fn typed_values() {
+        // No `Result` anywhere before `build`.
+        let path = ObjectPath::try_from("/org/zbus/Test").unwrap();
+        let interface = InterfaceName::try_from("org.zbus.Test").unwrap();
+        let builder = Message::signal(&path, &interface, "Test").sender(":1.72");
+        let message = builder.build(&()).unwrap();
+        assert_eq!(message.header().interface().unwrap(), &interface);
+    }
+
+    #[test]
+    fn a_later_valid_call_keeps_the_first_error() {
+        // Setting the field again, even to a valid value, doesn't clear the error it recorded.
+        let error = Message::method_call("/", "Test")
+            .path("not a path")
+            .path("/org/zbus/Test")
+            .build(&())
+            .unwrap_err();
+        assert_eq!(error, ObjectPath::try_from("not a path").unwrap_err());
+
+        // Same for a valid flag after an invalid one.
+        let error = Message::signal("/", "org.zbus.Test", "Test")
+            .with_flags(Flags::NO_REPLY_EXPECTED)
+            .with_flags(Flags::NO_AUTO_START)
+            .build(&())
+            .unwrap_err();
+        assert_eq!(error, Error::InvalidField);
+    }
+
+    #[test]
+    fn raw() -> Result<(), Error> {
         let raw_body: &[u8] = &[16, 0, 0, 0, 1, 0, 0, 0, 2, 0, 0, 0, 3, 0, 0, 0, 4, 0, 0, 0];
-        let message_builder = Message::signal("/", "test.test", "test")?;
+        let message_builder = Message::signal("/", "test.test", "test");
         let message_builder = message_builder.endian(Endian::Little);
         let message = unsafe {
             message_builder.build_raw_body(

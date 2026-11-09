@@ -86,6 +86,15 @@ impl VariantDictionary {
                 .ok_or(VariantDictionaryError::UnexpectedEof)?;
             pos += value_length;
 
+            let width = match value_type {
+                U32_TYPE_ID | I32_TYPE_ID => 4,
+                U64_TYPE_ID | I64_TYPE_ID => 8,
+                _ => 0,
+            };
+            if value_buffer.len() < width {
+                return Err(VariantDictionaryError::UnexpectedEof);
+            }
+
             let value = match value_type {
                 U32_TYPE_ID => VariantDictionaryValue::UInt32(LittleEndian::read_u32(value_buffer)),
                 U64_TYPE_ID => VariantDictionaryValue::UInt64(LittleEndian::read_u64(value_buffer)),

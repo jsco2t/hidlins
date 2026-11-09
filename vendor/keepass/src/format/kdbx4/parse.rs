@@ -25,6 +25,21 @@ use crate::{
 
 use super::KDBX4InnerHeader;
 
+impl Database {
+    /// Inspect the untrusted KDBX4 KDF configuration without deriving a key.
+    ///
+    /// Untrusted metadata is suitable only for resource admission. Callers
+    /// must still open the database and authenticate its complete contents.
+    pub fn kdbx4_kdf_config(data: &[u8]) -> Result<KdfConfig, DatabaseOpenError> {
+        if !matches!(DatabaseVersion::parse(data)?, DatabaseVersion::KDB4(_)) {
+            return Err(DatabaseOpenError::UnsupportedVersion);
+        }
+        let (header, _) = parse_outer_header(data)
+            .map_err(|error| DatabaseOpenError::Format(DatabaseFormatError::Kdbx4(Kdbx4OpenError::OuterHeader(error))))?;
+        Ok(header.kdf_config)
+    }
+}
+
 /// Open, decrypt and parse a KeePass database from a source and key elements
 pub(crate) fn parse_kdbx4(data: &[u8], db_key: &DatabaseKey) -> Result<Database, DatabaseOpenError> {
     let (config, header_attachments, mut inner_decryptor, xml) = decrypt_kdbx4(data, db_key)?;
@@ -147,6 +162,10 @@ pub(crate) fn decrypt_kdbx4(
     Ok((config, header_attachments, inner_decryptor, xml.to_vec()))
 }
 
+fn read_u32_field(bytes: &[u8]) -> Option<u32> {
+    bytes.get(..4).map(LittleEndian::read_u32)
+}
+
 fn parse_outer_header(data: &[u8]) -> Result<(KDBX4OuterHeader, usize), Kdbx4OuterHeaderError> {
     // skip over the version header
     let mut pos = DatabaseVersion::get_version_header_size();
@@ -196,7 +215,7 @@ fn parse_outer_header(data: &[u8]) -> Result<(KDBX4OuterHeader, usize), Kdbx4Out
             }
 
             HEADER_COMPRESSION_ID => {
-                compression_config = Some(CompressionConfig::try_from(LittleEndian::read_u32(entry_buffer))?);
+                compression_config = Some(CompressionConfig::try_from(read_u32_field(entry_buffer).ok_or(Kdbx4OuterHeaderError::UnexpectedEof)?)?);
             }
 
             HEADER_MASTER_SEED => master_seed = Some(entry_buffer.to_vec()),
@@ -316,7 +335,7 @@ fn parse_inner_header(
             INNER_HEADER_END => break,
 
             INNER_HEADER_RANDOM_STREAM_ID => {
-                inner_random_stream = Some(InnerCipherConfig::try_from(LittleEndian::read_u32(entry_buffer))?);
+                inner_random_stream = Some(InnerCipherConfig::try_from(read_u32_field(entry_buffer).ok_or(Kdbx4InnerHeaderError::UnexpectedEof)?)?);
             }
 
             INNER_HEADER_RANDOM_STREAM_KEY => inner_random_stream_key = Some(entry_buffer.to_vec()),

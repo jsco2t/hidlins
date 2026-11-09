@@ -138,6 +138,7 @@ impl PasswordInput {
     }
 
     fn insert_char(&mut self, c: char) {
+        crate::util::reserve_sensitive(&mut self.buffer, c.len_utf8());
         self.buffer.insert(self.cursor, c);
         self.cursor += c.len_utf8();
     }

@@ -187,10 +187,17 @@ pub enum MergeError {
 /// # Errors
 ///
 /// Returns [`MergeError::Unresolvable`] when the underlying merge cannot decide
-/// a winner (same-second divergence). `local` may be left partially modified on
+/// a winner (same-second divergence), or the root UUIDs identify unrelated
+/// databases. Identity rejection leaves both inputs unchanged.
+/// `local` may be left partially modified on
 /// error, which is why the orchestrator always snapshots `.kdbx.bak` before
 /// calling this.
 pub fn reconcile(local: &mut Database, remote: &Database) -> Result<MergeSummary, MergeError> {
+    if local.root().id() != remote.root().id() {
+        return Err(MergeError::Unresolvable {
+            reason: "cannot merge databases with different root identities".to_owned(),
+        });
+    }
     let before = entry_times(local);
 
     // Snapshot both sides' live entries *before* the merge, so we can enforce
@@ -601,8 +608,9 @@ fn attachment_state_matches(entry: &EntryRef<'_>, expected: &[AttachmentSnapshot
         })
 }
 
-/// Compare all entry content except timestamps, history, and pool-local
-/// attachment ids. Parent identity remains content so moves are preserved.
+/// Compare all entry content except ordering/access timestamps, history, and
+/// pool-local attachment ids. Expiration flags/cutoffs and parent identity
+/// remain content so expiry edits and moves are preserved.
 fn same_non_attachment_content(a: &Entry, b: &Entry) -> bool {
     a.id() == b.id()
         && a.parent_id() == b.parent_id()
@@ -616,6 +624,8 @@ fn same_non_attachment_content(a: &Entry, b: &Entry) -> bool {
         && a.background_color == b.background_color
         && a.override_url == b.override_url
         && a.quality_check == b.quality_check
+        && a.times.expires == b.times.expires
+        && a.times.expiry == b.times.expiry
 }
 
 fn same_non_attachment_version(a: &Entry, b: &Entry) -> bool {
@@ -648,7 +658,7 @@ fn history_has_version(entry: &EntryRef<'_>, candidate: &VersionSnapshot) -> boo
 
 /// Collect every entry's UUID → `last_modification` time by walking the group
 /// tree through the public read API. Used to summarize what a merge changed.
-fn entry_times(db: &Database) -> BTreeMap<Uuid, Option<NaiveDateTime>> {
+pub(crate) fn entry_times(db: &Database) -> BTreeMap<Uuid, Option<NaiveDateTime>> {
     fn walk(group: &GroupRef<'_>, out: &mut BTreeMap<Uuid, Option<NaiveDateTime>>) {
         for entry in group.entries() {
             out.insert(entry.id().uuid(), entry.times.last_modification);
@@ -663,7 +673,7 @@ fn entry_times(db: &Database) -> BTreeMap<Uuid, Option<NaiveDateTime>> {
 }
 
 /// Classify the difference between two UUID → time snapshots of `local`.
-fn delta_between(
+pub(crate) fn delta_between(
     before: &BTreeMap<Uuid, Option<NaiveDateTime>>,
     after: &BTreeMap<Uuid, Option<NaiveDateTime>>,
 ) -> EntryDelta {

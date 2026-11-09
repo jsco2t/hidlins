@@ -3,15 +3,13 @@ use std::iter::FromIterator;
 use crate::key::Key;
 use crate::repr::Decor;
 use crate::table::{Iter, IterMut, KeyValuePairs, TableLike};
-use crate::{Item, KeyMut, RawString, Table, Value};
+use crate::{InternalString, Item, KeyMut, RawString, Table, Value};
 
 /// A TOML [`Value`] that contains a collection of [`Key`]/[`Value`] pairs
 #[derive(Debug, Default, Clone)]
 pub struct InlineTable {
-    // `trailing` represents whitespaces, newlines
-    // and comments in an empty array or after the trailing comma
-    trailing: RawString,
-    trailing_comma: bool,
+    // `preamble` represents whitespaces in an empty table
+    preamble: RawString,
     // Whether to hide an empty table
     pub(crate) implicit: bool,
     // prefix before `{` and suffix after `}`
@@ -53,61 +51,34 @@ impl InlineTable {
     /// For example, this will return dotted keys
     pub fn get_values(&self) -> Vec<(Vec<&Key>, &Value)> {
         let mut values = Vec::new();
-        let mut root = Vec::new();
-        self.append_values(&mut root, &mut values);
+        let root = Vec::new();
+        self.append_values(&root, &mut values);
         values
     }
 
-    /// Helper for `get_values()`.
-    ///
-    /// `path` is the parent for this table. path is mutable to reuse allocations but no mutations
-    /// should be observable.
     pub(crate) fn append_values<'s>(
         &'s self,
-        path: &mut Vec<&'s Key>,
+        parent: &[&'s Key],
         values: &mut Vec<(Vec<&'s Key>, &'s Value)>,
     ) {
         for (key, value) in self.items.iter() {
+            let mut path = parent.to_vec();
             path.push(key);
             match value {
                 Item::Value(Value::InlineTable(table)) if table.is_dotted() => {
-                    table.append_values(path, values);
+                    table.append_values(&path, values);
                 }
                 Item::Value(value) => {
-                    values.push((path.clone(), value));
-                }
-                Item::Table(table) => {
-                    table.append_all_values(path, values);
+                    values.push((path, value));
                 }
                 _ => {}
             }
-            path.pop();
         }
     }
 
     /// Auto formats the table.
     pub fn fmt(&mut self) {
         decorate_inline_table(self);
-    }
-
-    /// Set whether the array will use a trailing comma
-    pub fn set_trailing_comma(&mut self, yes: bool) {
-        self.trailing_comma = yes;
-    }
-
-    /// Whether the array will use a trailing comma
-    pub fn trailing_comma(&self) -> bool {
-        self.trailing_comma
-    }
-
-    /// Set whitespace after last element
-    pub fn set_trailing(&mut self, trailing: impl Into<RawString>) {
-        self.trailing = trailing.into();
-    }
-
-    /// Whitespace after last element
-    pub fn trailing(&self) -> &RawString {
-        &self.trailing
     }
 
     /// Sorts [Key]/[Value]-pairs of the table
@@ -235,9 +206,36 @@ impl InlineTable {
             .map(|(_, key, _)| key.as_mut())
     }
 
+    /// Returns the decor associated with a given key of the table.
+    #[deprecated(since = "0.21.1", note = "Replaced with `key_mut`")]
+    pub fn key_decor_mut(&mut self, key: &str) -> Option<&mut Decor> {
+        #![allow(deprecated)]
+        use indexmap::map::MutableKeys;
+        self.items
+            .get_full_mut2(key)
+            .map(|(_, key, _)| key.leaf_decor_mut())
+    }
+
+    /// Returns the decor associated with a given key of the table.
+    #[deprecated(since = "0.21.1", note = "Replaced with `key_mut`")]
+    pub fn key_decor(&self, key: &str) -> Option<&Decor> {
+        #![allow(deprecated)]
+        self.items.get_full(key).map(|(_, key, _)| key.leaf_decor())
+    }
+
+    /// Set whitespace after before element
+    pub fn set_preamble(&mut self, preamble: impl Into<RawString>) {
+        self.preamble = preamble.into();
+    }
+
+    /// Whitespace after before element
+    pub fn preamble(&self) -> &RawString {
+        &self.preamble
+    }
+
     /// The location within the original document
     ///
-    /// This generally requires a [`Document`][crate::Document].
+    /// This generally requires an [`ImDocument`][crate::ImDocument].
     pub fn span(&self) -> Option<std::ops::Range<usize>> {
         self.span.clone()
     }
@@ -246,7 +244,7 @@ impl InlineTable {
         use indexmap::map::MutableKeys;
         self.span = None;
         self.decor.despan(input);
-        self.trailing.despan(input);
+        self.preamble.despan(input);
         for (key, value) in self.items.iter_mut2() {
             key.despan(input);
             value.despan(input);
@@ -292,7 +290,7 @@ impl InlineTable {
     }
 
     /// Gets the given key's corresponding entry in the Table for in-place manipulation.
-    pub fn entry(&'_ mut self, key: impl Into<String>) -> InlineEntry<'_> {
+    pub fn entry(&'_ mut self, key: impl Into<InternalString>) -> InlineEntry<'_> {
         match self.items.entry(key.into().into()) {
             indexmap::map::Entry::Occupied(mut entry) => {
                 // Ensure it is a `Value` to simplify `InlineOccupiedEntry`'s code.
@@ -381,7 +379,7 @@ impl InlineTable {
     /// Returns a mutable reference to the corresponding value.
     pub fn get_or_insert<V: Into<Value>>(
         &mut self,
-        key: impl Into<String>,
+        key: impl Into<InternalString>,
         value: V,
     ) -> &mut Value {
         let key = key.into();
@@ -393,7 +391,7 @@ impl InlineTable {
     }
 
     /// Inserts a key-value pair into the map.
-    pub fn insert(&mut self, key: impl Into<String>, value: Value) -> Option<Value> {
+    pub fn insert(&mut self, key: impl Into<InternalString>, value: Value) -> Option<Value> {
         use indexmap::map::MutableEntryKey;
         let key = Key::new(key);
         let value = Item::Value(value);
@@ -481,14 +479,14 @@ impl<K: Into<Key>, V: Into<Value>> FromIterator<(K, V)> for InlineTable {
     where
         I: IntoIterator<Item = (K, V)>,
     {
-        let mut table = Self::new();
+        let mut table = InlineTable::new();
         table.extend(iter);
         table
     }
 }
 
 impl IntoIterator for InlineTable {
-    type Item = (String, Value);
+    type Item = (InternalString, Value);
     type IntoIter = InlineTableIntoIter;
 
     fn into_iter(self) -> Self::IntoIter {
@@ -525,7 +523,7 @@ fn decorate_inline_table(table: &mut InlineTable) {
 }
 
 /// An owned iterator type over an [`InlineTable`]'s [`Key`]/[`Value`] pairs
-pub type InlineTableIntoIter = Box<dyn Iterator<Item = (String, Value)>>;
+pub type InlineTableIntoIter = Box<dyn Iterator<Item = (InternalString, Value)>>;
 /// An iterator type over [`InlineTable`]'s [`Key`]/[`Value`] pairs
 pub type InlineTableIter<'a> = Box<dyn Iterator<Item = (&'a str, &'a Value)> + 'a>;
 /// A mutable iterator type over [`InlineTable`]'s [`Key`]/[`Value`] pairs
@@ -547,7 +545,7 @@ impl TableLike for InlineTable {
         self.clear();
     }
     fn entry<'a>(&'a mut self, key: &str) -> crate::Entry<'a> {
-        // Accept a `&str` rather than an owned type to keep `String`, well, internal
+        // Accept a `&str` rather than an owned type to keep `InternalString`, well, internal
         match self.items.entry(key.into()) {
             indexmap::map::Entry::Occupied(entry) => {
                 crate::Entry::Occupied(crate::OccupiedEntry { entry })
@@ -612,6 +610,14 @@ impl TableLike for InlineTable {
     }
     fn key_mut(&mut self, key: &str) -> Option<KeyMut<'_>> {
         self.key_mut(key)
+    }
+    fn key_decor_mut(&mut self, key: &str) -> Option<&mut Decor> {
+        #![allow(deprecated)]
+        self.key_decor_mut(key)
+    }
+    fn key_decor(&self, key: &str) -> Option<&Decor> {
+        #![allow(deprecated)]
+        self.key_decor(key)
     }
 }
 

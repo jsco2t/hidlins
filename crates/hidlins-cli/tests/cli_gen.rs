@@ -106,9 +106,10 @@ fn gen_passphrase_default_human_six_words() {
 
 #[test]
 fn gen_passphrase_custom_word_count() {
-    let (code, stdout, _) = run_args(&["gen", "passphrase", "--word-count", "8"]);
+    let (code, stdout, _) =
+        run_args(&["gen", "passphrase", "--word-count", "8", "--separator", " "]);
     assert_eq!(code, 0);
-    let words: Vec<&str> = stdout.trim_end().split('-').collect();
+    let words: Vec<&str> = stdout.trim_end().split(' ').collect();
     assert_eq!(words.len(), 8);
 }
 
@@ -145,12 +146,16 @@ fn gen_passphrase_json_show_emits_value() {
         "passphrase",
         "--word-count",
         "3",
+        "--separator",
+        " ",
         "--show",
     ]);
     assert_eq!(code, 0);
     let v: Value = serde_json::from_str(stdout.trim()).expect("valid JSON");
     let value = v["passphrase"].as_str().expect("passphrase present");
-    assert_eq!(value.split('-').count(), 3);
+    assert_eq!(v["word_count"], 3);
+    assert_eq!(v["separator"], " ");
+    assert_eq!(value.split(' ').count(), 3);
 }
 
 #[test]

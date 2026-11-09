@@ -21,9 +21,9 @@
 
 use std::sync::mpsc::{self, Receiver, TryRecvError};
 use std::sync::Arc;
-use std::thread;
+use std::thread::{self, JoinHandle};
 
-use hidlins_core::{MasterPassword, Vault, VaultRegistry};
+use hidlins_core::{Keyfile, MasterPassword, Vault, VaultRegistry};
 use hidlins_sync::{
     client,
     discovery::{self, CandidateCache, ServiceKind},
@@ -82,6 +82,23 @@ pub(crate) trait SyncEngine: Send + std::marker::Sync {
         master_password: &MasterPassword,
         opts: SyncOptions,
     ) -> Result<SyncOutcome, SyncError>;
+
+    /// Owner cancellation for engines with blocking discovery/network work.
+    /// Immediate engines keep the original seam; production overrides this.
+    fn sync_now_with_cancellation(
+        &self,
+        vault: &mut Vault,
+        vault_name: &str,
+        registry: &mut VaultRegistry,
+        master_password: &MasterPassword,
+        opts: SyncOptions,
+        cancellation: client::LanCancellation,
+    ) -> Result<SyncOutcome, SyncError> {
+        if cancellation.is_cancelled() {
+            return Err(client::LanError::Cancelled.into());
+        }
+        self.sync_now(vault, vault_name, registry, master_password, opts)
+    }
 }
 
 /// Production engine: discovers candidates and forwards to the local client.
@@ -96,7 +113,29 @@ impl SyncEngine for RealSyncEngine {
         master_password: &MasterPassword,
         opts: SyncOptions,
     ) -> Result<SyncOutcome, SyncError> {
+        self.sync_now_with_cancellation(
+            vault,
+            vault_name,
+            registry,
+            master_password,
+            opts,
+            client::LanCancellation::default(),
+        )
+    }
+
+    fn sync_now_with_cancellation(
+        &self,
+        vault: &mut Vault,
+        vault_name: &str,
+        registry: &mut VaultRegistry,
+        master_password: &MasterPassword,
+        opts: SyncOptions,
+        cancellation: client::LanCancellation,
+    ) -> Result<SyncOutcome, SyncError> {
         let mut candidates = Vec::new();
+        if cancellation.is_cancelled() {
+            return Err(client::LanError::Cancelled.into());
+        }
         if let Ok(mut browser) = discovery::desktop::DesktopBrowser::start() {
             let mut cache = CandidateCache::new();
             candidates = discovery::collect_candidates(
@@ -105,18 +144,23 @@ impl SyncEngine for RealSyncEngine {
                 ServiceKind::Trusted,
                 std::time::Duration::from_millis(500),
                 std::time::Duration::from_millis(20),
-                || false,
+                || cancellation.is_cancelled(),
             )
             .unwrap_or_default();
         }
-        client::sync_vault(
+        let keyfile = registry
+            .get(vault_name)
+            .and_then(|registered| registered.keyfile_path.clone())
+            .map(Keyfile::Path);
+        client::sync_vault_with_cancellation(
             vault,
             vault_name,
             registry,
             master_password,
-            None,
+            keyfile.as_ref(),
             candidates,
             opts,
+            cancellation,
         )
     }
 }
@@ -125,7 +169,13 @@ impl SyncEngine for RealSyncEngine {
 /// worker channel while a sync is in flight.
 pub(crate) struct SyncRuntime {
     engine: Arc<dyn SyncEngine>,
-    inflight: Option<Receiver<SyncMsg>>,
+    inflight: Option<SyncWorker>,
+}
+
+struct SyncWorker {
+    receiver: Receiver<SyncMsg>,
+    cancellation: client::LanCancellation,
+    handle: JoinHandle<()>,
 }
 
 impl SyncRuntime {
@@ -166,10 +216,16 @@ impl SyncRuntime {
         master_password: MasterPassword,
         trigger: SyncTrigger,
     ) {
+        assert!(
+            self.inflight.is_none(),
+            "only one sync worker may own the vault"
+        );
         let (tx, rx) = mpsc::channel();
         let engine = Arc::clone(&self.engine);
         let activity_tx = tx.clone();
-        thread::spawn(move || {
+        let cancellation = client::LanCancellation::default();
+        let worker_cancellation = cancellation.clone();
+        let handle = thread::spawn(move || {
             let mut vault = vault;
             let mut registry = registry;
             let opts = SyncOptions {
@@ -182,15 +238,15 @@ impl SyncRuntime {
                 })),
                 ..SyncOptions::default()
             };
-            let outcome = engine.sync_now(
+            let outcome = engine.sync_now_with_cancellation(
                 &mut vault,
                 &vault_name,
                 &mut registry,
                 &master_password,
                 opts,
+                worker_cancellation,
             );
-            // `master_password` drops here → zeroized on this thread, never
-            // retained by the App.
+            drop(master_password);
             let _ = tx.send(SyncMsg::Done(Box::new(SyncResult {
                 vault,
                 registry,
@@ -198,7 +254,26 @@ impl SyncRuntime {
                 trigger,
             })));
         });
-        self.inflight = Some(rx);
+        self.inflight = Some(SyncWorker {
+            receiver: rx,
+            cancellation,
+            handle,
+        });
+    }
+
+    pub(crate) fn cancel(&self) {
+        if let Some(worker) = self.inflight.as_ref() {
+            worker.cancellation.cancel();
+        }
+    }
+
+    /// Cancel and join before dropping queued results, so credentials and the
+    /// worker-owned vault cannot outlive their runtime owner.
+    pub(crate) fn shutdown(&mut self) {
+        if let Some(worker) = self.inflight.take() {
+            worker.cancellation.cancel();
+            let _ = worker.handle.join();
+        }
     }
 
     /// Drain pending worker messages without blocking. Clears the in-flight
@@ -207,7 +282,8 @@ impl SyncRuntime {
     pub(crate) fn drain(&mut self) -> Vec<SyncMsg> {
         let mut msgs = Vec::new();
         let mut finished = false;
-        if let Some(rx) = self.inflight.as_ref() {
+        if let Some(worker) = self.inflight.as_ref() {
+            let rx = &worker.receiver;
             loop {
                 match rx.try_recv() {
                     Ok(msg) => {
@@ -233,9 +309,17 @@ impl SyncRuntime {
             }
         }
         if finished {
-            self.inflight = None;
+            if let Some(worker) = self.inflight.take() {
+                let _ = worker.handle.join();
+            }
         }
         msgs
+    }
+}
+
+impl Drop for SyncRuntime {
+    fn drop(&mut self) {
+        self.shutdown();
     }
 }
 
@@ -354,7 +438,11 @@ mod tests {
                 outcome: || Ok(SyncOutcome::AlreadyInSync),
                 ping_activity: false,
             }),
-            inflight: Some(rx),
+            inflight: Some(SyncWorker {
+                receiver: rx,
+                cancellation: client::LanCancellation::default(),
+                handle: thread::spawn(|| {}),
+            }),
         };
         assert!(rt.is_syncing(), "inflight is set before draining");
         let msgs = rt.drain();

@@ -5,7 +5,7 @@ use std::collections::BTreeSet;
 use keepass::db::{MoveGroupError, Times};
 
 use crate::entry::crud::{find_group_id, is_entry_in_recycle_bin, recycle_bin_group_id_or_create};
-use crate::{Tag, Vault, VaultError};
+use crate::{Tag, Vault, VaultError, VaultReadOnly};
 
 /// Behavior to use when deleting a group.
 #[derive(Clone, Copy, Debug, Default, Eq, PartialEq)]
@@ -59,6 +59,22 @@ impl<'a> GroupView<'a> {
     /// Return whether the group has no child groups or entries.
     pub fn is_empty(&self) -> bool {
         self.group.group_ids().next().is_none() && self.group.entry_ids().next().is_none()
+    }
+}
+
+impl VaultReadOnly {
+    /// Return the root group UUID without requiring writable access.
+    pub fn root_group_uuid(&self) -> uuid::Uuid {
+        self.database().root().id().uuid()
+    }
+
+    /// Return an immutable group view under this handle's shared lock.
+    pub fn group_view(&self, uuid: uuid::Uuid) -> Result<GroupView<'_>, VaultError> {
+        let group_id = find_group_id(self.database(), uuid)?;
+        self.database()
+            .group(group_id)
+            .map(GroupView::new)
+            .ok_or(VaultError::GroupNotFound { uuid })
     }
 }
 

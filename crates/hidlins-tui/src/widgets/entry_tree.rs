@@ -20,7 +20,6 @@ use std::cmp::Ordering;
 use std::collections::HashSet;
 
 use chrono::{DateTime, Utc};
-use hidlins_core::Vault;
 use ratatui::layout::Rect;
 use ratatui::style::{Modifier, Style};
 use ratatui::text::{Line, Span};
@@ -31,6 +30,7 @@ use uuid::Uuid;
 
 use crate::recents::Recents;
 use crate::theme::Theme;
+use crate::vault_view::VaultView;
 
 /// Tree sort order (design U.2). Applies to **entries within each group**;
 /// groups always sort by name. `RecentlyUsed` is the redesign default (D-2):
@@ -264,7 +264,12 @@ impl TreeState {
 /// Pure and clock-free — the expired affordance is computed at render time.
 /// `recents` supplies the per-vault MRU ordering for the `RecentlyUsed` sort
 /// (ignored by the other orders).
-pub(crate) fn build_rows(vault: &Vault, state: &TreeState, recents: &Recents) -> Vec<TreeRow> {
+pub(crate) fn build_rows<'a>(
+    vault: impl Into<VaultView<'a>>,
+    state: &TreeState,
+    recents: &Recents,
+) -> Vec<TreeRow> {
+    let vault = vault.into();
     let recycle = vault
         .group_summaries()
         .into_iter()
@@ -288,7 +293,7 @@ pub(crate) fn build_rows(vault: &Vault, state: &TreeState, recents: &Recents) ->
 /// into expanded groups.
 #[allow(clippy::too_many_arguments)]
 fn walk(
-    vault: &Vault,
+    vault: VaultView<'_>,
     group_uuid: Uuid,
     depth: usize,
     expanded: &HashSet<Uuid>,
@@ -356,7 +361,7 @@ fn walk(
 /// Sort entry UUIDs in place per `sort`. `RecentlyUsed` orders by position in
 /// `recents` (most-recent first); entries absent from the list fall back to
 /// title order, so an empty recents list degenerates to a plain title sort.
-fn sort_entries(vault: &Vault, entries: &mut [Uuid], sort: SortOrder, recents: &Recents) {
+fn sort_entries(vault: VaultView<'_>, entries: &mut [Uuid], sort: SortOrder, recents: &Recents) {
     match sort {
         // Native order from `entry_uuids()` (UUID order); a stable grouping.
         SortOrder::Group => {}
@@ -390,7 +395,7 @@ fn sort_entries(vault: &Vault, entries: &mut [Uuid], sort: SortOrder, recents: &
     }
 }
 
-fn title_key(vault: &Vault, uuid: Uuid) -> String {
+fn title_key(vault: VaultView<'_>, uuid: Uuid) -> String {
     vault
         .get_entry(uuid)
         .map(|e| e.title().to_lowercase())
@@ -399,7 +404,7 @@ fn title_key(vault: &Vault, uuid: Uuid) -> String {
 
 /// Compare two entries by title (case-insensitive), tie-breaking on UUID for a
 /// stable total order.
-fn title_cmp(vault: &Vault, a: Uuid, b: Uuid) -> Ordering {
+fn title_cmp(vault: VaultView<'_>, a: Uuid, b: Uuid) -> Ordering {
     title_key(vault, a)
         .cmp(&title_key(vault, b))
         .then(a.cmp(&b))
@@ -408,13 +413,14 @@ fn title_cmp(vault: &Vault, a: Uuid, b: Uuid) -> Ordering {
 /// Build the per-row `ListItem`s. `now` drives the expired affordance; kept
 /// separate from [`render_tree`] so the draw call stays under the argument cap
 /// and so callers can reuse the items.
-pub(crate) fn tree_items(
+pub(crate) fn tree_items<'a>(
     rows: &[TreeRow],
-    vault: &Vault,
+    vault: impl Into<VaultView<'a>>,
     now: DateTime<Utc>,
     marks: &HashSet<Uuid>,
     theme: &Theme,
 ) -> Vec<ListItem<'static>> {
+    let vault = vault.into();
     rows.iter()
         .map(|row| list_item(*row, vault, now, marks, theme))
         .collect()
@@ -461,7 +467,7 @@ pub(crate) fn render_tree(
 
 fn list_item(
     row: TreeRow,
-    vault: &Vault,
+    vault: VaultView<'_>,
     now: DateTime<Utc>,
     marks: &HashSet<Uuid>,
     theme: &Theme,

@@ -17,7 +17,7 @@
 //! scroll offset (clamped to content height), and draws the bordered pane.
 
 use chrono::{DateTime, Utc};
-use hidlins_core::{EntryKind, Vault, Zeroizing};
+use hidlins_core::{EntryKind, Zeroizing};
 use ratatui::layout::Rect;
 use ratatui::style::Style;
 use ratatui::text::{Line, Span};
@@ -27,6 +27,7 @@ use uuid::Uuid;
 
 use crate::app::{App, Focus};
 use crate::theme::Theme;
+use crate::vault_view::VaultView;
 
 /// Fixed-width password mask. A constant width (not `password.len()`) so the
 /// rendered field never leaks the secret's length.
@@ -36,7 +37,7 @@ const MASK: &str = "••••••••";
 /// an `EntryView` by [`build_detail_data`]; consumed by [`detail_lines`].
 ///
 /// **No `Debug` derive:** `password` is the live entry secret. It is held in a
-/// [`Zeroizing`] so the per-frame copy is wiped on drop (CLAUDE.md zeroize-on-
+/// [`Zeroizing`] like sensitive notes so per-frame copies are wiped on drop (CLAUDE.md zeroize-on-
 /// drop), and `Debug` is omitted so the secret can never be formatted/logged.
 #[derive(Clone, Default)]
 pub(crate) struct DetailData {
@@ -45,13 +46,13 @@ pub(crate) struct DetailData {
     pub(crate) username: String,
     pub(crate) url: String,
     pub(crate) password: Zeroizing<String>,
-    pub(crate) notes: String,
+    pub(crate) notes: Zeroizing<String>,
     /// Preformatted `YYYY-MM-DD HH:MM UTC` strings.
     pub(crate) created: Option<String>,
     pub(crate) modified: Option<String>,
     pub(crate) expired: bool,
     /// `(code, seconds_remaining)` when the entry carries a TOTP secret.
-    pub(crate) totp: Option<(String, u64)>,
+    pub(crate) totp: Option<(Zeroizing<String>, u64)>,
     /// `(name, size_bytes)` per attachment.
     pub(crate) attachments: Vec<(String, u64)>,
     pub(crate) tags: Vec<String>,
@@ -75,8 +76,8 @@ pub(crate) struct CustomFieldData {
 
 /// Render `DetailData` into styled lines. Pure: identical input → identical
 /// output, regardless of clock or terminal.
-pub(crate) fn detail_lines(data: &DetailData, reveal: bool, theme: &Theme) -> Vec<Line<'static>> {
-    let mut lines: Vec<Line<'static>> = Vec::new();
+pub(crate) fn detail_lines<'a>(data: &'a DetailData, reveal: bool, theme: &Theme) -> Vec<Line<'a>> {
+    let mut lines: Vec<Line<'a>> = Vec::new();
 
     // Title (always shown). Expired entries get the bold + " (expired)" dual
     // affordance (FR-074).
@@ -103,9 +104,9 @@ pub(crate) fn detail_lines(data: &DetailData, reveal: bool, theme: &Theme) -> Ve
         // Only materialise the plaintext when actually revealing; the masked
         // path never copies the secret out of the `Zeroizing` buffer.
         let (value, hint) = if reveal {
-            (data.password.as_str().to_string(), " (Space: hide)")
+            (data.password.as_str(), " (Space: hide)")
         } else {
-            (MASK.to_string(), " (Space: reveal)")
+            (MASK, " (Space: reveal)")
         };
         lines.push(Line::from(vec![
             Span::raw("Password: "),
@@ -116,7 +117,7 @@ pub(crate) fn detail_lines(data: &DetailData, reveal: bool, theme: &Theme) -> Ve
     if let Some((code, remaining)) = &data.totp {
         lines.push(Line::from(vec![
             Span::raw("TOTP: "),
-            Span::styled(code.clone(), theme.good()),
+            Span::styled(code.as_str(), theme.good()),
             Span::styled(format!("  (valid {remaining}s)"), theme.muted()),
         ]));
     }
@@ -124,7 +125,7 @@ pub(crate) fn detail_lines(data: &DetailData, reveal: bool, theme: &Theme) -> Ve
     if !data.notes.is_empty() {
         lines.push(section("Notes:", theme));
         for line in data.notes.lines() {
-            lines.push(Line::from(format!("  {line}")));
+            lines.push(Line::from(vec![Span::raw("  "), Span::raw(line)]));
         }
     }
 
@@ -157,11 +158,10 @@ pub(crate) fn detail_lines(data: &DetailData, reveal: bool, theme: &Theme) -> Ve
                     Span::styled(" (Space: reveal)".to_string(), theme.muted()),
                 ]));
             } else {
-                lines.push(Line::from(format!(
-                    "  {}: {}",
-                    field.name,
-                    field.value.as_str()
-                )));
+                lines.push(Line::from(vec![
+                    Span::raw(format!("  {}: ", field.name)),
+                    Span::raw(field.value.as_str()),
+                ]));
             }
         }
     }
@@ -185,6 +185,8 @@ pub(crate) fn detail_lines(data: &DetailData, reveal: bool, theme: &Theme) -> Ve
         Span::styled(" (Shift+H to view)".to_string(), theme.muted()),
     ]));
 
+    #[cfg(test)]
+    crate::render_memory_regressions::capture("detail", &lines);
     lines
 }
 
@@ -222,7 +224,12 @@ pub(crate) fn build_detail_data(app: &App, now: DateTime<Utc>) -> Option<DetailD
 /// Snapshot a specific entry's fields into a [`DetailData`]. Returns `None` if
 /// `uuid` is not an entry (e.g. a group UUID, or a stale pinned UUID whose
 /// entry was deleted). Shared by the Secrets-tab selection and pinned tabs.
-pub(crate) fn detail_data_for(vault: &Vault, uuid: Uuid, now: DateTime<Utc>) -> Option<DetailData> {
+pub(crate) fn detail_data_for<'a>(
+    vault: impl Into<VaultView<'a>>,
+    uuid: Uuid,
+    now: DateTime<Utc>,
+) -> Option<DetailData> {
+    let vault = vault.into();
     // `get_entry` errors on a group UUID, which is exactly the "not an entry"
     // signal we want.
     let entry = vault.get_entry(uuid).ok()?;
@@ -235,7 +242,8 @@ pub(crate) fn detail_data_for(vault: &Vault, uuid: Uuid, now: DateTime<Utc>) -> 
 
     let totp = matches!(entry.kind(), EntryKind::Totp)
         .then(|| vault.totp(uuid).ok())
-        .flatten();
+        .flatten()
+        .map(|(code, remaining)| (Zeroizing::new(code), remaining));
 
     // Custom fields, excluding any OTP-bearing field (surfaced as TOTP above)
     // so the secret seed is never rendered in plaintext.
@@ -258,7 +266,7 @@ pub(crate) fn detail_data_for(vault: &Vault, uuid: Uuid, now: DateTime<Utc>) -> 
         username: entry.username().to_string(),
         url: entry.url().to_string(),
         password: Zeroizing::new(entry.password().to_string()),
-        notes: entry.notes().to_string(),
+        notes: Zeroizing::new(entry.notes().to_string()),
         created: entry.creation_time().map(crate::util::format_ts),
         modified: entry.last_modification_time().map(crate::util::format_ts),
         expired: vault.is_expired(uuid, now).unwrap_or(false),
@@ -311,7 +319,7 @@ pub(crate) fn render_detail(app: &App, frame: &mut Frame, area: Rect, now: DateT
 /// (entry deleted) renders the "not found" placeholder rather than panicking.
 #[allow(clippy::too_many_arguments)]
 pub(crate) fn render_pinned(
-    vault: &Vault,
+    vault: VaultView<'_>,
     uuid: Uuid,
     reveal: bool,
     scroll: u16,
@@ -369,16 +377,29 @@ fn render_detail_data(
         return;
     };
 
-    let lines = detail_lines(data, reveal, theme);
-    let viewport = block.inner(area).height as usize;
-    let max_scroll = u16::try_from(lines.len().saturating_sub(viewport)).unwrap_or(u16::MAX);
+    let inner = block.inner(area);
+    let paragraph = Paragraph::new(detail_lines(data, reveal, theme)).wrap(Wrap { trim: false });
+    let max_scroll = paragraph_scroll_limit(&paragraph, inner);
     let scroll = scroll.min(max_scroll);
 
-    let paragraph = Paragraph::new(lines)
-        .block(block)
-        .wrap(Wrap { trim: false })
-        .scroll((scroll, 0));
+    let paragraph = paragraph.block(block).scroll((scroll, 0));
     frame.render_widget(paragraph, area);
+}
+
+/// The event and render paths use the same wrapping and actual inner viewport.
+pub(crate) fn detail_scroll_limit(
+    data: &DetailData,
+    reveal: bool,
+    theme: &Theme,
+    inner: Rect,
+) -> u16 {
+    let paragraph = Paragraph::new(detail_lines(data, reveal, theme)).wrap(Wrap { trim: false });
+    paragraph_scroll_limit(&paragraph, inner)
+}
+
+fn paragraph_scroll_limit(paragraph: &Paragraph<'_>, inner: Rect) -> u16 {
+    let rows = paragraph.line_count(inner.width);
+    u16::try_from(rows.saturating_sub(usize::from(inner.height))).unwrap_or(u16::MAX)
 }
 
 #[cfg(test)]
@@ -434,7 +455,7 @@ mod tests {
             username: "octocat".to_string(),
             url: "https://github.com".to_string(),
             password: Zeroizing::new("hunter2".to_string()),
-            notes: "first line\nsecond line".to_string(),
+            notes: "first line\nsecond line".to_string().into(),
             created: Some("2026-01-02 03:04 UTC".to_string()),
             modified: Some("2026-05-06 07:08 UTC".to_string()),
             expired: false,
@@ -460,7 +481,8 @@ mod tests {
     // T-DETAIL-1: every field type renders with a text label.
     #[test]
     fn renders_all_field_types_with_labels() {
-        let lines = detail_lines(&full_credential(), false, &theme());
+        let data = full_credential();
+        let lines = detail_lines(&data, false, &theme());
         let joined: Vec<String> = lines.iter().map(text).collect();
         let blob = joined.join("\n");
         assert!(blob.contains("Title: GitHub"));
@@ -555,7 +577,7 @@ mod tests {
     fn totp_line_shows_code_and_window() {
         let mut data = full_credential();
         data.kind = "TOTP";
-        data.totp = Some(("123456".to_string(), 23));
+        data.totp = Some(("123456".to_string().into(), 23));
         let blob = detail_lines(&data, false, &theme())
             .iter()
             .map(text)
@@ -571,7 +593,7 @@ mod tests {
         let data = DetailData {
             title: "Note".to_string(),
             kind: "Secure Note",
-            notes: "secret".to_string(),
+            notes: "secret".to_string().into(),
             history_count: 0,
             ..DetailData::default()
         };

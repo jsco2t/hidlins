@@ -1,5 +1,8 @@
+import 'dart:async';
+
 import 'package:material_ui/material_ui.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
+import 'package:go_router/go_router.dart';
 
 import '../../l10n/app_localizations.dart';
 import '../../licenses.dart';
@@ -22,6 +25,16 @@ class SettingsPage extends ConsumerWidget {
           style: Theme.of(context).textTheme.headlineSmall,
         ),
         const SizedBox(height: HidlinsSpacing.lg),
+
+        Card(
+          child: ListTile(
+            leading: const Icon(Icons.folder_outlined),
+            title: Text(l10n.navVaults),
+            trailing: const Icon(Icons.chevron_right),
+            onTap: () => unawaited(context.push<void>('/vaults')),
+          ),
+        ),
+        const SizedBox(height: HidlinsSpacing.sm),
 
         // Theme
         Card(

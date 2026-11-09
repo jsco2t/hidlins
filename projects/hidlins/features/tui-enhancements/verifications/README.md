@@ -1,7 +1,7 @@
 # TUI Enhancements Verification
 
 **Feature:** TUI Enhancements
-**Last Updated:** 2026-08-31
+**Last Updated:** 2026-11-09
 
 Deterministic discoverability, configuration, theme, search, navigation, bulk,
 mouse, read-only, secret-redaction, and accessibility semantics are automated
@@ -18,8 +18,11 @@ plus their manual-only fixtures and scratch directory, were removed.
 - The work-package coverage ledger records the replacement for every former
   `TE-DS-*` and `TE-SR-*` ID.
 
-The surviving `01-local-headless/` documents are historical command/runbook
-references. Repository Make targets are authoritative.
+Engineering plans and historical runbooks live in the
+[external project verification workspace](../../../../../../projects/hidlins/features/tui-enhancements/verifications/index.md).
+This link assumes the sibling project-workspace layout documented in
+`CLAUDE.md`; those runbook trees are not copied here. Repository Make targets
+are authoritative for current execution.
 
 ## Real-environment confidence
 

@@ -8,9 +8,31 @@ use crate::error::HidlinsApiError;
 
 impl AppSession {
     /// Change the vault password and rewrap (never replace) its local Noise identity.
-    #[allow(clippy::needless_pass_by_value, clippy::too_many_lines)]
     pub fn change_master_password(
         &self,
+        current: String,
+        new_password: String,
+    ) -> Result<(), HidlinsApiError> {
+        self.change_password_for_target(None, current, new_password)
+    }
+
+    /// Rotate only when the selected registered vault is currently unlocked.
+    /// The target check and credential rotation share the session mutex, so a
+    /// stale UI action cannot rotate another vault after a lock or switch.
+    #[allow(clippy::needless_pass_by_value)]
+    pub fn change_vault_master_password(
+        &self,
+        vault_name: String,
+        current: String,
+        new_password: String,
+    ) -> Result<(), HidlinsApiError> {
+        self.change_password_for_target(Some(&vault_name), current, new_password)
+    }
+
+    #[allow(clippy::too_many_lines)]
+    fn change_password_for_target(
+        &self,
+        selected: Option<&str>,
         current: String,
         new_password: String,
     ) -> Result<(), HidlinsApiError> {
@@ -27,6 +49,18 @@ impl AppSession {
             .ok_or(HidlinsApiError::VaultLocked)?
             .path()
             .to_path_buf();
+        if let Some(selected) = selected {
+            if state
+                .registry
+                .get(selected)
+                .is_none_or(|entry| entry.path != vault_path)
+            {
+                return Err(HidlinsApiError::InvalidInput {
+                    field: "vault".to_string(),
+                    reason: "unlock the selected vault before changing its password".to_string(),
+                });
+            }
+        }
         let vault_name = state
             .registry
             .list()
@@ -103,6 +137,9 @@ impl AppSession {
             return Err(error.into());
         }
 
+        // The same public identity now has a different credential wrapping.
+        // Pending confirmation must not persist its old sealed configuration.
+        state.pairing_api.cancel_all();
         let old_keyfile = state
             .credentials
             .as_mut()

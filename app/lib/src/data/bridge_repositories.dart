@@ -162,8 +162,8 @@ final class BridgeSessionRepository implements SessionRepository {
   void reportActivity() => _bridgeSync(_session.reportActivity);
 
   @override
-  LockEvent reportLifecycleState(LifecycleStateDto state) =>
-      _bridgeSync(() => _session.reportLifecycleState(state: state));
+  Future<LockEvent> reportLifecycleState(LifecycleStateDto state) =>
+      _bridgeFuture(() => _session.reportLifecycleState(state: state));
 
   @override
   Future<List<VaultSummary>> listVaults() async {
@@ -223,6 +223,21 @@ final class BridgeSessionRepository implements SessionRepository {
       ),
     );
   }
+
+  @override
+  Future<void> changeVaultMasterPassword(
+    String vaultName,
+    String current,
+    String newPassword,
+  ) {
+    return _bridgeFuture(
+      () => _session.changeVaultMasterPassword(
+        vaultName: vaultName,
+        current: current,
+        newPassword: newPassword,
+      ),
+    );
+  }
 }
 
 final class BridgeEntryRepository implements EntryRepository {
@@ -249,16 +264,36 @@ final class BridgeEntryRepository implements EntryRepository {
   }
 
   @override
-  Future<String> createEntry(String groupUuid, EntryDraftDto draft) {
+  Future<String> createEntry(
+    String groupUuid,
+    EntryDraftDto draft, {
+    int? expiryTime,
+  }) {
     return _mutation(
-      () => _session.createEntry(group: groupUuid, draft: _entryDraft(draft)),
+      () => expiryTime == null
+          ? _session.createEntry(group: groupUuid, draft: _entryDraft(draft))
+          : _session.createEntryWithExpiration(
+              group: groupUuid,
+              draft: _entryDraft(draft),
+              expiryTime: expiryTime,
+            ),
     );
   }
 
   @override
-  Future<void> updateEntry(String uuid, EntryEditDto edit) {
+  Future<void> updateEntry(
+    String uuid,
+    EntryEditDto edit, {
+    EntryExpirationChange? expiration,
+  }) {
     return _mutation(
-      () => _session.updateEntry(uuid: uuid, edit: _entryEdit(edit)),
+      () => expiration == null
+          ? _session.updateEntry(uuid: uuid, edit: _entryEdit(edit))
+          : _session.updateEntryWithExpiration(
+              uuid: uuid,
+              edit: _entryEdit(edit),
+              expiryTime: expiration.epochSecs,
+            ),
     );
   }
 
@@ -394,6 +429,37 @@ final class BridgeSecretsRepository implements SecretsRepository {
         field: _copyField(field),
       ),
     );
+    await _copyPrepared(mobileClipboard, ticket);
+  }
+
+  @override
+  Future<void> copyGeneratedSecret(GeneratedSecret result) async {
+    final origin = result.copyOrigin;
+    if (origin == null) {
+      throw const InvalidInputFailure(
+        field: 'generated_secret',
+        reason: 'missing copy origin',
+      );
+    }
+    final value = bridge.GeneratedSecret(
+      value: result.value,
+      entropyBits: result.entropyBits,
+      copyOrigin: origin,
+    );
+    final mobileClipboard = _mobileClipboard;
+    if (mobileClipboard == null) {
+      return _bridgeFuture(() => _session.copyGeneratedSecret(result: value));
+    }
+    final ticket = await _bridgeFuture(
+      () => _session.prepareGeneratedClipboardTransfer(result: value),
+    );
+    await _copyPrepared(mobileClipboard, ticket);
+  }
+
+  Future<void> _copyPrepared(
+    SecureClipboardCapability mobileClipboard,
+    bridge.ClipboardTransferTicket ticket,
+  ) async {
     final result = await mobileClipboard.copyPrepared(
       PreparedClipboardTransfer(
         id: ticket.id,
@@ -507,7 +573,11 @@ final class BridgeGeneratorRepository implements GeneratorRepository {
         ),
       ),
     );
-    return GeneratedSecret(value: value.value, entropyBits: value.entropyBits);
+    return GeneratedSecret(
+      value: value.value,
+      entropyBits: value.entropyBits,
+      copyOrigin: value.copyOrigin,
+    );
   }
 
   @override
@@ -522,7 +592,11 @@ final class BridgeGeneratorRepository implements GeneratorRepository {
         ),
       ),
     );
-    return GeneratedSecret(value: value.value, entropyBits: value.entropyBits);
+    return GeneratedSecret(
+      value: value.value,
+      entropyBits: value.entropyBits,
+      copyOrigin: value.copyOrigin,
+    );
   }
 }
 
@@ -608,7 +682,14 @@ final class BridgeSyncRepository implements SyncRepository {
       );
       return status;
     }
-    final value = await _bridgeFuture(_session.pollLocalDiscovery);
+    final value = await _bridgeFuture(
+      () => _session.pollLocalDiscoveryFor(
+        service: switch (kind) {
+          DiscoveryKind.trusted => bridge.DiscoveryServiceDto.trusted,
+          DiscoveryKind.pairing => bridge.DiscoveryServiceDto.pairing,
+        },
+      ),
+    );
     return _discoveryStatus(value);
   }
 
@@ -627,7 +708,10 @@ final class BridgeSyncRepository implements SyncRepository {
 
   @override
   Future<void> stopDiscovery() async {
-    if (!useNativeDiscovery) return;
+    if (!useNativeDiscovery) {
+      await _bridgeFuture(_session.stopLocalDiscovery);
+      return;
+    }
     await (nativeDiscovery ?? const MethodChannelLocalDiscovery()).stop();
   }
 
@@ -656,7 +740,11 @@ final class BridgeSyncRepository implements SyncRepository {
     required String masterPassword,
     KeyfileRef? keyfile,
   }) async {
-    final discovery = await _bridgeFuture(_session.localDiscoveryStatus);
+    final discovery = await _bridgeFuture(
+      () => _session.localDiscoveryStatusFor(
+        service: bridge.DiscoveryServiceDto.pairing,
+      ),
+    );
     final value = await _bridgeFuture(
       () => _session.beginPairImport(
         name: name,
@@ -739,7 +827,10 @@ final class BridgeSyncRepository implements SyncRepository {
   @override
   Future<void> startStartupSync() async {
     try {
-      await discover(DiscoveryKind.trusted);
+      // Rust's paired summary identifies an active client. Check it before
+      // platform discovery can request permissions for an offline vault.
+      final status = await _bridgeFuture(_session.syncStatus);
+      if (status.paired) await discover(DiscoveryKind.trusted);
     } finally {
       await _bridgeFuture(_session.startStartupSync);
     }

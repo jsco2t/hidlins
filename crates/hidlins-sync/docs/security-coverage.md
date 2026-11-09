@@ -47,7 +47,7 @@ Makefile and is run by CI directly or through `make verify`.
 | Attack/failure class | Stable evidence |
 |---|---|
 | MITM, key substitution, wrong pin, cross-mode downgrade | LNS-NOISE-003/004/005, LNS-TRUST-003, LNS-SERVER-006 |
-| Discovery spoof, metadata correlation, candidate flood, DHCP/interface churn | LNS-DISCOVERY-001 through 004; Android API 29/36 replacement-authority scenarios |
+| Discovery spoof, metadata correlation, candidate flood, DHCP/interface churn | LNS-DISCOVERY-001 through 004; Android API 30/36 shared-LAN replacement-authority scenarios (API 29/36 remains the native/UI matrix) |
 | Public/special address and mapped/scope bypass | LNS-ADDR-001 through 005, LNS-DISCOVERY-002/003/005 |
 | Replay, reorder, duplicate, truncate, malformed record/frame, invalid commit order | LNS-FRAME-001, LNS-PROTO-001/002/003, LNS-STATE-001/002/003 and all fuzz targets |
 | Pairing rejection, expiry, failed acknowledgement, transcript/role/key substitution | LNS-PAIRING-001/002, LNS-PAIR-004..007, LNS-PROCESS-002/003, LNS-TRUST-001/002 |

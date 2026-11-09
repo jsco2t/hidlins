@@ -22,7 +22,7 @@ EXPECTED = {
     "attachment_export": (
         "attachment_export.dart",
         "app.hidlins/attachment_export",
-        ("chooseDestination",),
+        ("chooseDestination", "chooseSource"),
     ),
     "local_discovery": (
         "local_discovery.dart",
@@ -47,6 +47,8 @@ NATIVE_ATTACHMENT_EXPORT = {
         "app.hidlins/attachment_export",
         "chooseDestination",
         "GTK_FILE_CHOOSER_ACTION_SAVE",
+        "chooseSource",
+        "GTK_FILE_CHOOSER_ACTION_OPEN",
     ),
 }
 NATIVE_LOCAL_DISCOVERY = {
@@ -214,6 +216,13 @@ def self_test() -> None:
             "method: 'reportState',\nmethod: 'lockNow',\n",
             encoding="utf-8",
         ),
+        "missing attachment source operation": lambda root: (
+            root / "app/lib/src/platform/attachment_export.dart"
+        ).write_text(
+            "static const channelName = 'app.hidlins/attachment_export';\n"
+            "method: 'chooseDestination',\n",
+            encoding="utf-8",
+        ),
         "missing native attachment registration": lambda root: (
             root / "app/macos/Runner/HidlinsAttachmentExport.swift"
         ).unlink(),
@@ -221,6 +230,13 @@ def self_test() -> None:
             root / "app/linux/runner/my_application.cc"
         ).write_text(
             "app.hidlins/attachment_export\nwrongMethod\nGTK_FILE_CHOOSER_ACTION_SAVE\n",
+            encoding="utf-8",
+        ),
+        "missing Linux attachment OPEN": lambda root: (
+            root / "app/linux/runner/my_application.cc"
+        ).write_text(
+            "app.hidlins/attachment_export\nchooseDestination\n"
+            "GTK_FILE_CHOOSER_ACTION_SAVE\nchooseSource\n",
             encoding="utf-8",
         ),
         "missing native local discovery registration": lambda root: (

@@ -88,7 +88,7 @@ impl Array {
 
     /// The location within the original document
     ///
-    /// This generally requires a [`Document`][crate::Document].
+    /// This generally requires an [`ImDocument`][crate::ImDocument].
     pub fn span(&self) -> Option<std::ops::Range<usize>> {
         self.span.clone()
     }
@@ -174,7 +174,9 @@ impl Array {
     /// arr.push("foo");
     /// ```
     pub fn push<V: Into<Value>>(&mut self, v: V) {
-        self.values.push(Item::Value(v.into()));
+        self.value_op(v.into(), true, |items, value| {
+            items.push(Item::Value(value));
+        });
     }
 
     /// Appends a new, already formatted value to the end of the array.
@@ -209,7 +211,9 @@ impl Array {
     /// arr.insert(0, "start");
     /// ```
     pub fn insert<V: Into<Value>>(&mut self, index: usize, v: V) {
-        self.values.insert(index, Item::Value(v.into()));
+        self.value_op(v.into(), true, |items, value| {
+            items.insert(index, Item::Value(value));
+        });
     }
 
     /// Inserts an already formatted value at the given position within the array, shifting all
@@ -369,6 +373,21 @@ impl Array {
             }
         });
     }
+
+    fn value_op<T>(
+        &mut self,
+        v: Value,
+        decorate: bool,
+        op: impl FnOnce(&mut Vec<Item>, Value) -> T,
+    ) -> T {
+        let mut value = v;
+        if !self.is_empty() && decorate {
+            value.decorate(" ", "");
+        } else if decorate {
+            value.decorate("", "");
+        }
+        op(&mut self.values, value)
+    }
 }
 
 #[cfg(feature = "display")]
@@ -392,7 +411,7 @@ impl<V: Into<Value>> FromIterator<V> for Array {
         I: IntoIterator<Item = V>,
     {
         let v = iter.into_iter().map(|a| Item::Value(a.into()));
-        Self {
+        Array {
             values: v.collect(),
             ..Default::default()
         }

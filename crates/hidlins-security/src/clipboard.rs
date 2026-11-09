@@ -117,23 +117,47 @@ impl Clipboard {
     ) -> Result<AutoClearGuard, SecurityError> {
         // Per design §3.6: the timer thread owns its own backend
         // because `arboard::Clipboard` is `!Send` on some backends.
-        let timer_backend: Box<dyn ClipboardBackend> = Box::new(ArboardBackend::new()?);
-        copy_with_autoclear_inner(&mut *self.backend, timer_backend, text, ttl)
+        copy_with_autoclear_factory(&mut *self.backend, text, ttl, || {
+            Ok(Box::new(ArboardBackend::new()?))
+        })
     }
 }
 
-/// Test-injectable arming-and-timer setup. Used by `copy_with_autoclear`
-/// in production (with `ArboardBackend`s) and by unit tests (with a
-/// `FakeClipboardBackend`).
+/// Keep fallible timer-backend initialization injectable without exposing
+/// platform clipboard handles outside the crate.
+pub(crate) fn copy_with_autoclear_factory(
+    arming: &mut dyn ClipboardBackend,
+    text: String,
+    ttl: Duration,
+    make_timer: impl FnOnce() -> Result<Box<dyn ClipboardBackend>, SecurityError>,
+) -> Result<AutoClearGuard, SecurityError> {
+    // Take zeroizing ownership before any backend initialization can fail.
+    let payload = zeroize::Zeroizing::new(text);
+    let timer_backend = make_timer()?;
+    copy_with_autoclear_protected(arming, timer_backend, payload, ttl)
+}
+
+/// Test-injectable setup for an already-constructed timer backend.
+#[cfg(test)]
 pub(crate) fn copy_with_autoclear_inner(
     arming: &mut dyn ClipboardBackend,
     timer_backend: Box<dyn ClipboardBackend>,
     text: String,
     ttl: Duration,
 ) -> Result<AutoClearGuard, SecurityError> {
+    copy_with_autoclear_protected(arming, timer_backend, zeroize::Zeroizing::new(text), ttl)
+}
+
+// Ownership ensures the arming buffer is erased when setup returns or unwinds.
+#[allow(clippy::needless_pass_by_value)]
+fn copy_with_autoclear_protected(
+    arming: &mut dyn ClipboardBackend,
+    timer_backend: Box<dyn ClipboardBackend>,
+    payload: zeroize::Zeroizing<String>,
+    ttl: Duration,
+) -> Result<AutoClearGuard, SecurityError> {
     // Self-zeroing buffer for the arming write — even if `set_text`
     // panics, the bytes are wiped when this stack frame unwinds.
-    let payload = zeroize::Zeroizing::new(text);
     arming
         .set_text(payload.as_str())
         .map_err(|e| SecurityError::ClipboardIo {
@@ -191,18 +215,13 @@ fn run_autoclear(
         }
         Err(RecvTimeoutError::Timeout) => {
             // TTL fired. Read-then-compare-then-maybe-clear.
-            match backend.get_text() {
-                Ok(current) if current == *comparison => {
+            if let Ok(current) = backend.get_text() {
+                // Readbacks are application-owned sensitive buffers too,
+                // including a value copied by another application.
+                let current = zeroize::Zeroizing::new(current);
+                if *current == *comparison {
                     // Contents match — safe to clear.
                     let _ = backend.set_text("");
-                }
-                Ok(_) | Err(_) => {
-                    // Either another application replaced the
-                    // clipboard (`Ok` with a non-matching value) or
-                    // the read itself failed (`Err` — e.g., display
-                    // disconnected). In both cases we can't be sure
-                    // what's on the clipboard, so we refuse to write
-                    // to it.
                 }
             }
         }

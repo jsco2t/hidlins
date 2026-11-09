@@ -5,12 +5,14 @@ import '../../data/models.dart';
 import '../sync/sync_controller.dart';
 import '../../l10n/app_localizations.dart';
 import '../../providers/providers.dart';
+import '../../providers/lock_state_provider.dart';
 import '../../ui/tokens.dart';
 import '../../ui/widgets/empty_state.dart';
 import 'entry_detail.dart';
 import 'entry_edit.dart';
 import 'entry_list.dart';
 import 'group_tree.dart';
+import 'group_management_page.dart';
 
 class EntriesPage extends ConsumerStatefulWidget {
   const EntriesPage({super.key, this.initialUuid});
@@ -23,6 +25,7 @@ class EntriesPage extends ConsumerStatefulWidget {
 
 class _EntriesPageState extends ConsumerState<EntriesPage> {
   String? _selectedGroupUuid;
+  bool _groupsOpen = false;
 
   @override
   void initState() {
@@ -81,11 +84,16 @@ class _EntriesPageState extends ConsumerState<EntriesPage> {
             onEditEntry: mutationsEnabled ? _editEntry : null,
             onDeleteEntry: mutationsEnabled ? _deleteEntry : null,
             onNewEntry: mutationsEnabled ? _newEntry : null,
+            onEntryMoved: (uuid, group) =>
+                _entryMoved(uuid, group, tree.root.uuid),
+            onEntryPurged: _entryPurged,
           );
         } else if (selectedEntryUuid != null) {
           content = _CompactDetail(
             uuid: selectedEntryUuid,
             onBack: () => _selectEntry(null),
+            onMoved: (uuid, group) => _entryMoved(uuid, group, tree.root.uuid),
+            onPurged: _entryPurged,
           );
         } else {
           content = _CompactList(
@@ -107,6 +115,29 @@ class _EntriesPageState extends ConsumerState<EntriesPage> {
           },
           child: Column(
             children: [
+              Padding(
+                padding: const EdgeInsets.all(HidlinsSpacing.sm),
+                child: Align(
+                  alignment: Alignment.centerRight,
+                  child: Wrap(
+                    alignment: WrapAlignment.end,
+                    spacing: HidlinsSpacing.sm,
+                    runSpacing: HidlinsSpacing.xs,
+                    children: [
+                      TextButton.icon(
+                        onPressed: _groupsOpen ? null : _openGroups,
+                        icon: const Icon(Icons.folder_open),
+                        label: Text(l10n.groupsTitle),
+                      ),
+                      FilledButton.icon(
+                        onPressed: mutationsEnabled ? _newEntry : null,
+                        icon: const Icon(Icons.add),
+                        label: Text(l10n.entryCreateTitle),
+                      ),
+                    ],
+                  ),
+                ),
+              ),
               if (syncInFlight)
                 Material(
                   color: Theme.of(context).colorScheme.secondaryContainer,
@@ -152,6 +183,69 @@ class _EntriesPageState extends ConsumerState<EntriesPage> {
 
   void _selectEntry(String? uuid) {
     ref.read(selectedEntryProvider.notifier).select(uuid);
+  }
+
+  void _entryMoved(String uuid, String destination, String rootUuid) {
+    if (!mounted || ref.read(selectedEntryProvider) != uuid) return;
+    setState(
+      () => _selectedGroupUuid = destination == rootUuid ? null : destination,
+    );
+  }
+
+  void _entryPurged(String uuid) {
+    if (mounted && ref.read(selectedEntryProvider) == uuid) _selectEntry(null);
+  }
+
+  void _groupsDeleted(Set<String> groups, Set<String> entries) {
+    if (!mounted) return;
+    if (groups.contains(_selectedGroupUuid)) {
+      setState(() => _selectedGroupUuid = null);
+    }
+    if (entries.contains(ref.read(selectedEntryProvider))) _selectEntry(null);
+  }
+
+  bool _hasGroup(GroupNode group, String uuid) =>
+      group.uuid == uuid ||
+      group.children.any((child) => _hasGroup(child, uuid));
+
+  Future<void> _openGroups() async {
+    if (!mounted ||
+        _groupsOpen ||
+        ref.read(lockStateProvider).asData?.value != LockEvent.unlocked) {
+      return;
+    }
+    setState(() => _groupsOpen = true);
+    try {
+      final chosen = await Navigator.of(context).push<String>(
+        MaterialPageRoute(
+          builder: (_) => GroupManagementPage(
+            selectedGroupUuid: _selectedGroupUuid,
+            onDeleted: _groupsDeleted,
+          ),
+        ),
+      );
+      if (chosen == null || !mounted) return;
+      final tree = await ref.read(vaultTreeProvider.future);
+      if (!mounted ||
+          ref.read(lockStateProvider).asData?.value != LockEvent.unlocked) {
+        return;
+      }
+      setState(() {
+        _selectedGroupUuid =
+            chosen == tree.root.uuid || !_hasGroup(tree.root, chosen)
+            ? null
+            : chosen;
+      });
+      _selectEntry(null);
+    } on Exception {
+      if (mounted) {
+        ScaffoldMessenger.of(context).showSnackBar(
+          SnackBar(content: Text(AppLocalizations.of(context)!.errorGeneric)),
+        );
+      }
+    } finally {
+      if (mounted) setState(() => _groupsOpen = false);
+    }
   }
 
   Future<void> _newEntry([String? groupUuid]) async {
@@ -238,6 +332,8 @@ class _ExpandedLayout extends StatelessWidget {
     required this.onEditEntry,
     required this.onDeleteEntry,
     required this.onNewEntry,
+    required this.onEntryMoved,
+    required this.onEntryPurged,
   });
 
   final VaultTree tree;
@@ -251,6 +347,8 @@ class _ExpandedLayout extends StatelessWidget {
   final ValueChanged<String>? onEditEntry;
   final ValueChanged<String>? onDeleteEntry;
   final ValueChanged<String>? onNewEntry;
+  final EntryMovedCallback onEntryMoved;
+  final ValueChanged<String> onEntryPurged;
 
   @override
   Widget build(BuildContext context) {
@@ -283,7 +381,11 @@ class _ExpandedLayout extends StatelessWidget {
         Expanded(
           flex: 2,
           child: selectedEntryUuid != null
-              ? EntryDetailPane(uuid: selectedEntryUuid!)
+              ? EntryDetailPane(
+                  uuid: selectedEntryUuid!,
+                  onMoved: onEntryMoved,
+                  onPurged: onEntryPurged,
+                )
               : EmptyState(
                   icon: Icons.article_outlined,
                   title: l10n.emptyStateSelectEntry,
@@ -327,10 +429,17 @@ class _CompactList extends StatelessWidget {
 }
 
 class _CompactDetail extends StatelessWidget {
-  const _CompactDetail({required this.uuid, required this.onBack});
+  const _CompactDetail({
+    required this.uuid,
+    required this.onBack,
+    required this.onMoved,
+    required this.onPurged,
+  });
 
   final String uuid;
   final VoidCallback onBack;
+  final EntryMovedCallback onMoved;
+  final ValueChanged<String> onPurged;
 
   @override
   Widget build(BuildContext context) {
@@ -340,7 +449,13 @@ class _CompactDetail extends StatelessWidget {
           alignment: Alignment.centerLeft,
           child: BackButton(onPressed: onBack),
         ),
-        Expanded(child: EntryDetailPane(uuid: uuid)),
+        Expanded(
+          child: EntryDetailPane(
+            uuid: uuid,
+            onMoved: onMoved,
+            onPurged: onPurged,
+          ),
+        ),
       ],
     );
   }

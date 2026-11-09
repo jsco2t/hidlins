@@ -274,6 +274,15 @@ impl LocalSyncConfig {
             return Err(TrustError::TransactionMismatch);
         }
         validate_expiry(now_epoch_seconds, expires_at_epoch_seconds)?;
+        let remaining = confirmation
+            .remaining_seconds()
+            .ok_or(TrustError::Expired)?;
+        let expires_at_epoch_seconds = expires_at_epoch_seconds.min(
+            now_epoch_seconds
+                .checked_add(remaining)
+                .ok_or(TrustError::Expired)?,
+        );
+        self.expire_provisional(now_epoch_seconds);
         if let Some(previous) = self.provisional().cloned() {
             if previous.peer.public_key == peer_key {
                 let recovered = self.recover_pairing_transaction(peer_key, now_epoch_seconds)?;

@@ -69,6 +69,7 @@ fn inbound_secret_types_redact_debug_output() {
             GeneratedSecret {
                 value: MARKER.to_string(),
                 entropy_bits: 64.0,
+                copy_origin: 42,
             }
         ),
         format!("{:?}", KeyfileRef::Bytes(MARKER.as_bytes().to_vec())),
@@ -236,10 +237,12 @@ fn explicit_zeroize_clears_generated_keyfile_and_totp_secrets() {
     let mut generated = GeneratedSecret {
         value: "secret".to_string(),
         entropy_bits: 64.0,
+        copy_origin: 42,
     };
     generated.zeroize();
     assert!(generated.value.is_empty());
     assert!(generated.entropy_bits.abs() < f64::EPSILON);
+    assert_eq!(generated.copy_origin, 0);
 
     let mut keyfile = KeyfileRef::Bytes(vec![1, 2, 3, 4]);
     keyfile.zeroize();

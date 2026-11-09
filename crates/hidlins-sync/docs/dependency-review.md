@@ -65,9 +65,10 @@ Android cannot resolve or link those two dependencies.
 - Purpose: synchronous desktop DNS-SD/mDNS advertising/browsing and safe
   interface enumeration. Discovery is routing only; it never authorizes a
   peer or bypasses `LocalEndpoint`.
-- License/provenance: both are `MIT OR Apache-2.0`; `mdns-sd` is the exact
-  `keepsimple1/mdns-sd` registry release. License manifests/texts were reviewed
-  in the vendor delta.
+- License/provenance: `mdns-sd 0.20.3` is `Apache-2.0 OR MIT` from the exact
+  `keepsimple1/mdns-sd` registry release. `if-addrs 0.15.0` is
+  `MIT OR BSD-3-Clause`. The exact vendored manifests and license texts are
+  authoritative; neither dependency requires a license-policy exception.
 - Maintenance/popularity signal: `mdns-sd` is an active focused project with
   current registry releases and downstream use; `if-addrs` is a small mature
   platform enumerator. Exact pins prevent unreviewed surface changes.

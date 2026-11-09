@@ -4,22 +4,25 @@
 //! be useful across various D-Bus applications. This module provides their proxy.
 
 use std::{borrow::Cow, collections::HashMap};
-use zbus_names::InterfaceName;
-use zvariant::{OwnedValue, Value};
 
-use super::{Error, Result};
-use crate::{Connection, ObjectServer, interface, message::Header, object_server::SignalEmitter};
+#[cfg(feature = "service")]
+use super::Error;
+use super::Result;
+#[cfg(feature = "service")]
+use crate::{
+    BoxDBusError, Connection, ObjectServer, interface, message::Header,
+    object_server::SignalEmitter,
+};
+use crate::{OwnedVariant, Variant, names::InterfaceName};
 
 /// Service-side implementation for the `org.freedesktop.DBus.Properties` interface.
 /// This interface is implemented automatically for any object registered to the
 /// [ObjectServer].
+#[cfg(feature = "service")]
 pub struct Properties;
 
-#[interface(
-    name = "org.freedesktop.DBus.Properties",
-    introspection_docs = false,
-    proxy(visibility = "pub")
-)]
+#[cfg(feature = "service")]
+#[interface(name = "org.freedesktop.DBus.Properties", introspection_docs = false)]
 impl Properties {
     /// Get a property value.
     async fn get(
@@ -30,7 +33,7 @@ impl Properties {
         #[zbus(object_server)] server: &ObjectServer,
         #[zbus(header)] header: Header<'_>,
         #[zbus(signal_emitter)] emitter: SignalEmitter<'_>,
-    ) -> Result<OwnedValue> {
+    ) -> std::result::Result<OwnedVariant, BoxDBusError> {
         let path = header.path().ok_or(crate::Error::MissingField)?;
         let root = server.root().read().await;
         let iface = root
@@ -47,9 +50,7 @@ impl Properties {
             .get(property_name, server, conn, Some(&header), &emitter)
             .await;
         res.unwrap_or_else(|| {
-            Err(Error::UnknownProperty(format!(
-                "Unknown property '{property_name}'"
-            )))
+            Err(Error::UnknownProperty(format!("Unknown property '{property_name}'")).into())
         })
     }
 
@@ -59,12 +60,12 @@ impl Properties {
         &self,
         interface_name: InterfaceName<'_>,
         property_name: &str,
-        value: Value<'_>,
+        value: &Variant<'_>,
         #[zbus(object_server)] server: &ObjectServer,
         #[zbus(connection)] connection: &Connection,
         #[zbus(header)] header: Header<'_>,
         #[zbus(signal_emitter)] emitter: SignalEmitter<'_>,
-    ) -> Result<()> {
+    ) -> std::result::Result<(), BoxDBusError> {
         let path = header.path().ok_or(crate::Error::MissingField)?;
         let root = server.root().read().await;
         let iface = root
@@ -76,19 +77,19 @@ impl Properties {
 
         match iface.instance.read().await.set(
             property_name,
-            &value,
+            value,
             server,
             connection,
             Some(&header),
             &emitter,
         ) {
-            zbus::object_server::DispatchResult2::RequiresMut => {}
-            zbus::object_server::DispatchResult2::NotFound => {
-                return Err(Error::UnknownProperty(format!(
-                    "Unknown property '{property_name}'"
-                )));
+            zbus::object_server::DispatchResult::RequiresMut => {}
+            zbus::object_server::DispatchResult::NotFound => {
+                return Err(
+                    Error::UnknownProperty(format!("Unknown property '{property_name}'")).into(),
+                );
             }
-            zbus::object_server::DispatchResult2::Async(f) => {
+            zbus::object_server::DispatchResult::Async(f) => {
                 return f.await;
             }
         }
@@ -98,7 +99,7 @@ impl Properties {
             .await
             .set_mut(
                 property_name,
-                &value,
+                value,
                 server,
                 connection,
                 Some(&header),
@@ -106,9 +107,7 @@ impl Properties {
             )
             .await;
         res.unwrap_or_else(|| {
-            Err(Error::UnknownProperty(format!(
-                "Unknown property '{property_name}'"
-            )))
+            Err(Error::UnknownProperty(format!("Unknown property '{property_name}'")).into())
         })
     }
 
@@ -120,7 +119,7 @@ impl Properties {
         #[zbus(connection)] connection: &Connection,
         #[zbus(header)] header: Header<'_>,
         #[zbus(signal_emitter)] emitter: SignalEmitter<'_>,
-    ) -> Result<HashMap<String, OwnedValue>> {
+    ) -> Result<HashMap<String, OwnedVariant>> {
         let path = header.path().ok_or(crate::Error::MissingField)?;
         let root = server.root().read().await;
         let iface = root
@@ -145,7 +144,35 @@ impl Properties {
     pub async fn properties_changed(
         emitter: &SignalEmitter<'_>,
         interface_name: InterfaceName<'_>,
-        changed_properties: HashMap<&str, Value<'_>>,
+        changed_properties: HashMap<&str, Variant<'_>>,
+        invalidated_properties: Cow<'_, [&str]>,
+    ) -> zbus::Result<()>;
+}
+
+/// Proxy for the `org.freedesktop.DBus.Properties` interface.
+#[cfg(feature = "proxy")]
+#[crate::proxy(interface = "org.freedesktop.DBus.Properties")]
+pub trait Properties {
+    /// Get a property value.
+    fn get(&self, interface_name: InterfaceName<'_>, property_name: &str) -> Result<OwnedVariant>;
+
+    /// Set a property value.
+    fn set(
+        &self,
+        interface_name: InterfaceName<'_>,
+        property_name: &str,
+        value: &Variant<'_>,
+    ) -> Result<()>;
+
+    /// Get all properties.
+    fn get_all(&self, interface_name: InterfaceName<'_>) -> Result<HashMap<String, OwnedVariant>>;
+
+    /// Emit the `org.freedesktop.DBus.Properties.PropertiesChanged` signal.
+    #[zbus(signal)]
+    fn properties_changed(
+        &self,
+        interface_name: InterfaceName<'_>,
+        changed_properties: HashMap<&str, Variant<'_>>,
         invalidated_properties: Cow<'_, [&str]>,
     ) -> zbus::Result<()>;
 }

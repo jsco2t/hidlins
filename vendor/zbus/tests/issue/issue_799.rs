@@ -1,9 +1,9 @@
-use event_listener::Event;
 use test_log::test;
 use tracing::instrument;
 use zbus::block_on;
+use zruntime::Event;
 
-use zbus::Result;
+use zbus::{Result, runtime::traits::TaskHandle};
 
 #[instrument]
 #[test]
@@ -27,11 +27,8 @@ fn concurrent_interface_methods() {
         let listener = event.listen();
         let iface = Iface(event);
         let conn = zbus::connection::Builder::session()
-            .unwrap()
             .name("org.zbus.test.issue799")
-            .unwrap()
             .serve_at("/org/zbus/test/issue799", iface)
-            .unwrap()
             .build()
             .await
             .unwrap();
@@ -48,14 +45,10 @@ fn concurrent_interface_methods() {
 
         let proxy = IfaceProxy::new(&conn).await.unwrap();
         let proxy_clone = proxy.clone();
-        conn.executor()
-            .spawn(
-                async move {
-                    proxy_clone.method1().await.unwrap();
-                },
-                "method1",
-            )
-            .detach();
+        conn.spawn("method1", async move {
+            proxy_clone.method1().await.unwrap();
+        })
+        .detach();
         // Wait till the `method1`` is called.
         listener.await;
 

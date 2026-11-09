@@ -6,10 +6,10 @@ Hidlins (Scots: "in secret, in hiding", pronounced HID-linz) is an offline-first
 
 ## Planning docs (authoritative)
 
-Engineering plans live outside this repo in the project notebook. Read these when scoping work — do not duplicate them here.
+Engineering plans live outside this repo in the project documentation workspace. Read these when scoping work — do not duplicate them here.
 
-- **PRD:** `$HOME/Developer/sources/personal/notebook/projects/hidlins/prd.md` — the product spec; section IDs (FR-xxx, NFR-xxx) are referenced throughout the plans.
-- **Project index:** `$HOME/Developer/sources/personal/notebook/projects/hidlins/index.md`
+- **PRD:** `$HOME/Developer/sources/personal/projects/hidlins/prd.md` — the product spec; section IDs (FR-xxx, NFR-xxx) are referenced throughout the plans.
+- **Project index:** `$HOME/Developer/sources/personal/projects/hidlins/index.md`
 - **Verifications (user scenarios):** `…/hidlins/verifications/` — every Must-Have FR maps to a US-xxx scenario.
 - **Knowledge base:** `…/hidlins/kb/` — KDBX format, three-way merge algorithm, memory hygiene, supply-chain policy, library notes.
 - **Features:** `…/hidlins/features/<slug>/` — per-feature implementation plan, design, task plan, follow-ups. First feature: `features/vault-core/`.
@@ -26,7 +26,7 @@ When implementing a feature, the corresponding `plans/implementation-plan.md` an
 ## Engineering principles
 
 1. **KDBX interop is a product promise, not an implementation detail.** A Hidlins vault must round-trip through KeePassXC (≥2.7) with zero observable data loss. Any custom data written into a vault must be readable by a standards-compliant KDBX client. Round-trip CI tests gate every change to the vault layer.
-2. **Test-forward means test-before-fix.** For every behavior defect, first add or strengthen the smallest regression test that demonstrates the failure, record the red result, implement the minimum repair, and record the green result before refactoring. Architecture-only refactors require characterization or invariant tests before responsibilities move. A code task is not complete merely because tests exist or the aggregate suite passes; its evidence must identify the fail-before/pass-after sequence. If a change is genuinely non-code or cannot meaningfully produce a failing test, document why and name the static or manual validation used instead. Every Must-Have FR also has at least one automated test AND one user-scenario verification in `notebook/.../verifications/`. Property-based / fuzz tests for the merge engine and fault-injection tests for atomic writes are first-class deliverables, not nice-to-haves.
+2. **Test-forward means test-before-fix.** For every behavior defect, first add or strengthen the smallest regression test that demonstrates the failure, record the red result, implement the minimum repair, and record the green result before refactoring. Architecture-only refactors require characterization or invariant tests before responsibilities move. A code task is not complete merely because tests exist or the aggregate suite passes; its evidence must identify the fail-before/pass-after sequence. If a change is genuinely non-code or cannot meaningfully produce a failing test, document why and name the static or manual validation used instead. Every Must-Have FR also has at least one automated test AND one user-scenario verification in `$HOME/Developer/sources/personal/projects/hidlins/verifications/`. Property-based / fuzz tests for the merge engine and fault-injection tests for atomic writes are first-class deliverables, not nice-to-haves.
 3. **Simplicity over cleverness.** Prefer obvious code, narrow abstractions, and well-trodden patterns. Don't introduce generality for hypothetical future requirements. Three similar lines beats a premature abstraction.
 4. **No data loss, ever.** During sync conflicts, the loser is preserved as a KDBX history entry under the same UUID. Atomic writes (write-then-rename) ensure a crash never leaves a corrupted vault. Pre-merge state is kept as `.kdbx.bak`.
 5. **Honest about limits.** Document platform limitations (encrypted swap, `mlock` quotas, OS lock-event reliability) rather than papering over them. Cosmic-ray paranoia (Rowhammer, cold-boot DMA) is explicitly out of scope.
@@ -75,7 +75,7 @@ When implementing a feature, the corresponding `plans/implementation-plan.md` an
   - `clap` (MIT/Apache-2.0) — CLI parsing.
   - `ratatui` (MIT) — TUI framework.
   - RustCrypto family — crypto primitives.
-- **Local sync transport:** Noise-authenticated connections over private/local IP ranges only, with secure discovery and pinned per-vault identities. Public IP ranges are rejected without an override.
+- **Local sync transport:** Noise-authenticated connections over private/local IP ranges only, with secure discovery and pinned per-vault identities. Addresses outside the fixed private/local allowlist are rejected; no override is available.
 
 ## Build system
 

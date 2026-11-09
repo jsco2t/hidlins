@@ -1,11 +1,15 @@
+import 'dart:async';
+
 import 'package:material_ui/material_ui.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
+import 'package:go_router/go_router.dart';
 
 import '../../data/models.dart';
 import '../../l10n/app_localizations.dart';
 import '../../platform/platform_result.dart';
 import '../../platform/vault_import.dart';
 import '../../providers/providers.dart';
+import '../../providers/lock_state_provider.dart';
 import '../../ui/tokens.dart';
 import 'change_password_dialog.dart';
 import 'connect_sync_dialog.dart';
@@ -19,9 +23,32 @@ class VaultManagementPage extends ConsumerWidget {
   Widget build(BuildContext context, WidgetRef ref) {
     final l10n = AppLocalizations.of(context)!;
     final vaults = ref.watch(vaultListProvider);
+    final unlocked =
+        ref.watch(lockStateProvider).valueOrNull == LockEvent.unlocked;
 
     return Scaffold(
-      appBar: AppBar(title: Text(l10n.navVaults)),
+      appBar: AppBar(
+        leading: BackButton(
+          onPressed: () {
+            final navigator = Navigator.of(context);
+            if (navigator.canPop()) {
+              navigator.pop();
+            } else {
+              context.go(unlocked ? '/settings' : '/lock');
+            }
+          },
+        ),
+        title: Text(l10n.navVaults),
+        actions: [
+          if (unlocked)
+            IconButton(
+              tooltip: l10n.actionLock,
+              icon: const Icon(Icons.lock_outline),
+              onPressed: () =>
+                  unawaited(ref.read(sessionRepositoryProvider).lockNow()),
+            ),
+        ],
+      ),
       body: vaults.when(
         loading: () => const Center(child: CircularProgressIndicator()),
         error: (_, _) => Center(child: Text(l10n.errorGeneric)),
@@ -195,7 +222,9 @@ class _VaultTile extends ConsumerWidget {
     switch (action) {
       case _VaultAction.changePassword:
         final result = await Navigator.of(context).push<bool>(
-          MaterialPageRoute(builder: (_) => const ChangePasswordDialog()),
+          MaterialPageRoute(
+            builder: (_) => ChangePasswordDialog(vaultName: vault.name),
+          ),
         );
         if (result == true) ref.invalidate(vaultListProvider);
       case _VaultAction.deregister:

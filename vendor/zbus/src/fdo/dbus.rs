@@ -3,65 +3,130 @@
 //! The D-Bus specification defines the message bus messages and some standard interfaces that may
 //! be useful across various D-Bus applications. This module provides their proxy.
 
-use enumflags2::{BitFlags, bitflags};
+#[cfg(unix)]
+use crate::OwnedFd;
 use serde::{Deserialize, Serialize};
 use serde_repr::{Deserialize_repr, Serialize_repr};
+#[cfg(feature = "proxy")]
 use std::collections::HashMap;
-use zbus_names::{
-    BusName, OwnedBusName, OwnedInterfaceName, OwnedUniqueName, UniqueName, WellKnownName,
-};
-#[cfg(unix)]
-use zvariant::OwnedFd;
-use zvariant::{DeserializeDict, Optional, SerializeDict, Type};
+use std::fmt;
 
 use super::Result;
-use crate::{OwnedGuid, proxy};
+use crate::{
+    Basic, DeserializeDict, OwnedVariant, SerializeDict, Type, Variant, utils::fmt_bitflags,
+};
+#[cfg(feature = "proxy")]
+use crate::{
+    Optional, OwnedGuid,
+    names::{
+        BusName, OwnedBusName, OwnedInterfaceName, OwnedUniqueName, UniqueName, WellKnownName,
+    },
+    proxy,
+};
 
-/// The flags used by the [`DBusProxy::request_name`] method.
+#[cfg_attr(
+    feature = "proxy",
+    doc = "The flags used by the [`DBusProxy::request_name`] method."
+)]
+#[cfg_attr(
+    not(feature = "proxy"),
+    doc = "The flags used by `DBusProxy::request_name` (requires the `proxy` feature)."
+)]
 ///
-/// The default flags (returned by [`BitFlags::default`]) are `AllowReplacement`, `ReplaceExisting`,
-/// and `DoNotQueue`.
-#[bitflags(default = AllowReplacement | ReplaceExisting | DoNotQueue)]
-#[repr(u32)]
-#[derive(Type, Debug, PartialEq, Eq, Copy, Clone, Serialize, Deserialize)]
-pub enum RequestNameFlags {
-    /// If an application A specifies this flag and succeeds in becoming the owner of the name, and
-    /// another application B later calls [`DBusProxy::request_name`] with the `ReplaceExisting`
-    /// flag, then application A will lose ownership and receive a `org.freedesktop.DBus.NameLost`
-    /// signal, and application B will become the new owner. If `AllowReplacement` is not specified
-    /// by application A, or `ReplaceExisting` is not specified by application B, then application
-    /// B will not replace application A as the owner.
-    AllowReplacement = 0x01,
-    /// Try to replace the current owner if there is one. If this flag is not set the application
-    /// will only become the owner of the name if there is no current owner. If this flag is set,
-    /// the application will replace the current owner if the current owner specified
-    /// `AllowReplacement`.
-    ReplaceExisting = 0x02,
-    /// Without this flag, if an application requests a name that is already owned, the
-    /// application will be placed in a queue to own the name when the current owner gives it
-    /// up. If this flag is given, the application will not be placed in the queue; the
-    /// request for the name will simply fail. This flag also affects behavior when an
-    /// application is replaced as name owner; by default the application moves back into the
-    /// waiting queue, unless this flag was provided when the application became the name
-    /// owner.
-    DoNotQueue = 0x04,
+/// This is a [`bitflags`](https://docs.rs/bitflags) type: a set of zero or more of the flags
+/// below, combined with `|`. Bits that none of the flags define are retained, not rejected, when
+/// the flags are decoded.
+///
+/// The default flags (returned by [`RequestNameFlags::default`]) are `ALLOW_REPLACEMENT`,
+/// `REPLACE_EXISTING`, and `DO_NOT_QUEUE`.
+#[derive(
+    Copy,
+    Clone,
+    PartialEq,
+    Eq,
+    PartialOrd,
+    Ord,
+    Hash,
+    Serialize,
+    Deserialize,
+    Type,
+    Variant,
+    OwnedVariant,
+)]
+pub struct RequestNameFlags(u32);
+
+bitflags::bitflags! {
+    impl RequestNameFlags: u32 {
+        /// If an application A specifies this flag and succeeds in becoming the owner of the name,
+        #[cfg_attr(
+            feature = "proxy",
+            doc = "and another application B later calls [`DBusProxy::request_name`] with the"
+        )]
+        #[cfg_attr(
+            not(feature = "proxy"),
+            doc = "and another application B later calls `DBusProxy::request_name` with the"
+        )]
+        /// `REPLACE_EXISTING` flag, then application A will lose ownership and receive a
+        /// `org.freedesktop.DBus.NameLost` signal, and application B will become the new owner. If
+        /// `ALLOW_REPLACEMENT` is not specified by application A, or `REPLACE_EXISTING` is not
+        /// specified by application B, then application B will not replace application A as the
+        /// owner.
+        const ALLOW_REPLACEMENT = 0x01;
+        /// Try to replace the current owner if there is one. If this flag is not set the
+        /// application will only become the owner of the name if there is no current owner. If
+        /// this flag is set, the application will replace the current owner if the current owner
+        /// specified `ALLOW_REPLACEMENT`.
+        const REPLACE_EXISTING = 0x02;
+        /// Without this flag, if an application requests a name that is already owned, the
+        /// application will be placed in a queue to own the name when the current owner gives it
+        /// up. If this flag is given, the application will not be placed in the queue; the
+        /// request for the name will simply fail. This flag also affects behavior when an
+        /// application is replaced as name owner; by default the application moves back into the
+        /// waiting queue, unless this flag was provided when the application became the name
+        /// owner.
+        const DO_NOT_QUEUE = 0x04;
+    }
 }
 
-/// The return code of the [`DBusProxy::request_name`] method.
+impl Default for RequestNameFlags {
+    fn default() -> Self {
+        Self::ALLOW_REPLACEMENT | Self::REPLACE_EXISTING | Self::DO_NOT_QUEUE
+    }
+}
+
+impl fmt::Debug for RequestNameFlags {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        fmt_bitflags("RequestNameFlags", self, f)
+    }
+}
+
+impl Basic for RequestNameFlags {
+    const SIGNATURE_CHAR: char = u32::SIGNATURE_CHAR;
+    const SIGNATURE_STR: &'static str = u32::SIGNATURE_STR;
+}
+
+#[cfg_attr(
+    feature = "proxy",
+    doc = "The return code of the [`DBusProxy::request_name`] method."
+)]
+#[cfg_attr(
+    not(feature = "proxy"),
+    doc = "The return code of `DBusProxy::request_name` (requires the `proxy` feature)."
+)]
 #[repr(u32)]
 #[derive(Deserialize_repr, Serialize_repr, Type, Debug, PartialEq, Eq)]
 pub enum RequestNameReply {
     /// The caller is now the primary owner of the name, replacing any previous owner. Either the
-    /// name had no owner before, or the caller specified [`RequestNameFlags::ReplaceExisting`] and
-    /// the current owner specified [`RequestNameFlags::AllowReplacement`].
+    /// name had no owner before, or the caller specified [`RequestNameFlags::REPLACE_EXISTING`] and
+    /// the current owner specified [`RequestNameFlags::ALLOW_REPLACEMENT`].
     PrimaryOwner = 0x01,
-    /// The name already had an owner, [`RequestNameFlags::DoNotQueue`] was not specified, and
-    /// either the current owner did not specify [`RequestNameFlags::AllowReplacement`] or the
-    /// requesting application did not specify [`RequestNameFlags::ReplaceExisting`].
+    /// The name already had an owner, [`RequestNameFlags::DO_NOT_QUEUE`] was not specified, and
+    /// either the current owner did not specify [`RequestNameFlags::ALLOW_REPLACEMENT`] or the
+    /// requesting application did not specify [`RequestNameFlags::REPLACE_EXISTING`].
     InQueue = 0x02,
-    /// The name already had an owner, [`RequestNameFlags::DoNotQueue`] was specified, and either
-    /// [`RequestNameFlags::AllowReplacement`] was not specified by the current owner, or
-    /// [`RequestNameFlags::ReplaceExisting`] was not specified by the requesting application.
+    /// The name already had an owner, [`RequestNameFlags::DO_NOT_QUEUE`] was specified, and either
+    /// [`RequestNameFlags::ALLOW_REPLACEMENT`] was not specified by the current owner, or
+    /// [`RequestNameFlags::REPLACE_EXISTING`] was not specified by the requesting application.
     Exists = 0x03,
     /// The application trying to request ownership of a name is already the owner of it.
     AlreadyOwner = 0x04,
@@ -78,7 +143,14 @@ impl std::fmt::Display for RequestNameReply {
     }
 }
 
-/// The return code of the [`DBusProxy::release_name`] method.
+#[cfg_attr(
+    feature = "proxy",
+    doc = "The return code of the [`DBusProxy::release_name`] method."
+)]
+#[cfg_attr(
+    not(feature = "proxy"),
+    doc = "The return code of `DBusProxy::release_name` (requires the `proxy` feature)."
+)]
 #[repr(u32)]
 #[derive(Deserialize_repr, Serialize_repr, Type, Debug, PartialEq, Eq)]
 pub enum ReleaseNameReply {
@@ -104,11 +176,14 @@ impl std::fmt::Display for ReleaseNameReply {
     }
 }
 
-/// The return code of the [`DBusProxy::start_service_by_name`] method.
-///
-/// In zbus 6.0, this will become the return type of `start_service_by_name`.
-/// For now, it's provided separately with a `TryFrom<u32>` implementation
-/// to avoid breaking changes in the API.
+#[cfg_attr(
+    feature = "proxy",
+    doc = "The return code of the [`DBusProxy::start_service_by_name`] method."
+)]
+#[cfg_attr(
+    not(feature = "proxy"),
+    doc = "The return code of `DBusProxy::start_service_by_name` (requires the `proxy` feature)."
+)]
 #[repr(u32)]
 #[derive(Deserialize_repr, Serialize_repr, Type, Debug, PartialEq, Eq)]
 pub enum StartServiceReply {
@@ -127,7 +202,6 @@ impl std::fmt::Display for StartServiceReply {
     }
 }
 
-// FIXME: When releasing 6.0, use StartServiceReply directly in start_service_by_name instead
 impl TryFrom<u32> for StartServiceReply {
     type Error = super::Error;
 
@@ -150,25 +224,25 @@ impl TryFrom<u32> for StartServiceReply {
 /// **Note**: unknown keys, in particular those with "." that are not from the specification, will
 /// be ignored. Use your own implementation or contribute your keys here, or in the specification.
 #[derive(Debug, Default, DeserializeDict, PartialEq, Eq, SerializeDict, Type)]
-#[zvariant(signature = "a{sv}")]
+#[zbus(signature = "a{sv}")]
 pub struct ConnectionCredentials {
-    #[zvariant(rename = "UnixUserID")]
+    #[zbus(rename = "UnixUserID")]
     pub(crate) unix_user_id: Option<u32>,
 
-    #[zvariant(rename = "UnixGroupIDs")]
+    #[zbus(rename = "UnixGroupIDs")]
     pub(crate) unix_group_ids: Option<Vec<u32>>,
 
     #[cfg(unix)]
-    #[zvariant(rename = "ProcessFD")]
+    #[zbus(rename = "ProcessFD")]
     pub(crate) process_fd: Option<OwnedFd>,
 
-    #[zvariant(rename = "ProcessID")]
+    #[zbus(rename = "ProcessID")]
     pub(crate) process_id: Option<u32>,
 
-    #[zvariant(rename = "WindowsSID")]
+    #[zbus(rename = "WindowsSID")]
     pub(crate) windows_sid: Option<String>,
 
-    #[zvariant(rename = "LinuxSecurityLabel")]
+    #[zbus(rename = "LinuxSecurityLabel")]
     pub(crate) linux_security_label: Option<Vec<u8>>,
 }
 
@@ -201,6 +275,13 @@ impl ConnectionCredentials {
     #[cfg(unix)]
     pub fn process_fd(&self) -> Option<&OwnedFd> {
         self.process_fd.as_ref()
+    }
+
+    /// Same as [`ConnectionCredentials::process_fd`], but consumes `self` and returns the owned
+    /// file descriptor.
+    #[cfg(unix)]
+    pub fn into_process_fd(self) -> Option<OwnedFd> {
+        self.process_fd
     }
 
     /// The numeric process ID, on platforms that have this concept. On Unix, this is the process ID
@@ -303,6 +384,7 @@ impl ConnectionCredentials {
 }
 
 /// Proxy for the `org.freedesktop.DBus` interface.
+#[cfg(feature = "proxy")]
 #[proxy(
     default_service = "org.freedesktop.DBus",
     default_path = "/org/freedesktop/DBus",
@@ -365,12 +447,16 @@ pub trait DBus {
     fn request_name(
         &self,
         name: WellKnownName<'_>,
-        flags: BitFlags<RequestNameFlags>,
+        flags: RequestNameFlags,
     ) -> Result<RequestNameReply>;
 
     /// Tries to launch the executable associated with a name (service
     /// activation), as an explicit request.
-    fn start_service_by_name(&self, name: WellKnownName<'_>, flags: u32) -> Result<u32>;
+    fn start_service_by_name(
+        &self,
+        name: WellKnownName<'_>,
+        flags: u32,
+    ) -> Result<StartServiceReply>;
 
     /// This method adds to or modifies that environment when activating services.
     fn update_activation_environment(&self, environment: HashMap<&str, &str>) -> Result<()>;
@@ -421,9 +507,30 @@ mod test {
 
     #[test]
     fn request_name_flags_default() {
-        let flags = BitFlags::<RequestNameFlags>::default();
-        assert!(flags.contains(RequestNameFlags::AllowReplacement));
-        assert!(flags.contains(RequestNameFlags::ReplaceExisting));
-        assert!(flags.contains(RequestNameFlags::DoNotQueue));
+        let flags = RequestNameFlags::default();
+        assert!(flags.contains(RequestNameFlags::ALLOW_REPLACEMENT));
+        assert!(flags.contains(RequestNameFlags::REPLACE_EXISTING));
+        assert!(flags.contains(RequestNameFlags::DO_NOT_QUEUE));
+    }
+
+    #[test]
+    fn request_name_flags_signature_and_debug() {
+        assert_eq!(RequestNameFlags::SIGNATURE, "u");
+        assert_eq!(
+            format!("{:?}", RequestNameFlags::default()),
+            "RequestNameFlags(ALLOW_REPLACEMENT | REPLACE_EXISTING | DO_NOT_QUEUE)"
+        );
+    }
+
+    #[test]
+    fn request_name_flags_convert_from_borrowed_value() {
+        use crate::wire::{LE, serialized::Context, to_bytes};
+
+        // A `Variant` that borrows from the buffer it was decoded from, as one taken out of a
+        // received message does.
+        let flags = RequestNameFlags::REPLACE_EXISTING | RequestNameFlags::DO_NOT_QUEUE;
+        let encoded = to_bytes(Context::new(LE, 0), &Variant::from(flags)).unwrap();
+        let (value, _): (Variant<'_>, _) = encoded.deserialize().unwrap();
+        assert_eq!(RequestNameFlags::try_from(value).unwrap(), flags);
     }
 }

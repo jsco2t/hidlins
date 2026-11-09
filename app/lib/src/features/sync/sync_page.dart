@@ -24,6 +24,8 @@ class _SyncPageState extends ConsumerState<SyncPage> {
   final _manualEndpoint = TextEditingController();
   late final SyncController _controller;
   String? _shownPairing;
+  DialogRoute<bool>? _pairingRoute;
+  bool _presentationScheduled = false;
 
   bool get _isDesktop =>
       widget.desktopOverride ??
@@ -36,10 +38,24 @@ class _SyncPageState extends ConsumerState<SyncPage> {
   void initState() {
     super.initState();
     _controller = ref.read(syncControllerProvider.notifier);
+    ref.listenManual(
+      syncControllerProvider,
+      (_, _) => _schedulePairingPresentation(),
+      fireImmediately: true,
+    );
   }
 
   @override
   void dispose() {
+    final route = _pairingRoute;
+    _pairingRoute = null;
+    _shownPairing = null;
+    scheduleMicrotask(() {
+      final navigator = route?.navigator;
+      if (navigator != null && navigator.mounted && route!.isActive) {
+        navigator.removeRoute(route);
+      }
+    });
     _manualEndpoint.clear();
     _manualEndpoint.dispose();
     unawaited(_controller.cancelForegroundOperations(updateState: false));
@@ -48,17 +64,6 @@ class _SyncPageState extends ConsumerState<SyncPage> {
 
   @override
   Widget build(BuildContext context) {
-    ref.listen(syncControllerProvider, (previous, next) {
-      final value = next.valueOrNull;
-      final prompt = value?.prompt;
-      if (prompt != null && _shownPairing != prompt.transactionHandle) {
-        _shownPairing = prompt.transactionHandle;
-        WidgetsBinding.instance.addPostFrameCallback((_) {
-          if (mounted) unawaited(_showPairing(prompt));
-        });
-      }
-    });
-
     final value = ref.watch(syncControllerProvider);
     final l10n = AppLocalizations.of(context)!;
     final content = Scaffold(
@@ -121,10 +126,47 @@ class _SyncPageState extends ConsumerState<SyncPage> {
     if (proceed == true) await action();
   }
 
+  void _schedulePairingPresentation() {
+    if (!mounted || _presentationScheduled) return;
+    final current = ref.read(syncControllerProvider).valueOrNull?.prompt;
+    if (_shownPairing == current?.transactionHandle) return;
+    _presentationScheduled = true;
+    WidgetsBinding.instance.addPostFrameCallback((_) {
+      _presentationScheduled = false;
+      if (!mounted) return;
+      final prompt = ref.read(syncControllerProvider).valueOrNull?.prompt;
+      if (_shownPairing == prompt?.transactionHandle) return;
+      final previous = _pairingRoute;
+      _pairingRoute = null;
+      _shownPairing = null;
+      if (previous?.isActive == true) {
+        previous!.navigator?.removeRoute(previous);
+      }
+      if (prompt != null) unawaited(_showPairing(prompt));
+    });
+    WidgetsBinding.instance.ensureVisualUpdate();
+  }
+
   Future<void> _showPairing(PairingPrompt prompt) async {
     final l10n = AppLocalizations.of(context)!;
     final peerName = TextEditingController(text: 'Nearby Hidlins');
-    final accepted = await showDialog<bool>(
+    late final DialogRoute<bool> route;
+    void choose(bool accepted) {
+      if (!mounted ||
+          !identical(_pairingRoute, route) ||
+          ref
+                  .read(syncControllerProvider)
+                  .valueOrNull
+                  ?.prompt
+                  ?.transactionHandle !=
+              prompt.transactionHandle ||
+          !route.isCurrent) {
+        return;
+      }
+      route.navigator?.pop(accepted);
+    }
+
+    route = DialogRoute<bool>(
       context: context,
       barrierDismissible: false,
       builder: (context) => PopScope(
@@ -158,25 +200,42 @@ class _SyncPageState extends ConsumerState<SyncPage> {
           ),
           actions: [
             TextButton(
-              onPressed: () => Navigator.pop(context, false),
+              onPressed: () => choose(false),
               child: Text(l10n.syncRejectPairing),
             ),
             FilledButton(
-              onPressed: () => Navigator.pop(context, true),
+              onPressed: () => choose(true),
               child: Text(l10n.syncConfirmMatches),
             ),
           ],
         ),
       ),
     );
-    final name = peerName.text;
-    peerName.clear();
-    peerName.dispose();
-    if (!mounted) return;
-    await ref
-        .read(syncControllerProvider.notifier)
-        .confirmPairing(accepted: accepted == true, peerName: name);
-    _shownPairing = null;
+    _pairingRoute = route;
+    _shownPairing = prompt.transactionHandle;
+    try {
+      final accepted = await Navigator.of(
+        context,
+        rootNavigator: true,
+      ).push(route);
+      if (!mounted || !identical(_pairingRoute, route) || accepted == null) {
+        return;
+      }
+      _pairingRoute = null;
+      // Keep the displayed handle reserved until confirmation completes, so a
+      // harmless event cannot reopen the same dialog while native work awaits.
+      await _controller.confirmPairing(
+        accepted: accepted,
+        peerName: peerName.text,
+        transactionHandle: prompt.transactionHandle,
+      );
+    } finally {
+      peerName.clear();
+      peerName.dispose();
+      if (identical(_pairingRoute, route)) _pairingRoute = null;
+      if (_shownPairing == prompt.transactionHandle) _shownPairing = null;
+      if (mounted) _schedulePairingPresentation();
+    }
   }
 }
 

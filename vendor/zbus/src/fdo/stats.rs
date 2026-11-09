@@ -5,11 +5,14 @@
 
 use serde::{Deserialize, Serialize};
 use std::collections::HashMap;
-use zbus_names::{BusName, OwnedUniqueName};
-use zvariant::{OwnedValue, Type, as_value::optional};
 
 use super::Result;
-use crate::proxy;
+use crate::{
+    OwnedVariant, Type,
+    as_variant::optional,
+    names::{BusName, OwnedUniqueName},
+    proxy,
+};
 
 /// Proxy for the [`org.freedesktop.DBus.Debug.Stats`][link] interface.
 ///
@@ -37,7 +40,7 @@ pub trait Stats {
 
 /// The stats returned by the [`StatsProxy::get_stats`] method.
 #[derive(Debug, Default, Deserialize, PartialEq, Serialize, Type)]
-#[zvariant(signature = "a{sv}", rename_all = "PascalCase")]
+#[zbus(signature = "a{sv}", rename_all = "PascalCase")]
 #[serde(default, rename_all = "PascalCase")]
 pub struct Stats {
     #[serde(with = "optional", skip_serializing_if = "Option::is_none")]
@@ -59,7 +62,7 @@ pub struct Stats {
     #[serde(with = "optional", skip_serializing_if = "Option::is_none")]
     pub(crate) peak_bus_names_per_connection: Option<u32>,
     #[serde(flatten)]
-    pub(crate) rest: HashMap<String, OwnedValue>,
+    pub(crate) rest: HashMap<String, OwnedVariant>,
 }
 
 impl Stats {
@@ -117,14 +120,14 @@ impl Stats {
 
     /// The rest of the statistics, that are not defined by the D-Bus specificiation and hence
     /// specific to individual D-Bus broker implementations.
-    pub fn rest(&self) -> &HashMap<String, OwnedValue> {
+    pub fn rest(&self) -> &HashMap<String, OwnedVariant> {
         &self.rest
     }
 }
 
 /// The stats returned by the [`StatsProxy::get_connection_stats`] method.
 #[derive(Debug, Default, Deserialize, PartialEq, Serialize, Type)]
-#[zvariant(signature = "a{sv}")]
+#[zbus(signature = "a{sv}")]
 #[serde(default, rename_all = "PascalCase")]
 pub struct ConnectionStats {
     #[serde(with = "optional", skip_serializing_if = "Option::is_none")]
@@ -164,7 +167,7 @@ pub struct ConnectionStats {
     #[serde(with = "optional", skip_serializing_if = "Option::is_none")]
     pub(crate) peak_outgoing_fds: Option<u32>,
     #[serde(flatten)]
-    pub(crate) rest: HashMap<String, OwnedValue>,
+    pub(crate) rest: HashMap<String, OwnedVariant>,
 }
 
 impl ConnectionStats {
@@ -266,7 +269,7 @@ impl ConnectionStats {
 
     /// The rest of the statistics, that are not defined by the D-Bus specificiation and hence
     /// specific to individual D-Bus broker implementations.
-    pub fn rest(&self) -> &HashMap<String, OwnedValue> {
+    pub fn rest(&self) -> &HashMap<String, OwnedVariant> {
         &self.rest
     }
 }

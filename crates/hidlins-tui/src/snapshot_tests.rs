@@ -241,7 +241,7 @@ fn detail_fixture() -> DetailData {
         username: "octocat".to_string(),
         url: "https://github.com".to_string(),
         password: hidlins_core::Zeroizing::new("hunter2".to_string()),
-        notes: "line one\nline two\nline three".to_string(),
+        notes: "line one\nline two\nline three".to_string().into(),
         created: Some("2026-01-02 03:04 UTC".to_string()),
         modified: Some("2026-05-06 07:08 UTC".to_string()),
         expired: false,
@@ -266,8 +266,8 @@ fn detail_fixture() -> DetailData {
     }
 }
 
-fn render_detail_at(lines: &[ratatui::text::Line<'static>], scroll: u16) -> Vec<String> {
-    let owned: Vec<ratatui::text::Line<'static>> = lines.to_vec();
+fn render_detail_at(lines: &[ratatui::text::Line<'_>], scroll: u16) -> Vec<String> {
+    let owned: Vec<ratatui::text::Line<'_>> = lines.to_vec();
     render_lines(44, 8, move |frame| {
         let area = Rect::new(0, 0, 44, 8);
         // No wrap here: the snapshot pins the builder's line content + the

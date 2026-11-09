@@ -1,23 +1,28 @@
+#![cfg(all(
+    feature = "proxy",
+    feature = "service",
+    any(feature = "default-rt", feature = "tokio")
+))]
 #![allow(clippy::disallowed_names)]
 
 mod iface_and_proxy;
 
-#[cfg(all(unix, not(feature = "tokio"), feature = "p2p"))]
+#[cfg(all(unix, feature = "p2p"))]
 use std::os::unix::net::UnixStream;
 use std::time::Duration;
-#[cfg(all(unix, feature = "tokio", feature = "p2p"))]
-use tokio::net::UnixStream;
 
 use ntest::timeout;
 use test_log::test;
 use tokio::sync::mpsc::channel;
 use tracing::{debug, instrument};
-use zbus::{block_on, connection, fdo::ObjectManager, object_server::InterfaceRef};
+#[cfg(feature = "object-manager")]
+use zbus::fdo::ObjectManager;
+use zbus::{block_on, connection, object_server::InterfaceRef};
 
 use iface_and_proxy::{
     client::my_iface_test,
     iface::{MyIface, MyIfaceSignals},
-    types::NextAction,
+    types::{MyIfaceError, NextAction},
 };
 
 #[test]
@@ -36,22 +41,17 @@ fn iface_and_proxy_unix_p2p() {
 
 #[instrument]
 async fn iface_and_proxy_(#[allow(unused)] p2p: bool) {
-    let event = event_listener::Event::new();
+    let event = zruntime::Event::new();
     #[cfg(feature = "p2p")]
     let guid = zbus::Guid::generate();
 
     let session_conns_build = || {
         let service_conn_builder = connection::Builder::session()
-            .unwrap()
             .name("org.freedesktop.MyService")
-            .unwrap()
             .name("org.freedesktop.MyService.foo")
-            .unwrap()
             .name("org.freedesktop.MyService.bar")
-            .unwrap()
-            .name("org.freedesktop.MyEmitsChangedSignalIface")
-            .unwrap();
-        let client_conn_builder = connection::Builder::session().unwrap();
+            .name("org.freedesktop.MyEmitsChangedSignalIface");
+        let client_conn_builder = connection::Builder::session();
 
         (service_conn_builder, client_conn_builder)
     };
@@ -62,47 +62,22 @@ async fn iface_and_proxy_(#[allow(unused)] p2p: bool) {
             let (p0, p1) = UnixStream::pair().unwrap();
 
             (
-                connection::Builder::unix_stream(p0)
-                    .server(guid)
-                    .unwrap()
-                    .p2p(),
+                connection::Builder::unix_stream(p0).server(guid).p2p(),
                 connection::Builder::unix_stream(p1).p2p(),
             )
         }
 
         #[cfg(windows)]
         {
-            #[cfg(not(feature = "tokio"))]
-            {
-                let listener = std::net::TcpListener::bind("127.0.0.1:0").unwrap();
-                let addr = listener.local_addr().unwrap();
-                let p1 = std::net::TcpStream::connect(addr).unwrap();
-                let p0 = listener.incoming().next().unwrap().unwrap();
+            let listener = std::net::TcpListener::bind("127.0.0.1:0").unwrap();
+            let addr = listener.local_addr().unwrap();
+            let p1 = std::net::TcpStream::connect(addr).unwrap();
+            let p0 = listener.incoming().next().unwrap().unwrap();
 
-                (
-                    connection::Builder::tcp_stream(p0)
-                        .server(guid)
-                        .unwrap()
-                        .p2p(),
-                    connection::Builder::tcp_stream(p1).p2p(),
-                )
-            }
-
-            #[cfg(feature = "tokio")]
-            {
-                let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
-                let addr = listener.local_addr().unwrap();
-                let p1 = tokio::net::TcpStream::connect(addr).await.unwrap();
-                let p0 = listener.accept().await.unwrap().0;
-
-                (
-                    connection::Builder::tcp_stream(p0)
-                        .server(guid)
-                        .unwrap()
-                        .p2p(),
-                    connection::Builder::tcp_stream(p1).p2p(),
-                )
-            }
+            (
+                connection::Builder::tcp_stream(p0).server(guid).p2p(),
+                connection::Builder::tcp_stream(p1).p2p(),
+            )
         }
     } else {
         session_conns_build()
@@ -120,11 +95,9 @@ async fn iface_and_proxy_(#[allow(unused)] p2p: bool) {
     );
     let (next_tx, mut next_rx) = channel(64);
     let iface = MyIface::new(next_tx.clone());
-    let service_conn_builder = service_conn_builder
-        .serve_at("/org/freedesktop/MyService", iface)
-        .unwrap()
-        .serve_at("/zbus/test", ObjectManager)
-        .unwrap();
+    let service_conn_builder = service_conn_builder.serve_at("/org/freedesktop/MyService", iface);
+    #[cfg(feature = "object-manager")]
+    let service_conn_builder = service_conn_builder.serve_at("/zbus/test", ObjectManager);
     debug!("ObjectServer set-up.");
 
     let (service_conn, client_conn) = futures_util::try_join!(
@@ -138,9 +111,7 @@ async fn iface_and_proxy_(#[allow(unused)] p2p: bool) {
     debug!("Service connection created: {:?}", service_conn);
 
     let listen = event.listen();
-    let child = client_conn
-        .executor()
-        .spawn(my_iface_test(client_conn.clone(), event), "client_task");
+    let child = client_conn.spawn("client_task", my_iface_test(client_conn.clone(), event));
     debug!("Child task spawned.");
     // Wait for the listener to be ready
     listen.await;
@@ -158,6 +129,31 @@ async fn iface_and_proxy_(#[allow(unused)] p2p: bool) {
         .await
         .unwrap();
     debug!("`PropertiesChanged` emitted for `Count` property.");
+
+    // A getter failing inside the `PropertiesChanged` helper hands its error back typed, both
+    // for a standard and for a custom error.
+    let err = iface
+        .get()
+        .await
+        .locked_prop_changed(iface.signal_emitter())
+        .await
+        .expect_err("`LockedProp` getter should fail");
+    assert!(matches!(err, zbus::Error::DBus(_)));
+    assert_eq!(
+        zbus::fdo::Error::from(err),
+        zbus::fdo::Error::AccessDenied("locked".to_string())
+    );
+    let err = iface
+        .get()
+        .await
+        .custom_locked_prop_changed(iface.signal_emitter())
+        .await
+        .expect_err("`CustomLockedProp` getter should fail");
+    assert!(matches!(err, zbus::Error::DBus(_)));
+    assert_eq!(
+        MyIfaceError::from(err),
+        MyIfaceError::SomethingWentWrong("locked".to_string())
+    );
 
     loop {
         iface.alert_count(51).await.unwrap();
@@ -191,7 +187,7 @@ async fn iface_and_proxy_(#[allow(unused)] p2p: bool) {
     drop(client_conn);
     debug!("Connection closed.");
 
-    let val = child.await.unwrap();
+    let val = child.await.expect("the runtime kept the client task");
     debug!("Client task done.");
     assert_eq!(val.unwrap(), 2);
 

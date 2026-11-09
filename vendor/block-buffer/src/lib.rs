@@ -365,7 +365,11 @@ impl<BS: BlockSizes> BlockBuffer<BS, Eager> {
     ) {
         assert!(suffix.len() <= BS::USIZE, "suffix is too long");
         let pos = self.get_pos();
-        let mut buf = self.pad_with_zeros();
+        let buf = self.pad_with_zeros();
+        #[cfg(feature = "zeroize")]
+        let mut buf = zeroize::Zeroizing::new(buf);
+        #[cfg(not(feature = "zeroize"))]
+        let mut buf = buf;
         buf[pos] = delim;
 
         let n = self.size() - suffix.len();

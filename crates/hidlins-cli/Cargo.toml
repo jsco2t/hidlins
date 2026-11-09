@@ -28,7 +28,12 @@ default = ["desktop"]
 # Normal distributed CLI behavior. Keeping desktop discovery and clipboard
 # support behind one default feature lets the Android scenario build exercise
 # the real CLI dispatcher without linking desktop-only clipboard code.
-desktop = ["hidlins-security/desktop", "hidlins-sync/desktop-discovery"]
+desktop = [
+    "hidlins-security/desktop",
+    "hidlins-security/logind",
+    "hidlins-security/iokit",
+    "hidlins-sync/desktop-discovery",
+]
 
 # Test-only: cross-build the actual CLI authority for an Android emulator.
 # This is never enabled by release or Flutter builds and deliberately omits
@@ -111,3 +116,8 @@ tempfile = "3.10"
 # for the RST-CRED-1 round-trip assertion (proves the CORRECT secret was
 # sealed, not just that some ciphertext landed on disk).
 secrecy = "0.10"
+
+[target.'cfg(target_os = "linux")'.dev-dependencies]
+# Reuse the existing isolated logind fixture for real CLI lock/sleep contracts.
+# Exact existing vendored MIT package; no new upstream crate or production edge.
+zbus = { version = "=6.2.1", default-features = false, features = ["default-rt", "proxy", "service"] }

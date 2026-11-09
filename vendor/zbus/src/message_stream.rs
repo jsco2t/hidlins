@@ -1,17 +1,19 @@
 use std::{
+    future::Future,
+    num::NonZeroUsize,
     pin::Pin,
     sync::Arc,
     task::{Context, Poll},
 };
 
-use async_broadcast::Receiver as ActiveReceiver;
 use futures_core::stream::{self, FusedStream};
 use ordered_stream::{OrderedStream, PollResult};
-use tracing::warn;
+use zruntime::{EventListener, broadcast::Receiver as ActiveReceiver};
 
 use crate::{
     AsyncDrop, Connection, MatchRule, OwnedMatchRule, Result,
     connection::ConnectionInner,
+    log::warn,
     message::{Message, Sequence},
 };
 
@@ -25,10 +27,33 @@ use crate::{
 /// conversion is not an expensive operation so you don't need to worry about performance, unless
 /// you do it very frequently. If you need to convert back and forth frequently, you may want to
 /// consider keeping both a connection and stream around.
-#[derive(Clone, Debug)]
+///
+/// The stream ends once the connection is closed and everything already queued for it has been
+/// yielded. That holds however the connection closed: a [`Connection::close`] of your own, the
+/// remote peer going away, an I/O error on the socket, or the runtime taking away the task that
+/// reads it.
+#[derive(Debug)]
 #[must_use = "streams do nothing unless polled"]
 pub struct MessageStream {
     inner: Inner,
+    // Armed on a poll that found the queue empty and dropped once it fires, so that the next
+    // such poll arms a fresh one.
+    closed_listener: Option<EventListener>,
+    // Whether this stream has already yielded its `None`. The channel below cannot be asked:
+    // a cancelled reader never gets to close it, so it stays open past the stream's end.
+    terminated: bool,
+}
+
+impl Clone for MessageStream {
+    fn clone(&self) -> Self {
+        Self {
+            inner: self.inner.clone(),
+            // A listener and an end belong to the stream that reached them; a clone arms its own
+            // listener when it first needs one and runs to its own end.
+            closed_listener: None,
+            terminated: false,
+        }
+    }
 }
 
 impl MessageStream {
@@ -53,24 +78,32 @@ impl MessageStream {
     /// # Example
     ///
     /// ```
-    /// use async_io::Timer;
+    /// # // The example decodes the signal with the `NameOwnerChanged` type of the `DBusProxy`.
+    /// # #[cfg(feature = "proxy")]
     /// use zbus::{AsyncDrop, Connection, MatchRule, MessageStream, fdo::NameOwnerChanged};
+    /// # #[cfg(feature = "proxy")]
+    /// use std::num::NonZeroUsize;
+    /// # #[cfg(feature = "proxy")]
     /// use futures_util::{TryStreamExt, future::select, future::Either::{Left, Right}, pin_mut};
     ///
-    /// # zbus::block_on(async {
+    /// # #[cfg(not(feature = "proxy"))]
+    /// # fn main() {}
+    /// # #[cfg(feature = "proxy")]
+    /// # #[tokio::main]
+    /// # async fn main() -> zbus::Result<()> {
     /// let conn = Connection::session().await?;
     /// let rule = MatchRule::builder()
     ///     .msg_type(zbus::message::Type::Signal)
-    ///     .sender("org.freedesktop.DBus")?
-    ///     .interface("org.freedesktop.DBus")?
-    ///     .member("NameOwnerChanged")?
-    ///     .add_arg("org.freedesktop.zbus.MatchRuleStreamTest42")?
-    ///     .build();
+    ///     .sender("org.freedesktop.DBus")
+    ///     .interface("org.freedesktop.DBus")
+    ///     .member("NameOwnerChanged")
+    ///     .add_arg("org.freedesktop.zbus.MatchRuleStreamTest42")
+    ///     .build()?;
     /// let mut stream = MessageStream::for_match_rule(
     ///     rule,
     ///     &conn,
     ///     // For such a specific match rule, we don't need a big queue.
-    ///     Some(1),
+    ///     Some(NonZeroUsize::new(1).unwrap()),
     /// ).await?;
     ///
     /// let rule_str = "type='signal',sender='org.freedesktop.DBus',\
@@ -107,15 +140,15 @@ impl MessageStream {
     /// pin_mut!(stream);
     /// let next = stream.try_next();
     /// pin_mut!(next);
-    /// let timeout = Timer::after(std::time::Duration::from_millis(50));
+    /// let timeout = tokio::time::sleep(std::time::Duration::from_millis(50));
     /// pin_mut!(timeout);
     /// match select(next, timeout).await {
     ///    Left((msg, _)) => unreachable!("unexpected message: {:?}", msg),
     ///    Right((_, _)) => (),
     /// }
     ///
-    /// # Ok::<(), zbus::Error>(())
-    /// # }).unwrap();
+    /// # Ok(())
+    /// # }
     /// ```
     ///
     /// # Caveats
@@ -124,7 +157,7 @@ impl MessageStream {
     pub async fn for_match_rule<R>(
         rule: R,
         conn: &Connection,
-        max_queued: Option<usize>,
+        max_queued: Option<NonZeroUsize>,
     ) -> Result<Self>
     where
         R: TryInto<OwnedMatchRule>,
@@ -146,14 +179,23 @@ impl MessageStream {
     }
 
     /// The maximum number of messages to queue for this stream.
-    pub fn max_queued(&self) -> usize {
+    pub fn max_queued(&self) -> NonZeroUsize {
         self.inner.msg_receiver.capacity()
     }
 
     /// Set the maximum number of messages to queue for this stream.
     ///
-    /// After this call, the capacity is guaranteed to be at least `max_queued`.
-    pub fn set_max_queued(&mut self, max_queued: usize) {
+    /// After this call, the capacity is guaranteed to be at least `max_queued`: if it is lower, it
+    /// is raised to `max_queued`, and if it is already `max_queued` or more, it is left as it is.
+    /// Unlike [`Connection::set_max_queued`], this never lowers the capacity and so never causes
+    /// queued messages to be dropped.
+    ///
+    /// The queue is shared with the other streams that receive the same messages, so the capacity
+    /// changes for all of them. For a stream created from a [`Connection`] without a match rule,
+    /// that is the main queue of the connection, which [`Connection::max_queued`] reports. For a
+    /// stream created by [`MessageStream::for_match_rule`], it is the queue of its match rule,
+    /// which the streams created for an equal match rule on the same connection share.
+    pub fn set_max_queued(&mut self, max_queued: NonZeroUsize) {
         if max_queued <= self.max_queued() {
             return;
         }
@@ -173,6 +215,8 @@ impl MessageStream {
                 msg_receiver,
                 match_rule: rule,
             },
+            closed_listener: None,
+            terminated: false,
         }
     }
 }
@@ -183,7 +227,46 @@ impl stream::Stream for MessageStream {
     fn poll_next(self: Pin<&mut Self>, cx: &mut Context<'_>) -> Poll<Option<Self::Item>> {
         let this = self.get_mut();
 
-        Pin::new(&mut this.inner.msg_receiver).poll_next(cx)
+        match Pin::new(&mut this.inner.msg_receiver).poll_next(cx) {
+            Poll::Ready(Some(item)) => return Poll::Ready(Some(item)),
+            Poll::Ready(None) => {
+                this.terminated = true;
+
+                return Poll::Ready(None);
+            }
+            Poll::Pending => {}
+        }
+
+        // Nothing is queued, so whether anything can still arrive is a question for the
+        // connection. The socket reader closes this channel on its way out, but a runtime is
+        // free to drop or abort the task it runs in, and then nobody ever does; the connection's
+        // own closed flag is what says so in that case. Arming the listener before reading the
+        // flag is what makes the pair race-free.
+        if this.closed_listener.is_none() {
+            this.closed_listener = Some(this.inner.conn_inner.closed_listener());
+        }
+        if !this.inner.conn_inner.is_closed() {
+            let listener = this
+                .closed_listener
+                .as_mut()
+                .expect("a listener was armed just above");
+            if Pin::new(listener).poll(cx).is_pending() {
+                return Poll::Pending;
+            }
+            // The listener has fired and is spent; the next poll that needs one arms it again.
+            this.closed_listener = None;
+        }
+
+        match Pin::new(&mut this.inner.msg_receiver).poll_next(cx) {
+            // A message can have landed while the connection was closing, so the queue has the
+            // last word on when this stream ends.
+            Poll::Ready(Some(item)) => Poll::Ready(Some(item)),
+            Poll::Ready(None) | Poll::Pending => {
+                this.terminated = true;
+
+                Poll::Ready(None)
+            }
+        }
     }
 }
 
@@ -228,7 +311,7 @@ impl OrderedStream for MessageStream {
 
 impl FusedStream for MessageStream {
     fn is_terminated(&self) -> bool {
-        self.inner.msg_receiver.is_terminated()
+        self.terminated || self.inner.msg_receiver.is_terminated()
     }
 }
 
@@ -243,6 +326,8 @@ impl From<Connection> for MessageStream {
                 msg_receiver,
                 match_rule: None,
             },
+            closed_listener: None,
+            terminated: false,
         }
     }
 }
@@ -286,17 +371,16 @@ impl Drop for Inner {
     }
 }
 
-#[async_trait::async_trait]
 impl AsyncDrop for MessageStream {
     async fn async_drop(mut self) {
         let conn = Connection {
             inner: self.inner.conn_inner.clone(),
         };
 
-        if let Some(rule) = self.inner.match_rule.take() {
-            if let Err(e) = conn.remove_match(rule).await {
-                warn!("Failed to remove match rule: {}", e);
-            }
+        if let Some(rule) = self.inner.match_rule.take()
+            && let Err(e) = conn.remove_match(rule).await
+        {
+            warn!("Failed to remove match rule: {}", e);
         }
     }
 }

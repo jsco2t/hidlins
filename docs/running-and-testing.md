@@ -151,28 +151,48 @@ message and exits; there is no background unlock service to exercise yet.
 
 ## Local-network sync across two devices
 
-Use two disposable copies of a vault on the same private/local network. On the
-authoritative macOS or Linux machine, open a bounded pairing window and keep the
-server in the foreground:
+Use two disposable copies of the same vault on the same private/local network.
+On each machine, prepare its own temporary `HIDLINS_DEMO_DIR` and register the
+copied kitchen-sink KDBX as `demo` in
+`$HIDLINS_DEMO_DIR/cli/vaults.toml`, using the CLI registration commands above.
+Copy the same generated KDBX to the client; independently generating a second
+vault would create a different logical vault. Keep both disposable registries
+separate from normal Hidlins state.
+
+On the authoritative macOS or Linux machine, open a bounded pairing window and
+keep the server in the foreground:
 
 ```sh
-target/release/hidlins sync serve --vault demo --pairing-window
+target/release/hidlins \
+  --registry "$HIDLINS_DEMO_DIR/cli/vaults.toml" \
+  sync serve --vault demo --pairing-window
 ```
 
 On the client, allow discovery to choose the current DHCP route:
 
 ```sh
-target/release/hidlins sync pair --vault demo --name authority
+target/release/hidlins \
+  --registry "$HIDLINS_DEMO_DIR/cli/vaults.toml" \
+  sync pair --vault demo --name authority
 ```
 
-Compare the six-digit SAS displayed on both applications. Accept only if both
-values match; rejecting or closing either prompt must leave no trusted peer.
+Compare the six-character Crockford Base32 SAS (`XXX-XXX`) displayed on both
+applications. Accept only if both values match; rejecting or closing either prompt must leave no trusted peer.
 After successful bilateral acceptance, stop the foreground server with
-`Ctrl+C`, restart it without opening a pairing window, then request sync:
+`Ctrl+C`, then restart it on the authority without opening a pairing window:
 
 ```sh
-target/release/hidlins sync serve --vault demo
-target/release/hidlins sync now --vault demo
+target/release/hidlins \
+  --registry "$HIDLINS_DEMO_DIR/cli/vaults.toml" \
+  sync serve --vault demo
+```
+
+In the client's separate shell, request sync using its disposable registry:
+
+```sh
+target/release/hidlins \
+  --registry "$HIDLINS_DEMO_DIR/cli/vaults.toml" \
+  sync now --vault demo
 ```
 
 Discovery provides candidate routes only. The saved Noise identity pin is the
@@ -280,6 +300,14 @@ requirements.
 
 ## Android emulator and optional physical device observations
 
+Set `ANDROID_SDK_ROOT` to the absolute path of your installed Android SDK;
+the manual emulator and `adb` commands below use that same SDK. For example,
+replace the placeholder before running:
+
+```sh
+export ANDROID_SDK_ROOT="/absolute/path/to/your/Android/sdk"
+```
+
 Provision the repository's API 29/36 native/UI and API 30/36 shared-LAN client,
 authority, and replacement-authority AVDs:
 
@@ -290,7 +318,7 @@ make android-emulator-provision
 For application-only diagnosis on Apple Silicon, start the phone manually with:
 
 ```sh
-/Users/jason/Library/Android/sdk/emulator/emulator -avd hidlins-api29
+"$ANDROID_SDK_ROOT/emulator/emulator" -avd hidlins-api29
 ```
 
 Use `hidlins-api36-tablet` for the tablet. On an x86_64 host, the corresponding
@@ -300,9 +328,9 @@ Build, install, and launch the debug APK:
 
 ```sh
 make app-build-android
-/Users/jason/Library/Android/sdk/platform-tools/adb install -r \
+"$ANDROID_SDK_ROOT/platform-tools/adb" install -r \
   app/build/app/outputs/apk/debug/app-debug.apk
-/Users/jason/Library/Android/sdk/platform-tools/adb shell am start \
+"$ANDROID_SDK_ROOT/platform-tools/adb" shell am start \
   -n app.hidlins/.MainActivity
 ```
 
@@ -310,7 +338,7 @@ To import the generated fixture, copy it into the emulator, then choose it in
 Hidlins' existing-vault flow:
 
 ```sh
-/Users/jason/Library/Android/sdk/platform-tools/adb push \
+"$ANDROID_SDK_ROOT/platform-tools/adb" push \
   "$HIDLINS_DEMO_DIR/kitchen-sink.kdbx" \
   /sdcard/Download/hidlins-demo.kdbx
 ```

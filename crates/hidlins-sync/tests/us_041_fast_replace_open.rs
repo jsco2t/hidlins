@@ -8,6 +8,7 @@
 mod common;
 
 use common::sync_env::{open_vault, vault_entry_titles, SyncTestEnv};
+use hidlins_sync::backup::backup_path_for;
 use hidlins_sync::sync::run_state_machine;
 use hidlins_sync::transport::memory::MemoryTransport;
 use hidlins_sync::transport::SyncTransport;
@@ -39,6 +40,7 @@ fn remote_advanced_local_unchanged_fast_replaces() {
 
     // Device A syncs: remote changed (version moved), local unchanged (sha ==
     // last-synced). → FastReplaced, merge NOT invoked.
+    let before = std::fs::read(dev_a.vault_path()).unwrap();
     let mut vault = open_vault(&dev_a);
     let (outcome, pointers) = run_state_machine(
         &mut vault,
@@ -64,4 +66,9 @@ fn remote_advanced_local_unchanged_fast_replaces() {
         "remote bytes replaced local: {titles:?}"
     );
     assert!(pointers.remote_version.is_some() && pointers.local_sha256.is_some());
+    assert_eq!(
+        std::fs::read(backup_path_for(dev_a.vault_path())).unwrap(),
+        before,
+        "fast replacement must preserve the original encrypted vault in its backup"
+    );
 }

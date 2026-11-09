@@ -1,4 +1,4 @@
-use hidlins_core::{EntryBuilder, EntryKind, Tag, Totp, Uuid};
+use hidlins_core::{EntryBuilder, EntryKind, Tag, Totp, Uuid, Vault};
 
 use super::session::{AppSession, TotpSnapshot};
 use crate::dto::{
@@ -15,12 +15,35 @@ fn parse_uuid(s: &str) -> Result<Uuid, HidlinsApiError> {
         })
 }
 
+fn parse_expiration(epoch_secs: i64) -> Result<chrono::DateTime<chrono::Utc>, HidlinsApiError> {
+    chrono::DateTime::from_timestamp(epoch_secs, 0).ok_or_else(|| HidlinsApiError::InvalidInput {
+        field: "epoch_secs".to_string(),
+        reason: "timestamp is out of representable range".to_string(),
+    })
+}
+
+enum ExpirationChange {
+    Preserve,
+    Replace(Option<i64>),
+}
+
 /// Convert the `GroupDeleteBehaviorDto` to the core enum.
 fn delete_behavior(dto: GroupDeleteBehaviorDto) -> hidlins_core::GroupDeleteBehavior {
     match dto {
         GroupDeleteBehaviorDto::Refuse => hidlins_core::GroupDeleteBehavior::Refuse,
         GroupDeleteBehaviorDto::Recurse => hidlins_core::GroupDeleteBehavior::Recurse,
     }
+}
+
+fn group_entry_uuids(vault: &Vault, root: Uuid) -> Result<Vec<Uuid>, HidlinsApiError> {
+    let mut pending = vec![root];
+    let mut entries = Vec::new();
+    while let Some(uuid) = pending.pop() {
+        let group = vault.group_view(uuid)?;
+        pending.extend(group.child_group_uuids());
+        entries.extend(group.entry_uuids());
+    }
+    Ok(entries)
 }
 
 #[allow(clippy::needless_pass_by_value)] // frb FFI passes owned DTOs
@@ -50,24 +73,37 @@ impl AppSession {
                     .and_then(|uri| {
                         Totp::from_otpauth_uri(uri)
                             .ok()
-                            .map(|totp| (totp, uri.to_string()))
+                            .map(|totp| TotpSnapshot::new(totp, uri.to_string()))
                     })
             } else {
                 None
             };
-            (detail, totp)
+            let fill = totp.map(|snapshot| {
+                let identity = match self.totp_cache.write() {
+                    Ok(mut cache) => cache.begin_fill(id),
+                    Err(poison) => {
+                        let mut cache = poison.into_inner();
+                        cache.clear();
+                        cache.begin_fill(id)
+                    }
+                };
+                (snapshot, identity)
+            });
+            (detail, fill)
         }; // state guard dropped here unconditionally
 
         // Populate the TOTP cache outside the session mutex.
-        if let Some((totp, uri)) = totp_data {
+        if let Some((snapshot, identity)) = totp_data {
+            #[cfg(test)]
+            super::session::lock_cache_regressions::before_publish();
             match self.totp_cache.write() {
                 Ok(mut cache) => {
-                    cache.insert(id, TotpSnapshot::new(totp, uri));
+                    cache.publish(id, &identity, snapshot);
                 }
                 Err(poison) => {
                     let mut cache = poison.into_inner();
                     cache.clear();
-                    cache.insert(id, TotpSnapshot::new(totp, uri));
+                    cache.publish(id, &identity, snapshot);
                 }
             }
         }
@@ -80,10 +116,30 @@ impl AppSession {
         group: String,
         draft: EntryDraftDto,
     ) -> Result<String, HidlinsApiError> {
+        self.create_entry_inner(group, draft, None)
+    }
+
+    /// Create fields and optional expiration in a single encrypted save.
+    pub fn create_entry_with_expiration(
+        &self,
+        group: String,
+        draft: EntryDraftDto,
+        expiry_time: Option<i64>,
+    ) -> Result<String, HidlinsApiError> {
+        self.create_entry_inner(group, draft, expiry_time)
+    }
+
+    fn create_entry_inner(
+        &self,
+        group: String,
+        draft: EntryDraftDto,
+        expiry_time: Option<i64>,
+    ) -> Result<String, HidlinsApiError> {
         // Own and wipe the complete input on every exit, including validation
         // and save failures before the successful persistence path.
         let draft = zeroize::Zeroizing::new(draft);
         let group_uuid = parse_uuid(&group)?;
+        let expiration = expiry_time.map(parse_expiration).transpose()?;
 
         let builder = match draft.kind {
             EntryKindDto::Credential => EntryBuilder::credential(&draft.title),
@@ -121,6 +177,9 @@ impl AppSession {
         for cf in &draft.custom_fields {
             builder = builder.custom_field(cf.name.as_str(), cf.value.as_str(), cf.protected);
         }
+        if let Some(when) = expiration {
+            builder = builder.expires_at(when);
+        }
 
         let entry_draft = builder.build();
 
@@ -135,8 +194,34 @@ impl AppSession {
     }
 
     pub fn update_entry(&self, uuid: String, edit: EntryEditDto) -> Result<(), HidlinsApiError> {
+        self.update_entry_inner(uuid, edit, ExpirationChange::Preserve)
+    }
+
+    /// Save fields and the desired expiration together. `None` clears expiration;
+    /// callers preserving it should use the existing `update_entry` method.
+    pub fn update_entry_with_expiration(
+        &self,
+        uuid: String,
+        edit: EntryEditDto,
+        expiry_time: Option<i64>,
+    ) -> Result<(), HidlinsApiError> {
+        self.update_entry_inner(uuid, edit, ExpirationChange::Replace(expiry_time))
+    }
+
+    fn update_entry_inner(
+        &self,
+        uuid: String,
+        edit: EntryEditDto,
+        change: ExpirationChange,
+    ) -> Result<(), HidlinsApiError> {
         let edit = zeroize::Zeroizing::new(edit);
         let id = parse_uuid(&uuid)?;
+        // Validate before the update closure can change fields or history. The
+        // change distinguishes legacy preservation from an explicit clear.
+        let expiration = match change {
+            ExpirationChange::Replace(Some(epoch)) => Some(parse_expiration(epoch)?),
+            ExpirationChange::Preserve | ExpirationChange::Replace(None) => None,
+        };
 
         let mut state = self.lock_state();
         let vault = state.require_vault_mut()?;
@@ -212,10 +297,20 @@ impl AppSession {
             Ok(())
         })?;
 
+        // These metadata operations only look up the same entry whose successful
+        // update just completed under this exclusive session guard. They add no
+        // second history snapshot and do not save independently.
+        if let ExpirationChange::Replace(_) = change {
+            match expiration {
+                Some(when) => vault.set_expiration(id, when)?,
+                None => vault.clear_expiration(id)?,
+            }
+        }
+
+        self.invalidate_totp(&id);
         vault.save()?;
 
         drop(state);
-        self.invalidate_totp(&id);
         Ok(())
     }
 
@@ -224,9 +319,9 @@ impl AppSession {
         let mut state = self.lock_state();
         let vault = state.require_vault_mut()?;
         vault.delete_entry(id)?;
+        self.invalidate_totp(&id);
         vault.save()?;
         drop(state);
-        self.invalidate_totp(&id);
         Ok(())
     }
 
@@ -235,9 +330,9 @@ impl AppSession {
         let mut state = self.lock_state();
         let vault = state.require_vault_mut()?;
         vault.purge_entry(id)?;
+        self.invalidate_totp(&id);
         vault.save()?;
         drop(state);
-        self.invalidate_totp(&id);
         Ok(())
     }
 
@@ -299,7 +394,15 @@ impl AppSession {
         let id = parse_uuid(&uuid)?;
         let mut state = self.lock_state();
         let vault = state.require_vault_mut()?;
+        let affected = if matches!(behavior, GroupDeleteBehaviorDto::Recurse) {
+            group_entry_uuids(vault, id)?
+        } else {
+            Vec::new()
+        };
         vault.delete_group(id, delete_behavior(behavior))?;
+        for uuid in affected {
+            self.invalidate_totp(&uuid);
+        }
         vault.save()?;
         drop(state);
         Ok(())

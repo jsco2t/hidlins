@@ -6,6 +6,13 @@ use super::session::AppSession;
 use crate::dto::{KeyfileRef, VaultSummary};
 use crate::error::HidlinsApiError;
 
+pub(super) fn protect_keyfile(keyfile: Option<KeyfileRef>) -> Option<hidlins_core::Keyfile> {
+    keyfile.map(|value| match value {
+        KeyfileRef::Path(path) => hidlins_core::Keyfile::Path(PathBuf::from(path)),
+        KeyfileRef::Bytes(bytes) => hidlins_core::Keyfile::Bytes(bytes),
+    })
+}
+
 pub(crate) fn validate_vault_name(name: &str) -> Result<(), HidlinsApiError> {
     if name.is_empty() || name.contains('/') || name.contains('\\') || name.contains("..") {
         return Err(HidlinsApiError::InvalidInput {
@@ -47,6 +54,7 @@ impl AppSession {
     ) -> Result<VaultSummary, HidlinsApiError> {
         // Zeroize the inbound secret at function entry, before any validation.
         let master = MasterPassword::new(master_password);
+        let kf = protect_keyfile(keyfile);
 
         validate_vault_name(&name)?;
 
@@ -56,11 +64,6 @@ impl AppSession {
                 reason: "no-recovery warning must be confirmed before vault creation".to_string(),
             });
         }
-
-        let kf = keyfile.map(|kr| match kr {
-            KeyfileRef::Path(p) => hidlins_core::Keyfile::Path(PathBuf::from(p)),
-            KeyfileRef::Bytes(b) => hidlins_core::Keyfile::Bytes(b),
-        });
 
         // Reject file names containing path separators or parent-directory
         // traversals — the inbound value arrives from FFI and must not
@@ -109,13 +112,17 @@ impl AppSession {
                 .and_then(|k| k.path().map(std::path::Path::to_path_buf)),
             extra: toml::Table::default(),
         };
-        if let Err(e) = state.registry.register(registered) {
-            let _ = std::fs::remove_file(&vault_path);
-            return Err(e.into());
-        }
-        if let Err(e) = state.registry.save() {
-            let _ = state.registry.deregister(&name, false);
-            let _ = std::fs::remove_file(&vault_path);
+        if let Err(e) = state.registry.register_and_save(registered) {
+            // The registry follows its installed rename even when a later
+            // durability step reports an error. Only an uncommitted creation
+            // may discard the new KDBX; keep a committed registration usable.
+            let installed = state
+                .registry
+                .get(&name)
+                .is_some_and(|entry| entry.path == vault_path);
+            if !installed {
+                let _ = std::fs::remove_file(&vault_path);
+            }
             return Err(e.into());
         }
 
@@ -133,15 +140,15 @@ impl AppSession {
         kdbx_path: String,
         keyfile: Option<KeyfileRef>,
     ) -> Result<VaultSummary, HidlinsApiError> {
+        let keyfile = protect_keyfile(keyfile);
         let path = PathBuf::from(&kdbx_path);
         if !path.exists() {
             return Err(HidlinsApiError::FileNotFound { path: kdbx_path });
         }
 
-        let keyfile_path = keyfile.as_ref().and_then(|kr| match kr {
-            KeyfileRef::Path(p) => Some(PathBuf::from(p)),
-            KeyfileRef::Bytes(_) => None,
-        });
+        let keyfile_path = keyfile
+            .as_ref()
+            .and_then(|value| value.path().map(std::path::Path::to_path_buf));
 
         let registered = RegisteredVault {
             name: name.clone(),

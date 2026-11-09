@@ -52,9 +52,29 @@ public final class HidlinsAndroidTest extends Instrumentation {
         runCase("scenarioRegistrarAcceptsOnlyBoundedPortAndKnownServiceKind", this::scenarioRegistrarAcceptsOnlyBoundedPortAndKnownServiceKind);
         runCase("pickerCancellationAndActivityDestructionCompletePendingResults", this::pickerCancellationAndActivityDestructionCompletePendingResults);
         runCase("vaultImportReportsProviderPermissionDenial", this::vaultImportReportsProviderPermissionDenial);
+        runCase("lifecycleRejectsStaleAfterPause", () -> LifecycleAckRegressions.staleAfterPause(this));
+        runCase("lifecycleRejectsResumePauseResumeABA", () -> LifecycleAckRegressions.staleAcrossResumeABA(this));
+        runCase("lifecycleRejectsUnnumberedAcknowledgement", () -> LifecycleAckRegressions.unnumberedCannotHide(this));
+        runCase("lifecycleAcceptsCurrentAcknowledgement", () -> LifecycleAckRegressions.currentAcknowledgementHides(this));
+        runCase("lifecycleBootstrapReplaysCurrentObservation", () -> LifecycleAckRegressions.bootstrapReplaysCurrent(this));
+        runCase("safVaultQueryKeepsMainResponsive", () -> SafWorkerRegressions.vaultStageDoesNotBlockMain(this, "query"));
+        runCase("safVaultOpenKeepsMainResponsive", () -> SafWorkerRegressions.vaultStageDoesNotBlockMain(this, "open"));
+        runCase("safVaultReadKeepsMainResponsive", () -> SafWorkerRegressions.vaultStageDoesNotBlockMain(this, "read"));
+        runCase("safKeyfileQueryKeepsMainResponsive", () -> SafWorkerRegressions.keyfileQueryDoesNotBlockMain(this));
+        runCase("safDestroyDuringVaultQueryCompletesPromptly", () -> SafWorkerRegressions.destroyDuringProviderWork(this, "query", false));
+        runCase("safDestroyDuringVaultOpenClosesLateReader", () -> SafWorkerRegressions.destroyDuringProviderWork(this, "open", false));
+        runCase("safDestroyDuringVaultReadCleansPartialCopy", () -> SafWorkerRegressions.destroyDuringProviderWork(this, "read", false));
+        runCase("safDestroyDuringKeyfileQueryRollsBack", () -> SafWorkerRegressions.destroyDuringProviderWork(this, "query", true));
+        runCase("safDeliveredImportSurvivesDestroy", () -> SafWorkerRegressions.deliveredImportSurvivesDestruction(this));
+        runCase("safDisposeAfterInstallCleansUndeliveredFile", () -> SafWorkerRegressions.disposalAfterInstallBeforeDelivery(this));
+        runCase("safInputClosesOnSetupFailure", () -> SafStorageRegressions.closesInputOnSetupFailure(this));
+        runCase("safPartialReadFailureCleansStaging", () -> SafStorageRegressions.cleansPartialReadFailure(this));
+        runCase("safOverlappingActivitiesNeverOverwriteImports", () -> SafStorageRegressions.overlappingImportsNeverOverwrite(this));
+        runCase("safFailedKeyfileSavePreservesExistingGrant", () -> SafKeyfileRegressions.failedSavePreservesEarlierGrant(this));
+        runCase("safFailedNewKeyfileSaveLeavesNoGrant", () -> SafKeyfileRegressions.failedNewSaveLeavesNoGrant(this));
         Bundle result = new Bundle();
         result.putString("stream", "HIDLINS_DEVICE_TESTS " + completed + " passed, " + failures + " failed\n");
-        finish(failures == 0 && completed == 11 ? -1 : 0, result);
+        finish(failures == 0 && completed == 31 ? -1 : 0, result);
     }
 
     private void runCase(String name, DeviceCase test) {
@@ -66,7 +86,7 @@ public final class HidlinsAndroidTest extends Instrumentation {
             failures += 1;
             // Never print assertion operands: tests exercise secret buffers.
             report("FAIL " + name + " (" + error.getClass().getSimpleName() + ", "
-                    + DeviceAssertions.failureLocation(error) + ")");
+                    + nativeFailureLocation(error) + ")");
         } finally {
             MainActivity activity = MainActivity.currentForTest();
             if (activity != null && !activity.isFinishing()) {
@@ -84,6 +104,22 @@ public final class HidlinsAndroidTest extends Instrumentation {
         Bundle status = new Bundle();
         status.putString("stream", message + "\n");
         sendStatus(0, status);
+    }
+
+    private static String nativeFailureLocation(Throwable error) {
+        Throwable cause = error;
+        while (cause.getCause() != null && cause.getCause() != cause) cause = cause.getCause();
+        for (StackTraceElement frame : cause.getStackTrace()) {
+            String name = frame.getClassName();
+            for (String fixture : new String[]{"SafWorkerRegressions", "SafStorageRegressions",
+                    "SafKeyfileRegressions", "HidlinsControlledDocumentProvider"}) {
+                if (name.equals("app.hidlins." + fixture)
+                        || name.startsWith("app.hidlins." + fixture + "$")) {
+                    return fixture + ".java:" + frame.getLineNumber();
+                }
+            }
+        }
+        return DeviceAssertions.failureLocation(error);
     }
 
     @FunctionalInterface
@@ -140,7 +176,7 @@ public final class HidlinsAndroidTest extends Instrumentation {
         File imported = storage.importVault(new ByteArrayInputStream(fixture), "personal.kdbx");
         assertEquals("personal.kdbx", imported.getName());
         assertArrayEquals(fixture, Files.readAllBytes(imported.toPath()));
-        File[] leftovers = root.listFiles((dir, name) -> name.startsWith(".import-"));
+        File[] leftovers = new File(root, "Vaults").listFiles((dir, name) -> name.startsWith(".import-"));
         assertNotNull(leftovers);
         assertEquals(0, leftovers.length);
     }
@@ -225,13 +261,17 @@ public final class HidlinsAndroidTest extends Instrumentation {
                 new HidlinsPlatformServices(activity, new SnapshotCoverController());
 
         RecordingResult canceled = new RecordingResult();
-        assertTrue(services.beginPicker(71, canceled));
-        assertTrue(services.onActivityResult(71, android.app.Activity.RESULT_CANCELED, null));
+        runOnMain(() -> {
+            assertTrue(services.beginPicker(71, canceled));
+            assertTrue(services.onActivityResult(71, android.app.Activity.RESULT_CANCELED, null));
+        });
         assertEquals("canceled", canceled.status());
 
         RecordingResult destroyed = new RecordingResult();
-        assertTrue(services.beginPicker(72, destroyed));
-        services.close();
+        runOnMain(() -> {
+            assertTrue(services.beginPicker(72, destroyed));
+            services.close();
+        });
         assertEquals("failure", destroyed.status());
         assertEquals("activity-destroyed", destroyed.code());
         runOnMain(activity::finish);
@@ -242,12 +282,12 @@ public final class HidlinsAndroidTest extends Instrumentation {
         HidlinsPlatformServices services =
                 new HidlinsPlatformServices(activity, new SnapshotCoverController());
         RecordingResult denied = new RecordingResult();
-        assertTrue(services.beginPicker(73, denied));
+        runOnMain(() -> assertTrue(services.beginPicker(73, denied)));
         Intent result = new Intent().setData(
                 Uri.parse("content://app.hidlins.test.denied/vault.kdbx"));
-        assertTrue(services.onActivityResult(73, android.app.Activity.RESULT_OK, result));
+        runOnMain(() -> assertTrue(services.onActivityResult(73, android.app.Activity.RESULT_OK, result)));
         assertEquals("denied", denied.status());
-        services.close();
+        runOnMain(services::close);
         runOnMain(activity::finish);
     }
 
@@ -303,11 +343,13 @@ public final class HidlinsAndroidTest extends Instrumentation {
     }
 
     private static final class RecordingResult implements MethodChannel.Result {
-        private Object value;
+        private volatile Object value;
+        private final CountDownLatch replied = new CountDownLatch(1);
 
         @Override
         public void success(Object result) {
             value = result;
+            replied.countDown();
         }
 
         @Override
@@ -321,6 +363,12 @@ public final class HidlinsAndroidTest extends Instrumentation {
         }
 
         String status() {
+            try {
+                assertTrue(replied.await(5, TimeUnit.SECONDS));
+            } catch (InterruptedException error) {
+                Thread.currentThread().interrupt();
+                throw new AssertionError("fixture reply wait interrupted", error);
+            }
             assertTrue(value instanceof java.util.Map<?, ?>);
             return (String) ((java.util.Map<?, ?>) value).get("status");
         }

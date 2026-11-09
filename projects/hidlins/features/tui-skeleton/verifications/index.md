@@ -1,12 +1,12 @@
 # TUI Skeleton Verifications Index
 
-**Parent:** [../index.md](../index.md)
-**Last Updated:** 2026-08-31
+**Overview:** [Verification overview](README.md)
+**Last Updated:** 2026-11-09
 
 | Surface | Current evidence |
 | --- | --- |
 | Deterministic behavior | Repository `make test-tui-contracts`, snapshots, and `make check` |
-| Historical headless runbooks | [`01-local-headless/`](01-local-headless/) |
+| Engineering plans and historical runbooks | [External project verification index](../../../../../../projects/hidlins/features/tui-skeleton/verifications/index.md) |
 | Terminal integration | [Central real-terminal matrix](../../../verifications/tui-real-terminal-matrix.md) — non-gating, not yet executed |
 | Screen-reader integration | [Central Orca/VoiceOver cases](../../../verifications/tui-screen-readers.md) — non-gating, not yet executed |
 

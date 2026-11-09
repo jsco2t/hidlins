@@ -1,12 +1,9 @@
 use serde::{Deserialize, Serialize};
-use zbus::{
-    DBusError,
-    zvariant::{DeserializeDict, OwnedValue, SerializeDict, Str, Type, Value},
-};
+use zbus::{DBusError, DeserializeDict, SerializeDict, Str, Type};
 
-// Test crate attribute with re-exported zvariant path
+// Tests the `crate` attribute with a path to the wire module.
 #[derive(Debug, Deserialize, Serialize, Type)]
-#[zvariant(crate = "zbus::zvariant")]
+#[zbus(crate = "zbus::wire")]
 pub struct ArgStructTest {
     pub foo: i32,
     pub bar: String,
@@ -14,18 +11,18 @@ pub struct ArgStructTest {
 
 // Mimic a NetworkManager interface property that's a dict. This tests ability to use a custom
 // dict type using the `Type` And `*Dict` macros (issue #241).
-// Also tests crate attribute with re-exported zvariant path.
-#[derive(DeserializeDict, SerializeDict, Type, Debug, Value, OwnedValue, PartialEq, Eq)]
-#[zvariant(signature = "dict", crate = "zbus::zvariant")]
+// Also tests the `crate` attribute with a path to the wire module.
+#[derive(DeserializeDict, SerializeDict, Type, Debug, PartialEq, Eq)]
+#[zbus(signature = "dict", crate = "zbus::wire")]
 pub struct IP4Adress {
     pub prefix: u32,
     pub address: String,
 }
 
 // To test property setter for types with lifetimes.
-// Also tests crate attribute with re-exported zvariant path.
-#[derive(Serialize, Deserialize, Type, Debug, Value, OwnedValue, PartialEq, Eq)]
-#[zvariant(crate = "zbus::zvariant")]
+// Also tests the `crate` attribute with a path to the wire module.
+#[derive(Serialize, Deserialize, Type, Debug, PartialEq, Eq)]
+#[zbus(crate = "zbus::wire")]
 pub struct RefType<'a> {
     #[serde(borrow)]
     pub field1: Str<'a>,

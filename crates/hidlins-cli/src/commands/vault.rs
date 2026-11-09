@@ -16,7 +16,8 @@
 //! write path and security-behaviors' read path cannot drift.
 
 use hidlins_core::{
-    KdfParams, Keyfile, NoRecoveryConfirmed, RegisteredVault, Vault, VaultError, VaultRegistry,
+    KdfParams, Keyfile, NoRecoveryConfirmed, RegisteredVault, Vault, VaultError, VaultReadOnly,
+    VaultRegistry,
 };
 use hidlins_security::VaultLockConfig;
 
@@ -75,7 +76,8 @@ fn run_register(cli: &Cli, args: &VaultRegisterArgs) -> Result<(), CliExit> {
     // Authentication deliberately precedes all registry mutation. Opening an
     // existing vault is read-only; drop its file lock before taking the
     // independent registry write lock below.
-    let vault = Vault::open(&args.path, &master, keyfile.as_ref()).map_err(CliExit::from)?;
+    let vault =
+        VaultReadOnly::open(&args.path, &master, keyfile.as_ref()).map_err(CliExit::from)?;
     drop(vault);
 
     // Persist stable absolute paths so later ID-based commands do not depend on
@@ -131,9 +133,8 @@ fn run_create(cli: &Cli, args: &VaultCreateArgs) -> Result<(), CliExit> {
     // Load the registry FIRST so a duplicate-id error surfaces before
     // we run the expensive Argon2id KDF + write a .kdbx file that the
     // user can't easily clean up. Belt-and-suspenders: the
-    // `VaultRegistry::register` call below still re-checks for
-    // duplicates, so a race between two concurrent `vault create`
-    // invocations can't silently succeed.
+    // The transaction below reloads the latest registry under its write
+    // lock and rechecks the name, preserving unrelated concurrent updates.
     let paths = resolve_paths(cli)?;
     let mut registry = VaultRegistry::load(paths).map_err(CliExit::from)?;
     if registry.get(&args.id).is_some() {
@@ -148,10 +149,15 @@ fn run_create(cli: &Cli, args: &VaultCreateArgs) -> Result<(), CliExit> {
     let mut stdin = stdin.lock();
     let mut stderr = std::io::stderr().lock();
     let master = new_master_password_confirmed(&mut stdin, &mut stderr)?;
-    let keyfile = args.keyfile.clone().map(Keyfile::Path);
+    let keyfile_path = args
+        .keyfile
+        .as_deref()
+        .map(canonicalize_registration_path)
+        .transpose()?;
+    let keyfile = keyfile_path.clone().map(Keyfile::Path);
     let kdf = KdfParams::default();
 
-    let _vault = Vault::create(
+    let vault = Vault::create(
         &args.path,
         &master,
         keyfile.as_ref(),
@@ -159,21 +165,19 @@ fn run_create(cli: &Cli, args: &VaultCreateArgs) -> Result<(), CliExit> {
         NoRecoveryConfirmed::yes(),
     )
     .map_err(CliExit::from)?;
-    // Drop the Vault handle here — Phase 2's `vault create` returns
-    // immediately after registration; the file is on disk and the
-    // registry will be updated below. The handle's exclusive lock is
-    // released as it drops.
+    // Persist the identity actually created and keep its exclusive lock
+    // through registration. The output below retains the user's input paths.
+    let vault_path = vault.backing_path().to_path_buf();
 
     registry
-        .register(RegisteredVault {
+        .register_and_save(RegisteredVault {
             name: args.id.clone(),
-            path: args.path.clone(),
+            path: vault_path,
             created_at: chrono::Utc::now().to_rfc3339(),
-            keyfile_path: args.keyfile.clone(),
+            keyfile_path,
             extra: toml::Table::new(),
         })
         .map_err(CliExit::from)?;
-    registry.save().map_err(CliExit::from)?;
 
     let view = VaultCreateView {
         id: &args.id,

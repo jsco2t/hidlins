@@ -1,7 +1,7 @@
 use std::{marker::PhantomData, sync::Arc};
 
 use super::{Interface, InterfaceDeref, InterfaceDerefMut, SignalEmitter};
-use crate::async_lock::RwLock;
+use crate::runtime::locks::RwLock;
 
 /// Wrapper over an interface, along with its corresponding `SignalEmitter`
 /// instance. A reference to the underlying interface may be obtained via
@@ -25,10 +25,6 @@ where
     pub async fn get(&self) -> InterfaceDeref<'_, I> {
         let iface = self.lock.read().await;
 
-        iface
-            .downcast_ref::<I>()
-            .expect("Unexpected interface type");
-
         InterfaceDeref {
             iface,
             phantom: PhantomData,
@@ -50,7 +46,7 @@ where
     ///
     /// ```no_run
     /// # use std::error::Error;
-    /// # use async_io::block_on;
+    /// # use zbus::block_on;
     /// # use zbus::{Connection, interface};
     ///
     /// struct MyIface(u32);
@@ -80,14 +76,7 @@ where
     /// # Ok::<_, Box<dyn Error + Send + Sync>>(())
     /// ```
     pub async fn get_mut(&self) -> InterfaceDerefMut<'_, I> {
-        let mut iface = self.lock.write().await;
-
-        iface
-            .downcast_ref::<I>()
-            .expect("Unexpected interface type");
-        iface
-            .downcast_mut::<I>()
-            .expect("Unexpected interface type");
+        let iface = self.lock.write().await;
 
         InterfaceDerefMut {
             iface,
@@ -95,12 +84,8 @@ where
         }
     }
 
+    /// The [`SignalEmitter`] for the object path that the interface is registered at.
     pub fn signal_emitter(&self) -> &SignalEmitter<'static> {
-        &self.emitter
-    }
-
-    #[deprecated(since = "0.5.0", note = "Please use `signal_emitter` instead.")]
-    pub fn signal_context(&self) -> &SignalEmitter<'static> {
         &self.emitter
     }
 }

@@ -12,6 +12,7 @@ impl AppSession {
         &self,
         opts: PasswordOptionsDto,
     ) -> Result<GeneratedSecret, HidlinsApiError> {
+        let copy_origin = self.lock_state().clipboard_owner;
         let classes = CharSet {
             lowercase: opts.lowercase,
             uppercase: opts.uppercase,
@@ -30,6 +31,7 @@ impl AppSession {
         Ok(GeneratedSecret {
             value: (*value).clone(),
             entropy_bits,
+            copy_origin,
         })
     }
 
@@ -38,6 +40,7 @@ impl AppSession {
         &self,
         opts: PassphraseOptionsDto,
     ) -> Result<GeneratedSecret, HidlinsApiError> {
+        let copy_origin = self.lock_state().clipboard_owner;
         let value = PassphraseBuilder::new()
             .words(opts.words)
             .separator(opts.separator)
@@ -48,6 +51,7 @@ impl AppSession {
         Ok(GeneratedSecret {
             value: (*value).clone(),
             entropy_bits,
+            copy_origin,
         })
     }
 }

@@ -11,7 +11,7 @@ import '../frb_generated.dart';
 
 import 'package:flutter_rust_bridge/flutter_rust_bridge_for_generated.dart';
 
-// These functions are ignored because they are not marked as `pub`: `attach_platform_lock_sources`, `clear_totp_cache_inner`, `clear_totp_cache`, `do_lock`, `install_lock_sink`, `invalidate_totp`, `is_unlocked`, `kill`, `lifecycle_from_u8`, `lifecycle_to_u8`, `lock_state`, `new`, `push_lock_event`, `push_sync_event`, `require_vault_mut`, `require_vault`, `secret_uri`, `spawn_ticker`, `stop_server_runtime`, `tick_inner`, `unlock_inner`
+// These functions are ignored because they are not marked as `pub`: `attach_platform_lock_sources`, `clear_totp_cache_inner`, `clear_totp_cache`, `do_lock`, `install_lock_sink`, `invalidate_totp`, `is_logically_unlocked`, `is_unlocked`, `kill`, `lifecycle_from_u8`, `lifecycle_to_u8`, `lock_session_state`, `lock_state`, `mark_lock_pending`, `new`, `push_lock_event`, `push_sync_event`, `recover_session_state`, `require_vault_mut`, `require_vault`, `revoke_cached_secrets`, `secret_uri`, `spawn_ticker`, `stop_server_runtime`, `tick_inner`, `try_lock_session_state`, `unlock_inner`
 // These types are ignored because they are neither used by any `pub` functions nor (for structs and enums) marked `#[frb(unignore)]`: `ClearUnlockingOnDrop`, `SessionCredentials`, `SessionServerRuntime`, `SessionState`, `TickerProgress`, `TotpSnapshot`
 // These function are ignored because they are on traits that is not defined in current crate (put an empty `#[frb]` on it to unignore): `drop`, `drop`, `drop`, `drop`, `fmt`, `fmt`
 // These functions are ignored (category: IgnoreBecauseOwnerTyShouldIgnore): `default`
@@ -48,6 +48,15 @@ abstract class AppSession implements RustOpaqueInterface {
     required String newPassword,
   });
 
+  /// Rotate only when the selected registered vault is currently unlocked.
+  /// The target check and credential rotation share the session mutex, so a
+  /// stale UI action cannot rotate another vault after a lock or switch.
+  Future<void> changeVaultMasterPassword({
+    required String vaultName,
+    required String current,
+    required String newPassword,
+  });
+
   Future<void> clearExpiration({required String uuid});
 
   Future<void> clearSyncConfig({required String name});
@@ -66,9 +75,19 @@ abstract class AppSession implements RustOpaqueInterface {
 
   Future<void> copyEntryField({required String uuid, required CopyField field});
 
+  /// Copy the exact displayed generated result through the Rust clipboard.
+  Future<void> copyGeneratedSecret({required GeneratedSecret result});
+
   Future<String> createEntry({
     required String group,
     required EntryDraftDto draft,
+  });
+
+  /// Create fields and optional expiration in a single encrypted save.
+  Future<String> createEntryWithExpiration({
+    required String group,
+    required EntryDraftDto draft,
+    PlatformInt64? expiryTime,
   });
 
   Future<String> createGroup({required String parent, required String name});
@@ -128,6 +147,11 @@ abstract class AppSession implements RustOpaqueInterface {
 
   Future<DiscoveryStatusDto> localDiscoveryStatus();
 
+  /// Return untrusted routes for the requested service, retaining explicit routes first.
+  Future<DiscoveryStatusDto> localDiscoveryStatusFor({
+    required DiscoveryServiceDto service,
+  });
+
   /// Return policy-approved local bind candidates for a desktop server.
   /// Mobile targets reject this before interface enumeration.
   Future<List<LocalEndpointDto>> localServerEndpoints();
@@ -160,6 +184,11 @@ abstract class AppSession implements RustOpaqueInterface {
   /// Poll the platform discovery adapter and apply only Rust-validated routes.
   Future<DiscoveryStatusDto> pollLocalDiscovery();
 
+  /// Collect routes for normal sync or an explicitly open pairing service.
+  Future<DiscoveryStatusDto> pollLocalDiscoveryFor({
+    required DiscoveryServiceDto service,
+  });
+
   /// Prepare a non-secret, single-use native clipboard handoff.
   ///
   /// Desktop uses the Rust clipboard directly and therefore returns a typed
@@ -169,6 +198,12 @@ abstract class AppSession implements RustOpaqueInterface {
   Future<ClipboardTransferTicket> prepareClipboardTransfer({
     required String uuid,
     required CopyField field,
+  });
+
+  /// Prepare the displayed generated result for the existing native-only,
+  /// single-use clipboard handoff. Dart receives only the transfer ticket.
+  Future<ClipboardTransferTicket> prepareGeneratedClipboardTransfer({
+    required GeneratedSecret result,
   });
 
   Future<void> purgeEntry({required String uuid});
@@ -190,7 +225,7 @@ abstract class AppSession implements RustOpaqueInterface {
 
   void reportActivity();
 
-  LockEvent reportLifecycleState({required LifecycleStateDto state});
+  Future<LockEvent> reportLifecycleState({required LifecycleStateDto state});
 
   Future<String> revealField({
     required String uuid,
@@ -236,6 +271,9 @@ abstract class AppSession implements RustOpaqueInterface {
 
   Future<List<String>> startupWarnings();
 
+  /// Stop browsing and cancel active or queued discovery without clearing routes.
+  Future<void> stopLocalDiscovery();
+
   Future<void> stopSyncServer();
 
   Stream<SyncEvent> syncEvents();
@@ -261,6 +299,14 @@ abstract class AppSession implements RustOpaqueInterface {
   });
 
   Future<void> updateEntry({required String uuid, required EntryEditDto edit});
+
+  /// Save fields and the desired expiration together. `None` clears expiration;
+  /// callers preserving it should use the existing `update_entry` method.
+  Future<void> updateEntryWithExpiration({
+    required String uuid,
+    required EntryEditDto edit,
+    PlatformInt64? expiryTime,
+  });
 
   Future<VaultTree> vaultTree();
 }

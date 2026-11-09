@@ -7,6 +7,12 @@ high-confidence high or critical finding. Human/physical observations in
 [`local-network-sync-manual-verification.md`](local-network-sync-manual-verification.md)
 are optional and non-blocking.
 
+This is the historical review record dated above. Its API 29 shared-LAN
+setup is superseded by the current API 30/36 shared-Wi-Fi matrix, which retains
+platform-default cellular state; API 29/36 remains the native/UI matrix.
+See the current [test matrix](../crates/hidlins-sync/docs/test-matrix.md).
+The dated results below are not new execution evidence for the current matrix.
+
 ## Focused security review
 
 | Boundary | Review result and evidence |
@@ -21,7 +27,7 @@ are optional and non-blocking.
 | Logs, errors, and process output | Errors, status DTOs, CLI JSON, Flutter events, discovery payloads, and process tests exclude keys, transcripts, SAS internals, vault contents, and master material. Telemetry/crash/update endpoints remain absent. |
 | FFI and UI policy | Rust owns protocol/trust/address/storage. Generated FFI exposes bounded opaque DTOs and rejects extra discovery metadata. CLI/TUI/desktop provide explicit serving; mobile APIs reject server start before bind and expose no server control. Flutter explicitly discovers before consuming its once-per-process startup attempt; later work is manual-only. The TUI uses a bind-only ephemeral endpoint and exposes only the kernel-assigned nonzero route. |
 | Mobile permissions and lifecycle | iOS Bonjour/local-network and Android NSD adapters are routing-only. Manifests have no background sync service/mode; every non-resumed transition stops native discovery and cancels Rust sync/pairing while preserving the vault-lock grace. Deterministic iOS native tests exercise stale timeout/browser callbacks and exactly-once ownership; Android native tests pin the generation-token state transition used by its guarded callbacks. Simulator/emulator scenarios cover the broader programmatic lifecycle contract. Physical OS wording and consumer-router multicast remain optional confidence checks. |
-| End-to-end application scenarios | `make test-local-sync-mobile-scenarios HIDLINS_ANDROID_STRICT=1` passed on iPhone 17 Pro Max, iPad mini (A17 Pro), API 29 phone, and API 36 tablet. Android ran the real release CLI inside API/ABI-matched authority emulators, advertised its port with an instrumentation-only `NsdManager` registrar, resolved it through the shipping client, and carried Noise/sync bytes directly over private emulator Wi-Fi. API 29 used its required explicit Wi-Fi peer link with synthetic cellular data disabled to avoid the emulator's duplicate same-subnet interfaces; Android still selected the NSD address and no route was injected. Each device emitted eleven passing steps, clean secret scans, release CLI/application hashes, encrypted restart-state hashes, and redacted logs under `build/verification/mobile-local-sync/`. |
+| Historical end-to-end application scenarios (2026-09-08) | `make test-local-sync-mobile-scenarios HIDLINS_ANDROID_STRICT=1` passed on iPhone 17 Pro Max, iPad mini (A17 Pro), API 29 phone, and API 36 tablet. Android ran the real release CLI inside API/ABI-matched authority emulators, advertised its port with an instrumentation-only `NsdManager` registrar, resolved it through the shipping client, and carried Noise/sync bytes directly over private emulator Wi-Fi. API 29 used its required explicit Wi-Fi peer link with synthetic cellular data disabled to avoid the emulator's duplicate same-subnet interfaces; Android still selected the NSD address and no route was injected. Each device emitted eleven passing steps, clean secret scans, release CLI/application hashes, encrypted restart-state hashes, and redacted logs under `build/verification/mobile-local-sync/`. |
 | Discovery-layer separation | `make test-local-sync-discovery` performs a real Rust `mdns-sd` desktop publisher/browser exchange. Android emulator acceptance separately proves platform NSD plus the real CLI data plane. A physical desktop-Rust-to-Android run is optional and is the only check that can characterize a particular access point/router multicast boundary. |
 
 ## Dependency and licensing disposition

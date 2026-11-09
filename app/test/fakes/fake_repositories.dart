@@ -69,6 +69,7 @@ class FakeSessionRepository implements SessionRepository {
   Completer<void>? changePasswordCompleter;
   String? lastCurrentPassword;
   String? lastNewPassword;
+  String? lastPasswordVaultName;
 
   @override
   Future<VaultTree> unlock(
@@ -129,7 +130,7 @@ class FakeSessionRepository implements SessionRepository {
   }
 
   @override
-  LockEvent reportLifecycleState(LifecycleStateDto state) {
+  Future<LockEvent> reportLifecycleState(LifecycleStateDto state) async {
     lifecycleStates.add(state);
     return currentLockState;
   }
@@ -196,6 +197,16 @@ class FakeSessionRepository implements SessionRepository {
     if (changePasswordError != null) throw changePasswordError!;
   }
 
+  @override
+  Future<void> changeVaultMasterPassword(
+    String vaultName,
+    String current,
+    String newPassword,
+  ) async {
+    lastPasswordVaultName = vaultName;
+    await changeMasterPassword(current, newPassword);
+  }
+
   void dispose() {
     unawaited(lockController.close());
   }
@@ -211,10 +222,12 @@ class FakeEntryRepository implements EntryRepository {
   bool createEntryCalled = false;
   String? lastCreateGroup;
   EntryDraftDto? lastDraft;
+  int? lastCreateExpiryTime;
 
   bool updateEntryCalled = false;
   String? lastUpdateUuid;
   EntryEditDto? lastEdit;
+  EntryExpirationChange? lastExpirationChange;
   Completer<void>? updateCompleter;
   Object? updateError;
 
@@ -260,19 +273,29 @@ class FakeEntryRepository implements EntryRepository {
   }
 
   @override
-  Future<String> createEntry(String groupUuid, EntryDraftDto draft) async {
+  Future<String> createEntry(
+    String groupUuid,
+    EntryDraftDto draft, {
+    int? expiryTime,
+  }) async {
     createEntryCalled = true;
     lastCreateGroup = groupUuid;
     lastDraft = draft;
+    lastCreateExpiryTime = expiryTime;
     onMutation?.call();
     return 'new-uuid';
   }
 
   @override
-  Future<void> updateEntry(String uuid, EntryEditDto edit) async {
+  Future<void> updateEntry(
+    String uuid,
+    EntryEditDto edit, {
+    EntryExpirationChange? expiration,
+  }) async {
     updateEntryCalled = true;
     lastUpdateUuid = uuid;
     lastEdit = edit;
+    lastExpirationChange = expiration;
     await updateCompleter?.future;
     if (updateError case final error?) throw error;
     onMutation?.call();
@@ -391,6 +414,14 @@ class FakeSecretsRepository implements SecretsRepository {
   String? lastCopyUuid;
   CopyField? lastCopyField;
   Object? copyError;
+  GeneratedSecret? lastGeneratedCopy;
+
+  @override
+  Future<void> copyGeneratedSecret(GeneratedSecret result) async {
+    copyCalled = true;
+    lastGeneratedCopy = result;
+    if (copyError case final error?) throw error;
+  }
 
   @override
   Future<String> revealField(String uuid, RevealField field) async {

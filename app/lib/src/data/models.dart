@@ -140,6 +140,14 @@ class EntryEditDto {
   String toString() => 'EntryEditDto(***)';
 }
 
+/// An explicit expiration edit. A missing change preserves the stored instant.
+class EntryExpirationChange {
+  const EntryExpirationChange.set(int value) : epochSecs = value;
+  const EntryExpirationChange.clear() : epochSecs = null;
+
+  final int? epochSecs;
+}
+
 class CustomFieldInputDto {
   final String name;
   final String value;
@@ -228,8 +236,13 @@ class PassphraseOptionsDto {
 class GeneratedSecret {
   final String value;
   final double entropyBits;
+  final BigInt? copyOrigin;
 
-  const GeneratedSecret({required this.value, required this.entropyBits});
+  const GeneratedSecret({
+    required this.value,
+    required this.entropyBits,
+    this.copyOrigin,
+  });
 
   @override
   String toString() => 'GeneratedSecret(***)';

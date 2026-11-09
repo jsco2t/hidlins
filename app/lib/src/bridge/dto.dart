@@ -133,6 +133,8 @@ enum DiscoveryPermissionDto {
   unavailable,
 }
 
+enum DiscoveryServiceDto { trusted, pairing }
+
 class DiscoveryStatusDto {
   final DiscoveryPermissionDto permission;
   final List<LocalEndpointDto> candidates;
@@ -380,10 +382,19 @@ class GeneratedSecret {
   final String value;
   final double entropyBits;
 
-  const GeneratedSecret({required this.value, required this.entropyBits});
+  /// Session revocation origin captured before generation, never refreshed
+  /// when this displayed value is submitted for copying.
+  final BigInt copyOrigin;
+
+  const GeneratedSecret({
+    required this.value,
+    required this.entropyBits,
+    required this.copyOrigin,
+  });
 
   @override
-  int get hashCode => value.hashCode ^ entropyBits.hashCode;
+  int get hashCode =>
+      value.hashCode ^ entropyBits.hashCode ^ copyOrigin.hashCode;
 
   @override
   bool operator ==(Object other) =>
@@ -391,7 +402,8 @@ class GeneratedSecret {
       other is GeneratedSecret &&
           runtimeType == other.runtimeType &&
           value == other.value &&
-          entropyBits == other.entropyBits;
+          entropyBits == other.entropyBits &&
+          copyOrigin == other.copyOrigin;
 }
 
 enum GroupDeleteBehaviorDto { refuse, recurse }

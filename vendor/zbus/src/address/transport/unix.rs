@@ -1,5 +1,7 @@
 #[cfg(target_os = "linux")]
 use std::ffi::OsString;
+#[cfg(any(unix, windows))]
+use std::{borrow::Cow, io, sync::Arc};
 use std::{
     ffi::OsStr,
     fmt::{Display, Formatter},
@@ -8,6 +10,9 @@ use std::{
 
 #[cfg(unix)]
 use super::encode_percents;
+#[cfg(any(unix, windows))]
+use crate::runtime::io::{RegisteredIo, UnixOps};
+use crate::{Address, Error, Result, connection::socket::BoxedSplit, runtime::Runtime};
 
 /// A Unix domain socket transport in a D-Bus address.
 #[derive(Clone, Debug, PartialEq, Eq)]
@@ -29,6 +34,42 @@ impl Unix {
     /// Take the path, consuming `self`.
     pub fn take_path(self) -> UnixSocket {
         self.path
+    }
+
+    /// Connects to the socket this address names.
+    #[cfg(any(unix, windows))]
+    pub(super) async fn connect(&self, address: &Address, runtime: &Runtime) -> Result<BoxedSplit> {
+        let path = match self.path() {
+            UnixSocket::File(path) => Cow::Borrowed(path.as_path()),
+            #[cfg(target_os = "linux")]
+            UnixSocket::Abstract(name) => Cow::Owned(abstract_path(name)),
+            // A directory is where a server puts a socket of its own, not something to connect
+            // to.
+            UnixSocket::Dir(_) | UnixSocket::TmpDir(_) => return Err(Error::Unsupported),
+        };
+
+        // A runtime that has no unix-domain sockets, such as Tokio on Windows, answers with
+        // `Unsupported`. That says nothing about this address, so it is not a failed connection.
+        let source = runtime
+            .connect_unix(&path)
+            .await
+            .map_err(|e| match e.kind() {
+                io::ErrorKind::Unsupported => Error::Unsupported,
+                _ => Error::Connection(Arc::new(e), Box::new(address.clone())),
+            })?;
+
+        Ok(RegisteredIo::new(runtime, source, UnixOps)?.into())
+    }
+
+    /// Connects to the socket this address names, which WASI has no way to: it has no unix-domain
+    /// sockets.
+    #[cfg(target_os = "wasi")]
+    pub(super) async fn connect(
+        &self,
+        _address: &Address,
+        _runtime: &Runtime,
+    ) -> Result<BoxedSplit> {
+        Err(Error::Unsupported)
     }
 
     pub(super) fn from_options(opts: std::collections::HashMap<&str, &str>) -> crate::Result<Self> {
@@ -55,6 +96,20 @@ impl Unix {
 
         Ok(Self::new(path))
     }
+}
+
+/// The path that names the abstract socket `name`.
+///
+/// A unix socket address whose path starts with a zero byte is a name in the Linux abstract
+/// namespace rather than one on the filesystem.
+#[cfg(target_os = "linux")]
+fn abstract_path(name: &OsStr) -> PathBuf {
+    use std::os::unix::ffi::{OsStrExt, OsStringExt};
+
+    let mut bytes = vec![0];
+    bytes.extend_from_slice(name.as_bytes());
+
+    PathBuf::from(OsString::from_vec(bytes))
 }
 
 impl Display for Unix {
@@ -98,7 +153,7 @@ impl Display for UnixSocket {
                 encode_percents(f, path.as_bytes())?;
             }
 
-            #[cfg(windows)]
+            #[cfg(not(unix))]
             write!(f, "{}", path.to_str().ok_or(std::fmt::Error)?)?;
 
             Ok(())

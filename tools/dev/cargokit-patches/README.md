@@ -24,7 +24,7 @@ Regenerate it after touching the tree:
 
 ```sh
 grep -rn "Hidlins patch\|HIDLINS PATCH" app/rust_builder/cargokit/ \
-  --include="*.dart" --include="*.sh" \
+  --include="*.dart" --include="*.sh" --include="*.py" \
   | sed 's/:.*//' | sort -u > tools/dev/cargokit-patches/PATCHED-FILES.txt
 ```
 
@@ -48,6 +48,9 @@ grep -rn "Hidlins patch\|HIDLINS PATCH" app/rust_builder/cargokit/ \
 | `build_tool/lib/src/build_pod.dart` | lipo output name uses `libraryName` | emitted `libhidlins-api.a` while both podspecs `-force_load libhidlins_api.a`; **broke every macOS/iOS link** |
 | `build_tool/lib/src/precompile_binaries.dart` | `libraryName` parameter fed `libraryName` | same class of bug, currently dormant |
 | `build_tool/lib/src/verify_binaries.dart` | same | same |
-| `build_tool/lib/src/builder.dart` | passes `--offline --locked`, runs Cargo from the workspace manifest directory, and disables desktop defaults for Android/iOS targets | preserves vendored/offline resolution and prevents mobile builds from compiling desktop-only clipboard/windowing dependencies |
-| `run_build_tool.sh` | vendored `PUB_CACHE` + `dart pub get --offline` | vendored/offline build posture |
+| `build_tool/lib/src/builder.dart` | passes `--offline --locked`, runs Cargo from the workspace manifest directory, selects the exact workspace compiler pin, verifies prerequisites without installing them, disables desktop defaults for Android/iOS targets, selects `logind` for the Hidlins API on Linux desktop, and coordinates vendor invalidation before compilation using the same Cargo configuration and existing Rustup executable resolver | preserves vendored/offline resolution, exact compiler selection and mobile boundaries while including the existing Linux OS lock/sleep adapter in every desktop build profile; `make cargokit-policy-check` covers production preparation and command selection |
+| `build_tool/lib/src/vendor_cache.dart` | locks effective Cargo target/intermediate roots and asks the shared stdlib helper to invalidate obsolete compiled vendor bytes before the unchanged compiler invocation | Flutter and Make builds use the same POSIX cache lock and generation policy; `make cargokit-cache-check` exercises real compilation and cross-runtime coordination |
+| `build_tool/lib/src/rustup.dart` | recognizes installed exact release names as well as named channels | an installed pinned compiler must not be mistaken for a missing toolchain |
+| `run_build_tool.sh` | vendored `PUB_CACHE`, offline resolution and a byte-derived kernel cache key | edited source must replace the cached build tool even when file size/timestamps are preserved |
+| `build_tool_fingerprint.py` | hashes build-tool source, manifests and reviewed Pub package bytes; excludes only mutable Pub cache bookkeeping | portable fail-closed content identity without GNU hash tools |
 | `build_pod.sh` | removed a bare `env` dump | it printed the whole environment — signing credentials, CI tokens, keychain vars — into build logs |

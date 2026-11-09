@@ -1,33 +1,38 @@
 //! The object server API.
 
-use std::{collections::HashMap, marker::PhantomData, sync::Arc};
-use tracing::{Instrument, debug, instrument, trace, trace_span};
-
-use zbus_names::InterfaceName;
-use zvariant::{ObjectPath, Value};
+#[cfg(feature = "object-manager")]
+use std::collections::HashMap;
+use std::{any::Any, marker::PhantomData, sync::Arc};
 
 use crate::{
-    Connection, Error, Result,
-    async_lock::RwLock,
+    BoxDBusError, Connection, Error, ObjectPath, Result,
     connection::WeakConnection,
     fdo,
-    fdo::ObjectManager,
+    log::{Instrument, debug, trace, trace_span},
     message::{Header, Message},
+    names::InterfaceName,
+    runtime::locks::RwLock,
 };
+#[cfg(feature = "object-manager")]
+use crate::{Variant, fdo::ObjectManager};
 
 mod interface;
 pub(crate) use interface::ArcInterface;
-#[allow(deprecated)]
-pub use interface::DispatchResult;
-pub use interface::{DispatchResult2, Interface, InterfaceDeref, InterfaceDerefMut, InterfaceRef};
+#[doc(hidden)]
+pub use interface::introspect_doc_comment;
+pub use interface::{
+    DispatchResult, Interface, InterfaceDeref, InterfaceDerefMut, InterfaceRef, IntoDBusError,
+};
+
+/// Deprecated alias of [`DispatchResult`].
+#[deprecated(since = "6.0.0", note = "renamed to `DispatchResult`")]
+pub type DispatchResult2<'a> = DispatchResult<'a>;
 
 mod signal_emitter;
 pub use signal_emitter::SignalEmitter;
-#[deprecated(since = "5.0.0", note = "Please use `SignalEmitter` instead.")]
-pub type SignalContext<'s> = SignalEmitter<'s>;
 
 mod dispatch_notifier;
-pub use dispatch_notifier::ResponseDispatchNotifier;
+pub use dispatch_notifier::{ResponseDispatchListener, ResponseDispatchNotifier};
 
 mod node;
 pub(crate) use node::Node;
@@ -47,8 +52,8 @@ pub(crate) use node::Node;
 /// ```no_run
 /// # use std::error::Error;
 /// use zbus::{Connection, interface};
-/// use event_listener::Event;
-/// # use async_io::block_on;
+/// use zruntime::Event;
+/// # use zbus::block_on;
 ///
 /// struct Example {
 ///     // Interfaces are owned by the ObjectServer. They can have
@@ -117,15 +122,38 @@ impl ObjectServer {
     /// However, there are situations where you'd need to register interfaces dynamically and that's
     /// where this method becomes useful.
     ///
-    /// If the interface already exists at this path, returns false.
-    pub async fn at<'p, P, I>(&self, path: P, iface: I) -> Result<bool>
+    /// Returns `None` on success. If an interface of the same name already exists at this path,
+    /// the object server is left untouched and the passed `iface` is handed back as `Some`, so
+    /// the caller can retry (e.g. at a different path) without having to reconstruct it.
+    ///
+    /// # Deadlocks
+    ///
+    /// It is fine to call this method from within an interface method (e.g. to register a child or
+    /// sibling object on demand), including from a `&mut self` method. There is however one
+    /// exception: registering an `fdo::ObjectManager` at an ancestor of the currently-executing
+    /// interface from within one of its `&mut self` methods will **deadlock**.
+    ///
+    /// This is because adding an `ObjectManager` reads the properties of every object under it (to
+    /// emit the initial `InterfacesAdded` signals), which requires a shared lock on each of those
+    /// interfaces — including the calling one, whose exclusive lock is held for the duration of the
+    /// `&mut self` method. Registering the `ObjectManager` up front (typically at connection
+    /// set-up), or from a `&self` method, avoids this.
+    pub async fn at<'p, P, I>(&self, path: P, iface: I) -> Result<Option<I>>
     where
         I: Interface,
         P: TryInto<ObjectPath<'p>>,
         P::Error: Into<Error>,
     {
-        self.add_arc_interface(path, I::name(), ArcInterface::new(iface))
-            .await
+        // `iface` is only moved into the object server once we know the slot is free, so that we
+        // can hand it back to the caller otherwise.
+        let mut iface = Some(iface);
+        let added = self
+            .add_interface_with(path, I::name(), || {
+                ArcInterface::new(iface.take().expect("closure is called at most once"))
+            })
+            .await?;
+
+        Ok(if added { None } else { iface })
     }
 
     pub(crate) async fn add_arc_interface<'p, P>(
@@ -138,82 +166,173 @@ impl ObjectServer {
         P: TryInto<ObjectPath<'p>>,
         P::Error: Into<Error>,
     {
+        self.add_interface_with(path, name, || arc_iface).await
+    }
+
+    /// Register the interface produced by `make` at `path`, under `name`.
+    ///
+    /// `make` is only called if no interface with that name exists at the path yet. Returns
+    /// whether the interface was added.
+    async fn add_interface_with<'p, P, F>(
+        &self,
+        path: P,
+        name: InterfaceName<'static>,
+        make: F,
+    ) -> Result<bool>
+    where
+        P: TryInto<ObjectPath<'p>>,
+        P::Error: Into<Error>,
+        F: FnOnce() -> ArcInterface,
+    {
         let path = path.try_into().map_err(Into::into)?;
         let mut root = self.root().write().await;
         let (node, manager_path) = root.get_child_mut(&path, true);
         let node = node.unwrap();
-        let added = node.add_arc_interface(name.clone(), arc_iface);
-        if added {
-            if name == ObjectManager::name() {
-                // Just added an object manager. Need to signal all managed objects under it.
-                let emitter = SignalEmitter::new(&self.connection(), path)?;
-                let objects = node.get_managed_objects(self, &self.connection()).await?;
-                for (path, owned_interfaces) in objects {
-                    let interfaces = owned_interfaces
-                        .iter()
-                        .map(|(i, props)| {
-                            let props = props
-                                .iter()
-                                .map(|(k, v)| Ok((k.as_str(), Value::try_from(v)?)))
-                                .collect::<Result<_>>();
-                            Ok((i.into(), props?))
-                        })
-                        .collect::<Result<_>>()?;
-                    ObjectManager::interfaces_added(&emitter, path.into(), interfaces).await?;
-                }
-            } else if let Some(manager_path) = manager_path {
-                let emitter = SignalEmitter::new(&self.connection(), manager_path.clone())?;
-                let mut interfaces = HashMap::new();
-                let owned_props = node
-                    .get_properties(self, &self.connection(), name.clone())
-                    .await?;
-                let props = owned_props
-                    .iter()
-                    .map(|(k, v)| Ok((k.as_str(), Value::try_from(v)?)))
-                    .collect::<Result<_>>()?;
-                interfaces.insert(name, props);
-
-                ObjectManager::interfaces_added(&emitter, path, interfaces).await?;
-            }
+        if node.has_interface(&name) {
+            // The nodes on the path may have been auto-created just now for this very
+            // registration; remove the ones that nothing else needs.
+            root.remove_node(&path);
+            return Ok(false);
         }
+        let added = node.add_arc_interface(name.clone(), make());
+        debug_assert!(added);
+        self.interfaces_added(node, name, path, manager_path)
+            .await?;
 
-        Ok(added)
+        Ok(true)
     }
 
     /// Unregister a D-Bus [`Interface`] at a given path.
     ///
-    /// If there are no more interfaces left at that path, destroys the object as well.
-    /// Returns whether the object was destroyed.
+    /// If there are no more interfaces or children left at that path, destroys the object as
+    /// well, along with any ancestor objects that are thereby left without interfaces or
+    /// children of their own. The root object is never destroyed. Returns whether the object
+    /// was destroyed.
     pub async fn remove<'p, I, P>(&self, path: P) -> Result<bool>
     where
         I: Interface,
         P: TryInto<ObjectPath<'p>>,
         P::Error: Into<Error>,
     {
+        self.remove_named(path, I::name()).await
+    }
+
+    /// Unregister a D-Bus [`Interface`] at a given path, using its name.
+    ///
+    /// If there are no more interfaces or children left at that path, destroys the object as
+    /// well, along with any ancestor objects that are thereby left without interfaces or
+    /// children of their own. The root object is never destroyed. Returns whether the object
+    /// was destroyed.
+    pub async fn remove_named<'p, P>(
+        &self,
+        path: P,
+        interface_name: InterfaceName<'static>,
+    ) -> Result<bool>
+    where
+        P: TryInto<ObjectPath<'p>>,
+        P::Error: Into<Error>,
+    {
         let path = path.try_into().map_err(Into::into)?;
         let mut root = self.root.write().await;
         let (node, manager_path) = root.get_child_mut(&path, false);
+        let manager_path = manager_path.map(ObjectPath::into_owned);
         let node = node.ok_or(Error::InterfaceNotFound)?;
-        if !node.remove_interface(I::name()) {
+        if !node.remove_interface(&interface_name) {
             return Err(Error::InterfaceNotFound);
         }
+        // Prune before emitting the (fallible) signal, so that an emission failure can't leave
+        // empty nodes behind.
+        let destroyed = root.remove_node(&path);
+        self.interfaces_removed(path, interface_name, manager_path)
+            .await?;
+
+        Ok(destroyed)
+    }
+
+    /// Emit `InterfacesAdded` for the interface `name` just registered at `path`.
+    ///
+    /// When the interface is itself an `ObjectManager`, every object under `path` is announced
+    /// instead. Otherwise the signal goes out from `manager_path`, the closest ancestor serving an
+    /// `ObjectManager`, if there is one.
+    #[cfg(feature = "object-manager")]
+    async fn interfaces_added(
+        &self,
+        node: &Node,
+        name: InterfaceName<'static>,
+        path: ObjectPath<'_>,
+        manager_path: Option<ObjectPath<'_>>,
+    ) -> Result<()> {
+        if name == ObjectManager::name() {
+            // Just added an object manager. Need to signal all managed objects under it.
+            let emitter = SignalEmitter::new(&self.connection(), path)?;
+            let objects = node.get_managed_objects(self, &self.connection()).await?;
+            for (path, owned_interfaces) in objects {
+                let interfaces = owned_interfaces
+                    .iter()
+                    .map(|(i, props)| {
+                        let props = props
+                            .iter()
+                            .map(|(k, v)| Ok((k.as_str(), Variant::try_from(v)?)))
+                            .collect::<Result<_>>();
+                        Ok((i.into(), props?))
+                    })
+                    .collect::<Result<_>>()?;
+                ObjectManager::interfaces_added(&emitter, path.into(), interfaces).await?;
+            }
+        } else if let Some(manager_path) = manager_path {
+            let emitter = SignalEmitter::new(&self.connection(), manager_path)?;
+            let mut interfaces = HashMap::new();
+            let owned_props = node
+                .get_properties(self, &self.connection(), name.clone())
+                .await?;
+            let props = owned_props
+                .iter()
+                .map(|(k, v)| Ok((k.as_str(), Variant::try_from(v)?)))
+                .collect::<Result<_>>()?;
+            interfaces.insert(name, props);
+
+            ObjectManager::interfaces_added(&emitter, path, interfaces).await?;
+        }
+
+        Ok(())
+    }
+
+    #[cfg(not(feature = "object-manager"))]
+    async fn interfaces_added(
+        &self,
+        _node: &Node,
+        _name: InterfaceName<'static>,
+        _path: ObjectPath<'_>,
+        _manager_path: Option<ObjectPath<'_>>,
+    ) -> Result<()> {
+        Ok(())
+    }
+
+    /// Emit `InterfacesRemoved` for `interface_name`, unregistered from `path`, from
+    /// `manager_path`, the closest ancestor serving an `ObjectManager`, if there is one.
+    #[cfg(feature = "object-manager")]
+    async fn interfaces_removed(
+        &self,
+        path: ObjectPath<'_>,
+        interface_name: InterfaceName<'static>,
+        manager_path: Option<ObjectPath<'static>>,
+    ) -> Result<()> {
         if let Some(manager_path) = manager_path {
-            let ctxt = SignalEmitter::new(&self.connection(), manager_path.clone())?;
-            ObjectManager::interfaces_removed(&ctxt, path.clone(), (&[I::name()]).into()).await?;
+            let ctxt = SignalEmitter::new(&self.connection(), manager_path)?;
+            ObjectManager::interfaces_removed(&ctxt, path, (&[interface_name]).into()).await?;
         }
-        if node.is_empty() {
-            let mut path_parts = path.rsplit('/').filter(|i| !i.is_empty());
-            let last_part = path_parts.next().unwrap();
-            let ppath = ObjectPath::from_string_unchecked(
-                path_parts.fold(String::new(), |a, p| format!("/{p}{a}")),
-            );
-            root.get_child_mut(&ppath, false)
-                .0
-                .unwrap()
-                .remove_node(last_part);
-            return Ok(true);
-        }
-        Ok(false)
+
+        Ok(())
+    }
+
+    #[cfg(not(feature = "object-manager"))]
+    async fn interfaces_removed(
+        &self,
+        _path: ObjectPath<'_>,
+        _interface_name: InterfaceName<'static>,
+        _manager_path: Option<ObjectPath<'static>>,
+    ) -> Result<()> {
+        Ok(())
     }
 
     /// Get the interface at the given path.
@@ -230,7 +349,7 @@ impl ObjectServer {
     /// ```no_run
     /// # use std::error::Error;
     /// # use zbus::{Connection, interface};
-    /// # use async_io::block_on;
+    /// # use zbus::block_on;
     /// #
     /// struct MyIface(u32);
     ///
@@ -271,14 +390,10 @@ impl ObjectServer {
         let lock = node
             .interface_lock(I::name())
             .ok_or(Error::InterfaceNotFound)?
-            .instance
-            .clone();
+            .instance;
 
-        // Ensure what we return can later be dowcasted safely.
-        lock.read()
-            .await
-            .downcast_ref::<I>()
-            .ok_or(Error::InterfaceNotFound)?;
+        // Ensure what we return can later be downcast safely.
+        <dyn Any>::downcast_ref::<I>(&*lock.read().await).ok_or(Error::InterfaceNotFound)?;
 
         let conn = self.connection();
         // SAFETY: We know that there is a valid path on the node as we already converted w/o error.
@@ -297,7 +412,7 @@ impl ObjectServer {
         connection: &Connection,
         msg: &Message,
         hdr: &Header<'_>,
-    ) -> fdo::Result<()> {
+    ) -> std::result::Result<(), BoxDBusError> {
         let member = hdr
             .member()
             .ok_or_else(|| fdo::Error::Failed("Missing member".into()))?;
@@ -309,31 +424,27 @@ impl ObjectServer {
         let read_lock = iface.read().await;
         trace!("acquired read lock on interface `{}`", iface_name);
         match read_lock.call(self, connection, msg, member.as_ref()) {
-            DispatchResult2::NotFound => {
-                return Err(fdo::Error::UnknownMethod(format!(
-                    "Unknown method '{member}'"
-                )));
+            DispatchResult::NotFound => {
+                return Err(fdo::Error::UnknownMethod(format!("Unknown method '{member}'")).into());
             }
-            DispatchResult2::Async(f) => {
+            DispatchResult::Async(f) => {
                 return f.await;
             }
-            DispatchResult2::RequiresMut => {}
+            DispatchResult::RequiresMut => {}
         }
         drop(read_lock);
         trace!("acquiring write lock on interface `{}`", iface_name);
         let mut write_lock = iface.write().await;
         trace!("acquired write lock on interface `{}`", iface_name);
         match write_lock.call_mut(self, connection, msg, member.as_ref()) {
-            DispatchResult2::NotFound => {}
-            DispatchResult2::RequiresMut => {}
-            DispatchResult2::Async(f) => {
+            DispatchResult::NotFound => {}
+            DispatchResult::RequiresMut => {}
+            DispatchResult::Async(f) => {
                 return f.await;
             }
         }
         drop(write_lock);
-        Err(fdo::Error::UnknownMethod(format!(
-            "Unknown method '{member}'"
-        )))
+        Err(fdo::Error::UnknownMethod(format!("Unknown method '{member}'")).into())
     }
 
     async fn dispatch_method_call_try(
@@ -341,7 +452,7 @@ impl ObjectServer {
         connection: &Connection,
         msg: &Message,
         hdr: &Header<'_>,
-    ) -> fdo::Result<()> {
+    ) -> std::result::Result<(), BoxDBusError> {
         let path = hdr
             .path()
             .ok_or_else(|| fdo::Error::Failed("Missing object path".into()))?;
@@ -386,33 +497,31 @@ impl ObjectServer {
         };
 
         if with_spawn {
-            let executor = connection.executor().clone();
             let task_name = format!("`{msg}` method dispatcher");
+            let runtime = connection.runtime().clone();
             let connection = connection.clone();
             let msg = msg.clone();
-            executor
-                .spawn(
-                    async move {
-                        let server = connection.object_server();
-                        let hdr = msg.header();
-                        if let Err(e) = server
-                            .dispatch_call_to_iface(iface, &connection, &msg, &hdr)
-                            .await
-                        {
-                            // When not spawning a task, this error is handled by the caller.
-                            debug!("Returning error: {}", e);
-                            if let Err(e) = connection.reply_dbus_error(&hdr, e).await {
-                                debug!(
-                                    "Error dispatching message. Message: {:?}, error: {:?}",
-                                    msg, e
-                                );
-                            }
-                        }
+            let dispatch = async move {
+                let server = connection.object_server();
+                let hdr = msg.header();
+                if let Err(e) = server
+                    .dispatch_call_to_iface(iface, &connection, &msg, &hdr)
+                    .await
+                {
+                    // When not spawning a task, this error is handled by the caller.
+                    debug!("Returning error: {}", e);
+                    if let Err(e) = connection.reply_dbus_error(&hdr, e).await {
+                        debug!(
+                            "Error dispatching message. Message: {:?}, error: {:?}",
+                            msg, e
+                        );
                     }
-                    .instrument(trace_span!("{}", task_name)),
-                    &task_name,
-                )
-                .detach();
+                }
+            }
+            .instrument(trace_span!("{}", task_name));
+            // The span above is built from a borrow of `task_name`; moved in only now that it is
+            // no longer needed, so the runtime is handed the `String` instead of a copy of it.
+            runtime.spawn(task_name, dispatch).detach();
             Ok(())
         } else {
             self.dispatch_call_to_iface(iface, connection, msg, hdr)
@@ -432,7 +541,7 @@ impl ObjectServer {
     ///   the caller through the associated server connection.
     ///
     /// Returns an error if the message is malformed.
-    #[instrument(skip(self))]
+    #[cfg_attr(feature = "tracing", tracing::instrument(skip(self)))]
     pub(crate) async fn dispatch_call(&self, msg: &Message, hdr: &Header<'_>) -> Result<()> {
         let conn = self.connection();
 
@@ -449,12 +558,5 @@ impl ObjectServer {
         self.conn
             .upgrade()
             .expect("ObjectServer can't exist w/o an associated Connection")
-    }
-}
-
-#[cfg(feature = "blocking-api")]
-impl From<crate::blocking::ObjectServer> for ObjectServer {
-    fn from(server: crate::blocking::ObjectServer) -> Self {
-        server.into_inner()
     }
 }

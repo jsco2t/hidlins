@@ -15,7 +15,7 @@ abstract class SessionRepository {
   BigInt droppedLockEvents();
   Future<List<String>> startupWarnings();
   void reportActivity();
-  LockEvent reportLifecycleState(LifecycleStateDto state);
+  Future<LockEvent> reportLifecycleState(LifecycleStateDto state);
 
   Future<List<VaultSummary>> listVaults();
   Future<VaultSummary> createVault({
@@ -32,13 +32,26 @@ abstract class SessionRepository {
   });
   Future<void> deregisterVault(String name, {required bool deleteFile});
   Future<void> changeMasterPassword(String current, String newPassword);
+  Future<void> changeVaultMasterPassword(
+    String vaultName,
+    String current,
+    String newPassword,
+  );
 }
 
 abstract class EntryRepository {
   Future<VaultTree> vaultTree();
   Future<EntryDetail> entryDetail(String uuid);
-  Future<String> createEntry(String groupUuid, EntryDraftDto draft);
-  Future<void> updateEntry(String uuid, EntryEditDto edit);
+  Future<String> createEntry(
+    String groupUuid,
+    EntryDraftDto draft, {
+    int? expiryTime,
+  });
+  Future<void> updateEntry(
+    String uuid,
+    EntryEditDto edit, {
+    EntryExpirationChange? expiration,
+  });
   Future<void> deleteEntry(String uuid);
   Future<void> purgeEntry(String uuid);
   Future<void> moveEntry(String uuid, String groupUuid);
@@ -64,6 +77,7 @@ abstract class EntryRepository {
 abstract class SecretsRepository {
   Future<String> revealField(String uuid, RevealField field);
   Future<void> copyEntryField(String uuid, CopyField field);
+  Future<void> copyGeneratedSecret(GeneratedSecret result);
 }
 
 abstract class SearchRepository {

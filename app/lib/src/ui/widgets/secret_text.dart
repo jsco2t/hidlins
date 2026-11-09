@@ -14,26 +14,30 @@ class SecretText extends StatefulWidget {
 
 class SecretTextState extends State<SecretText> {
   final ValueNotifier<String?> _revealed = ValueNotifier<String?>(null);
+  int _revealRequest = 0;
 
   bool get isRevealed => _revealed.value != null;
 
   Future<void> reveal() async {
+    final request = ++_revealRequest;
     String? value;
     try {
       value = await widget.onReveal();
     } on Exception {
       return;
     }
-    if (!mounted) return;
+    if (!mounted || request != _revealRequest) return;
     _revealed.value = value;
   }
 
   void hide() {
+    _revealRequest++;
     _revealed.value = null;
   }
 
   @override
   void dispose() {
+    _revealRequest++;
     _revealed.value = null;
     _revealed.dispose();
     super.dispose();

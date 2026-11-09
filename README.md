@@ -158,7 +158,8 @@ Synchronization is direct between Hidlins devices on the same private/local
 network. One trusted desktop-class application is the authoritative server;
 the other applications are clients. DNS-SD/mDNS discovers a route only. The
 Noise XX pairing ceremony requires both people to compare and accept the same
-six-digit code, and later Noise IK connections authenticate the pinned
+six-character Crockford Base32 code (`XXX-XXX`), and later Noise IK connections
+authenticate the pinned
 per-vault device identities. A discovery result never grants trust.
 
 Every interactive application attempts one sync for each configured client

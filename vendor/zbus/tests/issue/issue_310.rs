@@ -3,7 +3,7 @@ use std::sync::Arc;
 use test_log::test;
 use tracing::instrument;
 
-use zvariant::OwnedObjectPath;
+use zbus::OwnedObjectPath;
 
 #[test(tokio::test(flavor = "multi_thread"))]
 #[instrument]
@@ -36,15 +36,12 @@ async fn issue_310() {
         fn connected_network(&self) -> zbus::Result<OwnedObjectPath>;
     }
     let connection = Builder::session()
-        .unwrap()
         .serve_at("/net/connman/iwd/0/33", Station(0))
-        .unwrap()
         .name("net.connman.iwd")
-        .unwrap()
         .build()
         .await
         .unwrap();
-    let event = Arc::new(event_listener::Event::new());
+    let event = Arc::new(zruntime::Event::new());
     let conn_clone = connection.clone();
     let event_clone = event.clone();
     tokio::spawn(async move {
@@ -70,7 +67,6 @@ async fn issue_310() {
 
     let station = StationProxy::builder(&connection)
         .path("/net/connman/iwd/0/33")
-        .unwrap()
         .build()
         .await
         .unwrap();

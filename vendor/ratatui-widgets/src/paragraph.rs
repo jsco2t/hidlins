@@ -364,6 +364,70 @@ impl<'a> Paragraph<'a> {
             .saturating_add(bottom as usize)
     }
 
+    /// Finds the unscrolled content row containing a rendered byte of one span.
+    ///
+    /// `width` is the actual inner text width; block and scroll offsets are not
+    /// included. Uses the same complete input and word wrapper as rendering.
+    /// Returns `None` without wrapping, for invalid/empty/end positions, zero
+    /// width, or when the target grapheme is filtered, overwide, or zero-width.
+    ///
+    /// This query borrows text. The composer may process an entire logical line
+    /// before yielding its first wrapped row, just as normal Paragraph drawing.
+    #[instability::unstable(
+        feature = "rendered-line-info",
+        issue = "https://github.com/ratatui/ratatui/issues/293"
+    )]
+    pub fn wrapped_row_for_span(
+        &self,
+        width: u16,
+        logical_line: usize,
+        span_index: usize,
+        byte_offset: usize,
+    ) -> Option<usize> {
+        if width == 0 {
+            return None;
+        }
+        let Wrap { trim } = self.wrap?;
+        let target = self.text.lines.get(logical_line)?.spans.get(span_index)?;
+        if byte_offset >= target.content.len() {
+            return None;
+        }
+        let address = target.content.as_ptr().wrapping_add(byte_offset).addr();
+        let marker = Style::default().add_modifier(ratatui_core::style::Modifier::REVERSED);
+        let styled = self.text.iter().enumerate().map(|(line_index, line)| {
+            let graphemes = line
+                .spans
+                .iter()
+                .enumerate()
+                .flat_map(move |(index, span)| {
+                    let tagged = line_index == logical_line && index == span_index;
+                    // Reflow depends only on symbols/widths. Query-only tags retain
+                    // source-span identity even for identical shared static text.
+                    span.styled_graphemes(Style::default())
+                        .map(move |grapheme| StyledGrapheme {
+                            symbol: grapheme.symbol,
+                            style: if tagged { marker } else { Style::default() },
+                        })
+                });
+            (graphemes, line.alignment.unwrap_or(self.alignment))
+        });
+        let mut composer = WordWrapper::new(styled, width, trim);
+        let mut row = 0;
+        while let Some(line) = composer.next_line() {
+            if line.graphemes.iter().any(|grapheme| {
+                let start = grapheme.symbol.as_ptr().addr();
+                grapheme.style == marker
+                    && grapheme.symbol.cell_width() > 0
+                    && address >= start
+                    && address < start.saturating_add(grapheme.symbol.len())
+            }) {
+                return Some(row);
+            }
+            row += 1;
+        }
+        None
+    }
+
     /// Calculates the shortest line width needed to avoid any word being wrapped or truncated.
     ///
     /// Accounts for the [`Block`] if a block is set through [`Self::block`].

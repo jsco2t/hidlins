@@ -1,6 +1,15 @@
+//! A [`Socket`] that connects two peers within the same process.
+//!
+//! [`Channel::pair`] creates the two ends, each of which splits into a [`Reader`] and a
+//! [`Writer`].
+//!
+//! [`Socket`]: super::Socket
+
 use std::io;
 
-use async_broadcast::{Receiver, Sender, broadcast};
+use std::num::NonZeroUsize;
+
+use zruntime::broadcast::{Receiver, Sender, channel};
 
 use crate::{Message, conn::AuthMechanism, fdo::ConnectionCredentials};
 
@@ -22,8 +31,8 @@ impl Channel {
     /// Use [`crate::connection::Builder::authenticated_socket`] to create `Connection` instances
     /// from each channel.
     pub fn pair() -> (Self, Self) {
-        let (tx1, rx1) = broadcast(CHANNEL_CAPACITY);
-        let (tx2, rx2) = broadcast(CHANNEL_CAPACITY);
+        let (tx1, rx1) = channel(CHANNEL_CAPACITY);
+        let (tx2, rx2) = channel(CHANNEL_CAPACITY);
 
         (
             Self {
@@ -93,7 +102,7 @@ pub struct Writer(Sender<Message>);
 impl super::WriteHalf for Writer {
     async fn send_message(&mut self, msg: &Message) -> crate::Result<()> {
         self.0
-            .broadcast_direct(msg.clone())
+            .broadcast(msg.clone())
             .await
             .map_err(|e| {
                 crate::Error::InputOutput(io::Error::new(io::ErrorKind::BrokenPipe, e).into())
@@ -122,23 +131,27 @@ impl super::WriteHalf for Writer {
 
 /// The credentials of the current process.
 async fn self_credentials() -> io::Result<ConnectionCredentials> {
-    let mut creds = ConnectionCredentials::default().set_process_id(std::process::id());
+    let creds = ConnectionCredentials::default();
+    // WASI has no process IDs, and std panics where asked for one there.
+    #[cfg(not(target_os = "wasi"))]
+    let creds = creds.set_process_id(std::process::id());
 
     #[cfg(unix)]
-    {
+    let creds = {
         use rustix::process::{getegid, geteuid};
 
-        creds = creds
+        creds
             .set_unix_user_id(geteuid().as_raw())
-            .add_unix_group_id(getegid().as_raw());
-    }
+            .add_unix_group_id(getegid().as_raw())
+    };
     #[cfg(windows)]
-    {
+    let creds = {
         let sid = crate::win32::ProcessToken::open(None)?.sid()?;
-        creds = creds.set_windows_sid(sid);
-    }
+
+        creds.set_windows_sid(sid)
+    };
 
     Ok(creds)
 }
 
-const CHANNEL_CAPACITY: usize = 32;
+const CHANNEL_CAPACITY: NonZeroUsize = NonZeroUsize::new(32).unwrap();

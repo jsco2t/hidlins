@@ -5,7 +5,7 @@ use indexmap::map::IndexMap;
 use crate::key::Key;
 use crate::repr::Decor;
 use crate::value::DEFAULT_VALUE_DECOR;
-use crate::{InlineTable, Item, KeyMut, Value};
+use crate::{InlineTable, InternalString, Item, KeyMut, Value};
 
 /// A TOML table, a top-level collection of key/[`Value`] pairs under a header and logical
 /// sub-tables
@@ -20,7 +20,7 @@ pub struct Table {
     // Used for putting tables back in their original order when serialising.
     //
     // `None` for user created tables (can be overridden with `set_position`)
-    doc_position: Option<isize>,
+    doc_position: Option<usize>,
     pub(crate) span: Option<std::ops::Range<usize>>,
     pub(crate) items: KeyValuePairs,
 }
@@ -34,7 +34,7 @@ impl Table {
         Default::default()
     }
 
-    pub(crate) fn with_pos(doc_position: Option<isize>) -> Self {
+    pub(crate) fn with_pos(doc_position: Option<usize>) -> Self {
         Self {
             doc_position,
             ..Default::default()
@@ -66,72 +66,36 @@ impl Table {
     /// For example, this will return dotted keys
     pub fn get_values(&self) -> Vec<(Vec<&Key>, &Value)> {
         let mut values = Vec::new();
-        let mut root = Vec::new();
-        self.append_values(&mut root, &mut values);
+        let root = Vec::new();
+        self.append_values(&root, &mut values);
         values
     }
 
-    /// Helper for `get_values()`.
-    ///
-    /// `path` is the parent for this table. path is mutable to reuse allocations but no mutations
-    /// should be observable.
     fn append_values<'s>(
         &'s self,
-        path: &mut Vec<&'s Key>,
+        parent: &[&'s Key],
         values: &mut Vec<(Vec<&'s Key>, &'s Value)>,
     ) {
         for (key, value) in self.items.iter() {
+            let mut path = parent.to_vec();
             path.push(key);
             match value {
                 Item::Table(table) if table.is_dotted() => {
-                    table.append_values(path, values);
+                    table.append_values(&path, values);
                 }
                 Item::Value(value) => {
                     if let Some(table) = value.as_inline_table() {
                         if table.is_dotted() {
-                            table.append_values(path, values);
+                            table.append_values(&path, values);
                         } else {
-                            values.push((path.clone(), value));
+                            values.push((path, value));
                         }
                     } else {
-                        values.push((path.clone(), value));
+                        values.push((path, value));
                     }
                 }
                 _ => {}
             }
-            path.pop();
-        }
-    }
-
-    /// Helper for `get_values()`.
-    ///
-    /// `path` is the parent for this table. path is mutable to reuse allocations but no mutations
-    /// should be observable.
-    pub(crate) fn append_all_values<'s>(
-        &'s self,
-        path: &mut Vec<&'s Key>,
-        values: &mut Vec<(Vec<&'s Key>, &'s Value)>,
-    ) {
-        for (key, value) in self.items.iter() {
-            path.push(key);
-            match value {
-                Item::Table(table) => {
-                    table.append_all_values(path, values);
-                }
-                Item::Value(value) => {
-                    if let Some(table) = value.as_inline_table() {
-                        if table.is_dotted() {
-                            table.append_values(path, values);
-                        } else {
-                            values.push((path.clone(), value));
-                        }
-                    } else {
-                        values.push((path.clone(), value));
-                    }
-                }
-                _ => {}
-            }
-            path.pop();
         }
     }
 
@@ -245,10 +209,8 @@ impl Table {
     }
 
     /// Sets the position of the `Table` within the [`DocumentMut`][crate::DocumentMut].
-    ///
-    /// Use `None` for having an unspecified location
-    pub fn set_position(&mut self, doc_position: Option<isize>) {
-        self.doc_position = doc_position;
+    pub fn set_position(&mut self, doc_position: usize) {
+        self.doc_position = Some(doc_position);
     }
 
     /// The position of the `Table` within the [`DocumentMut`][crate::DocumentMut].
@@ -256,7 +218,7 @@ impl Table {
     /// Returns `None` if the `Table` was created manually (i.e. not via parsing)
     /// in which case its position is set automatically.  This can be overridden with
     /// [`Table::set_position`].
-    pub fn position(&self) -> Option<isize> {
+    pub fn position(&self) -> Option<usize> {
         self.doc_position
     }
 
@@ -283,9 +245,26 @@ impl Table {
             .map(|(_, key, _)| key.as_mut())
     }
 
+    /// Returns the decor associated with a given key of the table.
+    #[deprecated(since = "0.21.1", note = "Replaced with `key_mut`")]
+    pub fn key_decor_mut(&mut self, key: &str) -> Option<&mut Decor> {
+        #![allow(deprecated)]
+        use indexmap::map::MutableKeys;
+        self.items
+            .get_full_mut2(key)
+            .map(|(_, key, _)| key.leaf_decor_mut())
+    }
+
+    /// Returns the decor associated with a given key of the table.
+    #[deprecated(since = "0.21.1", note = "Replaced with `key_mut`")]
+    pub fn key_decor(&self, key: &str) -> Option<&Decor> {
+        #![allow(deprecated)]
+        self.items.get_full(key).map(|(_, key, _)| key.leaf_decor())
+    }
+
     /// The location within the original document
     ///
-    /// This generally requires a [`Document`][crate::Document].
+    /// This generally requires an [`ImDocument`][crate::ImDocument].
     pub fn span(&self) -> Option<std::ops::Range<usize>> {
         self.span.clone()
     }
@@ -340,7 +319,7 @@ impl Table {
 
     /// Gets the given key's corresponding entry in the Table for in-place manipulation.
     pub fn entry<'a>(&'a mut self, key: &str) -> Entry<'a> {
-        // Accept a `&str` rather than an owned type to keep `String`, well, internal
+        // Accept a `&str` rather than an owned type to keep `InternalString`, well, internal
         match self.items.entry(key.into()) {
             indexmap::map::Entry::Occupied(entry) => Entry::Occupied(OccupiedEntry { entry }),
             indexmap::map::Entry::Vacant(entry) => Entry::Vacant(VacantEntry { entry }),
@@ -516,14 +495,14 @@ impl<K: Into<Key>, V: Into<Item>> FromIterator<(K, V)> for Table {
     where
         I: IntoIterator<Item = (K, V)>,
     {
-        let mut table = Self::new();
+        let mut table = Table::new();
         table.extend(iter);
         table
     }
 }
 
 impl IntoIterator for Table {
-    type Item = (String, Item);
+    type Item = (InternalString, Item);
     type IntoIter = IntoIter;
 
     fn into_iter(self) -> Self::IntoIter {
@@ -563,7 +542,7 @@ pub(crate) const DEFAULT_TABLE_DECOR: (&str, &str) = ("\n", "");
 pub(crate) const DEFAULT_KEY_PATH_DECOR: (&str, &str) = ("", "");
 
 /// An owned iterator type over [`Table`]'s [`Key`]/[`Item`] pairs
-pub type IntoIter = Box<dyn Iterator<Item = (String, Item)>>;
+pub type IntoIter = Box<dyn Iterator<Item = (InternalString, Item)>>;
 /// An iterator type over [`Table`]'s [`Key`]/[`Item`] pairs
 pub type Iter<'a> = Box<dyn Iterator<Item = (&'a str, &'a Item)> + 'a>;
 /// A mutable iterator type over [`Table`]'s [`Key`]/[`Item`] pairs
@@ -631,6 +610,12 @@ pub trait TableLike: crate::private::Sealed {
     fn key(&self, key: &str) -> Option<&'_ Key>;
     /// Returns an accessor to a key's formatting
     fn key_mut(&mut self, key: &str) -> Option<KeyMut<'_>>;
+    /// Returns the decor associated with a given key of the table.
+    #[deprecated(since = "0.21.1", note = "Replaced with `key_mut`")]
+    fn key_decor_mut(&mut self, key: &str) -> Option<&mut Decor>;
+    /// Returns the decor associated with a given key of the table.
+    #[deprecated(since = "0.21.1", note = "Replaced with `key_mut`")]
+    fn key_decor(&self, key: &str) -> Option<&Decor>;
 }
 
 impl TableLike for Table {
@@ -692,6 +677,14 @@ impl TableLike for Table {
     }
     fn key_mut(&mut self, key: &str) -> Option<KeyMut<'_>> {
         self.key_mut(key)
+    }
+    fn key_decor_mut(&mut self, key: &str) -> Option<&mut Decor> {
+        #![allow(deprecated)]
+        self.key_decor_mut(key)
+    }
+    fn key_decor(&self, key: &str) -> Option<&Decor> {
+        #![allow(deprecated)]
+        self.key_decor(key)
     }
 }
 

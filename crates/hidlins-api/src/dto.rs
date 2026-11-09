@@ -363,6 +363,9 @@ pub struct PassphraseOptionsDto {
 pub struct GeneratedSecret {
     pub value: String,
     pub entropy_bits: f64,
+    /// Session revocation origin captured before generation, never refreshed
+    /// when this displayed value is submitted for copying.
+    pub copy_origin: u64,
 }
 
 impl fmt::Debug for GeneratedSecret {
@@ -370,6 +373,7 @@ impl fmt::Debug for GeneratedSecret {
         f.debug_struct("GeneratedSecret")
             .field("value", &"***")
             .field("entropy_bits", &self.entropy_bits)
+            .field("copy_origin", &self.copy_origin)
             .finish()
     }
 }

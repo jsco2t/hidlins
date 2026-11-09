@@ -24,6 +24,241 @@ spec.loader.exec_module(vendor)
 
 
 class KeepassPatchReplayTests(unittest.TestCase):
+    def test_borrowed_entry_comparison_helper_replays(self) -> None:
+        with tempfile.TemporaryDirectory(prefix="hidlins-borrowed-comparison-patch-") as temporary:
+            vendor_dir = Path(temporary)
+            crate = vendor_dir / "keepass"
+            shutil.copytree(ROOT / "vendor" / "keepass", crate)
+            source = crate / "src/db/merge.rs"
+            reviewed = source.read_text()
+            marker = "// Hidlins: compare borrowed Entry properties without cloning secrets/history.\n"
+            boundary = "/// Check entry content, ignoring ordering/access times but retaining expiration."
+            self.assertTrue(marker in reviewed, "borrowed comparison helper must be present")
+            prefix, tail = reviewed.split(marker, 1)
+            _, suffix = tail.split(boundary, 1)
+            source.write_text(prefix + boundary + suffix)
+            with patch.object(vendor, "VENDOR", vendor_dir):
+                vendor.patch_keepass()
+                self.assertEqual(source.read_text(), reviewed)
+                checksum = (crate / ".cargo-checksum.json").read_bytes()
+                vendor.patch_keepass()
+                self.assertEqual((crate / ".cargo-checksum.json").read_bytes(), checksum)
+
+    def test_restored_group_move_metadata_patch_replays(self) -> None:
+        before = "            dest_group.times = source.times.clone();"
+        after = "            dest_group.times = source.times.clone();\n            dest_group.previous_parent_group = source.previous_parent_group;"
+        with tempfile.TemporaryDirectory(prefix="hidlins-group-move-metadata-patch-") as temporary:
+            vendor_dir = Path(temporary)
+            crate = vendor_dir / "keepass"
+            shutil.copytree(ROOT / "vendor" / "keepass", crate)
+            source = crate / "src/db/merge.rs"
+            reviewed = source.read_text()
+            source.write_text(reviewed.replace(after, before, 1))
+            with patch.object(vendor, "VENDOR", vendor_dir):
+                vendor.patch_keepass()
+                self.assertTrue(after in source.read_text(), "restored group move metadata must replay")
+                if after in reviewed:
+                    self.assertEqual(source.read_text(), reviewed)
+                checksum = (crate / ".cargo-checksum.json").read_bytes()
+                vendor.patch_keepass()
+                self.assertEqual((crate / ".cargo-checksum.json").read_bytes(), checksum)
+
+    def test_move_deletion_order_patches_replay(self) -> None:
+        replacements = [
+            ("group.times.last_modification.or(group.times.location_changed)", "group.times.last_modification.max(group.times.location_changed)"),
+            ("e.times.last_modification.or(e.times.location_changed)", "e.times.last_modification.max(e.times.location_changed)"),
+            (".last_modification\n                .or(source_entry.times.location_changed)", ".last_modification\n                .max(source_entry.times.location_changed)"),
+            (".last_modification\n                .or(dest_entry.times.location_changed)", ".last_modification\n                .max(dest_entry.times.location_changed)"),
+        ]
+        with tempfile.TemporaryDirectory(prefix="hidlins-move-order-patch-") as temporary:
+            vendor_dir = Path(temporary)
+            crate = vendor_dir / "keepass"
+            shutil.copytree(ROOT / "vendor" / "keepass", crate)
+            source = crate / "src/db/merge.rs"
+            reviewed = source.read_text()
+            original = reviewed
+            for before, after in replacements:
+                original = original.replace(after, before, 1)
+            source.write_text(original)
+            with patch.object(vendor, "VENDOR", vendor_dir):
+                vendor.patch_keepass()
+                for _, after in replacements:
+                    self.assertTrue(after in source.read_text(), "move ordering repair must replay")
+                if all(after in reviewed for _, after in replacements):
+                    self.assertEqual(source.read_text(), reviewed)
+                checksum = (crate / ".cargo-checksum.json").read_bytes()
+                vendor.patch_keepass()
+                self.assertEqual((crate / ".cargo-checksum.json").read_bytes(), checksum)
+
+    def test_tombstone_union_patches_replay(self) -> None:
+        union = "        // Hidlins: propagate deletions even when neither side has the object.\n        // Concrete timestamps supersede unknown dates; never move a marker back.\n        for (id, deleted_at) in &other.deleted_objects {\n            self.deleted_objects.entry(*id)\n                .and_modify(|existing| *existing = (*existing).max(*deleted_at))\n                .or_insert(*deleted_at);\n        }\n\n"
+        before = "dest_db.deleted_objects.insert(id.uuid(), *deletion_time);"
+        after = "dest_db.deleted_objects.entry(id.uuid())\n                .and_modify(|existing| *existing = (*existing).max(*deletion_time))\n                .or_insert(*deletion_time);"
+        with tempfile.TemporaryDirectory(prefix="hidlins-tombstone-union-patch-") as temporary:
+            vendor_dir = Path(temporary)
+            crate = vendor_dir / "keepass"
+            shutil.copytree(ROOT / "vendor" / "keepass", crate)
+            source = crate / "src/db/merge.rs"
+            reviewed = source.read_text()
+            source.write_text(reviewed.replace(union, "", 1).replace(after, before))
+            with patch.object(vendor, "VENDOR", vendor_dir):
+                vendor.patch_keepass()
+                self.assertTrue(union in source.read_text(), "tombstone union must replay")
+                self.assertEqual(source.read_text().count(after), 3)
+                if union in reviewed and reviewed.count(after) == 3:
+                    self.assertEqual(source.read_text(), reviewed)
+                checksum = (crate / ".cargo-checksum.json").read_bytes()
+                vendor.patch_keepass()
+                self.assertEqual((crate / ".cargo-checksum.json").read_bytes(), checksum)
+
+    def test_recursive_group_update_patches_replay(self) -> None:
+        replacements = [
+            ("use std::{collections::HashSet, ops::Deref};", "use std::{collections::{HashMap, HashSet}, ops::Deref};"),
+            ("fn get_last_update(group: GroupRef<'_>) -> Option<NaiveDateTime> {", "fn get_last_update(\n    group: GroupRef<'_>,\n    cache: &mut HashMap<crate::db::GroupId, Option<NaiveDateTime>>,\n) -> Option<NaiveDateTime> {\n    let id = group.id();\n    if let Some(update) = cache.get(&id) {\n        return *update;\n    }"),
+            ("    group\n        .entries()\n", "    let latest = group\n        .entries()\n"),
+            ("        .chain(\n            group\n                .groups()\n                .filter_map(|g| g.times.last_modification.or(g.times.location_changed)),\n        )", "        .chain(group.groups().filter_map(|child| get_last_update(child, cache)))"),
+            ("        .chain(last_update)\n        .max()\n}", "        .chain(last_update)\n        .max();\n    cache.insert(id, latest);\n    latest\n}"),
+            ("    let source_groups = source_db.groups.keys().cloned().collect::<HashSet<_>>();", "    let source_groups = source_db.groups.keys().cloned().collect::<HashSet<_>>();\n    // Visit each requested subtree only once, even when ancestors overlap.\n    let mut source_updates = HashMap::new();\n    let mut dest_updates = HashMap::new();"),
+            ("get_last_update(source);", "get_last_update(source, &mut source_updates);"),
+            ("get_last_update(dest.as_ref());", "get_last_update(dest.as_ref(), &mut dest_updates);"),
+        ]
+        with tempfile.TemporaryDirectory(prefix="hidlins-subtree-update-patch-") as temporary:
+            vendor_dir = Path(temporary)
+            crate = vendor_dir / "keepass"
+            shutil.copytree(ROOT / "vendor" / "keepass", crate)
+            source = crate / "src/db/merge.rs"
+            reviewed = source.read_text()
+            original = reviewed
+            for before, after in reversed(replacements):
+                original = original.replace(after, before, 1)
+            source.write_text(original)
+            with patch.object(vendor, "VENDOR", vendor_dir):
+                vendor.patch_keepass()
+                for _, after in replacements:
+                    self.assertTrue(after in source.read_text(), "recursive subtree repair must replay")
+                if all(after in reviewed for _, after in replacements):
+                    self.assertEqual(source.read_text(), reviewed)
+                checksum = (crate / ".cargo-checksum.json").read_bytes()
+                vendor.patch_keepass()
+                self.assertEqual((crate / ".cargo-checksum.json").read_bytes(), checksum)
+
+    def test_expiration_merge_patches_replay(self) -> None:
+        replacements = [
+            ("            dest_entry.times.last_modification = source_entry.times.last_modification;\n            dest_entry.fields = source_entry.fields.clone();", "            dest_entry.times.last_modification = source_entry.times.last_modification;\n            dest_entry.times.expires = source_entry.times.expires;\n            dest_entry.times.expiry = source_entry.times.expiry;\n            dest_entry.fields = source_entry.fields.clone();"),
+            ("fn have_entries_diverged(a: &Entry, b: &Entry) -> bool {\n    let new_times = Times::default();\n\n    let mut a = a.clone();\n    a.times = new_times.clone();\n    a.history = None;\n\n    let mut b = b.clone();\n    b.times = new_times.clone();\n    b.history = None;\n\n    !a.eq(&b)\n}", "fn have_entries_diverged(a: &Entry, b: &Entry) -> bool {\n    !same_entry_properties(a, b)\n        || a.times.expires != b.times.expires\n        || a.times.expiry != b.times.expiry\n        || a.attachments != b.attachments\n}"),
+        ]
+        with tempfile.TemporaryDirectory(prefix="hidlins-expiration-merge-patch-") as temporary:
+            vendor_dir = Path(temporary)
+            crate = vendor_dir / "keepass"
+            shutil.copytree(ROOT / "vendor" / "keepass", crate)
+            source = crate / "src/db/merge.rs"
+            reviewed = source.read_text()
+            original = reviewed
+            for before, after in replacements:
+                original = original.replace(after, before, 1)
+            source.write_text(original)
+            with patch.object(vendor, "VENDOR", vendor_dir):
+                vendor.patch_keepass()
+                for _, after in replacements:
+                    self.assertTrue(after in source.read_text(), "expiration repair must replay")
+                if all(after in reviewed for _, after in replacements):
+                    self.assertEqual(source.read_text(), reviewed)
+                checksum = (crate / ".cargo-checksum.json").read_bytes()
+                vendor.patch_keepass()
+                self.assertEqual((crate / ".cargo-checksum.json").read_bytes(), checksum)
+
+    def test_history_union_deduplication_patch_replays(self) -> None:
+        before = "    Ok(History { entries })\n}"
+        after = """    // Hidlins: a timestamp can contain several distinct secret versions.
+    // Pairwise merging can repeat one of them when one replica has a subset.
+    // Remove only exact duplicates, retaining all different metadata/content.
+    // Distinct timestamps cannot contain exact duplicate versions.
+    if entries.windows(2).all(|pair| {
+        pair[0].times.last_modification != pair[1].times.last_modification
+    }) {
+        return Ok(History { entries });
+    }
+    let mut unique: Vec<Entry> = Vec::with_capacity(entries.len());
+    for entry in entries {
+        // The merge emits descending timestamps. Compare only the equal-time
+        // suffix so ordinary histories retain linear deduplication cost.
+        let duplicate = unique.iter().rev()
+            .take_while(|prior| prior.times.last_modification == entry.times.last_modification)
+            .any(|prior| prior == &entry);
+        if !duplicate {
+            unique.push(entry);
+        }
+    }
+    Ok(History { entries: unique })
+}"""
+        with tempfile.TemporaryDirectory(prefix="hidlins-history-union-patch-") as temporary:
+            vendor_dir = Path(temporary)
+            crate = vendor_dir / "keepass"
+            shutil.copytree(ROOT / "vendor" / "keepass", crate)
+            source = crate / "src/db/merge.rs"
+            reviewed = source.read_text()
+            source.write_text(reviewed.replace(after, before, 1))
+            with patch.object(vendor, "VENDOR", vendor_dir):
+                vendor.patch_keepass()
+                self.assertTrue(after in source.read_text(), "history union deduplication must replay")
+                if after in reviewed:
+                    self.assertEqual(source.read_text(), reviewed)
+                checksum = (crate / ".cargo-checksum.json").read_bytes()
+                vendor.patch_keepass()
+                self.assertEqual((crate / ".cargo-checksum.json").read_bytes(), checksum)
+
+    def test_history_pool_import_replays_without_touching_other_bytes(self) -> None:
+        with tempfile.TemporaryDirectory(prefix="hidlins-history-pool-patch-") as temporary:
+            vendor_dir = Path(temporary)
+            crate = vendor_dir / "keepass"
+            shutil.copytree(ROOT / "vendor" / "keepass", crate)
+            source = crate / "src/db/merge.rs"
+            reviewed = source.read_text()
+            marker = "// Hidlins: historical attachment ids belong to the source pool.\n"
+            boundary = "/// Merge two histories together, returning the merged history."
+            self.assertTrue(marker in reviewed, "history pool normalization must be present")
+            prefix, tail = reviewed.split(marker, 1)
+            _, suffix = tail.split(boundary, 1)
+            source.write_text(prefix + boundary + suffix)
+            with patch.object(vendor, "VENDOR", vendor_dir):
+                vendor.patch_keepass()
+                self.assertEqual(source.read_text(), reviewed)
+                checksum = (crate / ".cargo-checksum.json").read_bytes()
+                vendor.patch_keepass()
+                self.assertEqual((crate / ".cargo-checksum.json").read_bytes(), checksum)
+
+    def test_equal_current_history_patch_replays_and_is_idempotent(self) -> None:
+        before = """                return Err(MergeError::EntryModificationTimeNotUpdated(id));
+            }
+            continue;"""
+        after = """                return Err(MergeError::EntryModificationTimeNotUpdated(id));
+            }
+            // Hidlins: equal current versions can carry different prior secrets.
+            if dest_entry.history != source_history {
+                let empty_history = History::default();
+                dest_entry.history = Some(merge_history(
+                    dest_entry.history.as_ref().unwrap_or(&empty_history),
+                    source_history.as_ref().unwrap_or(&empty_history),
+                    log,
+                )?);
+            }
+            continue;"""
+        with tempfile.TemporaryDirectory(prefix="hidlins-equal-history-patch-") as temporary:
+            vendor_dir = Path(temporary)
+            crate = vendor_dir / "keepass"
+            shutil.copytree(ROOT / "vendor" / "keepass", crate)
+            source = crate / "src/db/merge.rs"
+            reviewed = source.read_text()
+            source.write_text(reviewed.replace(after, before, 1))
+            with patch.object(vendor, "VENDOR", vendor_dir):
+                vendor.patch_keepass()
+                self.assertTrue(after in source.read_text(), "equal-current history repair must replay")
+                if after in reviewed:
+                    self.assertEqual(source.read_text(), reviewed)
+                checksum = (crate / ".cargo-checksum.json").read_bytes()
+                vendor.patch_keepass()
+                self.assertEqual((crate / ".cargo-checksum.json").read_bytes(), checksum)
+
     def test_value_erasure_patch_replays_and_preserves_other_bytes(self) -> None:
         with tempfile.TemporaryDirectory(prefix="hidlins-value-drop-patch-") as temporary:
             vendor_dir = Path(temporary)

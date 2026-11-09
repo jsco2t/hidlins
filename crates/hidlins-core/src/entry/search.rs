@@ -406,7 +406,7 @@ impl Matcher {
                 let mut folded = Zeroizing::new(Vec::with_capacity(lowercase.chars().count()));
                 folded.extend(lowercase.chars());
                 // Keep whole-string casing (including Greek final sigma),
-                // but do not let '?' consume just part of an expanded scalar.
+                // but do not let wildcards split an expanded scalar.
                 // ASCII and non-expanding Unicode need no boundary allocation.
                 let mut boundaries = Vec::new();
                 if !value.is_ascii() {
@@ -505,7 +505,12 @@ fn wildcard_match_with_boundaries(pattern: &[char], value: &[char], boundaries: 
     let mut star_v: usize = 0;
 
     while v < value.len() {
-        if p < pattern.len() && pattern[p] == '*' {
+        if p < pattern.len() && pattern[p] == '*' && boundaries.get(v).copied().unwrap_or(true) {
+            // At an original-character boundary, a final star accepts the
+            // entire remaining field without scanning its folded scalars.
+            if p + 1 == pattern.len() {
+                return true;
+            }
             star_p = Some(p);
             star_v = v;
             p += 1;
@@ -524,6 +529,9 @@ fn wildcard_match_with_boundaries(pattern: &[char], value: &[char], boundaries: 
         } else if let Some(saved) = star_p {
             p = saved + 1;
             star_v += 1;
+            while boundaries.get(star_v) == Some(&false) {
+                star_v += 1;
+            }
             v = star_v;
         } else {
             return false;

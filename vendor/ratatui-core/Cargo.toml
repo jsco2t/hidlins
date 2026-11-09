@@ -97,11 +97,16 @@ path = "tests/rect.rs"
 version = "1"
 optional = true
 
+[dependencies.zeroize]
+version = "=1.8.2"
+default-features = false
+
 [dependencies.bitflags]
 version = "2.12"
 
 [dependencies.compact_str]
 version = "0.9"
+features = ["zeroize"]
 default-features = false
 
 [dependencies.critical-section]

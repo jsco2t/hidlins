@@ -5,8 +5,8 @@ use std::{
     str::FromStr,
 };
 
+use crate::{Str, Type};
 use serde::{Deserialize, Serialize, de};
-use zvariant::{Str, Type};
 
 /// A D-Bus server GUID.
 ///
@@ -194,6 +194,12 @@ impl From<OwnedGuid> for Guid<'_> {
 impl<'unowned, 'owned: 'unowned> From<&'owned OwnedGuid> for Guid<'unowned> {
     fn from(guid: &'owned OwnedGuid) -> Self {
         guid.0.clone()
+    }
+}
+
+impl<'g> From<&Guid<'g>> for Guid<'g> {
+    fn from(guid: &Guid<'g>) -> Self {
+        guid.clone()
     }
 }
 

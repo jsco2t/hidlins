@@ -21,13 +21,13 @@
 //!
 //! Compiled only when `hidlins-security/logind` is enabled. The
 //! feature is **default-off** so a plain `cargo build` does not pull
-//! the `zbus` + `async-io` dependency trees. Consumers (the TUI / CLI
+//! the `zbus` + `zruntime` dependency trees. Consumers (the TUI / CLI
 //! / agent crates) opt in via their own `Cargo.toml`.
 //!
 //! ## Shutdown (Phase 5 T5.0 contract)
 //!
 //! The source owns an `async-channel::Sender<()>` whose receiver is
-//! racing the signal streams. On controller drop, the
+//! racing the entire connection, subscription and streaming future. On controller drop, the
 //! [`ShutdownHandle`] returned by
 //! [`OsLockEventSource::shutdown_handle`] drops the sender; the
 //! receiver's `recv` resolves with `Err`, the race finishes with
@@ -52,8 +52,6 @@ const LOGIND_SESSION_IFACE: &str = "org.freedesktop.login1.Session";
 
 /// Outcome of one round of `run_async`'s `futures_lite::or` race.
 enum Branch {
-    /// `shutdown_rx` closed — controller is dropping us.
-    Shutdown,
     /// A `PrepareForSleep` signal arrived with `start = true`/`false`.
     Sleep(zbus::Message),
     /// A `Session.Lock` signal arrived (body unused).
@@ -144,7 +142,7 @@ async fn setup_streams(
     // per-session Lock signal. Method: GetSessionByPID(uint32 pid)
     // returns the object path of the session containing that pid.
     let our_pid: u32 = std::process::id();
-    let session_path: zbus::zvariant::OwnedObjectPath = manager
+    let session_path: zbus::OwnedObjectPath = manager
         .call("GetSessionByPID", &our_pid)
         .await
         .map_err(|e| SecurityError::EventSourceStart {
@@ -186,40 +184,54 @@ async fn run_async(
     shutdown_rx: AsyncRx<()>,
     sender: StdSender<SecurityEvent>,
 ) -> Result<(), SecurityError> {
-    let system_conn =
-        zbus::Connection::system()
-            .await
-            .map_err(|e| SecurityError::EventSourceStart {
-                name: "logind",
-                detail: format!("connect to system DBus: {e}"),
-            })?;
+    // Cancellation must cover connection authentication and every setup await,
+    // not only the steady-state stream loop. Dropping the losing future also
+    // releases its connection while the controller still joins this worker.
+    futures_lite::future::or(
+        async {
+            let _ = shutdown_rx.recv().await;
+            Ok(())
+        },
+        run_connected(sender),
+    )
+    .await
+}
+
+async fn run_connected(sender: StdSender<SecurityEvent>) -> Result<(), SecurityError> {
+    let address = zbus::Address::system().map_err(|_| SecurityError::EventSourceStart {
+        name: "logind",
+        detail: "invalid system DBus address".into(),
+    })?;
+    let address = local_system_bus_address(address)?;
+    // Use the admitted owned address; do not reread ambient configuration.
+    let builder = zbus::connection::Builder::address(address);
+    let system_conn = builder
+        .build()
+        .await
+        .map_err(|e| SecurityError::EventSourceStart {
+            name: "logind",
+            detail: format!("connect to system DBus: {e}"),
+        })?;
     let (mut prepare_for_sleep, mut session_lock) = setup_streams(&system_conn).await?;
 
     loop {
         let next = futures_lite::future::or(
             async {
-                let _ = shutdown_rx.recv().await;
-                Branch::Shutdown
+                match prepare_for_sleep.next().await {
+                    Some(msg) => Branch::Sleep(msg),
+                    None => Branch::StreamEnded,
+                }
             },
-            futures_lite::future::or(
-                async {
-                    match prepare_for_sleep.next().await {
-                        Some(msg) => Branch::Sleep(msg),
-                        None => Branch::StreamEnded,
-                    }
-                },
-                async {
-                    match session_lock.next().await {
-                        Some(_msg) => Branch::Lock,
-                        None => Branch::StreamEnded,
-                    }
-                },
-            ),
+            async {
+                match session_lock.next().await {
+                    Some(_msg) => Branch::Lock,
+                    None => Branch::StreamEnded,
+                }
+            },
         )
         .await;
 
         match next {
-            Branch::Shutdown => break,
             Branch::StreamEnded => {
                 // A signal stream closing means the DBus connection
                 // was lost or zbus is tearing down. Treat as a clean
@@ -264,8 +276,54 @@ async fn run_async(
     Ok(())
 }
 
+fn local_system_bus_address(address: zbus::Address) -> Result<zbus::Address, SecurityError> {
+    if matches!(address.transport(), zbus::address::Transport::Unix(_)) {
+        Ok(address)
+    } else {
+        Err(SecurityError::EventSourceStart {
+            name: "logind",
+            detail: "system DBus requires a local Unix transport".into(),
+        })
+    }
+}
+
 #[cfg(test)]
 mod tests {
+    #[test]
+    fn system_bus_transport_accepts_unix_filesystem_and_abstract_addresses() {
+        for text in [
+            "unix:path=/tmp/hidlins-native-bus",
+            "unix:abstract=hidlins-native-bus",
+        ] {
+            let address: zbus::Address = text.parse().unwrap();
+            let expected = address.to_string();
+            let admitted = super::local_system_bus_address(address).unwrap();
+            assert_eq!(admitted.to_string(), expected);
+        }
+    }
+
+    #[test]
+    fn system_bus_transport_rejects_network_and_exec_without_using_them() {
+        for text in [
+            "tcp:host=127.0.0.1,port=1",
+            "nonce-tcp:host=127.0.0.1,port=1,noncefile=/tmp/not-opened",
+            "unixexec:path=/definitely-not-executed,argv0=fixture",
+        ] {
+            match text.parse::<zbus::Address>() {
+                Ok(address) => {
+                    assert!(matches!(super::local_system_bus_address(address),
+                        Err(crate::SecurityError::EventSourceStart { name: "logind", detail })
+                            if detail.contains("local Unix transport")));
+                }
+                Err(error) => {
+                    // zbus rejects unixexec at parsing when that feature is disabled.
+                    assert!(text.starts_with("unixexec:"));
+                    assert!(matches!(error, zbus::Error::Address(detail)
+                        if detail == "unsupported transport 'unixexec'"));
+                }
+            }
+        }
+    }
     use super::*;
 
     #[test]

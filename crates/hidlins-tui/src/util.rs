@@ -8,6 +8,24 @@
 //! drift (PMF-4).
 
 use chrono::{DateTime, Utc};
+use zeroize::Zeroizing;
+
+/// Reserve input space without handing a previous plaintext allocation back
+/// to the allocator. The caller must also erase the final owned buffer on drop.
+pub(crate) fn reserve_sensitive(buffer: &mut String, additional: usize) {
+    let required = buffer
+        .len()
+        .checked_add(additional)
+        .expect("input too large");
+    if required > buffer.capacity() {
+        let capacity = required.max(buffer.capacity().saturating_mul(2));
+        let mut replacement = Zeroizing::new(String::with_capacity(capacity));
+        replacement.push_str(buffer);
+        std::mem::swap(buffer, &mut replacement);
+        // The previous allocation, including deleted bytes in spare capacity,
+        // is erased by replacement's drop before being freed.
+    }
+}
 
 /// Whether a custom-field name denotes an OTP/TOTP secret seed.
 ///

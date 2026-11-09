@@ -6,6 +6,10 @@ use std::future::ready;
 use zbus::{block_on, fdo, object_server::SignalEmitter, proxy::CacheProperties};
 use zbus_macros::{DBusError, interface, proxy};
 
+// `::mybus` only resolves because of this alias; the test below exercises the `crate` attribute
+// on property setters.
+extern crate zbus as mybus;
+
 mod param {
     #[zbus_macros::proxy(
         interface = "org.freedesktop.zbus_macros.ProxyParam",
@@ -19,10 +23,7 @@ mod param {
 }
 
 mod test {
-    use zbus::{
-        fdo,
-        zvariant::{OwnedStructure, Structure},
-    };
+    use zbus::{OwnedStructure, Structure, fdo};
 
     #[zbus_macros::proxy(
         assume_defaults = false,
@@ -33,7 +34,7 @@ mod test {
         /// comment for a_test()
         fn a_test(&self, val: &str) -> zbus::Result<u32>;
 
-        /// The generated proxies implement both `zvariant::Type` and `serde::ser::Serialize`
+        /// The generated proxies implement both `zbus::Type` and `serde::ser::Serialize`
         /// which is useful to pass in a proxy as a param. It serializes it as an `ObjectPath`.
         fn some_method<T>(&self, object_path: &T) -> zbus::Result<()>;
 
@@ -71,7 +72,6 @@ fn test_proxy() {
         let connection = zbus::Connection::session().await.unwrap();
         let proxy = test::TestProxy::builder(&connection)
             .path("/org/freedesktop/zbus_macros/test")
-            .unwrap()
             .cache_properties(CacheProperties::No)
             .build()
             .await
@@ -82,7 +82,7 @@ fn test_proxy() {
             .unwrap()
             .request_name(
                 "org.freedesktop.zbus_macros".try_into().unwrap(),
-                fdo::RequestNameFlags::DoNotQueue.into(),
+                fdo::RequestNameFlags::DO_NOT_QUEUE,
             )
             .await
             .unwrap();
@@ -122,16 +122,17 @@ fn test_derive_error() {
         LetItBe {
             desc: String,
         },
+        // A named field must not clash with the locals the generated `create_reply` binds.
+        Shadowing {
+            builder: String,
+        },
     }
 }
 
 #[test]
 fn test_interface() {
     use serde::{Deserialize, Serialize};
-    use zbus::{
-        object_server::Interface,
-        zvariant::{Type, Value},
-    };
+    use zbus::{Type, object_server::Interface};
 
     // Test write-only property
     struct TestWriteOnlyProperty;
@@ -159,13 +160,13 @@ fn test_interface() {
         generic: T,
     }
 
-    #[derive(Serialize, Deserialize, Type, Value)]
+    #[derive(Serialize, Deserialize, Type)]
     struct MyCustomPropertyType(u32);
 
     #[interface(name = "org.freedesktop.zbus.Test", spawn = false)]
     impl<T: 'static> Test<T>
     where
-        T: serde::ser::Serialize + zbus::zvariant::Type + Send + Sync,
+        T: serde::ser::Serialize + zbus::Type + Send + Sync,
     {
         /// Testing `no_arg` documentation is reflected in XML.
         fn no_arg(&self) {
@@ -302,7 +303,6 @@ fn test_interface() {
             let c = zbus::Connection::session().await.unwrap();
             let s = c.object_server();
             let m = zbus::message::Message::method_call("/", "StrU32")
-                .unwrap()
                 .build(&(42,))
                 .unwrap();
             let _ = t.call(s, &c, &m, "StrU32".try_into().unwrap());
@@ -378,7 +378,6 @@ mod signal_from_message {
             "org.freedesktop.zbus_macros.Test",
             "SignalU8",
         )
-        .expect("Failed to create signal message builder")
         .build(&(1u8,))
         .expect("Failed to build signal message");
 
@@ -399,7 +398,6 @@ mod signal_from_message {
             "org.freedesktop.zbus_macros.Test",
             "SignalString",
         )
-        .expect("Failed to create signal message builder")
         .build(&(String::from("test"),))
         .expect("Failed to build signal message");
 
@@ -420,7 +418,6 @@ mod signal_from_message {
             "org.freedesktop.zbus_macros.Test",
             "SignalU8",
         )
-        .expect("Failed to create signal message builder")
         .build(&(String::from("test"),))
         .expect("Failed to build signal message");
 
@@ -433,9 +430,13 @@ mod signal_from_message {
 
 #[test]
 fn test_proxy_object_list() {
+    zbus::block_on(proxy_object_list());
+}
+
+async fn proxy_object_list() {
     #[derive(Clone)]
     struct ObjectList {
-        paths: [zbus::zvariant::ObjectPath<'static>; 2],
+        paths: [zbus::ObjectPath<'static>; 2],
     }
 
     #[zbus_macros::interface(
@@ -444,49 +445,177 @@ fn test_proxy_object_list() {
     )]
     impl ObjectList {
         #[zbus(proxy(object = "ObjectList", object_vec))]
-        async fn get_test_objects(&self) -> Vec<zbus::zvariant::ObjectPath<'static>> {
+        async fn get_test_objects(&self) -> Vec<zbus::ObjectPath<'static>> {
             self.paths.to_vec()
         }
 
         #[zbus(property, proxy(object = "ObjectList", object_vec))]
-        fn objects(&self) -> Vec<zbus::zvariant::ObjectPath<'static>> {
+        fn objects(&self) -> Vec<zbus::ObjectPath<'static>> {
             self.paths.to_vec()
         }
     }
 
     static OBJECT_LIST: ObjectList = ObjectList {
         paths: [
-            zbus::zvariant::ObjectPath::from_static_str_unchecked(
+            zbus::ObjectPath::from_static_str_unchecked(
                 "/org/freedesktop/zbus_macros/object_list/0",
             ),
-            zbus::zvariant::ObjectPath::from_static_str_unchecked(
+            zbus::ObjectPath::from_static_str_unchecked(
                 "/org/freedesktop/zbus_macros/object_list/1",
             ),
         ],
     };
 
-    fn check_return(list: Vec<ObjectListProxyBlocking<'_>>) {
-        for (correct, returned) in OBJECT_LIST.paths.iter().zip(list.into_iter()) {
+    fn check_return(list: Vec<ObjectListProxy<'_>>) {
+        for (correct, returned) in OBJECT_LIST.paths.iter().zip(list) {
             assert!(returned.inner().path() == correct);
         }
     }
 
-    let connection = zbus::blocking::connection::Builder::session()
-        .unwrap()
+    let connection = zbus::connection::Builder::session()
         .serve_at(OBJECT_LIST.paths[1].as_ref(), OBJECT_LIST.clone())
-        .unwrap()
         .build()
+        .await
         .unwrap();
     let destination = connection.unique_name().unwrap().clone();
 
-    let proxy = ObjectListProxyBlocking::builder(&connection)
+    let proxy = ObjectListProxy::builder(&connection)
         .path(OBJECT_LIST.paths[1].as_ref())
-        .unwrap()
         .destination(&destination)
-        .unwrap()
         .build()
+        .await
         .unwrap();
 
-    check_return(proxy.get_test_objects().unwrap());
-    check_return(proxy.objects().unwrap());
+    check_return(proxy.get_test_objects().await.unwrap());
+    check_return(proxy.objects().await.unwrap());
+}
+
+// `proxy_type_name` and its `async_object` alias must both resolve the same method's return
+// type to the named proxy, overriding the `<object>Proxy` derivation.
+#[test]
+fn method_object_proxy_type_name_and_its_alias() {
+    #[zbus_macros::proxy(
+        interface = "org.freedesktop.zbus_macros.ProxyTypeName",
+        default_service = "org.freedesktop.zbus_macros"
+    )]
+    trait ProxyTypeNameTarget {}
+
+    #[zbus_macros::proxy(
+        interface = "org.freedesktop.zbus_macros.UsesProxyTypeName",
+        default_service = "org.freedesktop.zbus_macros",
+        default_path = "/org/freedesktop/zbus_macros/uses_proxy_type_name"
+    )]
+    trait UsesProxyTypeName {
+        #[zbus(object = "ProxyTypeName", proxy_type_name = "ProxyTypeNameTargetProxy")]
+        fn get_target(&self);
+    }
+
+    #[zbus_macros::proxy(
+        interface = "org.freedesktop.zbus_macros.UsesAsyncObjectAlias",
+        default_service = "org.freedesktop.zbus_macros",
+        default_path = "/org/freedesktop/zbus_macros/uses_async_object_alias"
+    )]
+    trait UsesAsyncObjectAlias {
+        #[zbus(object = "ProxyTypeName", async_object = "ProxyTypeNameTargetProxy")]
+        fn get_target(&self);
+    }
+
+    block_on(async move {
+        let connection = zbus::Connection::session().await.unwrap();
+
+        let target = UsesProxyTypeNameProxy::new(&connection).await.unwrap();
+        // Nothing replies, but the point of the call is the return type, checked below.
+        let result: zbus::Result<ProxyTypeNameTargetProxy<'_>> = target.get_target().await;
+        assert!(result.is_err());
+
+        let alias = UsesAsyncObjectAliasProxy::new(&connection).await.unwrap();
+        let result: zbus::Result<ProxyTypeNameTargetProxy<'_>> = alias.get_target().await;
+        assert!(result.is_err());
+    });
+}
+
+// This crate has no `zvariant` dependency, so the path `signature!` expands to has to resolve
+// through the `zbus` re-export.
+#[test]
+fn signature_macro_resolves_zvariant_through_zbus() {
+    use zbus::{Signature, signature};
+
+    const DICT: Signature = signature!("a{sv}");
+
+    assert_eq!(DICT.to_string(), "a{sv}");
+    assert_eq!(signature!("s").to_string(), "s");
+}
+
+#[test]
+fn interface_property_setter_with_crate_attr() {
+    use mybus::{Variant, object_server::Interface};
+
+    struct CrateAttrProperties;
+
+    #[interface(name = "org.freedesktop.CrateAttrProperties", crate = "mybus")]
+    impl CrateAttrProperties {
+        #[zbus(property)]
+        fn set_owned(&self, _value: u32) {}
+
+        #[zbus(property)]
+        fn set_borrowed(&self, _value: Variant<'_>) {}
+    }
+
+    assert_eq!(
+        CrateAttrProperties::name(),
+        "org.freedesktop.CrateAttrProperties"
+    );
+}
+
+#[test]
+fn interface_property_setter_with_serde() {
+    use serde::{Deserialize, Serialize};
+    use zbus::{Type, object_server::Interface};
+
+    #[derive(Deserialize, Serialize, Type)]
+    struct Fahrenheit(u32);
+
+    struct Thermostat;
+
+    #[interface(name = "org.freedesktop.Thermostat")]
+    impl Thermostat {
+        #[zbus(property)]
+        fn set_target(&self, value: Fahrenheit) -> fdo::Result<()> {
+            match value.0 {
+                32..=212 => Ok(()),
+                _ => Err(fdo::Error::InvalidArgs("out of range".to_string())),
+            }
+        }
+    }
+
+    assert_eq!(Thermostat::name(), "org.freedesktop.Thermostat");
+}
+
+#[test]
+fn interface_property_setter_with_lifetime_parameter() {
+    use zbus::{ObjectPath, OwnedObjectPath, object_server::Interface};
+
+    struct Lifetimes;
+
+    // The lifetime parameters of a setter aren't in scope where its value is deserialized.
+    #[interface(name = "org.freedesktop.Lifetimes")]
+    impl Lifetimes {
+        #[zbus(property)]
+        fn path(&self) -> OwnedObjectPath {
+            ObjectPath::from_static_str_unchecked("/").into()
+        }
+
+        #[zbus(property)]
+        fn set_path<'a>(&self, _path: ObjectPath<'a>) {}
+
+        #[zbus(property)]
+        fn borrowed_path(&self) -> OwnedObjectPath {
+            ObjectPath::from_static_str_unchecked("/").into()
+        }
+
+        #[zbus(property)]
+        fn set_borrowed_path<'a>(&self, _path: &ObjectPath<'a>) {}
+    }
+
+    assert_eq!(Lifetimes::name(), "org.freedesktop.Lifetimes");
 }

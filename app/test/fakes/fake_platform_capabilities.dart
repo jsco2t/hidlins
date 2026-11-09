@@ -84,6 +84,10 @@ final class FakeAttachmentExportCapability
     suggestedNames.add(suggestedName);
     return _take(results);
   }
+
+  @override
+  Future<PlatformResult<String>> chooseSource() async =>
+      const PlatformUnsupported();
 }
 
 final class FakeKeyfileAccessCapability implements KeyfileAccessCapability {

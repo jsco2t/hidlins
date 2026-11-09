@@ -344,8 +344,8 @@ impl Keymap {
             return self.continue_sequence(ctx, ev, pending);
         }
 
-        // 2. Accumulate a `{count}` prefix (only where a count sequence exists).
-        if self.ctx_has_count_seq(ctx) {
+        // 2. Accumulate a `{count}` prefix for a sequence or rebound jump key.
+        if self.ctx_has_count_binding(ctx) {
             if let Some(d) = plain_digit(ev) {
                 let acc = pending
                     .count
@@ -527,10 +527,13 @@ impl Keymap {
         })
     }
 
-    /// Does `ctx` have any `{count}`-taking sequence (so digit keys accumulate)?
-    fn ctx_has_count_seq(&self, ctx: Contexts) -> bool {
+    /// Does `ctx` have a binding that takes a preceding count?
+    fn ctx_has_count_binding(&self, ctx: Contexts) -> bool {
         self.map.iter().any(|(c, trigger, cmd)| {
-            is_tab_command(*cmd) && c.contains(ctx) && matches!(trigger, KeyTrigger::CountSeq(_))
+            *cmd == Command::JumpToTab
+                && c.contains(ctx)
+                && (matches!(trigger, KeyTrigger::CountSeq(_))
+                    || matches!(trigger, KeyTrigger::Key(key) if alt_digit(key).is_none()))
         })
     }
 }
@@ -568,6 +571,11 @@ fn plain_digit(ev: &KeyEvent) -> Option<u16> {
         return u16::try_from(c.to_digit(10)?).ok();
     }
     None
+}
+
+/// Save is handled before configurable commands in the Edit overlay.
+pub(crate) fn edit_save_key(ev: &KeyEvent) -> bool {
+    ev.modifiers.contains(KeyModifiers::CONTROL) && matches!(ev.code, KeyCode::Char('s'))
 }
 
 /// Collapse a `["…", "Alt+1", "Alt+2", … "Alt+9"]` run into `["…", "Alt+1..9"]`,
@@ -913,6 +921,32 @@ fn parse_bind_value(value: &BindValue) -> Result<Vec<KeyTrigger>, ()> {
     }
 }
 
+/// Reject overrides consumed by an earlier dispatch stage, retaining defaults.
+fn override_warning(cmd: Command, triggers: &[KeyTrigger]) -> Option<&'static str> {
+    if !is_tab_command(cmd)
+        && triggers
+            .iter()
+            .any(|trigger| !matches!(trigger, KeyTrigger::Key(_)))
+    {
+        return Some("sequences require a tab command (default kept)");
+    }
+    let first_keys = || {
+        triggers.iter().filter_map(|trigger| match trigger {
+            KeyTrigger::Key(key) => Some(key),
+            KeyTrigger::Seq(keys) | KeyTrigger::CountSeq(keys) => keys.first(),
+        })
+    };
+    if cmd == Command::JumpToTab && first_keys().any(|key| plain_digit(key).is_some()) {
+        return Some("leading digits are reserved for counts (default kept)");
+    }
+    if cmd == Command::Generate
+        && first_keys().any(|key| edit_save_key(key) || matches!(key.code, KeyCode::Esc))
+    {
+        return Some("key is reserved for saving or cancelling in Edit (default kept)");
+    }
+    None
+}
+
 impl Keymap {
     /// Build a keymap from a preset chosen by `patch.preset` (default Vim), then
     /// apply the slot overrides. Returns the keymap plus any non-fatal warnings
@@ -929,12 +963,25 @@ impl Keymap {
         for (slot, value) in &patch.bindings {
             let Some(cmd) = command_by_name(slot) else {
                 warnings.push(KeymapWarning {
-                    message: format!("unknown keymap slot `{slot}` (ignored)"),
+                    message: "unknown keymap slot (ignored)".to_string(),
                 });
                 continue;
             };
             match parse_bind_value(value) {
-                Ok(triggers) => {
+                Ok(mut triggers) => {
+                    if let Some(reason) = override_warning(cmd, &triggers) {
+                        warnings.push(KeymapWarning {
+                            message: format!("`{slot}`: {reason}"),
+                        });
+                        continue;
+                    }
+                    if cmd == Command::JumpToTab {
+                        for trigger in &mut triggers {
+                            if let KeyTrigger::Seq(keys) = trigger {
+                                *trigger = KeyTrigger::CountSeq(std::mem::take(keys));
+                            }
+                        }
+                    }
                     km.rebind(cmd, triggers);
                     rebound.push(cmd);
                 }
@@ -1393,7 +1440,8 @@ mod tests {
             "#,
         ));
         assert_eq!(warnings.len(), 1, "one warning for the typo'd slot");
-        assert!(warnings[0].message.contains("copy-passwrod"));
+        assert_eq!(warnings[0].message, "unknown keymap slot (ignored)");
+        assert!(!warnings[0].message.contains("copy-passwrod"));
         // The valid rebind still applied.
         assert!(keys.matches(Command::Search, &ch_ev('z')));
     }

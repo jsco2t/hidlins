@@ -8,6 +8,11 @@
     <uses-permission android:name="android.permission.ACCESS_LOCAL_NETWORK" />
     <application>
         <provider
+            android:name="app.hidlins.HidlinsControlledDocumentProvider"
+            android:authorities="app.hidlins.test.controlled-document"
+            android:exported="true"
+            android:grantUriPermissions="true" />
+        <provider
             android:name="app.hidlins.DenyingProvider"
             android:authorities="app.hidlins.test.denied"
             android:exported="true" />

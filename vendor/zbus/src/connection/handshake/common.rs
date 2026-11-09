@@ -1,7 +1,5 @@
-use tracing::{instrument, trace};
-
 use super::{AuthMechanism, BoxedSplit, Command};
-use crate::{Error, Result};
+use crate::{Error, Result, log::trace};
 
 // Common code for the client and server side of the handshake.
 #[derive(Debug)]
@@ -57,12 +55,14 @@ impl Common {
         )
     }
 
-    #[instrument(skip(self))]
+    // Only the server writes a command on its own: the client sends all of its at once.
+    #[cfg(feature = "p2p")]
+    #[cfg_attr(feature = "tracing", tracing::instrument(skip(self)))]
     pub async fn write_command(&mut self, command: Command) -> Result<()> {
         self.write_commands(&[command], None).await
     }
 
-    #[instrument(skip(self))]
+    #[cfg_attr(feature = "tracing", tracing::instrument(skip(self)))]
     pub async fn write_commands(
         &mut self,
         commands: &[Command],
@@ -99,18 +99,19 @@ impl Common {
                 .await?;
             send_buffer.drain(..written);
         }
+        self.socket.write_mut().flush().await?;
         trace!("Wrote all commands");
         Ok(())
     }
 
-    #[instrument(skip(self))]
+    #[cfg_attr(feature = "tracing", tracing::instrument(skip(self)))]
     pub async fn read_command(&mut self) -> Result<Command> {
         self.read_commands(1)
             .await
             .map(|cmds| cmds.into_iter().next().unwrap())
     }
 
-    #[instrument(skip(self))]
+    #[cfg_attr(feature = "tracing", tracing::instrument(skip(self)))]
     pub async fn read_commands(&mut self, n_commands: usize) -> Result<Vec<Command>> {
         let mut commands = Vec::with_capacity(n_commands);
         let mut n_received_commands = 0;

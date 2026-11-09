@@ -1,7 +1,7 @@
-use proc_macro2::TokenStream;
+use proc_macro2::{Span, TokenStream};
 use quote::{ToTokens, quote};
 use syn::{Data, DeriveInput, Error, Fields, Ident, Variant, spanned::Spanned};
-use zvariant_utils::def_attrs;
+use zbus_utils::def_attrs;
 
 def_attrs! {
     crate zbus;
@@ -37,6 +37,8 @@ pub fn expand_derive(input: DeriveInput) -> Result<TokenStream, Error> {
 
     let zbus = zbus_path(crate_path.as_ref());
     let mut replies = quote! {};
+    // Hygienic so that a variant field of the same name does not shadow it in the reply arms.
+    let builder = Ident::new("builder", Span::mixed_site());
     let mut error_names = quote! {};
     let mut error_descriptions = quote! {};
     let mut error_converts = quote! {};
@@ -137,7 +139,7 @@ pub fn expand_derive(input: DeriveInput) -> Result<TokenStream, Error> {
             error_converts.extend(e);
         }
 
-        let r = gen_reply_for_variant(&variant, error, &zbus)?;
+        let r = gen_reply_for_variant(&variant, error, &zbus, &builder)?;
         replies.extend(r);
     }
 
@@ -146,23 +148,22 @@ pub fn expand_derive(input: DeriveInput) -> Result<TokenStream, Error> {
             quote! {
                 impl ::std::convert::From<#zbus::Error> for #name {
                     fn from(value: #zbus::Error) -> #name {
-                        match &value {
+                        let (name, desc) = match &value {
                             #zbus::Error::MethodError(name, desc, _) => {
-                                let desc = desc.as_deref();
-                                match name.as_str() {
-                                    #error_converts
-                                    _ => Self::#ident(value),
-                                }
+                                (name.as_ref(), desc.as_deref())
                             }
                             #zbus::Error::FDO(e) => {
                                 let e = ::std::convert::AsRef::as_ref(e);
-                                let name = #zbus::DBusError::name(e);
-                                let desc = #zbus::DBusError::description(e);
-                                match name.as_str() {
-                                    #error_converts
-                                    _ => Self::#ident(value),
-                                }
+                                (#zbus::DBusError::name(e), #zbus::DBusError::description(e))
                             }
+                            #zbus::Error::DBus(e) => {
+                                let e = ::std::convert::AsRef::as_ref(e);
+                                (#zbus::DBusError::name(e), #zbus::DBusError::description(e))
+                            }
+                            _ => return Self::#ident(value),
+                        };
+                        match name.as_str() {
+                            #error_converts
                             _ => Self::#ident(value),
                         }
                     }
@@ -201,6 +202,7 @@ pub fn expand_derive(input: DeriveInput) -> Result<TokenStream, Error> {
 
             fn create_reply(&self, call: &#zbus::message::Header) -> #zbus::Result<#zbus::message::Message> {
                 let name = self.name();
+                let #builder = #zbus::message::Message::error(call, name);
                 match self {
                     #replies
                 }
@@ -219,11 +221,12 @@ fn gen_reply_for_variant(
     variant: &Variant,
     zbus_error_variant: bool,
     zbus: &TokenStream,
+    builder: &Ident,
 ) -> Result<TokenStream, Error> {
     let ident = &variant.ident;
     match &variant.fields {
         Fields::Unit => Ok(quote! {
-            Self::#ident => #zbus::message::Message::error(call, name)?.build(&()),
+            Self::#ident => #builder.build(&()),
         }),
         Fields::Unnamed(f) => {
             // Name the unnamed fields as the number of the field with an 'f' in front.
@@ -242,6 +245,9 @@ fn gen_reply_for_variant(
                         #zbus::Error::MethodError(name, desc, _) => {
                             ::std::clone::Clone::clone(desc)
                         }
+                        #zbus::Error::DBus(e) => {
+                            #zbus::DBusError::description(e).map(::std::string::ToString::to_string)
+                        }
                         _ => None,
                     }
                     .unwrap_or_else(|| ::std::string::ToString::to_string(#error_field))
@@ -253,13 +259,13 @@ fn gen_reply_for_variant(
             };
 
             Ok(quote! {
-                Self::#ident(#(#in_fields),*) => #zbus::message::Message::error(call, name)?.build(&(#(#out_fields),*)),
+                Self::#ident(#(#in_fields),*) => #builder.build(&(#(#out_fields),*)),
             })
         }
         Fields::Named(f) => {
             let fields = f.named.iter().map(|v| v.ident.as_ref()).collect::<Vec<_>>();
             Ok(quote! {
-                Self::#ident { #(#fields),* } => #zbus::message::Message::error(call, name)?.build(&(#(#fields),*)),
+                Self::#ident { #(#fields),* } => #builder.build(&(#(#fields),*)),
             })
         }
     }

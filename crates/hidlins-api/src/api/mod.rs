@@ -15,4 +15,8 @@ pub mod secrets;
 pub mod session;
 pub mod sync;
 pub mod totp;
+mod totp_cache;
 pub mod vaults;
+
+#[cfg(all(test, not(feature = "desktop")))]
+mod native_publication_regressions;

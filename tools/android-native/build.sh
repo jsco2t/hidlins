@@ -51,20 +51,20 @@ esac
 readonly SCENARIO_CARGO_ARGS=(-p hidlins-cli --no-default-features --features android-scenario-authority --offline --locked)
 case "${1:-}" in
   check)
-    cargo check "${CARGO_ARGS[@]}" --target aarch64-linux-android
-    cargo check "${CARGO_ARGS[@]}" --target x86_64-linux-android
+    python3 "$ROOT/tools/dev/cargo_artifacts.py" run cargo -- check "${CARGO_ARGS[@]}" --target aarch64-linux-android
+    python3 "$ROOT/tools/dev/cargo_artifacts.py" run cargo -- check "${CARGO_ARGS[@]}" --target x86_64-linux-android
     ;;
   build)
-    cargo build "${CARGO_ARGS[@]}" --release --target aarch64-linux-android
-    cargo build "${CARGO_ARGS[@]}" --release --target x86_64-linux-android
+    python3 "$ROOT/tools/dev/cargo_artifacts.py" run cargo -- build "${CARGO_ARGS[@]}" --target-dir "$ROOT/target" --release --target aarch64-linux-android
+    python3 "$ROOT/tools/dev/cargo_artifacts.py" run cargo -- build "${CARGO_ARGS[@]}" --target-dir "$ROOT/target" --release --target x86_64-linux-android
     python3 "$ROOT/tools/android-native/artifacts.py" stage
     printf '  OK: release native libraries pass for both Android ABIs\n'
     ;;
   scenario-check)
-    cargo check "${SCENARIO_CARGO_ARGS[@]}" --target "$HOST_ANDROID_TARGET"
+    python3 "$ROOT/tools/dev/cargo_artifacts.py" run cargo -- check "${SCENARIO_CARGO_ARGS[@]}" --target "$HOST_ANDROID_TARGET"
     ;;
   scenario-build)
-    cargo build "${SCENARIO_CARGO_ARGS[@]}" --release --target "$HOST_ANDROID_TARGET"
+    python3 "$ROOT/tools/dev/cargo_artifacts.py" run cargo -- build "${SCENARIO_CARGO_ARGS[@]}" --target-dir "$ROOT/target" --release --target "$HOST_ANDROID_TARGET"
     printf '%s\n' "$ROOT/target/$HOST_ANDROID_TARGET/release/hidlins"
     ;;
   *) die "usage: $0 {check|build|scenario-check|scenario-build}" ;;

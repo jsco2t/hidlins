@@ -24,6 +24,7 @@ use hidlins_core::{
     VaultError, VaultReadOnly,
 };
 use hidlins_genpw::{CharSet, PasswordBuilder};
+use zeroize::Zeroizing;
 
 use crate::cli::{
     Cli, EntryAddArgs, EntryArgs, EntryEditArgs, EntryGetArgs, EntryListArgs, EntryRmArgs,
@@ -36,6 +37,10 @@ use crate::views::entry::{
     EntryAddView, EntryEditView, EntryGetView, EntryListItem, EntryListView, EntryRmView,
     EntrySearchItem, EntrySearchView, FieldIndices,
 };
+
+#[cfg(test)]
+#[path = "entry_secret_regressions.rs"]
+mod entry_secret_regressions;
 
 /// Owned row buffered during `list`/`search` so the resulting view
 /// items can borrow `&str` slices into the same memory. Defining it at
@@ -105,7 +110,7 @@ fn run_add(cli: &Cli, args: &EntryAddArgs) -> Result<(), CliExit> {
         let parsed = hidlins_core::Tag::from(tag.clone()).map_err(CliExit::from)?;
         builder = builder.tag(parsed);
     }
-    if let Some(pw) = password_value.as_deref() {
+    if let Some(pw) = password_value.as_ref().map(|value| value.as_str()) {
         builder = builder.password(pw);
     }
 
@@ -129,7 +134,7 @@ fn run_add(cli: &Cli, args: &EntryAddArgs) -> Result<(), CliExit> {
         // password echoed back is just as sensitive as a generated one;
         // `--show-password` is the user's explicit acknowledgment.
         password: if args.show_password {
-            password_value.as_deref()
+            password_value.as_ref().map(|value| value.as_str())
         } else {
             None
         },
@@ -137,14 +142,10 @@ fn run_add(cli: &Cli, args: &EntryAddArgs) -> Result<(), CliExit> {
     write_success(cli, &view)
 }
 
-fn resolve_add_password(args: &EntryAddArgs) -> Result<Option<String>, CliExit> {
+fn resolve_add_password(args: &EntryAddArgs) -> Result<Option<Zeroizing<String>>, CliExit> {
     if args.generate {
         let builder = build_password_builder(args.length, args.class_flags);
-        let value = builder
-            .generate()
-            .map_err(CliExit::from)?
-            .as_str()
-            .to_string();
+        let value = builder.generate().map_err(CliExit::from)?;
         return Ok(Some(value));
     }
     if args.password_stdin {
@@ -153,7 +154,7 @@ fn resolve_add_password(args: &EntryAddArgs) -> Result<Option<String>, CliExit> 
         let mut stderr = std::io::stderr().lock();
         let raw = read_password_no_echo("Entry password: ", &mut stdin, &mut stderr)
             .map_err(|e| CliExit::UserError(format!("failed to read password: {e}")))?;
-        return Ok(Some(raw));
+        return Ok(Some(Zeroizing::new(raw)));
     }
     Ok(None)
 }
@@ -190,8 +191,8 @@ fn run_get(cli: &Cli, args: &EntryGetArgs) -> Result<(), CliExit> {
     let tag_strs: Vec<&str> = tags.iter().map(hidlins_core::Tag::as_str).collect();
     let attachments = view_data.attachments();
 
-    let password_owned = if args.show_password {
-        Some(view_data.password().to_owned())
+    let password = if args.show_password {
+        Some(view_data.password())
     } else {
         None
     };
@@ -201,7 +202,7 @@ fn run_get(cli: &Cli, args: &EntryGetArgs) -> Result<(), CliExit> {
         username: optional_field(view_data.username()),
         url: optional_field(view_data.url()),
         notes: optional_field(view_data.notes()),
-        password: password_owned.as_deref(),
+        password,
         tags: tag_strs,
         group: &group_name,
         expired,
@@ -272,10 +273,10 @@ fn run_edit(cli: &Cli, args: &EntryEditArgs) -> Result<(), CliExit> {
         let stdin = std::io::stdin();
         let mut stdin = stdin.lock();
         let mut stderr = std::io::stderr().lock();
-        Some(
+        Some(Zeroizing::new(
             read_password_no_echo("New entry password: ", &mut stdin, &mut stderr)
                 .map_err(|e| CliExit::UserError(format!("failed to read password: {e}")))?,
-        )
+        ))
     } else {
         None
     };
@@ -312,7 +313,7 @@ fn run_edit(cli: &Cli, args: &EntryEditArgs) -> Result<(), CliExit> {
                 entry.set_notes(n);
                 modified_fields.push("notes");
             }
-            if let Some(p) = new_password.as_deref() {
+            if let Some(p) = new_password.as_ref().map(|value| value.as_str()) {
                 entry.set_password(p);
                 modified_fields.push("password");
             }

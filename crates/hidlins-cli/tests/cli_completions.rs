@@ -103,6 +103,9 @@ fn make_completions_writes_shell_completions_files() {
     let workspace = workspace_root();
     let output = Command::new("make")
         .arg("completions")
+        // Cargo already built this exact CLI. A nested Cargo invocation
+        // would wait for the outer test run's vendor-cache guard.
+        .env("HIDLINS_COMPLETIONS_BIN", hidlins_bin())
         .current_dir(&workspace)
         .output()
         .expect("spawn make completions");
@@ -114,7 +117,11 @@ fn make_completions_writes_shell_completions_files() {
     );
 
     let out_dir = workspace.join("shell-completions");
-    for filename in ["hidlins.bash", "_hidlins", "hidlins.fish"] {
+    for (shell, filename) in [
+        ("bash", "hidlins.bash"),
+        ("zsh", "_hidlins"),
+        ("fish", "hidlins.fish"),
+    ] {
         let path = out_dir.join(filename);
         let meta =
             std::fs::metadata(&path).unwrap_or_else(|e| panic!("missing {}: {e}", path.display()));
@@ -123,6 +130,19 @@ fn make_completions_writes_shell_completions_files() {
             "{} should be non-empty (got {} bytes)",
             path.display(),
             meta.len()
+        );
+        let expected = Command::new(hidlins_bin())
+            .args(["completions", shell])
+            .output()
+            .expect("run the actual Cargo-built CLI");
+        assert!(
+            expected.status.success(),
+            "runtime completion generation failed"
+        );
+        assert_eq!(
+            std::fs::read(&path).expect("generated completion file"),
+            expected.stdout,
+            "make and the actual CLI must generate identical {shell} completions"
         );
     }
 }

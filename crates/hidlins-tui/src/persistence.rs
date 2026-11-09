@@ -7,7 +7,7 @@ use hidlins_core::HidlinsPaths;
 use crate::config::{self, TuiConfig};
 use crate::user_config::UserConfig;
 
-pub(crate) fn save_ui_state(paths: &HidlinsPaths, config: &TuiConfig) -> Result<(), String> {
+pub(crate) fn save_ui_state(paths: &HidlinsPaths, config: &mut TuiConfig) -> Result<(), String> {
     let path = config::config_path(paths);
     config.save(paths, &path).map_err(|error| error.to_string())
 }

@@ -1,60 +1,99 @@
+//! The standard D-Bus interfaces.
+//!
+//! The D-Bus specification defines the interface of the message bus, `org.freedesktop.DBus`, and
+//! some [standard interfaces][si] that are useful across D-Bus applications: `Peer`,
+//! `Introspectable`, `Properties` and `ObjectManager`. This module provides the types that go
+//! with them: their proxies, with the `proxy` feature; `Properties` and `ObjectManager`, the
+//! service side of those two interfaces, with the `service` and `object-manager` features
+//! respectively; and the types that their methods and signals use, such as
+//! [`ConnectionCredentials`].
+//!
+//! [`Error`] is the type of the errors that are named under `org.freedesktop.DBus.Error`, and
+//! [`Result`] is the alias of `Result` that has it as its error type.
+//!
+//! [si]: https://dbus.freedesktop.org/doc/dbus-specification.html#standard-interfaces
+
 mod error;
 pub use error::{Error, Result};
 
 pub(crate) mod dbus;
 pub use dbus::{
-    ConnectionCredentials, DBusProxy, NameAcquired, NameAcquiredArgs, NameAcquiredStream, NameLost,
-    NameLostArgs, NameLostStream, NameOwnerChanged, NameOwnerChangedArgs, NameOwnerChangedStream,
-    ReleaseNameReply, RequestNameFlags, RequestNameReply, StartServiceReply,
+    ConnectionCredentials, ReleaseNameReply, RequestNameFlags, RequestNameReply, StartServiceReply,
+};
+#[cfg(feature = "proxy")]
+pub use dbus::{
+    DBusProxy, NameAcquired, NameAcquiredArgs, NameAcquiredStream, NameLost, NameLostArgs,
+    NameLostStream, NameOwnerChanged, NameOwnerChangedArgs, NameOwnerChangedStream,
 };
 
+#[cfg(any(feature = "proxy", feature = "service"))]
 pub(crate) mod introspectable;
+#[cfg(feature = "service")]
 pub(crate) use introspectable::Introspectable;
+#[cfg(feature = "proxy")]
 pub use introspectable::IntrospectableProxy;
 
+#[cfg(feature = "proxy")]
 pub(crate) mod monitoring;
+#[cfg(feature = "proxy")]
 pub use monitoring::MonitoringProxy;
 
 pub(crate) mod object_manager;
+pub use object_manager::ManagedObjects;
+#[cfg(feature = "object-manager")]
+pub use object_manager::ObjectManager;
+#[cfg(feature = "proxy")]
 pub use object_manager::{
     InterfacesAdded, InterfacesAddedArgs, InterfacesAddedStream, InterfacesRemoved,
-    InterfacesRemovedArgs, InterfacesRemovedStream, ManagedObjects, ObjectManager,
-    ObjectManagerProxy,
+    InterfacesRemovedArgs, InterfacesRemovedStream, ObjectManagerProxy,
 };
 
+#[cfg(any(feature = "proxy", feature = "service"))]
 pub(crate) mod peer;
+#[cfg(feature = "service")]
 pub(crate) use peer::Peer;
+#[cfg(feature = "proxy")]
 pub use peer::PeerProxy;
 
+#[cfg(any(feature = "proxy", feature = "service"))]
 pub(crate) mod properties;
+#[cfg(feature = "service")]
+pub use properties::Properties;
+#[cfg(feature = "proxy")]
 pub use properties::{
-    Properties, PropertiesChanged, PropertiesChangedArgs, PropertiesChangedStream, PropertiesProxy,
+    PropertiesChanged, PropertiesChangedArgs, PropertiesChangedStream, PropertiesProxy,
 };
 
+#[cfg(feature = "proxy")]
 pub(crate) mod stats;
+#[cfg(feature = "proxy")]
 pub use stats::StatsProxy;
 
-#[cfg(test)]
+#[cfg(all(test, feature = "proxy", feature = "service"))]
 mod tests {
-    use crate::{DBusError, Error, fdo, interface, message::Message};
+    use std::sync::Arc;
+
+    use crate::{DBusError, Error, fdo, message::Message};
+    #[cfg(any(feature = "default-rt", feature = "tokio"))]
+    use crate::{interface, names::WellKnownName};
+    #[cfg(any(feature = "default-rt", feature = "tokio"))]
     use futures_util::StreamExt;
+    #[cfg(any(feature = "default-rt", feature = "tokio"))]
     use ntest::timeout;
     use test_log::test;
+    #[cfg(any(feature = "default-rt", feature = "tokio"))]
     use tokio::runtime;
-    use zbus_names::WellKnownName;
 
+    #[cfg(any(feature = "default-rt", feature = "tokio"))]
     use super::PeerProxy;
 
     #[test]
     fn error_from_zerror() {
         let m = Message::method_call("/", "foo")
-            .unwrap()
             .destination(":1.2")
-            .unwrap()
             .build(&())
             .unwrap();
         let m = Message::error(&m.header(), "org.freedesktop.DBus.Error.TimedOut")
-            .unwrap()
             .build(&("so long"))
             .unwrap();
         let e: Error = m.into();
@@ -64,6 +103,18 @@ mod tests {
         assert_eq!(e.description(), Some("so long"));
     }
 
+    #[test]
+    fn error_from_dbus_variant() {
+        let e = Error::DBus(Arc::new(fdo::Error::TimedOut("so long".to_string())));
+        assert_eq!(
+            e.to_string(),
+            "org.freedesktop.DBus.Error.TimedOut: so long"
+        );
+        let e: fdo::Error = e.into();
+        assert_eq!(e, fdo::Error::TimedOut("so long".to_string()));
+    }
+
+    #[cfg(any(feature = "default-rt", feature = "tokio"))]
     #[test]
     #[timeout(15000)]
     fn signal() {
@@ -78,6 +129,7 @@ mod tests {
             .block_on(test_signal());
     }
 
+    #[cfg(any(feature = "default-rt", feature = "tokio"))]
     async fn test_signal() {
         let conn = crate::Connection::session().await.unwrap();
         let proxy = fdo::DBusProxy::new(&conn).await.unwrap();
@@ -99,10 +151,7 @@ mod tests {
 
         let well_known: WellKnownName<'static> = well_known.try_into().unwrap();
         proxy
-            .request_name(
-                well_known.as_ref(),
-                fdo::RequestNameFlags::ReplaceExisting.into(),
-            )
+            .request_name(well_known.as_ref(), fdo::RequestNameFlags::REPLACE_EXISTING)
             .await
             .unwrap();
 
@@ -134,12 +183,20 @@ mod tests {
             });
     }
 
+    #[cfg(all(
+        feature = "object-manager",
+        any(feature = "default-rt", feature = "tokio")
+    ))]
     #[test]
     #[timeout(15000)]
     fn no_object_manager_signals_before_hello() {
         crate::block_on(no_object_manager_signals_before_hello_async());
     }
 
+    #[cfg(all(
+        feature = "object-manager",
+        any(feature = "default-rt", feature = "tokio")
+    ))]
     async fn no_object_manager_signals_before_hello_async() {
         // We were emitting `InterfacesAdded` signals before `Hello` was called, which is wrong and
         // results in us getting disconnected by the bus. This test case ensures we don't do that
@@ -151,10 +208,9 @@ mod tests {
             zbus::MatchRule::builder()
                 .msg_type(zbus::message::Type::Signal)
                 .interface("org.freedesktop.DBus.ObjectManager")
-                .unwrap()
                 .path("/org/zbus/NoObjectManagerSignalsBeforeHello")
-                .unwrap()
-                .build(),
+                .build()
+                .unwrap(),
             &conn,
             None,
         )
@@ -171,16 +227,12 @@ mod tests {
             }
         }
         let _conn = zbus::conn::Builder::session()
-            .unwrap()
             .name("org.zbus.NoObjectManagerSignalsBeforeHello")
-            .unwrap()
             .serve_at("/org/zbus/NoObjectManagerSignalsBeforeHello/Obj", TestObj)
-            .unwrap()
             .serve_at(
                 "/org/zbus/NoObjectManagerSignalsBeforeHello",
                 super::ObjectManager,
             )
-            .unwrap()
             .build()
             .await
             .unwrap();
@@ -192,7 +244,7 @@ mod tests {
             signal.args().unwrap().interfaces_and_properties,
             vec![(
                 "org.zbus.TestObj".try_into().unwrap(),
-                vec![("Test", zvariant::Value::new("test"))]
+                vec![("Test", crate::Variant::new("test"))]
                     .into_iter()
                     .collect()
             )]
@@ -201,6 +253,7 @@ mod tests {
         );
     }
 
+    #[cfg(any(feature = "default-rt", feature = "tokio"))]
     #[test]
     #[timeout(15000)]
     fn peer_on_arbitrary_path() {
@@ -216,6 +269,7 @@ mod tests {
     ///
     /// This test verifies that Ping and GetMachineId work on paths that haven't been
     /// registered via ObjectServer::at.
+    #[cfg(any(feature = "default-rt", feature = "tokio"))]
     async fn peer_on_arbitrary_path_async() {
         // Create a service with only a registered path at /registered
         struct TestObj;
@@ -223,11 +277,8 @@ mod tests {
         impl TestObj {}
 
         let _service_conn = zbus::conn::Builder::session()
-            .unwrap()
             .name("org.zbus.PeerArbitraryPathTest")
-            .unwrap()
             .serve_at("/registered", TestObj)
-            .unwrap()
             .build()
             .await
             .unwrap();

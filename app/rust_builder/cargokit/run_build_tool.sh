@@ -45,16 +45,8 @@ void main(List<String> args) {
 }
 EOF
 
-if ! [ -x "$(command -v shasum)" ] && [ -x "$(command -v sha1sum)" ]; then
-  shopt -s expand_aliases
-  alias shasum="sha1sum"
-fi
-
-if [[ "$OSTYPE" == "darwin"* ]]; then
-  PACKAGE_HASH=$(ls -lTR "$BUILD_TOOL_PKG_DIR" | shasum)
-else
-  PACKAGE_HASH=$(ls -lR --full-time "$BUILD_TOOL_PKG_DIR" | shasum)
-fi
+# Hash actual reviewed source bytes; metadata-preserving edits must rebuild.
+PACKAGE_HASH=$(python3 "$BASEDIR/build_tool_fingerprint.py" "$BUILD_TOOL_PKG_DIR")
 
 PACKAGE_HASH_FILE=".package_hash"
 

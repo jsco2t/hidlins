@@ -40,6 +40,8 @@ class _AppContent extends ConsumerStatefulWidget {
 class _AppContentState extends ConsumerState<_AppContent> {
   NativeLifecycleEvents? _nativeLifecycle;
   final Completer<void> _disposed = Completer<void>();
+  Future<void> _lifecycleQueue = Future<void>.value();
+  int _lifecycleGeneration = 0;
 
   bool get _usesNativeLifecycle =>
       !kIsWeb &&
@@ -65,13 +67,52 @@ class _AppContentState extends ConsumerState<_AppContent> {
     super.dispose();
   }
 
-  Future<void> _reportNativeLifecycle(AppLifecycleSignal state) async {
-    if (!mounted) return;
-    final knownLockState = ref
-        .read(sessionRepositoryProvider)
-        .reportLifecycleState(_mapNativeLifecycleState(state));
-    if (!await _waitForRenderedLockState(knownLockState) || !mounted) return;
-    await const MethodChannelLifecycle().acknowledge(state, knownLockState);
+  Future<void> _reportNativeLifecycle(
+    AppLifecycleSignal state, {
+    String? observationToken,
+  }) => _reportLifecycle(
+    _mapNativeLifecycleState(state),
+    nativeSignal: state,
+    observationToken: observationToken,
+  );
+
+  Future<void> _reportLifecycle(
+    LifecycleStateDto state, {
+    AppLifecycleSignal? nativeSignal,
+    String? observationToken,
+  }) {
+    final generation = ++_lifecycleGeneration;
+    // A resumed observation must not overtake a preceding pause while Rust
+    // reconciles its authoritative state on a worker.
+    final report = _lifecycleQueue.then<LockEvent?>((_) async {
+      if (!mounted) return null;
+      return ref.read(sessionRepositoryProvider).reportLifecycleState(state);
+    });
+    // Serialize Rust reconciliation only. Waiting for a rendered frame or a
+    // native reply must not delay the next pause/cancellation reaching Rust.
+    // Errors reach the caller; the tail recovers for later observations.
+    _lifecycleQueue = report.then<void>(
+      (_) {},
+      onError: (Object _, StackTrace _) {},
+    );
+    return report.then((knownLockState) async {
+      if (knownLockState == null ||
+          !mounted ||
+          nativeSignal == null ||
+          generation != _lifecycleGeneration) {
+        return;
+      }
+      if (!await _waitForRenderedLockState(knownLockState) ||
+          !mounted ||
+          generation != _lifecycleGeneration) {
+        return;
+      }
+      await const MethodChannelLifecycle().acknowledge(
+        nativeSignal,
+        knownLockState,
+        observationToken: observationToken,
+      );
+    });
   }
 
   Future<bool> _waitForRenderedLockState(LockEvent expected) async {
@@ -109,9 +150,7 @@ class _AppContentState extends ConsumerState<_AppContent> {
       },
       onLifecycleStateChange: (state) {
         if (!_usesNativeLifecycle) {
-          ref
-              .read(sessionRepositoryProvider)
-              .reportLifecycleState(_mapLifecycleState(state));
+          unawaited(_reportLifecycle(_mapLifecycleState(state)));
         }
       },
       child: MaterialApp.router(

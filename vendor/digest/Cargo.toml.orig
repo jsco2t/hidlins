@@ -34,7 +34,7 @@ getrandom = ["common/getrandom", "rand_core"]
 mac = ["dep:ctutils"] # Enable MAC traits
 rand_core = ["common/rand_core"] # Enable random key generation methods
 oid = ["dep:const-oid"]
-zeroize = ["dep:zeroize", "block-buffer?/zeroize"]
+zeroize = ["dep:zeroize", "block-buffer?/zeroize", "common/zeroize"]
 
 [lints]
 workspace = true

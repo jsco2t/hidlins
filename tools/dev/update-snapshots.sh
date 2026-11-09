@@ -66,7 +66,7 @@ if [[ "${1:-}" == "--check" ]]; then
     # to detect which tests fail due to missing or mismatched goldens.
     cd "$REPO_ROOT"
     CARGO_STATUS=0
-    OUTPUT=$(cargo test -p hidlins-tui --offline --locked snapshot_tests 2>&1) || CARGO_STATUS=$?
+    OUTPUT=$(python3 "$REPO_ROOT/tools/dev/cargo_artifacts.py" run cargo -- test -p hidlins-tui --offline --locked snapshot_tests 2>&1) || CARGO_STATUS=$?
 
     # Parse test names that failed.
     MISSING=()
@@ -148,7 +148,7 @@ fi
 cd "$REPO_ROOT"
 
 # Run snapshot tests with update mode enabled.
-if ! HIDLINS_UPDATE_SNAPSHOTS=1 cargo test -p hidlins-tui --offline --locked snapshot_tests; then
+if ! HIDLINS_UPDATE_SNAPSHOTS=1 python3 "$REPO_ROOT/tools/dev/cargo_artifacts.py" run cargo -- test -p hidlins-tui --offline --locked snapshot_tests; then
     echo ""
     echo "ERROR: snapshot tests failed. Check the output above." >&2
     exit 1

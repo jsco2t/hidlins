@@ -105,7 +105,11 @@ where
         buffer: &mut Buffer<Self>,
         out: &mut Array<u8, Self::OutputSize>,
     ) {
-        let mut full_res = Default::default();
+        let full_res = Array::<u8, T::OutputSize>::default();
+        #[cfg(feature = "zeroize")]
+        let mut full_res = zeroize::Zeroizing::new(full_res);
+        #[cfg(not(feature = "zeroize"))]
+        let mut full_res = full_res;
         self.inner.finalize_variable_core(buffer, &mut full_res);
         let n = out.len();
         let m = full_res.len() - n;

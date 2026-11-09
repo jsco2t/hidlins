@@ -15,6 +15,7 @@
 use std::io::{stdout, Write};
 use std::sync::Once;
 
+use crossterm::cursor::Show;
 use crossterm::event::{DisableMouseCapture, EnableMouseCapture};
 use crossterm::execute;
 use crossterm::terminal::{
@@ -77,6 +78,7 @@ pub(crate) fn restore_terminal(out: &mut impl Write) {
     // so a panic mid-session never leaves the terminal emitting mouse escapes.
     let _ = execute!(out, DisableMouseCapture);
     let _ = execute!(out, LeaveAlternateScreen);
+    let _ = execute!(out, Show);
     let _ = disable_raw_mode();
 }
 
@@ -116,19 +118,22 @@ pub(crate) fn install_panic_hook() {
 /// terminal only. A SIGKILL cannot be handled at all.
 #[cfg(unix)]
 mod signals {
-    use std::sync::atomic::{AtomicBool, Ordering};
+    use std::sync::atomic::{AtomicBool, AtomicI32, Ordering};
 
     /// Cooked-mode termios captured before raw mode, restored by the handler.
     /// Written once (before any handler can fire) and only read in the handler.
     static mut SAVED_TERMIOS: Option<libc::termios> = None;
     static TERMIOS_SAVED: AtomicBool = AtomicBool::new(false);
+    // Retain one close-on-exec descriptor for the installed handler's lifetime.
+    // Stdin may be redirected; raw mode then operates on /dev/tty instead.
+    static TERMINAL_FD: AtomicI32 = AtomicI32::new(-1);
     static INSTALLED: AtomicBool = AtomicBool::new(false);
 
     /// Disable all mouse-reporting modes enabled by crossterm, then leave the
     /// alternate screen. Written directly because `execute!`/`Stdout` are not
     /// async-signal-safe.
     pub(super) const RESTORE_TERMINAL: &[u8] =
-        b"\x1b[?1000l\x1b[?1002l\x1b[?1003l\x1b[?1015l\x1b[?1006l\x1b[?1049l";
+        b"\x1b[?1000l\x1b[?1002l\x1b[?1003l\x1b[?1015l\x1b[?1006l\x1b[?1049l\x1b[?25h";
 
     /// Capture the current (cooked) termios and install the handlers. Idempotent
     /// and called before `enable_raw_mode`, so the saved state is the cooked one.
@@ -139,13 +144,26 @@ mod signals {
         // SAFETY: single-threaded construction path; we capture the terminal's
         // current termios into a process-global before any signal handler is
         // armed, and only read it (never write) from the handler thereafter.
-        // `tcgetattr` on a non-TTY fd fails harmlessly (we just skip restore).
+        // Match crossterm's terminal selection: stdin if it is a TTY, else
+        // /dev/tty. Retain our own fd so later stdin changes cannot redirect
+        // restoration. Open/dup/close happen only here, never in the handler.
         #[allow(unsafe_code)]
         unsafe {
+            let fd = if libc::isatty(libc::STDIN_FILENO) == 1 {
+                libc::fcntl(libc::STDIN_FILENO, libc::F_DUPFD_CLOEXEC, 3)
+            } else {
+                libc::open(
+                    c"/dev/tty".as_ptr(),
+                    libc::O_RDWR | libc::O_CLOEXEC | libc::O_NOCTTY,
+                )
+            };
             let mut termios = std::mem::zeroed::<libc::termios>();
-            if libc::tcgetattr(libc::STDIN_FILENO, std::ptr::addr_of_mut!(termios)) == 0 {
+            if fd >= 0 && libc::tcgetattr(fd, std::ptr::addr_of_mut!(termios)) == 0 {
                 SAVED_TERMIOS = Some(termios);
+                TERMINAL_FD.store(fd, Ordering::SeqCst);
                 TERMIOS_SAVED.store(true, Ordering::SeqCst);
+            } else if fd >= 0 {
+                libc::close(fd);
             }
             let handler_ptr = handler as *const () as libc::sighandler_t;
             libc::signal(libc::SIGHUP, handler_ptr);
@@ -165,7 +183,7 @@ mod signals {
             if TERMIOS_SAVED.load(Ordering::SeqCst) {
                 if let Some(termios) = std::ptr::addr_of!(SAVED_TERMIOS).read() {
                     libc::tcsetattr(
-                        libc::STDIN_FILENO,
+                        TERMINAL_FD.load(Ordering::SeqCst),
                         libc::TCSANOW,
                         std::ptr::addr_of!(termios),
                     );

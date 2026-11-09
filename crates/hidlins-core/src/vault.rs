@@ -85,8 +85,20 @@ pub struct Vault {
 /// Read-only vault handle. Holds a shared advisory lock.
 pub struct VaultReadOnly {
     path: PathBuf,
+    backing_path: PathBuf,
     database: Database,
     _lock: SharedLock,
+}
+
+/// Completion of a host-owned database replacement, including its rename
+/// boundary independently of any subsequent durability error.
+#[doc(hidden)]
+#[must_use]
+pub struct DatabaseReplacementOutcome {
+    /// Whether the complete encrypted replacement was installed by rename.
+    pub committed: bool,
+    /// The original validation, serialization or durability result.
+    pub result: Result<(), VaultError>,
 }
 
 impl Vault {
@@ -192,6 +204,14 @@ impl Vault {
         save_database(&self.backing_path, &mut self.database, self.key.clone())
     }
 
+    /// Re-verify a master password against the on-disk vault while retaining
+    /// this handle's exclusive lock and original keyfile material. Does not
+    /// change the live database or write either credentials or vault bytes.
+    pub fn verify_master_password(&self, master: &MasterPassword) -> Result<(), VaultError> {
+        let key = build_database_key_from_material(master, &self.keyfile_material)?;
+        open_database(&self.backing_path, key).map(drop)
+    }
+
     /// Re-encrypt the vault with a new master password after re-verifying
     /// the current password against the on-disk vault.
     /// A durability error after rename can leave the new password committed;
@@ -244,7 +264,10 @@ impl Vault {
 
     /// The file identity protected by this handle's lock. Keep it fixed even
     /// when a caller retargets the original logical symlink while open.
-    pub(crate) fn backing_path(&self) -> &Path {
+    /// Infrastructure access for encrypted sync reads and sibling backups;
+    /// presentation code should keep using [`Self::path`].
+    #[doc(hidden)]
+    pub fn backing_path(&self) -> &Path {
         &self.backing_path
     }
 
@@ -325,23 +348,42 @@ impl Vault {
     /// never call it directly.
     #[doc(hidden)]
     pub fn replace_database_and_save(&mut self, new_db: Database) -> Result<(), VaultError> {
+        self.replace_database_and_save_with_outcome(new_db).result
+    }
+
+    /// Replace and save with the exact installed-state outcome. Hosts use
+    /// this to invalidate derived state even when directory durability fails
+    /// after rename; failed validation and pre-rename writes are not commits.
+    #[doc(hidden)]
+    pub fn replace_database_and_save_with_outcome(
+        &mut self,
+        new_db: Database,
+    ) -> DatabaseReplacementOutcome {
         let expected = self.database.root().id().uuid();
         let found = new_db.root().id().uuid();
         if expected != found {
-            return Err(VaultError::DatabaseIdentityMismatch { expected, found });
+            return DatabaseReplacementOutcome {
+                committed: false,
+                result: Err(VaultError::DatabaseIdentityMismatch { expected, found }),
+            };
         }
 
         let previous = std::mem::replace(&mut self.database, new_db);
-        if let Err(error) = save_database(&self.backing_path, &mut self.database, self.key.clone())
-        {
+        let mut committed = false;
+        let result = save_database_with_commit(
+            &self.backing_path,
+            &mut self.database,
+            self.key.clone(),
+            || committed = true,
+        );
+        if result.is_err() {
             // A failure before rename leaves the previous file; a directory
             // fsync failure can occur after rename. Reopen whichever complete
             // encrypted KDBX is actually canonical so live and disk state do
             // not diverge across that ambiguous durability boundary.
             self.database = open_database(&self.backing_path, self.key.clone()).unwrap_or(previous);
-            return Err(error);
         }
-        Ok(())
+        DatabaseReplacementOutcome { committed, result }
     }
 }
 
@@ -365,6 +407,7 @@ impl VaultReadOnly {
 
         Ok(Self {
             path: path.to_path_buf(),
+            backing_path,
             database,
             _lock: lock,
         })
@@ -373,6 +416,11 @@ impl VaultReadOnly {
     /// Return the on-disk vault path.
     pub fn path(&self) -> &Path {
         &self.path
+    }
+
+    /// Return the canonical backing path protected by this handle's lock.
+    pub fn backing_path(&self) -> &Path {
+        &self.backing_path
     }
 
     /// Return immutable access to the in-memory KDBX database.

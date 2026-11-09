@@ -37,6 +37,8 @@ class _GeneratorPageState extends ConsumerState<GeneratorPage>
 
   GeneratedSecret? _result;
   bool _generating = false;
+  bool _generationFailed = false;
+  int _generationRequest = 0;
   late AnimationController _rotateCtrl;
 
   @override
@@ -60,13 +62,20 @@ class _GeneratorPageState extends ConsumerState<GeneratorPage>
 
   @override
   void dispose() {
+    _generationRequest++;
+    _result = null;
     _separatorCtrl.dispose();
     _rotateCtrl.dispose();
     super.dispose();
   }
 
   Future<void> _generate() async {
-    setState(() => _generating = true);
+    final request = ++_generationRequest;
+    setState(() {
+      _generating = true;
+      _generationFailed = false;
+      _result = null;
+    });
     unawaited(_rotateCtrl.forward(from: 0));
 
     try {
@@ -90,11 +99,17 @@ class _GeneratorPageState extends ConsumerState<GeneratorPage>
                     : _separatorCtrl.text,
               ),
             );
-      if (mounted) setState(() => _result = result);
+      if (mounted && request == _generationRequest) {
+        setState(() => _result = result);
+      }
     } on Exception {
-      // ignore generation failures
+      if (mounted && request == _generationRequest) {
+        setState(() => _generationFailed = true);
+      }
     } finally {
-      if (mounted) setState(() => _generating = false);
+      if (mounted && request == _generationRequest) {
+        setState(() => _generating = false);
+      }
     }
   }
 
@@ -124,6 +139,11 @@ class _GeneratorPageState extends ConsumerState<GeneratorPage>
                     PasswordText(password: _result!.value, fontSize: 20)
                   else if (_generating)
                     const CircularProgressIndicator()
+                  else if (_generationFailed)
+                    Text(
+                      l10n.errorGeneric,
+                      style: TextStyle(color: colorScheme.error),
+                    )
                   else
                     const SizedBox(height: 28),
                   const SizedBox(height: HidlinsSpacing.md),
@@ -151,14 +171,12 @@ class _GeneratorPageState extends ConsumerState<GeneratorPage>
               IconButton.filled(
                 icon: const Icon(Icons.copy),
                 tooltip: l10n.generatorCopy,
-                onPressed: _result == null ? null : _copyResult,
+                onPressed: _generating || _result == null ? null : _copyResult,
               ),
               if (widget.onUse != null) ...[
                 const SizedBox(width: HidlinsSpacing.md),
                 FilledButton(
-                  onPressed: _result == null
-                      ? null
-                      : () => widget.onUse!(_result!.value),
+                  onPressed: _generating || _result == null ? null : _useResult,
                   child: Text(l10n.actionUse),
                 ),
               ],
@@ -235,12 +253,19 @@ class _GeneratorPageState extends ConsumerState<GeneratorPage>
     );
   }
 
+  void _useResult() {
+    final result = _result;
+    if (_generating || result == null) return;
+    widget.onUse?.call(result.value);
+  }
+
   Future<void> _copyResult() async {
-    if (_result == null) return;
+    final result = _result;
+    if (_generating || result == null) return;
     final l10n = AppLocalizations.of(context)!;
     try {
       final repo = ref.read(secretsRepositoryProvider);
-      await repo.copyEntryField('generator', CopyField.password);
+      await repo.copyGeneratedSecret(result);
       if (mounted) {
         ScaffoldMessenger.of(context)
             .showSnackBar(SnackBar(content: Text(l10n.copiedSnackbar(30))));

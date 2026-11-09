@@ -80,6 +80,8 @@ impl PairingAuthority for TuiPairingAuthority {
     }
 
     fn activate(&self, transaction: &PairingTransaction) -> Result<(), PairingAuthorityError> {
+        #[cfg(test)]
+        pairing_activation_regressions::before_lock();
         let mut registry = VaultRegistry::load(self.paths.clone())
             .map_err(|_| PairingAuthorityError::Persistence)?;
         let now = epoch_seconds().ok_or(PairingAuthorityError::Persistence)?;
@@ -104,6 +106,27 @@ impl PairingAuthority for TuiPairingAuthority {
             .map_err(|_| PairingAuthorityError::Persistence)
     }
 
+    fn activate_authorized(
+        &self,
+        transaction: &PairingTransaction,
+        authorization: &hidlins_sync::server::PairingAuthorization,
+    ) -> Result<(), PairingAuthorityError> {
+        #[cfg(test)]
+        pairing_activation_regressions::before_lock();
+        let mut registry = VaultRegistry::load(self.paths.clone())
+            .map_err(|_| PairingAuthorityError::Persistence)?;
+        let now = epoch_seconds().ok_or(PairingAuthorityError::Persistence)?;
+        LocalSyncConfig::transactional_update(&mut registry, &self.vault_name, |config| {
+            authorization
+                .check()
+                .map_err(|_| hidlins_sync::trust::TrustError::Expired)?;
+            config.activate_client(transaction, now)
+        })
+        .map_err(|_| PairingAuthorityError::Persistence)?;
+        let _ = self.sender.send(AuthorityRequest::ReloadTrust);
+        Ok(())
+    }
+
     fn shutdown(&self) {
         self.cancel_pending();
     }
@@ -122,6 +145,8 @@ pub(crate) struct ServerRuntime {
     processor: HostProcessor,
     master: Option<MasterPassword>,
     authority: mpsc::Receiver<AuthorityRequest>,
+    #[cfg(test)]
+    authority_test_sender: mpsc::Sender<AuthorityRequest>,
 }
 
 impl ServerRuntime {
@@ -150,6 +175,8 @@ impl ServerRuntime {
             .collect::<Vec<_>>();
         let (queue, processor) = HostQueue::new();
         let (sender, authority) = mpsc::channel();
+        #[cfg(test)]
+        let authority_test_sender = sender.clone();
         let pairing_authority: Arc<dyn PairingAuthority> = Arc::new(TuiPairingAuthority {
             sender,
             paths,
@@ -174,6 +201,8 @@ impl ServerRuntime {
             processor,
             master: Some(master),
             authority,
+            #[cfg(test)]
+            authority_test_sender,
         })
     }
 
@@ -193,6 +222,13 @@ impl ServerRuntime {
 
     pub(crate) fn drain_authority(&self) -> Vec<AuthorityRequest> {
         std::iter::from_fn(|| self.authority.try_recv().ok()).collect()
+    }
+
+    #[cfg(test)]
+    pub(crate) fn notify_trust_reload_for_test(&self) {
+        self.authority_test_sender
+            .send(AuthorityRequest::ReloadTrust)
+            .unwrap();
     }
 
     pub(crate) fn take_work(
@@ -245,6 +281,10 @@ impl Drop for ServerRuntime {
         self.stop();
     }
 }
+
+#[cfg(test)]
+#[path = "pairing_activation_regressions.rs"]
+mod pairing_activation_regressions;
 
 #[cfg(test)]
 mod tests {

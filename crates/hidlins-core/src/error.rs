@@ -172,6 +172,10 @@ pub enum VaultError {
         uuid: Uuid,
     },
 
+    /// A custom-field operation used a dedicated KDBX standard-field name.
+    #[error("standard fields must use their dedicated setters, not custom fields")]
+    ReservedCustomField,
+
     /// No group exists with the given UUID.
     #[error("group not found: {uuid}")]
     GroupNotFound {

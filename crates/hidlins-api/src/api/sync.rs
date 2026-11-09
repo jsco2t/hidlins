@@ -1,20 +1,19 @@
 //! Local-network sync API and application-owned lifecycle integration.
 
 use std::{
-    collections::HashMap,
     net::IpAddr,
     panic::AssertUnwindSafe,
     path::PathBuf,
     sync::{
         atomic::{AtomicBool, Ordering},
-        mpsc, Arc, Mutex, RwLock, TryLockError, Weak,
+        mpsc, Arc, Mutex, Weak,
     },
     thread,
     time::Duration,
     time::{SystemTime, UNIX_EPOCH},
 };
 
-use hidlins_core::{Keyfile, MasterPassword, Uuid};
+use hidlins_core::{Keyfile, MasterPassword};
 use hidlins_sync::{
     address::LocalEndpoint,
     config::local::LocalSyncConfig,
@@ -25,41 +24,25 @@ use hidlins_sync::{
     SyncOptions,
 };
 
-use super::session::{AppSession, SessionServerRuntime, SessionState, TotpSnapshot};
+use super::session::{
+    lock_session_state, try_lock_session_state, AppSession, SessionServerRuntime, SessionState,
+};
 use crate::dto::{
-    DiscoveryPermissionDto, DiscoveryStatusDto, KeyfileRef, LocalEndpointDto, LocalSyncRoleDto,
-    PairingPromptDto, SyncEvent, SyncOutcomeDto, SyncPeerDto, SyncStatusDto, VaultSummary,
+    DiscoveryPermissionDto, DiscoveryServiceDto, DiscoveryStatusDto, KeyfileRef, LocalEndpointDto,
+    LocalSyncRoleDto, PairingPromptDto, SyncEvent, SyncOutcomeDto, SyncPeerDto, SyncStatusDto,
+    VaultSummary,
 };
 use crate::error::HidlinsApiError;
 
-pub(crate) struct PairingApiState {
-    clients: Mutex<HashMap<String, PendingClientPairing>>,
-    server_decisions: Mutex<HashMap<String, mpsc::SyncSender<ServerPairingDecision>>>,
-}
-
-impl PairingApiState {
-    pub(crate) fn new() -> Self {
-        Self {
-            clients: Mutex::new(HashMap::new()),
-            server_decisions: Mutex::new(HashMap::new()),
-        }
-    }
-
-    pub(crate) fn cancel_all(&self) {
-        if let Ok(mut clients) = self.clients.lock() {
-            clients.clear();
-        }
-        if let Ok(mut decisions) = self.server_decisions.lock() {
-            for (_, sender) in decisions.drain() {
-                let _ = sender.try_send(ServerPairingDecision::Reject);
-            }
-        }
-    }
-}
+#[path = "pairing_state.rs"]
+mod pairing_state;
+pub(crate) use pairing_state::PairingApiState;
+use pairing_state::PairingRegistration;
 
 enum PendingPairingTarget {
     Existing {
         vault_name: String,
+        backing_path: PathBuf,
     },
     Import {
         vault_name: String,
@@ -74,11 +57,60 @@ struct PendingClientPairing {
     config: LocalSyncConfig,
     target: PendingPairingTarget,
     candidates: Vec<LocalEndpoint>,
+    registration: PairingRegistration,
 }
 
 enum ServerPairingDecision {
     Accept(String),
     Reject,
+}
+
+fn pairing_origin_matches(
+    state: &SessionState,
+    target: &PendingPairingTarget,
+    expected: &LocalSyncConfig,
+) -> bool {
+    if state.dead || state.syncing || state.unlocking || state.lock_pending {
+        return false;
+    }
+    match target {
+        PendingPairingTarget::Existing {
+            vault_name,
+            backing_path,
+        } => {
+            let (Some(vault), Some(entry)) = (state.vault.as_ref(), state.registry.get(vault_name))
+            else {
+                return false;
+            };
+            vault.backing_path() == backing_path
+                && vault.path() == entry.path
+                && LocalSyncConfig::from_vault_entry(entry).as_ref() == Some(expected)
+        }
+        PendingPairingTarget::Import {
+            vault_name, target, ..
+        } => {
+            !state.is_logically_unlocked()
+                && state.registry.get(vault_name).is_none()
+                && *target
+                    == state
+                        .registry
+                        .paths()
+                        .state_dir()
+                        .join(format!("{vault_name}.kdbx"))
+                && !target.exists()
+        }
+    }
+}
+
+fn pairing_failure(
+    registration: &PairingRegistration,
+    error: hidlins_sync::client::LanError,
+) -> HidlinsApiError {
+    if registration.is_current() {
+        HidlinsApiError::from(hidlins_sync::SyncError::from(error))
+    } else {
+        HidlinsApiError::SyncCanceled
+    }
 }
 
 pub(crate) struct ApiPairingAuthority {
@@ -106,14 +138,13 @@ impl ApiPairingAuthority {
             if self.cancelled.load(Ordering::Acquire) {
                 return Err(());
             }
-            match session.try_lock() {
-                Ok(state) if state.dead => return Err(()),
-                Ok(state) if state.syncing => drop(state),
-                Ok(mut state) => {
+            match try_lock_session_state(&session) {
+                Some(state) if state.dead => return Err(()),
+                Some(state) if state.syncing => drop(state),
+                Some(mut state) => {
                     return action.take().ok_or(())?(&mut state);
                 }
-                Err(TryLockError::Poisoned(_)) => return Err(()),
-                Err(TryLockError::WouldBlock) => {}
+                None => {}
             }
             thread::sleep(Duration::from_millis(5));
         }
@@ -181,6 +212,8 @@ impl hidlins_sync::server::PairingAuthority for ApiPairingAuthority {
         &self,
         transaction: &hidlins_sync::pairing::PairingTransaction,
     ) -> Result<(), PairingAuthorityError> {
+        #[cfg(all(test, feature = "desktop"))]
+        pairing_activation_regressions::before_lock();
         self.with_ready_state(|state| {
             let (name, _) = current_vault_name_and_master(state).map_err(|_| ())?;
             let now = epoch_seconds()?;
@@ -202,6 +235,27 @@ impl hidlins_sync::server::PairingAuthority for ApiPairingAuthority {
             config
                 .recover_pairing_transaction(peer, now)
                 .map_err(|_| ())
+        })
+        .map_err(|()| PairingAuthorityError::Persistence)
+    }
+
+    fn activate_authorized(
+        &self,
+        transaction: &hidlins_sync::pairing::PairingTransaction,
+        authorization: &hidlins_sync::server::PairingAuthorization,
+    ) -> Result<(), PairingAuthorityError> {
+        #[cfg(all(test, feature = "desktop"))]
+        pairing_activation_regressions::before_lock();
+        self.with_ready_state(|state| {
+            let (name, _) = current_vault_name_and_master(state).map_err(|_| ())?;
+            let now = epoch_seconds()?;
+            LocalSyncConfig::transactional_update(&mut state.registry, &name, |config| {
+                authorization
+                    .check()
+                    .map_err(|_| hidlins_sync::trust::TrustError::Expired)?;
+                config.activate_client(transaction, now)
+            })
+            .map_err(|_| ())
         })
         .map_err(|()| PairingAuthorityError::Persistence)
     }
@@ -258,6 +312,15 @@ impl From<DiscoveryPermissionDto> for DiscoveryPermission {
     }
 }
 
+impl From<DiscoveryServiceDto> for ServiceKind {
+    fn from(value: DiscoveryServiceDto) -> Self {
+        match value {
+            DiscoveryServiceDto::Trusted => Self::Trusted,
+            DiscoveryServiceDto::Pairing => Self::Pairing,
+        }
+    }
+}
+
 impl LocalEndpointDto {
     fn checked(&self) -> Result<LocalEndpoint, HidlinsApiError> {
         let ip = self
@@ -284,6 +347,50 @@ fn endpoint_dto(endpoint: LocalEndpoint) -> LocalEndpointDto {
     }
 }
 
+fn discovery_status(state: &SessionState, service: DiscoveryServiceDto) -> DiscoveryStatusDto {
+    let candidates = match service {
+        DiscoveryServiceDto::Trusted => operation_candidates(state),
+        DiscoveryServiceDto::Pairing => pairing_candidates(state),
+    };
+    DiscoveryStatusDto {
+        permission: state.discovery_permission.into(),
+        candidates: candidates.into_iter().map(endpoint_dto).collect(),
+    }
+}
+
+fn owns_discovery(state: &SessionState, cancellation: &Arc<AtomicBool>) -> bool {
+    state
+        .discovery_cancel
+        .as_ref()
+        .is_some_and(|current| Arc::ptr_eq(current, cancellation))
+}
+
+fn require_current_discovery(
+    state: &SessionState,
+    cancellation: &Arc<AtomicBool>,
+) -> Result<(), HidlinsApiError> {
+    if state.dead || cancellation.load(Ordering::Acquire) || !owns_discovery(state, cancellation) {
+        return Err(HidlinsApiError::SyncCanceled);
+    }
+    Ok(())
+}
+
+pub(super) fn cancel_discovery_locked(state: &mut SessionState) -> Arc<AtomicBool> {
+    // Keep this canceled identity installed until its owner finishes cleanup.
+    // Already queued polls retain it; new calls cannot start a replacement yet.
+    let cancellation = state
+        .discovery_cancel
+        .get_or_insert_with(|| Arc::new(AtomicBool::new(false)));
+    cancellation.store(true, Ordering::Release);
+    Arc::clone(cancellation)
+}
+
+fn discovery_unavailable() -> HidlinsApiError {
+    HidlinsApiError::Internal {
+        context: "discovery state unavailable".into(),
+    }
+}
+
 #[allow(clippy::needless_pass_by_value)]
 impl AppSession {
     pub fn configure_local_sync(&self, role: LocalSyncRoleDto) -> Result<(), HidlinsApiError> {
@@ -292,8 +399,26 @@ impl AppSession {
             return Err(HidlinsApiError::VaultBusySyncing);
         }
         let (vault_name, master) = current_vault_name_and_master(&state)?;
-        LocalSyncConfig::configure(&mut state.registry, &vault_name, role.into(), &master)
-            .map_err(|_| HidlinsApiError::LocalSyncConfiguration)?;
+        let previous = state
+            .registry
+            .get(&vault_name)
+            .and_then(LocalSyncConfig::from_vault_entry)
+            .map(|config| config.identity().public_key());
+        let configured =
+            LocalSyncConfig::configure(&mut state.registry, &vault_name, role.into(), &master);
+        let current = state
+            .registry
+            .get(&vault_name)
+            .and_then(LocalSyncConfig::from_vault_entry)
+            .map(|config| config.identity().public_key());
+        // A durability error may still leave the new registry committed.
+        // Retire the old authority whenever its identity actually changed.
+        if previous != current {
+            state.pairing_api.cancel_all();
+            state.server_requested = None;
+            state.stop_server_runtime();
+        }
+        configured.map_err(|_| HidlinsApiError::LocalSyncConfiguration)?;
         Ok(())
     }
 
@@ -316,26 +441,60 @@ impl AppSession {
     }
 
     pub fn local_discovery_status(&self) -> DiscoveryStatusDto {
+        self.local_discovery_status_for(DiscoveryServiceDto::Trusted)
+    }
+
+    /// Return untrusted routes for the requested service, retaining explicit routes first.
+    pub fn local_discovery_status_for(&self, service: DiscoveryServiceDto) -> DiscoveryStatusDto {
         let state = self.lock_state();
-        DiscoveryStatusDto {
-            permission: state.discovery_permission.into(),
-            candidates: operation_candidates(&state)
-                .into_iter()
-                .map(endpoint_dto)
-                .collect(),
-        }
+        discovery_status(&state, service)
     }
 
     /// Poll the platform discovery adapter and apply only Rust-validated routes.
     pub fn poll_local_discovery(&self) -> Result<DiscoveryStatusDto, HidlinsApiError> {
+        self.poll_local_discovery_for(DiscoveryServiceDto::Trusted)
+    }
+
+    /// Collect routes for normal sync or an explicitly open pairing service.
+    pub fn poll_local_discovery_for(
+        &self,
+        service: DiscoveryServiceDto,
+    ) -> Result<DiscoveryStatusDto, HidlinsApiError> {
+        let cancellation = {
+            let mut state = self.lock_state();
+            if state.dead {
+                return Err(HidlinsApiError::SyncCanceled);
+            }
+            let cancellation = state
+                .discovery_cancel
+                .get_or_insert_with(|| Arc::new(AtomicBool::new(false)));
+            if cancellation.load(Ordering::Acquire) {
+                return Err(HidlinsApiError::SyncCanceled);
+            }
+            Arc::clone(cancellation)
+        };
+        // Capture the identity before queuing, so stop also cancels polls that
+        // have not acquired this mutex. Valid polls serialize through publish.
+        #[cfg(all(test, feature = "desktop"))]
+        discovery_stop_controls::after_claim();
+        let _operation = self
+            .discovery_operation
+            .lock()
+            .map_err(|_| discovery_unavailable())?;
+        let state = self.lock_state();
+        require_current_discovery(&state, &cancellation)?;
         #[cfg(feature = "desktop")]
-        {
+        let mut cache = state.discovery_cache.clone();
+        drop(state);
+        #[cfg(feature = "desktop")]
+        let collected = {
             let mut port = self
                 .discovery_port
                 .lock()
-                .map_err(|_| HidlinsApiError::Internal {
-                    context: "discovery state unavailable".to_string(),
-                })?;
+                .map_err(|_| discovery_unavailable())?;
+            if cancellation.load(Ordering::Acquire) {
+                return Err(HidlinsApiError::SyncCanceled);
+            }
             if port.is_none() {
                 *port = Some(Box::new(
                     hidlins_sync::discovery::desktop::DesktopBrowser::start()
@@ -345,21 +504,74 @@ impl AppSession {
             let browser = port.as_mut().ok_or_else(|| HidlinsApiError::Internal {
                 context: "discovery browser did not initialize".to_string(),
             })?;
-            let mut cache = self.lock_state().discovery_cache.clone();
             hidlins_sync::discovery::collect_candidates(
                 browser.as_mut(),
                 &mut cache,
-                ServiceKind::Trusted,
+                service.into(),
                 std::time::Duration::from_millis(1_200),
                 std::time::Duration::from_millis(25),
-                || false,
+                || cancellation.load(Ordering::Acquire),
             )
-            .map_err(map_discovery_error)?;
-            let mut state = self.lock_state();
+            .map_err(map_discovery_error)
+        };
+        // The browser guard is gone before State is acquired, including on
+        // backend errors. Stop never waits for an operation while owning State.
+        #[cfg(all(test, feature = "desktop"))]
+        discovery_stop_controls::before_publish();
+        let state = self.lock_state();
+        require_current_discovery(&state, &cancellation)?;
+        #[cfg(feature = "desktop")]
+        let state = {
+            collected?;
+            let mut state = state;
             state.discovery_cache = cache;
             state.discovery_permission = DiscoveryPermission::Granted;
+            state
+        };
+        Ok(discovery_status(&state, service))
+    }
+
+    /// Stop browsing and cancel active or queued discovery without clearing routes.
+    pub fn stop_local_discovery(&self) -> Result<(), HidlinsApiError> {
+        let cancellation = cancel_discovery_locked(&mut self.lock_state());
+        #[cfg(all(test, feature = "desktop"))]
+        discovery_stop_controls::after_stop_request();
+        self.finish_discovery_stop(&cancellation)
+    }
+
+    pub(super) fn finish_discovery_stop(
+        &self,
+        cancellation: &Arc<AtomicBool>,
+    ) -> Result<(), HidlinsApiError> {
+        let operation = self
+            .discovery_operation
+            .lock()
+            .unwrap_or_else(std::sync::PoisonError::into_inner);
+        if !owns_discovery(&self.lock_state(), cancellation) {
+            return Ok(());
         }
-        Ok(self.local_discovery_status())
+        let browser = {
+            let mut port = self
+                .discovery_port
+                .lock()
+                .unwrap_or_else(std::sync::PoisonError::into_inner);
+            let browser = port.take();
+            self.discovery_port.clear_poison();
+            browser
+        };
+        // Backend shutdown and Drop run outside both State and browser guards.
+        let result = browser.map_or(Ok(()), |mut browser| {
+            browser.shutdown().map_err(map_discovery_error)
+        });
+        {
+            let mut state = self.lock_state();
+            if owns_discovery(&state, cancellation) {
+                state.discovery_cancel = None;
+            }
+        }
+        self.discovery_operation.clear_poison();
+        drop(operation);
+        result
     }
 
     pub fn local_sync_status(&self) -> Result<SyncStatusDto, HidlinsApiError> {
@@ -412,7 +624,7 @@ impl AppSession {
     }
 
     pub fn sync_now(&self) -> Result<SyncOutcomeDto, HidlinsApiError> {
-        run_sync(&self.inner, &self.sync_engine, &self.totp_cache, false)
+        run_sync(&self.inner, &self.sync_engine, false)
     }
 
     /// Consume the once-per-process startup attempt after the application has
@@ -445,7 +657,6 @@ impl AppSession {
         if let Some(cancellation) = state.sync_cancellation.as_ref() {
             cancellation.cancel();
         }
-        drop(state);
         self.pairing_api.cancel_all();
     }
 
@@ -525,27 +736,51 @@ impl AppSession {
 
     /// Begin XX pairing for the currently unlocked client vault.
     pub fn begin_pairing(&self) -> Result<PairingPromptDto, HidlinsApiError> {
-        let (config, name, master, candidates) = {
+        let (config, name, master, candidates, backing_path, registration) = {
             let state = self.lock_state();
             let config = current_local_config(&state)?;
             if config.role() != SyncRole::Client || config.is_active_client() {
                 return Err(HidlinsApiError::SyncAuthFailed);
             }
             let (name, master) = current_vault_name_and_master(&state)?;
-            (config, name, master, pairing_candidates(&state))
+            let backing_path = state.require_vault()?.backing_path().to_path_buf();
+            let registration = self.pairing_api.reserve(None)?;
+            (
+                config,
+                name,
+                master,
+                pairing_candidates(&state),
+                backing_path,
+                registration,
+            )
         };
         let identity = config
             .identity()
             .unlock(&name, SyncRole::Client, &master)
-            .map_err(|_| HidlinsApiError::AuthenticationFailed)?;
-        let pairing =
-            hidlins_sync::client::ClientPairingSession::begin(&identity, candidates.clone())
-                .map_err(|error| HidlinsApiError::from(hidlins_sync::SyncError::from(error)))?;
+            .map_err(|_| {
+                if registration.is_current() {
+                    HidlinsApiError::AuthenticationFailed
+                } else {
+                    HidlinsApiError::SyncCanceled
+                }
+            })?;
+        let pairing = hidlins_sync::client::ClientPairingSession::begin_with_cancellation(
+            &identity,
+            candidates.clone(),
+            registration.cancellation(),
+        )
+        .map_err(|error| pairing_failure(&registration, error))?;
+        #[cfg(test)]
+        pairing_lifetime_regressions::after_begin();
         self.store_client_pairing(
             pairing,
             config,
             candidates,
-            PendingPairingTarget::Existing { vault_name: name },
+            PendingPairingTarget::Existing {
+                vault_name: name,
+                backing_path,
+            },
+            registration,
         )
     }
 
@@ -557,6 +792,8 @@ impl AppSession {
         keyfile: Option<KeyfileRef>,
         candidates: Vec<LocalEndpointDto>,
     ) -> Result<PairingPromptDto, HidlinsApiError> {
+        let master = MasterPassword::new(master_password);
+        let keyfile = super::vaults::protect_keyfile(keyfile);
         super::vaults::validate_vault_name(&name)?;
         let checked = candidates
             .iter()
@@ -565,13 +802,14 @@ impl AppSession {
         if checked.is_empty() || checked.len() > hidlins_sync::protocol::MAX_CANDIDATE_ATTEMPTS {
             return Err(HidlinsApiError::SyncNotFound);
         }
-        let master = MasterPassword::new(master_password);
-        let keyfile = keyfile.map(|value| match value {
-            KeyfileRef::Path(path) => Keyfile::Path(PathBuf::from(path)),
-            KeyfileRef::Bytes(bytes) => Keyfile::Bytes(bytes),
-        });
-        let target = {
+        let (target, registration) = {
             let state = self.lock_state();
+            if state.dead {
+                return Err(HidlinsApiError::SyncCanceled);
+            }
+            if state.syncing || state.unlocking || state.lock_pending {
+                return Err(HidlinsApiError::VaultBusySyncing);
+            }
             if state.is_unlocked() || state.registry.get(&name).is_some() {
                 return Err(HidlinsApiError::PathExists { path: name });
             }
@@ -585,26 +823,42 @@ impl AppSession {
                     path: target.display().to_string(),
                 });
             }
-            target
+            let registration = self
+                .pairing_api
+                .reserve(Some((name.clone(), target.clone())))?;
+            (target, registration)
         };
         let config = LocalSyncConfig::create(&name, SyncRole::Client, &master)
             .map_err(|_| HidlinsApiError::LocalSyncConfiguration)?;
         let identity = config
             .identity()
             .unlock(&name, SyncRole::Client, &master)
-            .map_err(|_| HidlinsApiError::AuthenticationFailed)?;
-        let pairing = hidlins_sync::client::ClientPairingSession::begin(&identity, checked.clone())
-            .map_err(|error| HidlinsApiError::from(hidlins_sync::SyncError::from(error)))?;
+            .map_err(|_| {
+                if registration.is_current() {
+                    HidlinsApiError::AuthenticationFailed
+                } else {
+                    HidlinsApiError::SyncCanceled
+                }
+            })?;
+        let pairing = hidlins_sync::client::ClientPairingSession::begin_with_cancellation(
+            &identity,
+            checked.clone(),
+            registration.cancellation(),
+        )
+        .map_err(|error| pairing_failure(&registration, error))?;
+        #[cfg(test)]
+        pairing_lifetime_regressions::after_begin();
         self.store_client_pairing(
             pairing,
             config,
-            checked.clone(),
+            checked,
             PendingPairingTarget::Import {
                 vault_name: name,
                 master,
                 keyfile,
                 target,
             },
+            registration,
         )
     }
 
@@ -614,24 +868,22 @@ impl AppSession {
         config: LocalSyncConfig,
         candidates: Vec<LocalEndpoint>,
         target: PendingPairingTarget,
+        registration: PairingRegistration,
     ) -> Result<PairingPromptDto, HidlinsApiError> {
+        let state = self.lock_state();
+        if !pairing_origin_matches(&state, &target, &config) {
+            registration.cancel();
+            return Err(HidlinsApiError::SyncCanceled);
+        }
         let sas = session.sas().to_string();
-        let handle = pairing_handle()?;
-        self.pairing_api
-            .clients
-            .lock()
-            .map_err(|_| HidlinsApiError::Internal {
-                context: "pairing state unavailable".to_string(),
-            })?
-            .insert(
-                handle.clone(),
-                PendingClientPairing {
-                    session,
-                    config,
-                    target,
-                    candidates,
-                },
-            );
+        let handle = registration.handle().to_string();
+        self.pairing_api.publish(PendingClientPairing {
+            session,
+            config,
+            target,
+            candidates,
+            registration,
+        })?;
         Ok(PairingPromptDto {
             transaction_handle: handle,
             sas,
@@ -651,7 +903,7 @@ impl AppSession {
             .server_decisions
             .lock()
             .map_err(|_| HidlinsApiError::Internal {
-                context: "pairing state unavailable".to_string(),
+                context: "pairing state unavailable".into(),
             })?
             .remove(&transaction_handle)
         {
@@ -665,104 +917,163 @@ impl AppSession {
                 .map_err(|_| HidlinsApiError::SyncCanceled)?;
             return Ok(None);
         }
-
-        let pending = self
-            .pairing_api
-            .clients
-            .lock()
-            .map_err(|_| HidlinsApiError::Internal {
-                context: "pairing state unavailable".to_string(),
-            })?
-            .remove(&transaction_handle)
-            .ok_or(HidlinsApiError::SyncCanceled)?;
+        let pending = self.pairing_api.take_pending(&transaction_handle)?;
+        #[cfg(test)]
+        pairing_lifetime_regressions::after_remove();
         if !accepted {
             return Ok(None);
         }
         self.confirm_client_pairing(pending, peer_display_name)
     }
 
+    fn persist_existing_pairing(
+        &self,
+        registration: &PairingRegistration,
+        target: &PendingPairingTarget,
+        expected: &mut LocalSyncConfig,
+        prepared: &LocalSyncConfig,
+    ) -> Result<(), hidlins_sync::config::local::LocalConfigError> {
+        use hidlins_sync::config::local::LocalConfigError;
+        let mut state = self.lock_state();
+        if !pairing_origin_matches(&state, target, expected) {
+            registration.cancel();
+            return Err(LocalConfigError::Malformed);
+        }
+        let PendingPairingTarget::Existing { vault_name, .. } = target else {
+            return Err(LocalConfigError::Malformed);
+        };
+        let mut origin_changed = false;
+        let result = registration
+            .with_current(|| {
+                #[cfg(test)]
+                pairing_lifetime_regressions::before_persist();
+                // Compare inside the registry's locked reload: another process or
+                // a parallel prompt must not be overwritten by this old config.
+                LocalSyncConfig::transactional_update(&mut state.registry, vault_name, |actual| {
+                    if *actual != *expected {
+                        origin_changed = true;
+                        return Err(hidlins_sync::trust::TrustError::TransactionMismatch);
+                    }
+                    *actual = prepared.clone();
+                    Ok(())
+                })
+            })
+            .map_err(|_| LocalConfigError::Malformed)?;
+        if origin_changed
+            || matches!(
+                &result,
+                Err(LocalConfigError::Trust(_)
+                    | LocalConfigError::Registry(hidlins_core::VaultError::NotRegistered { .. }))
+            )
+        {
+            registration.cancel();
+        }
+        if result.is_ok() {
+            *expected = prepared.clone();
+        }
+        result
+    }
+
     fn confirm_client_pairing(
         &self,
-        mut pending: PendingClientPairing,
+        pending: PendingClientPairing,
         peer_display_name: String,
     ) -> Result<Option<VaultSummary>, HidlinsApiError> {
+        // Registration outlives every later State/clients guard and the core
+        // confirmation consumes only its own session, never this registration.
+        let PendingClientPairing {
+            session,
+            mut config,
+            target,
+            candidates,
+            registration,
+        } = pending;
+        {
+            let state = self.lock_state();
+            if !pairing_origin_matches(&state, &target, &config) {
+                registration.cancel();
+                return Err(HidlinsApiError::SyncCanceled);
+            }
+            registration.with_current(|| ())?;
+        }
         let now = epoch_seconds().map_err(|()| HidlinsApiError::Internal {
-            context: "system clock unavailable".to_string(),
+            context: "system clock unavailable".into(),
         })?;
-        let _transaction = match &pending.target {
-            PendingPairingTarget::Existing { vault_name } => pending
-                .session
-                .confirm(&mut pending.config, peer_display_name, now, |prepared| {
-                    let mut state = self.lock_state();
-                    if state.dead || !state.is_unlocked() {
+        let mut expected = config.clone();
+        let result = match &target {
+            PendingPairingTarget::Existing { .. } => {
+                session.confirm(&mut config, peer_display_name, now, |prepared| {
+                    self.persist_existing_pairing(&registration, &target, &mut expected, prepared)
+                })
+            }
+            PendingPairingTarget::Import { vault_name, .. } => {
+                let store = hidlins_sync::client::PendingPairingStore::new(
+                    self.paths.state_dir(),
+                    vault_name,
+                );
+                session.confirm(&mut config, peer_display_name, now, |prepared| {
+                    let state = self.lock_state();
+                    if !pairing_origin_matches(&state, &target, prepared) {
+                        registration.cancel();
                         return Err(hidlins_sync::config::local::LocalConfigError::Malformed);
                     }
-                    prepared.persist(&mut state.registry, vault_name)
+                    registration
+                        .with_current(|| store.save(prepared))
+                        .map_err(|_| hidlins_sync::config::local::LocalConfigError::Malformed)?
                 })
-                .map_err(|error| HidlinsApiError::from(hidlins_sync::SyncError::from(error)))?,
-            PendingPairingTarget::Import { vault_name, .. } => {
-                let state_dir = self.lock_state().registry.paths().state_dir().to_path_buf();
-                let store = hidlins_sync::client::PendingPairingStore::new(&state_dir, vault_name);
-                pending
-                    .session
-                    .confirm(&mut pending.config, peer_display_name, now, |prepared| {
-                        store.save(prepared)
-                    })
-                    .map_err(|error| HidlinsApiError::from(hidlins_sync::SyncError::from(error)))?
             }
         };
-
-        match pending.target {
-            PendingPairingTarget::Existing { vault_name } => {
-                let mut state = self.lock_state();
-                if state.dead || !state.is_unlocked() {
-                    return Err(HidlinsApiError::VaultLocked);
-                }
-                pending
-                    .config
-                    .persist(&mut state.registry, &vault_name)
-                    .map_err(|_| HidlinsApiError::LocalSyncConfiguration)?;
-                Ok(None)
-            }
+        result.map_err(|error| pairing_failure(&registration, error))?;
+        match &target {
+            // Core confirm already persisted the active config under the
+            // guarded compare-and-replace. Do not add a third stale write.
+            PendingPairingTarget::Existing { .. } => Ok(None),
             PendingPairingTarget::Import {
                 vault_name,
                 master,
                 keyfile,
-                target,
+                target: path,
             } => {
-                let (bytes, version) = hidlins_sync::client::fetch_paired_vault(
-                    &vault_name,
-                    &master,
-                    &pending.config,
-                    pending.candidates,
+                let (bytes, version) = hidlins_sync::client::fetch_paired_vault_with_cancellation(
+                    vault_name,
+                    master,
+                    &config,
+                    candidates,
+                    registration.cancellation(),
                 )
-                .map_err(|error| HidlinsApiError::from(hidlins_sync::SyncError::from(error)))?;
-                pending
-                    .config
-                    .set_sync_versions(Some(version), Some(version));
+                .map_err(|error| pairing_failure(&registration, error))?;
+                #[cfg(test)]
+                pairing_lifetime_regressions::after_fetch();
+                config.set_sync_versions(Some(version), Some(version));
                 let mut state = self.lock_state();
-                hidlins_sync::client::import_paired_vault(
-                    &bytes,
-                    &target,
-                    &vault_name,
-                    &master,
-                    keyfile.as_ref(),
-                    &pending.config,
-                    &mut state.registry,
-                )
-                .map_err(|_| HidlinsApiError::InvalidFormat)?;
-                hidlins_sync::client::PendingPairingStore::new(
-                    state.registry.paths().state_dir(),
-                    &vault_name,
-                )
-                .clear()
-                .map_err(|_| HidlinsApiError::LocalSyncConfiguration)?;
-                Ok(Some(VaultSummary {
-                    name: vault_name,
-                    path: target.display().to_string(),
-                    has_keyfile: keyfile.is_some(),
-                    has_sync: true,
-                }))
+                if !pairing_origin_matches(&state, &target, &config) {
+                    registration.cancel();
+                    return Err(HidlinsApiError::SyncCanceled);
+                }
+                registration.with_current(|| {
+                    hidlins_sync::client::import_paired_vault(
+                        &bytes,
+                        path,
+                        vault_name,
+                        master,
+                        keyfile.as_ref(),
+                        &config,
+                        &mut state.registry,
+                    )
+                    .map_err(|_| HidlinsApiError::InvalidFormat)?;
+                    hidlins_sync::client::PendingPairingStore::new(
+                        state.registry.paths().state_dir(),
+                        vault_name,
+                    )
+                    .clear()
+                    .map_err(|_| HidlinsApiError::LocalSyncConfiguration)?;
+                    Ok(Some(VaultSummary {
+                        name: vault_name.clone(),
+                        path: path.display().to_string(),
+                        has_keyfile: keyfile.is_some(),
+                        has_sync: true,
+                    }))
+                })?
             }
         }
     }
@@ -794,17 +1105,13 @@ impl AppSession {
     }
 
     pub fn revoke_sync_peer(&self, peer_id: String) -> Result<(), HidlinsApiError> {
-        self.update_peer(
+        let result = self.update_peer(
             peer_id,
             hidlins_sync::config::local::LocalSyncConfig::revoke_peer,
-        )?;
-        let state = self.lock_state();
-        if let (Some(runtime), Ok(config)) = (&state.server_runtime, current_local_config(&state)) {
-            runtime
-                .controller
-                .replace_trusted(active_peer_keys(&config));
-        }
-        Ok(())
+        );
+        #[cfg(all(test, debug_assertions))]
+        revoke_reconciliation_regressions::after_update();
+        result
     }
 
     fn update_peer(
@@ -818,7 +1125,7 @@ impl AppSession {
         let index = parse_peer_id(&peer_id)?;
         let mut state = self.lock_state();
         let (name, _) = current_vault_name_and_master(&state)?;
-        LocalSyncConfig::transactional_update(&mut state.registry, &name, |config| {
+        let result = LocalSyncConfig::transactional_update(&mut state.registry, &name, |config| {
             let key = match config.role() {
                 SyncRole::Server => config
                     .trusted_peers()
@@ -832,7 +1139,16 @@ impl AppSession {
             .ok_or(hidlins_sync::trust::TrustError::NotActive)?;
             update(config, key)
         })
-        .map_err(|_| HidlinsApiError::SyncRevoked)
+        .map_err(|_| HidlinsApiError::SyncRevoked);
+        // Registry memory follows a committed rename even if durability
+        // reports an error. Reconcile installed trust before releasing this
+        // guard, so a host ownership loan cannot skip revocation afterward.
+        if let (Some(runtime), Ok(config)) = (&state.server_runtime, current_local_config(&state)) {
+            runtime
+                .controller
+                .replace_trusted(active_peer_keys(&config));
+        }
+        result
     }
 
     pub fn clear_sync_config(&self, name: String) -> Result<(), HidlinsApiError> {
@@ -840,6 +1156,7 @@ impl AppSession {
         if state.syncing {
             return Err(HidlinsApiError::VaultBusySyncing);
         }
+        state.pairing_api.cancel_all();
         state.server_requested = None;
         state.stop_server_runtime();
         state.registry.update_registered_extra(&name, |extra| {
@@ -953,13 +1270,13 @@ fn clone_keyfile(keyfile: Option<&Keyfile>) -> Option<Keyfile> {
 fn run_sync(
     inner: &Arc<Mutex<SessionState>>,
     engine: &Arc<dyn crate::sync_port::SyncEnginePort>,
-    totp_cache: &Arc<RwLock<std::collections::HashMap<Uuid, TotpSnapshot>>>,
     automatic: bool,
 ) -> Result<SyncOutcomeDto, HidlinsApiError> {
     let (mut vault, mut registry, master, keyfile, name, candidates, cancellation) = {
-        let mut state = inner
-            .lock()
-            .unwrap_or_else(std::sync::PoisonError::into_inner);
+        let mut state = lock_session_state(inner);
+        if state.dead || state.lock_pending {
+            return Err(HidlinsApiError::VaultLocked);
+        }
         if state.syncing {
             return Err(HidlinsApiError::VaultBusySyncing);
         }
@@ -1012,13 +1329,11 @@ fn run_sync(
         )
     }));
 
-    let mut state = inner
-        .lock()
-        .unwrap_or_else(std::sync::PoisonError::into_inner);
+    let mut state = lock_session_state(inner);
     state.syncing = false;
     state.sync_cancellation = None;
     let lock_requested = std::mem::take(&mut state.lock_pending);
-    super::session::clear_totp_cache_inner(totp_cache);
+    super::session::clear_totp_cache_inner(&state.totp_cache);
     if lock_requested || state.dead {
         state.registry = registry;
         state.stop_server_runtime();
@@ -1027,9 +1342,7 @@ fn run_sync(
             .controller
             .lock_now(hidlins_security::OsLockReason::Manual);
         state.push_sync_event(SyncEvent::Failed(HidlinsApiError::VaultLocked));
-        if !state.dead {
-            state.push_lock_event(crate::dto::LockEvent::Locked);
-        }
+        // The pending-lock or poison transition already published Locked.
         return Err(HidlinsApiError::VaultLocked);
     }
     match result {
@@ -1048,6 +1361,7 @@ fn run_sync(
             Err(error)
         }
         Err(_) => {
+            state.revoke_cached_secrets();
             if let Ok(reloaded) = hidlins_core::VaultRegistry::load(state.registry.paths().clone())
             {
                 state.registry = reloaded;
@@ -1086,11 +1400,10 @@ pub(crate) fn schedule_startup_sync(session: &AppSession, vault_name: &str) {
     }
     let inner = Arc::clone(&session.inner);
     let engine = Arc::clone(&session.sync_engine);
-    let cache = Arc::clone(&session.totp_cache);
     let worker = std::thread::Builder::new()
         .name("hidlins-startup-sync".to_string())
         .spawn(move || {
-            let _ = run_sync(&inner, &engine, &cache, true);
+            let _ = run_sync(&inner, &engine, true);
         });
     if let Ok(worker) = worker {
         if let Ok(mut workers) = session.background_workers.lock() {
@@ -1136,7 +1449,7 @@ fn start_server_runtime(
     );
     state.server_runtime = Some(SessionServerRuntime {
         controller,
-        processor,
+        processor: Some(processor),
     });
     Ok(())
 }
@@ -1168,8 +1481,8 @@ pub(crate) fn restart_requested_server(session: &AppSession, state: &mut Session
 }
 
 pub(crate) fn pump_server_once(inner: &Arc<Mutex<SessionState>>) {
-    let (mut runtime, mut vault, master, keyfile) = {
-        let Ok(mut state) = inner.try_lock() else {
+    let (mut processor, mut vault, master, keyfile) = {
+        let Some(mut state) = try_lock_session_state(inner) else {
             return;
         };
         if state.syncing || state.dead || state.server_runtime.is_none() || state.vault.is_none() {
@@ -1182,33 +1495,64 @@ pub(crate) fn pump_server_once(inner: &Arc<Mutex<SessionState>>) {
             String::from_utf8_lossy(credentials.master.as_bytes()).into_owned(),
         );
         let keyfile = clone_keyfile(credentials.keyfile.as_ref());
-        let runtime = state.server_runtime.take().expect("checked above");
+        // The listener/controller stays reachable by stop, close and lock
+        // while the worker exclusively owns its processor and vault.
+        let processor = state
+            .server_runtime
+            .as_mut()
+            .expect("checked above")
+            .processor
+            .take()
+            .expect("host processor is present outside an ownership loan");
         let vault = state.vault.take().expect("checked above");
         state.syncing = true;
-        (runtime, vault, master, keyfile)
+        (processor, vault, master, keyfile)
     };
+    #[cfg(test)]
+    server_lifecycle_regressions::after_claim();
+    #[cfg(test)]
+    server_unlock_regressions::after_claim();
+    #[cfg(all(test, debug_assertions))]
+    revoke_reconciliation_regressions::after_claim();
     let result = std::panic::catch_unwind(AssertUnwindSafe(|| {
         let mut host = AuthoritativeVault::new(&mut vault, &master, keyfile.as_ref());
-        runtime.processor.process_one(&mut host)
+        let result = processor.process_one(&mut host);
+        (result, host.has_committed())
     }));
-    let mut state = inner
-        .lock()
-        .unwrap_or_else(std::sync::PoisonError::into_inner);
+    let mut state = lock_session_state(inner);
     state.syncing = false;
     let lock_requested = std::mem::take(&mut state.lock_pending);
     if state.dead || lock_requested || result.is_err() {
-        runtime.processor.shutdown();
-        runtime.controller.stop();
+        state.revoke_cached_secrets();
+        processor.shutdown();
+        state.stop_server_runtime();
         if state.dead || result.is_err() {
             state.server_requested = None;
         }
         state.credentials = None;
-        state.push_sync_event(SyncEvent::ServerStopped);
-        state.push_lock_event(crate::dto::LockEvent::Locked);
+        if !state.dead && !lock_requested {
+            state
+                .controller
+                .lock_now(hidlins_security::OsLockReason::Manual);
+            state.push_lock_event(crate::dto::LockEvent::Locked);
+        }
         return;
     }
     state.vault = Some(vault);
-    state.server_runtime = Some(runtime);
+    if let Some(runtime) = state.server_runtime.as_mut() {
+        runtime.processor = Some(processor);
+    } else {
+        // An explicit stop already closed admission and published its event.
+        // The vault remains available for local operations after handback.
+        processor.shutdown();
+    }
+    if result.as_ref().is_ok_and(|(_, committed)| *committed) {
+        // A fresh host adapter reports only an actually installed replacement,
+        // including rename followed by a durability error. Restore the vault
+        // and revoke old snapshots before the existing provider change event.
+        state.revoke_cached_secrets();
+        state.push_sync_event(SyncEvent::Done(SyncOutcomeDto::FastReplaced));
+    }
 }
 
 fn parse_peer_id(value: &str) -> Result<usize, HidlinsApiError> {
@@ -1247,7 +1591,30 @@ fn epoch_seconds() -> Result<u64, ()> {
         .map_err(|_| ())
 }
 
-#[cfg(feature = "desktop")]
+#[cfg(test)]
+#[path = "server_lifecycle_regressions.rs"]
+mod server_lifecycle_regressions;
+
+#[cfg(test)]
+#[path = "server_unlock_regressions.rs"]
+mod server_unlock_regressions;
+
+#[cfg(all(test, debug_assertions))]
+#[path = "server_config_commit_regressions.rs"]
+mod server_config_commit_regressions;
+
+#[cfg(all(test, debug_assertions))]
+#[path = "revoke_reconciliation_regressions.rs"]
+mod revoke_reconciliation_regressions;
+
+#[cfg(all(test, debug_assertions))]
+#[path = "incoming_commit_regressions.rs"]
+mod incoming_commit_regressions;
+
+#[cfg(test)]
+#[path = "pairing_lifetime_regressions.rs"]
+mod pairing_lifetime_regressions;
+
 fn map_discovery_error(error: hidlins_sync::discovery::DiscoveryError) -> HidlinsApiError {
     use hidlins_sync::discovery::DiscoveryError;
     match error {
@@ -1266,6 +1633,22 @@ fn map_discovery_error(error: hidlins_sync::discovery::DiscoveryError) -> Hidlin
         }
     }
 }
+
+#[cfg(all(test, feature = "desktop"))]
+#[path = "pairing_activation_regressions.rs"]
+mod pairing_activation_regressions;
+
+#[cfg(all(test, feature = "desktop"))]
+#[path = "discovery_kind_regressions.rs"]
+mod discovery_kind_regressions;
+
+#[cfg(all(test, feature = "desktop"))]
+#[path = "discovery_cancel_regressions.rs"]
+pub(super) mod discovery_cancel_regressions;
+
+#[cfg(all(test, feature = "desktop"))]
+#[path = "discovery_stop_controls.rs"]
+mod discovery_stop_controls;
 
 #[cfg(all(test, feature = "desktop"))]
 mod tests {

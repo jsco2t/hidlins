@@ -26,15 +26,22 @@ use crate::exit::CliExit;
 ///   positional `Option<Shell>` lets the parser accept the bare
 ///   `hidlins completions` invocation; we surface the missing-value
 ///   case explicitly here so the message is helpful).
+/// - [`CliExit::Internal`] when writing or flushing stdout fails.
 pub fn run(_cli: &Cli, args: &CompletionsArgs) -> Result<(), CliExit> {
     let Some(shell) = args.shell else {
         return Err(CliExit::UserError(
             "missing shell argument (try `hidlins completions bash|zsh|fish`)".to_string(),
         ));
     };
+    // The upstream generators expect successful writes (including Fish's
+    // internal helper). Generate in memory, then handle the real sink error.
+    let mut script = Vec::new();
+    write_completions(shell, &mut script);
     let stdout = io::stdout();
     let mut handle = stdout.lock();
-    write_completions(shell, &mut handle);
+    handle
+        .write_all(&script)
+        .map_err(|e| CliExit::Internal(format!("failed to write completions to stdout: {e}")))?;
     handle
         .flush()
         .map_err(|e| CliExit::Internal(format!("failed to flush completions to stdout: {e}")))
@@ -42,14 +49,13 @@ pub fn run(_cli: &Cli, args: &CompletionsArgs) -> Result<(), CliExit> {
 
 /// Generate the completion script for `shell` into `out`. Shared with
 /// `examples/gen_completions.rs` via the library entry point.
+///
+/// # Panics
+///
+/// The upstream generator panics on a sink write error. The runtime dispatcher
+/// uses an in-memory sink here and reports its actual stdout error separately.
 pub fn write_completions(shell: Shell, out: &mut dyn Write) {
     let mut cmd = Cli::command();
-    // `clap_complete::generate` swallows write errors silently; the
-    // signature is `&mut dyn Write` so any wrapping that propagates
-    // errors would have to be at the caller. For the build-time
-    // helper we point at a file and trust the OS; for the runtime
-    // dispatcher we point at stdout and a write failure surfaces on
-    // the trailing `flush()` instead.
     generate(shell, &mut cmd, "hidlins", out);
 }
 

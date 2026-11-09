@@ -1,7 +1,11 @@
 use async_trait::async_trait;
-use tracing::{instrument, trace, warn};
 
-use crate::{Message, conn::socket::ReadHalf, is_flatpak, names::OwnedUniqueName};
+use crate::{
+    Message,
+    conn::socket::ReadHalf,
+    log::{trace, warn},
+    names::OwnedUniqueName,
+};
 
 use super::{
     AuthMechanism, Authenticated, BoxedSplit, Command, Common, Error, Handshake, OwnedGuid, Result,
@@ -58,7 +62,7 @@ impl Client {
 
     // The dbus daemon on some platforms requires sending the zero byte as a
     // separate message with SCM_CREDS.
-    #[instrument(skip(self), level = "trace")]
+    #[cfg_attr(feature = "tracing", tracing::instrument(skip(self), level = "trace"))]
     #[cfg(any(target_os = "freebsd", target_os = "dragonfly"))]
     async fn send_zero_byte(&mut self) -> Result<()> {
         let write = self.common.socket_mut().write_mut();
@@ -81,9 +85,17 @@ impl Client {
         Ok(())
     }
 
-    /// Perform the authentication handshake with the server.
-    #[instrument(skip(self), level = "trace")]
-    async fn authenticate(&mut self) -> Result<()> {
+    /// Sends out every command of the handshake at once, followed by the `Hello` call on a bus
+    /// connection.
+    ///
+    /// Nothing the client says depends on how the server answers, so it all goes in one write
+    /// and the answers are read afterwards. A server that rejects the mechanism answers `AUTH` with
+    /// `REJECTED` and may drop the connection over what follows, which fails the handshake as
+    /// waiting for its answer would have.
+    ///
+    /// Returns how many answers the server gives to the commands after `AUTH`.
+    #[cfg_attr(feature = "tracing", tracing::instrument(skip(self), level = "trace"))]
+    async fn send_commands(&mut self) -> Result<usize> {
         let mechanism = self.common.mechanism();
         trace!("Trying {mechanism} mechanism");
         let user_id = self.user_id.clone();
@@ -91,7 +103,33 @@ impl Client {
             AuthMechanism::Anonymous => Command::Auth(Some(mechanism), Some("zbus".into())),
             AuthMechanism::External => Command::Auth(Some(mechanism), Some(user_id?.into_bytes())),
         };
-        self.common.write_command(auth_cmd).await?;
+        let mut commands = Vec::with_capacity(3);
+        commands.push(auth_cmd);
+
+        let can_pass_fd = self.common.socket_mut().read_mut().can_pass_unix_fd();
+        if can_pass_fd {
+            commands.push(Command::NegotiateUnixFD);
+        }
+        commands.push(Command::Begin);
+        let hello_method = if self.bus {
+            Some(create_hello_method_call())
+        } else {
+            None
+        };
+
+        self.common
+            .write_commands(&commands, hello_method.as_ref().map(|m| &**m.data()))
+            .await?;
+
+        // Server replies to all commands except `BEGIN`, and the reply to `AUTH` is read on its
+        // own.
+        Ok(commands.len() - 2)
+    }
+
+    /// Reads the server's answer to `AUTH`.
+    #[cfg_attr(feature = "tracing", tracing::instrument(skip(self), level = "trace"))]
+    async fn receive_auth_response(&mut self) -> Result<()> {
+        let mechanism = self.common.mechanism();
 
         match self.common.read_command().await? {
             Command::Ok(guid) => {
@@ -113,47 +151,7 @@ impl Client {
         }
     }
 
-    /// Sends out all commands after authentication.
-    #[instrument(skip(self), level = "trace")]
-    async fn send_secondary_commands(&mut self) -> Result<usize> {
-        let mut commands = Vec::with_capacity(4);
-
-        let can_pass_fd = self.common.socket_mut().read_mut().can_pass_unix_fd();
-        if can_pass_fd {
-            // xdg-dbus-proxy can't handle pipelining, hence this special handling.
-            // FIXME: Remove this as soon as flatpak is fixed and fix is available in major distros.
-            // See https://github.com/flatpak/xdg-dbus-proxy/issues/21
-            if is_flatpak() {
-                self.common.write_command(Command::NegotiateUnixFD).await?;
-                match self.common.read_command().await? {
-                    Command::AgreeUnixFD => self.common.set_cap_unix_fd(true),
-                    Command::Error(e) => warn!("UNIX file descriptor passing rejected: {e}"),
-                    cmd => {
-                        return Err(Error::Handshake(format!(
-                            "Unexpected command from server: {cmd}"
-                        )));
-                    }
-                }
-            } else {
-                commands.push(Command::NegotiateUnixFD);
-            }
-        };
-        commands.push(Command::Begin);
-        let hello_method = if self.bus {
-            Some(create_hello_method_call())
-        } else {
-            None
-        };
-
-        self.common
-            .write_commands(&commands, hello_method.as_ref().map(|m| &**m.data()))
-            .await?;
-
-        // Server replies to all commands except `BEGIN`.
-        Ok(commands.len() - 1)
-    }
-
-    #[instrument(skip(self), level = "trace")]
+    #[cfg_attr(feature = "tracing", tracing::instrument(skip(self), level = "trace"))]
     async fn receive_secondary_responses(&mut self, expected_n_responses: usize) -> Result<()> {
         for response in self.common.read_commands(expected_n_responses).await? {
             match response {
@@ -177,15 +175,15 @@ impl Client {
 
 #[async_trait]
 impl Handshake for Client {
-    #[instrument(skip(self), level = "trace")]
+    #[cfg_attr(feature = "tracing", tracing::instrument(skip(self), level = "trace"))]
     async fn perform(mut self) -> Result<Authenticated> {
         trace!("Initializing");
 
         #[cfg(any(target_os = "freebsd", target_os = "dragonfly"))]
         self.send_zero_byte().await?;
 
-        self.authenticate().await?;
-        let expected_n_responses = self.send_secondary_commands().await?;
+        let expected_n_responses = self.send_commands().await?;
+        self.receive_auth_response().await?;
 
         if expected_n_responses > 0 {
             self.receive_secondary_responses(expected_n_responses)
@@ -224,11 +222,8 @@ impl Handshake for Client {
 
 fn create_hello_method_call() -> Message {
     Message::method_call("/org/freedesktop/DBus", "Hello")
-        .unwrap()
         .destination("org.freedesktop.DBus")
-        .unwrap()
         .interface("org.freedesktop.DBus")
-        .unwrap()
         .build(&())
         .unwrap()
 }

@@ -6,7 +6,7 @@
 use std::time::Instant;
 
 use chrono::Utc;
-use hidlins_core::{Uuid, Vault};
+use hidlins_core::Uuid;
 use ratatui::layout::{Alignment, Constraint, Layout, Rect};
 use ratatui::style::{Modifier, Style};
 use ratatui::widgets::Paragraph;
@@ -15,6 +15,7 @@ use unicode_width::UnicodeWidthStr;
 
 use crate::app::{App, MouseTarget};
 use crate::user_config::{TREE_RATIO_MAX, TREE_RATIO_MIN};
+use crate::vault_view::VaultView;
 use crate::widgets::{entry_detail, entry_tree};
 
 /// Separator between breadcrumb components.
@@ -115,7 +116,7 @@ pub(crate) fn build_breadcrumb(app: &App, width: usize) -> String {
 /// Find `target` below `group_uuid`, returning its root-relative UUID path. The
 /// vault root itself is omitted because the registered vault display name is the
 /// breadcrumb's first component.
-pub(crate) fn node_path(vault: &Vault, group_uuid: Uuid, target: Uuid) -> Option<Vec<Uuid>> {
+pub(crate) fn node_path(vault: VaultView<'_>, group_uuid: Uuid, target: Uuid) -> Option<Vec<Uuid>> {
     let group = vault.group_view(group_uuid).ok()?;
     if group.entry_uuids().contains(&target) {
         return Some(vec![target]);
@@ -135,7 +136,7 @@ pub(crate) fn node_path(vault: &Vault, group_uuid: Uuid, target: Uuid) -> Option
 }
 
 /// The display name of a tree node: a group's name, else an entry's title.
-fn node_name(vault: &Vault, uuid: Uuid) -> String {
+fn node_name(vault: VaultView<'_>, uuid: Uuid) -> String {
     if let Ok(group) = vault.group_view(uuid) {
         return group.name().to_string();
     }

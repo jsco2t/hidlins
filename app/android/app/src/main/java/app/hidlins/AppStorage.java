@@ -20,31 +20,47 @@ final class AppStorage {
     }
 
     File prepare() throws IOException {
-        if ((!root.exists() && !root.mkdirs()) || !root.isDirectory()) {
+        if (!root.isDirectory() && !root.mkdirs() && !root.isDirectory()) {
             throw new IOException("app support unavailable");
         }
         return root;
     }
 
     File importVault(InputStream source, String displayName) throws IOException {
-        File vaults = new File(prepare(), "Vaults");
-        if ((!vaults.exists() && !vaults.mkdirs()) || !vaults.isDirectory()) {
-            throw new IOException("vault directory unavailable");
-        }
-        String safe = safeVaultName(displayName);
-        File destination = uniqueDestination(vaults, safe);
-        File temporary = new File(vaults, ".import-" + UUID.randomUUID());
+        File temporary = null;
         boolean installed = false;
-        try (InputStream input = source; FileOutputStream output = new FileOutputStream(temporary)) {
-            byte[] buffer = new byte[16 * 1024];
-            for (int count; (count = input.read(buffer)) != -1; ) output.write(buffer, 0, count);
-            java.util.Arrays.fill(buffer, (byte) 0);
-            output.getFD().sync();
-            if (!temporary.renameTo(destination)) throw new IOException("atomic vault install failed");
-            installed = true;
-            return destination;
+        try {
+            File vaults;
+            String safe;
+            // Own the source before setup, and close both streams before
+            // installation so a close failure cannot orphan an installed file.
+            try (InputStream input = source) {
+                vaults = new File(prepare(), "Vaults");
+                if (!vaults.isDirectory() && !vaults.mkdirs() && !vaults.isDirectory()) {
+                    throw new IOException("vault directory unavailable");
+                }
+                safe = safeVaultName(displayName);
+                temporary = new File(vaults, ".import-" + UUID.randomUUID());
+                try (FileOutputStream output = new FileOutputStream(temporary)) {
+                    byte[] buffer = new byte[16 * 1024];
+                    try {
+                        for (int count; (count = input.read(buffer)) != -1; ) output.write(buffer, 0, count);
+                    } finally {
+                        java.util.Arrays.fill(buffer, (byte) 0);
+                    }
+                    output.getFD().sync();
+                }
+            }
+            // Copies overlap across activity/storage instances. Serialize only
+            // name selection and atomic rename, never provider I/O or copying.
+            synchronized (AppStorage.class) {
+                File destination = uniqueDestination(vaults, safe);
+                if (!temporary.renameTo(destination)) throw new IOException("atomic vault install failed");
+                installed = true;
+                return destination;
+            }
         } finally {
-            if (!installed && temporary.exists() && !temporary.delete()) temporary.deleteOnExit();
+            if (!installed && temporary != null && temporary.exists() && !temporary.delete()) temporary.deleteOnExit();
         }
     }
 

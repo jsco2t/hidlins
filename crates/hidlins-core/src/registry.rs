@@ -36,12 +36,15 @@
 //! applying the mutation, preventing stale snapshots from losing another
 //! process's completed registry edit.
 
+use std::io::Write as _;
 use std::path::{Path, PathBuf};
 
 use serde::{Deserialize, Serialize};
 use sha2::{Digest as _, Sha256};
 
-use crate::atomic::{install_staged_file, remove_file_durable, write_atomic};
+use crate::atomic::{
+    install_staged_file, remove_file_durable, write_atomic, write_atomic_with_commit,
+};
 use crate::error::VaultError;
 use crate::locking::{acquire_exclusive, resolve_file_path};
 use crate::paths::HidlinsPaths;
@@ -270,6 +273,14 @@ impl VaultRegistry {
     }
 
     fn save_unlocked_at(&mut self, path: &Path) -> Result<(), VaultError> {
+        self.save_unlocked_at_with_commit(path, || {})
+    }
+
+    fn save_unlocked_at_with_commit(
+        &mut self,
+        path: &Path,
+        committed: impl FnOnce(),
+    ) -> Result<(), VaultError> {
         let on_disk = OnDisk {
             version: SCHEMA_VERSION,
             vaults: self.vaults.clone(),
@@ -279,14 +290,31 @@ impl VaultRegistry {
         let body = toml::to_string(&on_disk)
             .map_err(|source| VaultError::RegistrySerializationFailed { source })?;
 
-        write_atomic(path, body.as_bytes())?;
-        self.baseline = Some(body);
-        Ok(())
+        let mut installed = false;
+        let result = write_atomic_with_commit(
+            path,
+            |file| {
+                file.write_all(body.as_bytes())
+                    .map_err(|source| VaultError::Io {
+                        source,
+                        path: path.to_path_buf(),
+                    })
+            },
+            || {
+                installed = true;
+                committed();
+            },
+        );
+        if installed {
+            self.baseline = Some(body);
+        }
+        result
     }
 
     /// Transactionally update one registered vault. The latest registry is
     /// reloaded while holding the write lock, so unrelated concurrent changes
-    /// survive. `self` is replaced only after the atomic save succeeds.
+    /// survive. `self` follows the installed rename even if a later durability
+    /// step reports an error, so callers do not retain retired configuration.
     pub fn update_registered_extra(
         &mut self,
         name: &str,
@@ -304,9 +332,12 @@ impl VaultRegistry {
                 name: name.to_string(),
             })?;
         update(&mut vault.extra);
-        latest.save_unlocked_at(&path)?;
-        *self = latest;
-        Ok(())
+        let mut installed = false;
+        let result = latest.save_unlocked_at_with_commit(&path, || installed = true);
+        if installed {
+            *self = latest;
+        }
+        result
     }
 
     /// Change a vault master password and one password-sealed registry value
@@ -408,9 +439,16 @@ impl VaultRegistry {
             old_extra_sha256: hash_toml_value(expected_old)?,
             new_extra_sha256: hash_toml_value(replacement)?,
         };
-        if let Err(error) = write_rotation_marker(&artifacts.marker, &marker) {
-            let _ = remove_file_durable(&artifacts.vault_stage);
-            let _ = remove_file_durable(&artifacts.registry_stage);
+        let mut marker_installed = false;
+        if let Err(error) = write_rotation_marker_with_commit(&artifacts.marker, &marker, || {
+            marker_installed = true;
+        }) {
+            // Rename may have installed the marker before a later durability
+            // operation failed. Its stages must survive for restart recovery.
+            if !marker_installed {
+                let _ = remove_file_durable(&artifacts.vault_stage);
+                let _ = remove_file_durable(&artifacts.registry_stage);
+            }
             return Err(error);
         }
         maybe_signal_rotation_phase("prepared")?;
@@ -569,7 +607,8 @@ impl VaultRegistry {
     ///
     /// The latest on-disk registry is reloaded while holding the write lock so
     /// a stale caller cannot overwrite registrations completed by another
-    /// process. `self` is replaced only after the atomic save succeeds.
+    /// process. `self` follows the installed registration once rename commits,
+    /// including when a later durability operation reports an error.
     ///
     /// # Errors
     ///
@@ -584,9 +623,12 @@ impl VaultRegistry {
         let _guard = acquire_exclusive(&path)?;
         let mut latest = Self::load_from(self.paths.clone(), &path)?;
         latest.register(vault)?;
-        latest.save_unlocked_at(&path)?;
-        *self = latest;
-        Ok(())
+        let mut installed = false;
+        let result = latest.save_unlocked_at_with_commit(&path, || installed = true);
+        if installed {
+            *self = latest;
+        }
+        result
     }
 
     /// Add a vault to the registry.
@@ -751,7 +793,7 @@ fn recover_one_rotation(paths: &HidlinsPaths, marker_path: &Path) -> Result<(), 
     }
 
     let live_vault_hash = hash_file(&vault_path)?;
-    if live_vault_hash == marker.old_vault_sha256 {
+    let install_vault = if live_vault_hash == marker.old_vault_sha256 {
         if matches!(
             marker.phase,
             RotationPhase::VaultCommitted | RotationPhase::RegistryCommitted
@@ -761,23 +803,33 @@ fn recover_one_rotation(paths: &HidlinsPaths, marker_path: &Path) -> Result<(), 
             });
         }
         require_hash(&artifacts.vault_stage, &marker.new_vault_sha256)?;
-        install_staged_file(&artifacts.vault_stage, &vault_path)?;
+        true
     } else if live_vault_hash != marker.new_vault_sha256 {
         return Err(VaultError::PasswordRotationRecoveryFailed {
             reason: "live vault does not match either transaction version",
         });
-    }
+    } else {
+        false
+    };
 
-    marker.phase = RotationPhase::VaultCommitted;
-    write_rotation_marker(&artifacts.marker, &marker)?;
-
-    recover_registry_value(
+    // Validate both authorities and prepare any merged registry bytes before
+    // replacing either live file. Invalid recovery inputs must leave an
+    // otherwise intact old vault/registry pair untouched.
+    let registry_recovery = prepare_registry_recovery(
         &mut latest,
         &marker,
         &artifacts,
         &vault_path,
         &registry_path,
     )?;
+    if install_vault {
+        install_staged_file(&artifacts.vault_stage, &vault_path)?;
+    }
+
+    marker.phase = RotationPhase::VaultCommitted;
+    write_rotation_marker(&artifacts.marker, &marker)?;
+
+    registry_recovery.commit(&artifacts, &registry_path)?;
 
     marker.phase = RotationPhase::RegistryCommitted;
     write_rotation_marker(&artifacts.marker, &marker)?;
@@ -787,13 +839,29 @@ fn recover_one_rotation(paths: &HidlinsPaths, marker_path: &Path) -> Result<(), 
     Ok(())
 }
 
-fn recover_registry_value(
+enum RegistryRecovery {
+    Unchanged,
+    InstallStaged,
+    WriteMerged(String),
+}
+
+impl RegistryRecovery {
+    fn commit(self, artifacts: &RotationArtifacts, path: &Path) -> Result<(), VaultError> {
+        match self {
+            Self::Unchanged => Ok(()),
+            Self::InstallStaged => install_staged_file(&artifacts.registry_stage, path),
+            Self::WriteMerged(body) => write_atomic(path, body.as_bytes()),
+        }
+    }
+}
+
+fn prepare_registry_recovery(
     latest: &mut VaultRegistry,
     marker: &RotationMarker,
     artifacts: &RotationArtifacts,
     vault_path: &Path,
     registry_path: &Path,
-) -> Result<(), VaultError> {
+) -> Result<RegistryRecovery, VaultError> {
     let current_extra = latest
         .get(&marker.vault_name)
         .and_then(|entry| entry.extra.get(&marker.extra_key))
@@ -839,7 +907,7 @@ fn recover_registry_value(
 
         let current_registry_hash = hash_file(registry_path)?;
         if current_registry_hash == marker.old_registry_sha256 {
-            install_staged_file(&artifacts.registry_stage, registry_path)?;
+            Ok(RegistryRecovery::InstallStaged)
         } else {
             // Only replace the password-sealed value in the latest registry.
             // Unrelated registrations and fields written after the crash are
@@ -855,15 +923,15 @@ fn recover_registry_value(
             target
                 .extra
                 .insert(marker.extra_key.clone(), replacement.clone());
-            latest.save_unlocked_at(registry_path)?;
+            Ok(RegistryRecovery::WriteMerged(latest.serialize()?))
         }
     } else if current_extra_hash != marker.new_extra_sha256 {
-        return Err(VaultError::PasswordRotationRecoveryFailed {
+        Err(VaultError::PasswordRotationRecoveryFailed {
             reason: "password rotation registry value changed unexpectedly",
-        });
+        })
+    } else {
+        Ok(RegistryRecovery::Unchanged)
     }
-
-    Ok(())
 }
 
 fn rotation_artifacts(
@@ -1001,9 +1069,27 @@ fn require_hash(path: &Path, expected: &str) -> Result<(), VaultError> {
 }
 
 fn write_rotation_marker(path: &Path, marker: &RotationMarker) -> Result<(), VaultError> {
+    write_rotation_marker_with_commit(path, marker, || {})
+}
+
+fn write_rotation_marker_with_commit(
+    path: &Path,
+    marker: &RotationMarker,
+    committed: impl FnOnce(),
+) -> Result<(), VaultError> {
     let body = toml::to_string(marker)
         .map_err(|source| VaultError::RegistrySerializationFailed { source })?;
-    write_atomic(path, body.as_bytes())
+    write_atomic_with_commit(
+        path,
+        |file| {
+            file.write_all(body.as_bytes())
+                .map_err(|source| VaultError::Io {
+                    source,
+                    path: path.to_path_buf(),
+                })
+        },
+        committed,
+    )
 }
 
 #[cfg(debug_assertions)]

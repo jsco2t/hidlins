@@ -1,5 +1,53 @@
 //! Fixed transport preface and bounded Noise record framing.
 
+use std::{
+    io::{self, Read, Write},
+    net::TcpStream,
+    time::{Duration, Instant},
+};
+
+fn remaining(deadline: Instant) -> io::Result<Duration> {
+    deadline
+        .checked_duration_since(Instant::now())
+        .filter(|duration| !duration.is_zero())
+        .ok_or_else(|| io::ErrorKind::TimedOut.into())
+}
+
+/// Partial progress cannot restart the absolute preface/record deadline.
+pub(crate) fn read_exact_until(
+    stream: &mut TcpStream,
+    mut bytes: &mut [u8],
+    deadline: Instant,
+) -> io::Result<()> {
+    while !bytes.is_empty() {
+        stream.set_read_timeout(Some(remaining(deadline)?))?;
+        match stream.read(bytes) {
+            Ok(0) => return Err(io::ErrorKind::UnexpectedEof.into()),
+            Ok(count) => bytes = &mut bytes[count..],
+            Err(error) if error.kind() == io::ErrorKind::Interrupted => {}
+            Err(error) => return Err(error),
+        }
+    }
+    remaining(deadline).map(|_| ())
+}
+
+pub(crate) fn write_all_until(
+    stream: &mut TcpStream,
+    mut bytes: &[u8],
+    deadline: Instant,
+) -> io::Result<()> {
+    while !bytes.is_empty() {
+        stream.set_write_timeout(Some(remaining(deadline)?))?;
+        match stream.write(bytes) {
+            Ok(0) => return Err(io::ErrorKind::WriteZero.into()),
+            Ok(count) => bytes = &bytes[count..],
+            Err(error) if error.kind() == io::ErrorKind::Interrupted => {}
+            Err(error) => return Err(error),
+        }
+    }
+    remaining(deadline).map(|_| ())
+}
+
 /// Size of the cleartext protocol preface.
 pub const PREFACE_LENGTH: usize = 12;
 /// Largest Noise ciphertext record representable by the two-byte prefix.

@@ -11,13 +11,15 @@
 //!
 //! Built only with `--features test-binaries,logind`.
 
-#![cfg(all(target_os = "linux", feature = "logind"))]
-
+#[cfg(all(target_os = "linux", feature = "logind"))]
 use std::io::{BufRead, Write};
+#[cfg(all(target_os = "linux", feature = "logind"))]
 use std::time::{Duration, Instant};
 
+#[cfg(all(target_os = "linux", feature = "logind"))]
 use hidlins_security::{AutoLockConfig, AutoLockController, LockState, LogindSource};
 
+#[cfg(all(target_os = "linux", feature = "logind"))]
 fn main() {
     let mut controller = AutoLockController::new(AutoLockConfig {
         idle_timeout: Duration::from_secs(3600),
@@ -31,12 +33,12 @@ fn main() {
     // discipline `sigstop_helper` follows for signal-hook (see
     // Phase 4 code review where the reverse ordering produced a
     // 40% test flake). NOTE: even with this ordering the parent
-    // *still* needs a brief grace period after seeing "ready" before
-    // emitting signals, because `LogindSource::run` opens its DBus
+    // *still* needs to allow for subscription setup after "ready",
+    // because `LogindSource::run` opens its DBus
     // connections and subscribes asynchronously on the worker thread
     // — the helper's main thread cannot block on those completing
     // without re-introducing the inverse race. The integration test
-    // sleeps 500ms after "ready" to cover the subscription window.
+    // repeats the owning fixture's idempotent lock signal until observed.
     let source = LogindSource::new().expect("LogindSource::new infallible");
     controller
         .attach_event_source(source)
@@ -79,4 +81,10 @@ fn main() {
             }
         }
     }
+}
+
+#[cfg(not(all(target_os = "linux", feature = "logind")))]
+fn main() {
+    eprintln!("logind_helper requires Linux and the logind feature");
+    std::process::exit(2);
 }

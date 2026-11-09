@@ -11,9 +11,9 @@
 
 [package]
 edition = "2024"
-rust-version = "1.87"
+rust-version = "1.89"
 name = "zbus"
-version = "5.15.0"
+version = "6.2.1"
 authors = ["Zeeshan Ali Khan <zeeshanak@gnome.org>"]
 build = false
 autolib = false
@@ -21,14 +21,20 @@ autobins = false
 autoexamples = false
 autotests = false
 autobenches = false
-description = "API for D-Bus communication"
+description = "API for D-Bus communication and its wire format"
 readme = "README.md"
 keywords = [
     "D-Bus",
     "DBus",
     "IPC",
+    "serde",
 ]
-categories = ["os::unix-apis"]
+categories = [
+    "os::unix-apis",
+    "data-structures",
+    "encoding",
+    "parsing",
+]
 license = "MIT"
 repository = "https://github.com/z-galaxy/zbus/"
 
@@ -44,40 +50,83 @@ targets = [
 ]
 
 [features]
-async-fs = []
-async-io = [
-    "dep:async-io",
-    "async-executor",
-    "async-fs",
-    "async-task",
-    "async-lock",
-    "async-process",
-    "blocking",
-]
-blocking-api = ["zbus_macros/blocking-api"]
+arrayvec = ["dep:arrayvec"]
 bus-impl = ["p2p"]
-camino = ["zvariant/camino"]
-chrono = ["zvariant/chrono"]
+camino = ["dep:camino"]
+chrono = ["dep:chrono"]
+comms = [
+    "dep:bitflags",
+    "zbus_macros/comms",
+    "dep:serde_repr",
+    "dep:futures-core",
+    "dep:ordered-stream",
+    "dep:zruntime",
+    "zruntime/broadcast",
+    "zruntime/lock",
+    "zruntime/unblock",
+    "dep:async-trait",
+    "dep:rustix",
+    "dep:libc",
+    "dep:windows-sys",
+    "dep:uds_windows",
+    "dep:socket2",
+    "dep:uuid",
+]
 default = [
-    "async-io",
-    "blocking-api",
+    "default-rt",
+    "proxy",
+    "service",
+    "object-manager",
+    "tracing",
 ]
-heapless = ["zvariant/heapless"]
-option-as-array = ["zvariant/option-as-array"]
-p2p = ["uuid/v4"]
-serde_bytes = ["zvariant/serde_bytes"]
-time = ["zvariant/time"]
-tokio = ["dep:tokio"]
-tokio-vsock = [
-    "dep:tokio-vsock",
+default-rt = [
+    "comms",
+    "zruntime/runtime",
+    "zruntime/helper",
+    "zruntime/tcp",
+    "zruntime/unix",
+    "zruntime/process",
+]
+heapless = ["dep:heapless"]
+ibus = [
+    "comms",
+    "tokio?/process",
+]
+object-manager = ["service"]
+option-as-array = []
+p2p = [
+    "comms",
+    "uuid?/v4",
+]
+proxy = [
+    "comms",
+    "zbus_macros/proxy",
+]
+serde_bytes = ["dep:serde_bytes"]
+service = [
+    "comms",
+    "zbus_macros/service",
+]
+time = ["dep:time"]
+tokio = [
+    "comms",
+    "dep:tokio",
+]
+tokio-multithread = [
     "tokio",
+    "tokio/rt-multi-thread",
 ]
-url = ["zvariant/url"]
-uuid = ["zvariant/uuid"]
-vsock = [
-    "dep:vsock",
-    "dep:async-io",
+tracing = [
+    "dep:tracing",
+    "tokio?/tracing",
+    "zruntime?/tracing",
 ]
+unixexec = [
+    "comms",
+    "tokio?/process",
+]
+url = ["dep:url"]
+uuid = ["dep:uuid"]
 
 [lib]
 name = "zbus"
@@ -87,19 +136,31 @@ bench = false
 [[example]]
 name = "screen-brightness"
 path = "examples/screen-brightness.rs"
-required-features = ["blocking-api"]
+required-features = ["proxy"]
 
 [[example]]
 name = "watch-systemd-jobs"
 path = "examples/watch-systemd-jobs.rs"
+required-features = [
+    "default-rt",
+    "proxy",
+]
 
 [[test]]
 name = "basic"
 path = "tests/basic.rs"
 
 [[test]]
+name = "builder_feature_additivity"
+path = "tests/builder_feature_additivity.rs"
+
+[[test]]
 name = "builder_message_stream"
 path = "tests/builder_message_stream.rs"
+
+[[test]]
+name = "connection_closed"
+path = "tests/connection_closed.rs"
 
 [[test]]
 name = "e2e"
@@ -110,6 +171,10 @@ name = "issues"
 path = "tests/issues.rs"
 
 [[test]]
+name = "polling_runtime"
+path = "tests/polling_runtime/main.rs"
+
+[[test]]
 name = "uncached_propert"
 path = "tests/uncached_propert.rs"
 
@@ -117,115 +182,177 @@ path = "tests/uncached_propert.rs"
 name = "unixexec"
 path = "tests/unixexec.rs"
 
+[[test]]
+name = "wire"
+path = "tests/wire/main.rs"
+
+[[test]]
+name = "zvariant_compat"
+path = "tests/zvariant_compat.rs"
+
 [[bench]]
 name = "benchmarks"
 path = "benches/benchmarks.rs"
 harness = false
+required-features = ["comms"]
 
-[dependencies.async-broadcast]
-version = "0.7.0"
+[[bench]]
+name = "connection"
+path = "benches/connection.rs"
+harness = false
+required-features = [
+    "default-rt",
+    "bus-impl",
+    "serde_bytes",
+]
 
-[dependencies.async-executor]
-version = "1.11.0"
-optional = true
+[[bench]]
+name = "names"
+path = "benches/names.rs"
+harness = false
 
-[dependencies.async-io]
-version = "2.3.2"
-optional = true
+[[bench]]
+name = "runtime"
+path = "benches/runtime.rs"
+harness = false
+required-features = ["p2p"]
 
-[dependencies.async-lock]
-version = "3.3.0"
-optional = true
+[[bench]]
+name = "wire"
+path = "benches/wire.rs"
+harness = false
 
-[dependencies.async-process]
-version = "2.2.2"
-optional = true
-
-[dependencies.async-task]
-version = "4.7.1"
+[dependencies.arrayvec]
+version = "0.7.4"
+features = ["serde"]
 optional = true
 
 [dependencies.async-trait]
 version = "0.1.80"
-
-[dependencies.blocking]
-version = "1.6.0"
 optional = true
 
-[dependencies.enumflags2]
-version = "0.7.9"
-features = ["serde"]
+[dependencies.bitflags]
+version = "2.13.2"
+optional = true
 
-[dependencies.event-listener]
-version = "5.3.0"
+[dependencies.camino]
+version = "1.1.9"
+optional = true
+
+[dependencies.chrono]
+version = "0.4.38"
+features = ["serde"]
+optional = true
+default-features = false
+
+[dependencies.endi]
+version = "1.1.0"
 
 [dependencies.futures-core]
 version = "0.3.30"
+optional = true
 
-[dependencies.futures-lite]
-version = "2.6.0"
-features = ["std"]
-default-features = false
+[dependencies.heapless]
+version = "0.9.0"
+features = ["serde"]
+optional = true
 
 [dependencies.ordered-stream]
 version = "0.2"
+optional = true
 
 [dependencies.serde]
 version = "1.0.200"
 features = ["derive"]
 
-[dependencies.serde_repr]
-version = "0.1.19"
-
-[dependencies.tokio]
-version = "1.37.0"
-features = [
-    "rt",
-    "rt-multi-thread",
-    "net",
-    "time",
-    "fs",
-    "io-util",
-    "process",
-    "sync",
-    "tracing",
-]
+[dependencies.serde_bytes]
+version = "0.11.14"
 optional = true
 
-[dependencies.tokio-vsock]
-version = "0.7"
+[dependencies.serde_repr]
+version = "0.1.19"
+optional = true
+
+[dependencies.time]
+version = "0.3.36"
+features = ["serde"]
+optional = true
+
+[dependencies.tokio]
+version = "1.53.3"
+features = [
+    "rt",
+    "net",
+    "time",
+    "sync",
+]
 optional = true
 
 [dependencies.tracing]
 version = "0.1.40"
+optional = true
+
+[dependencies.url]
+version = "2.5.0"
+features = ["serde"]
+optional = true
 
 [dependencies.uuid]
 version = "1.8.0"
 features = ["serde"]
-
-[dependencies.vsock]
-version = "0.5.0"
 optional = true
 
 [dependencies.winnow]
 version = "1.0"
 
 [dependencies.zbus_macros]
-version = "5.15.0"
+version = "6.2.1"
+default-features = false
 
-[dependencies.zbus_names]
-version = "4.3.2"
+[dependencies.zbus_utils]
+version = "6.1.0"
 
-[dependencies.zvariant]
-version = "5.10.1"
-features = ["enumflags2"]
+[dependencies.zcheapstr]
+version = "1.0.0"
+features = ["serde"]
+
+[dependencies.zruntime]
+version = "0.2.0"
+optional = true
+default-features = false
+
+[dev-dependencies.async-executor]
+version = "1.11.0"
+
+[dev-dependencies.async-io]
+version = "2.3.2"
+
+[dev-dependencies.async-task]
+version = "4.7.1"
+
+[dev-dependencies.bitflags]
+version = "2.13.2"
+
+[dev-dependencies.chrono]
+version = "0.4.38"
+features = [
+    "serde",
+    "serde",
+    "alloc",
+]
+default-features = false
 
 [dev-dependencies.criterion]
-version = "4.0.4"
+version = "6.0.0"
 package = "codspeed-criterion-compat"
 
 [dev-dependencies.doc-comment]
 version = "0.3.3"
+
+[dev-dependencies.futures-lite]
+version = "2.6.0"
+features = ["std"]
+default-features = false
 
 [dev-dependencies.futures-util]
 version = "0.3.31"
@@ -236,8 +363,27 @@ features = [
 ]
 default-features = false
 
+[dev-dependencies.libc]
+version = "0.2"
+default-features = false
+
 [dev-dependencies.ntest]
-version = "0.9.2"
+version = "0.10.0"
+
+[dev-dependencies.polling]
+version = "3.11.0"
+
+[dev-dependencies.serde_json]
+version = "1.0.116"
+
+[dev-dependencies.serde_repr]
+version = "0.1.19"
+
+[dev-dependencies.socket2]
+version = "0.6.5"
+
+[dev-dependencies.static_assertions]
+version = "1.1.0"
 
 [dev-dependencies.tempfile]
 version = "3.10.1"
@@ -248,7 +394,7 @@ features = ["trace"]
 default-features = false
 
 [dev-dependencies.tokio]
-version = "1.37.0"
+version = "1.53.3"
 features = [
     "macros",
     "rt-multi-thread",
@@ -260,6 +406,9 @@ features = [
     "test-util",
 ]
 
+[dev-dependencies.tracing]
+version = "0.1.40"
+
 [dev-dependencies.tracing-subscriber]
 version = "0.3.18"
 features = [
@@ -269,27 +418,33 @@ features = [
 ]
 default-features = false
 
-[target."cfg(unix)".dependencies.async-recursion]
-version = "1.1.1"
-
-[target."cfg(unix)".dependencies.libc]
-version = "0.2"
-default-features = false
-
-[target."cfg(unix)".dependencies.rustix]
+[target.'cfg(any(unix, target_os = "wasi"))'.dependencies.rustix]
 version = "1.1.2"
 features = [
     "net",
     "process",
     "std",
 ]
+optional = true
 default-features = false
 
-[target."cfg(windows)".dependencies.async-recursion]
-version = "1.1.1"
+[target.'cfg(not(target_os = "wasi"))'.dependencies.socket2]
+version = "0.6.5"
+optional = true
+
+[target.'cfg(target_os = "macos")'.dependencies.tokio]
+version = "1.53.3"
+features = ["process"]
+optional = true
+
+[target."cfg(unix)".dependencies.libc]
+version = "0.2"
+optional = true
+default-features = false
 
 [target."cfg(windows)".dependencies.uds_windows]
 version = "1.1.0"
+optional = true
 
 [target."cfg(windows)".dependencies.windows-sys]
 version = "0.61"
@@ -305,6 +460,7 @@ features = [
     "Win32_System_IO",
     "Win32_System_Threading",
 ]
+optional = true
 
 [lints.rust.unexpected_cfgs]
 level = "warn"

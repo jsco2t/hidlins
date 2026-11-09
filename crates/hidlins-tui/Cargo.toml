@@ -26,7 +26,7 @@ hidlins-core = { path = "../hidlins-core", version = "0.1" }
 hidlins-sync = { path = "../hidlins-sync", version = "0.1", features = ["desktop-discovery"] }
 # Auto-lock + clipboard. `AutoLockController` enforces FR-073 idle locking;
 # `Clipboard`/`AutoClearGuard` protect copy actions.
-hidlins-security = { path = "../hidlins-security", version = "0.1" }
+hidlins-security = { path = "../hidlins-security", version = "0.1", features = ["logind", "iokit"] }
 # Password / passphrase generation for the Edit→Generate panel.
 # First-party path dep; pulls no new vendored crates (its deps are already in
 # the tree).
@@ -47,7 +47,9 @@ hidlins-genpw = { path = "../hidlins-genpw", version = "0.1" }
 # (`std = ["time/local-offset"]`), which any usable build enables — so dropping
 # `all-widgets` removes zero crates (verified: compiled set unchanged). Not
 # worth the `default-features = false` + curated-list fragility for no gain.
-ratatui = "=0.30.2"
+# Use the pinned renderer's own wrap count for scroll bounds, including words
+# and grapheme widths. This exposes an existing API and adds no package.
+ratatui = { version = "=0.30.2", features = ["unstable-rendered-line-info"] }
 crossterm = "0.29"
 # Input-widget primitive for `PasswordInput`, search, and edit fields. The
 # `crossterm` feature enables direct event translation. 0.15.3 targets crossterm 0.29 +
@@ -90,3 +92,7 @@ libc = "0.2"
 # tempdir and register it in an in-memory `VaultRegistry`. (`toml` for the
 # `RegisteredVault::extra` table is now a regular dependency above.)
 tempfile = "3"
+
+[target.'cfg(target_os = "linux")'.dev-dependencies]
+# Reuse the exact existing MIT private-logind fixture/backend; no new package.
+zbus = { version = "=6.2.1", default-features = false, features = ["default-rt", "proxy", "service"] }

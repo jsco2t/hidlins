@@ -13,6 +13,7 @@ import zipfile
 from pathlib import Path
 
 from artifacts import elf_metadata
+from release_jni import inspect_apk
 
 ROOT = Path(__file__).resolve().parents[2]
 DEBUG_APK = ROOT / "app/build/app/outputs/apk/debug/app-debug.apk"
@@ -183,6 +184,11 @@ def main() -> None:
         verify_android_metadata(apk, release=release)
         if release:
             release_libraries = libraries
+    try:
+        inspect_apk(RELEASE_APK, sdk_root(), os.environ.copy())
+    except (OSError, RuntimeError, subprocess.SubprocessError) as error:
+        fail(str(error))
+    print("  OK: release DEX preserves the public JNI receive([B)Z callback")
     verify_release_elfs(
         RELEASE_APK,
         release_libraries,

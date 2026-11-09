@@ -386,7 +386,19 @@ class AppLocalizationsEn extends AppLocalizations {
   String get entryMoveTitle => 'Move entry';
 
   @override
+  String get entryMoveDestinationLabel => 'Destination group';
+
+  @override
+  String get entryMoveNoDestinations => 'No other groups';
+
+  @override
+  String get entryActionChanged => 'The vault changed. Try this action again.';
+
+  @override
   String get entryHistoryTitle => 'Entry history';
+
+  @override
+  String get entryHistoryEmpty => 'No history yet';
 
   @override
   String entryHistoryVersion(int number) {
@@ -410,6 +422,33 @@ class AppLocalizationsEn extends AppLocalizations {
 
   @override
   String get groupNameLabel => 'Group name';
+
+  @override
+  String get groupsTitle => 'Groups';
+
+  @override
+  String groupActionsFor(String name) {
+    return 'Actions for $name';
+  }
+
+  @override
+  String get groupMoveTitle => 'Move group';
+
+  @override
+  String get groupMoveNoDestinations => 'No other eligible groups';
+
+  @override
+  String get groupDeleteBehavior => 'Delete behavior';
+
+  @override
+  String get groupDeleteOnlyEmpty => 'Only if empty';
+
+  @override
+  String get groupDeleteSubtree => 'Group and contents to Recycle Bin';
+
+  @override
+  String get groupDeleteNonempty =>
+      'This group is not empty. Choose to move it and its contents to Recycle Bin.';
 
   @override
   String get recycleBin => 'Recycle bin';
@@ -437,6 +476,9 @@ class AppLocalizationsEn extends AppLocalizations {
   String get attachmentExportFailed => 'Could not save attachment';
 
   @override
+  String get attachmentSourceFailed => 'Could not choose attachment';
+
+  @override
   String attachmentBytes(String size) {
     return '$size bytes';
   }
@@ -446,6 +488,15 @@ class AppLocalizationsEn extends AppLocalizations {
 
   @override
   String get expirationClear => 'Clear expiration';
+
+  @override
+  String get expirationLabel => 'Expiration (UTC)';
+
+  @override
+  String get expirationNever => 'Never expires';
+
+  @override
+  String get expirationPickerHelp => 'Expiration date (00:00 UTC)';
 
   @override
   String get searchHintText => 'Search entries…';
@@ -508,6 +559,10 @@ class AppLocalizationsEn extends AppLocalizations {
 
   @override
   String get vaultChangePasswordTitle => 'Change master password';
+
+  @override
+  String get vaultChangePasswordUnlockTarget =>
+      'Unlock this vault before changing its password.';
 
   @override
   String get vaultChangePasswordCurrent => 'Current password';

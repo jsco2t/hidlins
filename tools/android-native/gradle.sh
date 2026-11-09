@@ -18,7 +18,18 @@ fi
   echo "error: JAVA_HOME must point at a Java 17+ runtime" >&2; exit 1;
 }
 
-readonly FLUTTER_ROOT="$(cd "$(dirname "$(command -v flutter)")/.." && pwd)"
+# Resolve executable shims before deriving the SDK's wrapper artifact path.
+if ! flutter_executable="$(command -v flutter)"; then
+  echo "error: Flutter executable is not available in PATH" >&2
+  exit 1
+fi
+FLUTTER_ROOT="$(python3 - "$flutter_executable" <<'SDK_PATH'
+from pathlib import Path
+import sys
+print(Path(sys.argv[1]).resolve(strict=True).parent.parent)
+SDK_PATH
+)"
+readonly FLUTTER_ROOT
 readonly WRAPPER_SOURCE="$FLUTTER_ROOT/bin/cache/artifacts/gradle_wrapper/gradle/wrapper/gradle-wrapper.jar"
 readonly WRAPPER_TEMP="$(mktemp -d)"
 trap 'rm -rf "$WRAPPER_TEMP"' EXIT

@@ -30,12 +30,20 @@ impl Vault {
     /// Add `draft` to `group` and return the freshly allocated entry UUID.
     ///
     /// The entry exists only in the in-memory vault until [`Self::save`] is
-    /// called.
+    /// called. Standard field names in custom fields return
+    /// [`VaultError::ReservedCustomField`] before inserting an entry.
     pub fn add_entry(
         &mut self,
         group: uuid::Uuid,
         draft: EntryDraft,
     ) -> Result<uuid::Uuid, VaultError> {
+        if draft
+            .custom_fields
+            .iter()
+            .any(|field| super::is_standard_field(&field.name))
+        {
+            return Err(VaultError::ReservedCustomField);
+        }
         let group_id = find_group_id(self.database(), group)?;
         let mut group = self
             .database_mut()
@@ -69,19 +77,31 @@ impl Vault {
 
     /// Update an entry, appending one history snapshot for the committed edit.
     ///
-    /// If `f` returns an error, the entry is restored to its pre-call state and
-    /// no history snapshot remains.
+    /// If `f` returns an error or attempts a custom-field operation on a
+    /// standard field, the entry and its history are restored to their
+    /// pre-call state.
     pub fn update_entry<F>(&mut self, uuid: uuid::Uuid, f: F) -> Result<(), VaultError>
     where
         F: FnOnce(&mut EntryViewMut<'_>) -> Result<(), VaultError>,
     {
         let entry_id = find_entry_id(self.database(), uuid)?;
         let cap = self.history_cap();
-        let snapshot = {
+        let (snapshot, rebuild_attachments) = {
             let mut entry = self
                 .database_mut()
                 .entry_mut(entry_id)
                 .ok_or(VaultError::EntryNotFound { uuid })?;
+            let rebuild_attachments = !matches!(cap, HistoryCap::Disabled) && {
+                let view = entry.as_ref();
+                view.attachment_names().next().is_some()
+                    || (0..view.history.as_ref().map_or(0, |h| h.get_entries().len())).any(
+                        |index| {
+                            view.historical(index).is_some_and(|historical| {
+                                historical.attachment_names().next().is_some()
+                            })
+                        },
+                    )
+            };
             let snapshot = entry.clone();
             match cap {
                 HistoryCap::Disabled => {}
@@ -94,7 +114,7 @@ impl Vault {
                     }
                 }
             }
-            snapshot
+            (snapshot, rebuild_attachments)
         };
 
         let result = {
@@ -103,10 +123,10 @@ impl Vault {
                 .entry_mut(entry_id)
                 .ok_or(VaultError::EntryNotFound { uuid })?;
             let mut view = EntryViewMut::new(entry);
-            f(&mut view)
+            f(&mut view).and_then(|()| view.validate_custom_fields())
         };
 
-        match result {
+        let result = match result {
             Ok(()) => {
                 let mut entry = self
                     .database_mut()
@@ -123,7 +143,14 @@ impl Vault {
                 *entry = snapshot;
                 Err(err)
             }
+        };
+        // Manual history append/pruning changes attachment history indices.
+        // Rebuild only for entries with affected references, keeping ordinary
+        // attachment-free edits off the database-wide indexing path.
+        if rebuild_attachments {
+            self.database_mut().rebuild_attachment_references();
         }
+        result
     }
 
     /// Delete an entry using the vault's recycle-bin setting.
@@ -231,8 +258,7 @@ impl Vault {
 }
 
 pub(crate) fn find_entry_id(db: &Database, uuid: uuid::Uuid) -> Result<EntryId, VaultError> {
-    db.iter_all_entries()
-        .find(|entry| entry.id().uuid() == uuid)
+    db.entry(EntryId::from_uuid(uuid))
         .map(|entry| entry.id())
         .ok_or(VaultError::EntryNotFound { uuid })
 }

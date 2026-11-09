@@ -84,6 +84,9 @@ abstract class RustLibApiImplPlatform extends BaseApiImpl<RustLibWire> {
   double dco_decode_box_autoadd_f_64(dynamic raw);
 
   @protected
+  GeneratedSecret dco_decode_box_autoadd_generated_secret(dynamic raw);
+
+  @protected
   HidlinsApiError dco_decode_box_autoadd_hidlins_api_error(dynamic raw);
 
   @protected
@@ -144,6 +147,9 @@ abstract class RustLibApiImplPlatform extends BaseApiImpl<RustLibWire> {
 
   @protected
   DiscoveryPermissionDto dco_decode_discovery_permission_dto(dynamic raw);
+
+  @protected
+  DiscoveryServiceDto dco_decode_discovery_service_dto(dynamic raw);
 
   @protected
   DiscoveryStatusDto dco_decode_discovery_status_dto(dynamic raw);
@@ -419,6 +425,11 @@ abstract class RustLibApiImplPlatform extends BaseApiImpl<RustLibWire> {
   double sse_decode_box_autoadd_f_64(SseDeserializer deserializer);
 
   @protected
+  GeneratedSecret sse_decode_box_autoadd_generated_secret(
+    SseDeserializer deserializer,
+  );
+
+  @protected
   HidlinsApiError sse_decode_box_autoadd_hidlins_api_error(
     SseDeserializer deserializer,
   );
@@ -499,6 +510,11 @@ abstract class RustLibApiImplPlatform extends BaseApiImpl<RustLibWire> {
 
   @protected
   DiscoveryPermissionDto sse_decode_discovery_permission_dto(
+    SseDeserializer deserializer,
+  );
+
+  @protected
+  DiscoveryServiceDto sse_decode_discovery_service_dto(
     SseDeserializer deserializer,
   );
 
@@ -831,6 +847,12 @@ abstract class RustLibApiImplPlatform extends BaseApiImpl<RustLibWire> {
   void sse_encode_box_autoadd_f_64(double self, SseSerializer serializer);
 
   @protected
+  void sse_encode_box_autoadd_generated_secret(
+    GeneratedSecret self,
+    SseSerializer serializer,
+  );
+
+  @protected
   void sse_encode_box_autoadd_hidlins_api_error(
     HidlinsApiError self,
     SseSerializer serializer,
@@ -935,6 +957,12 @@ abstract class RustLibApiImplPlatform extends BaseApiImpl<RustLibWire> {
   @protected
   void sse_encode_discovery_permission_dto(
     DiscoveryPermissionDto self,
+    SseSerializer serializer,
+  );
+
+  @protected
+  void sse_encode_discovery_service_dto(
+    DiscoveryServiceDto self,
     SseSerializer serializer,
   );
 

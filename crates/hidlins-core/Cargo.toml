@@ -33,7 +33,7 @@ zeroize = { version = "1.8", features = ["derive"] }
 libc = "0.2"
 # Already required by tempfile. Reuse its safe descriptor-relative filesystem
 # APIs for owned atomic staging; no new packages or features are introduced.
-rustix = { version = "=1.1.4", default-features = false, features = ["fs", "std"] }
+rustix = { version = "=1.1.6", default-features = false, features = ["fs", "std"] }
 
 [dev-dependencies]
 # Already in the workspace dep tree via `tempfile`; promoted here so the

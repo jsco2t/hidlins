@@ -1,33 +1,37 @@
 //! Connection API.
-use async_broadcast::{InactiveReceiver, Receiver, Sender as Broadcaster, broadcast};
-use enumflags2::BitFlags;
-use event_listener::{Event, EventListener};
-use ordered_stream::{OrderedFuture, OrderedStream, PollResult};
 use std::{
+    borrow::Cow,
     collections::HashMap,
-    io::{self, ErrorKind},
-    num::NonZeroU32,
-    pin::Pin,
-    sync::{Arc, OnceLock, Weak},
-    task::{Context, Poll},
+    future::Future,
+    io,
+    num::NonZeroUsize,
+    sync::{
+        Arc, OnceLock, Weak,
+        atomic::{AtomicBool, Ordering},
+    },
     time::Duration,
 };
-use tracing::{Instrument, debug, info_span, instrument, trace, trace_span, warn};
-use zbus_names::{BusName, ErrorName, InterfaceName, MemberName, OwnedUniqueName, WellKnownName};
-use zvariant::ObjectPath;
-
-use futures_core::Future;
-use futures_lite::StreamExt;
-
-use crate::{
-    DBusError, Error, Executor, MatchRule, MessageStream, ObjectServer, OwnedGuid, OwnedMatchRule,
-    Result, Task,
-    async_lock::{Mutex, Semaphore, SemaphorePermit},
-    fdo::{ConnectionCredentials, ReleaseNameReply, RequestNameFlags, RequestNameReply},
-    is_flatpak,
-    message::{Flags, Message, Type},
-    timeout::timeout,
+use zruntime::{
+    Event, EventListener,
+    broadcast::{InactiveReceiver, Receiver, Sender as Broadcaster, channel},
 };
+
+#[cfg(feature = "service")]
+use crate::ObjectServer;
+#[cfg(feature = "service")]
+use crate::log::debug;
+use crate::{
+    DBusError, Error, MatchRule, ObjectPath, OwnedGuid, OwnedMatchRule, Result,
+    fdo::{ConnectionCredentials, ReleaseNameReply, RequestNameFlags, RequestNameReply},
+    log::{Instrument, info, info_span, trace, trace_span, warn},
+    message::{self, Flags, Message, Type},
+    names::{BusName, ErrorName, InterfaceName, MemberName, OwnedUniqueName, WellKnownName},
+    runtime::{Runtime, Task, locks::Mutex, traits},
+    utils::next,
+};
+
+mod activity_listener;
+pub use activity_listener::ActivityListener;
 
 mod builder;
 pub use builder::Builder;
@@ -36,14 +40,16 @@ pub mod socket;
 pub use socket::Socket;
 
 mod socket_reader;
-use socket_reader::SocketReader;
+use socket_reader::{SocketReader, SocketStatus};
+
+mod pending_method_calls;
+use pending_method_calls::{PendingMethodCall, PendingMethodCalls};
 
 pub(crate) mod handshake;
 pub use handshake::AuthMechanism;
 use handshake::Authenticated;
 
-const DEFAULT_MAX_QUEUED: usize = 64;
-const DEFAULT_MAX_METHOD_RETURN_QUEUED: usize = 8;
+const DEFAULT_MAX_QUEUED: NonZeroUsize = NonZeroUsize::new(64).unwrap();
 
 /// Inner state shared by Connection and WeakConnection
 #[derive(Debug)]
@@ -56,30 +62,51 @@ pub(crate) struct ConnectionInner {
     unique_name: OnceLock<OwnedUniqueName>,
     registered_names: Mutex<HashMap<WellKnownName<'static>, NameStatus>>,
 
-    activity_event: Arc<Event>,
+    socket_status: Arc<SocketStatus>,
     socket_write: Mutex<Box<dyn socket::WriteHalf>>,
-
-    // Our executor
-    executor: Executor<'static>,
 
     // Socket reader task
     #[allow(unused)]
     socket_reader_task: OnceLock<Task<()>>,
 
     pub(crate) msg_receiver: InactiveReceiver<Result<Message>>,
-    pub(crate) method_return_receiver: InactiveReceiver<Result<Message>>,
     msg_senders: Arc<Mutex<HashMap<Option<OwnedMatchRule>, MsgBroadcaster>>>,
+    pending_method_calls: PendingMethodCalls,
 
     subscriptions: Mutex<Subscriptions>,
 
+    #[cfg(feature = "service")]
     object_server: OnceLock<ObjectServer>,
+    #[cfg(feature = "service")]
     object_server_dispatch_task: OnceLock<Task<()>>,
+
+    // The runtime that runs our tasks and times our calls out. Declared after the task handles
+    // so that it outlives them.
+    runtime: Runtime,
 
     drop_event: Event,
 
     method_timeout: Option<Duration>,
     // Cache the credentials.
     credentials: OnceLock<Arc<ConnectionCredentials>>,
+}
+
+impl ConnectionInner {
+    /// Whether the connection is closed, in the sense [`Connection::is_closed`] reports.
+    ///
+    /// The `Acquire` load pairs with the `Release` store whoever closed the connection made, so
+    /// everything they did on their way out is visible to whoever sees `true` here.
+    pub(crate) fn is_closed(&self) -> bool {
+        self.socket_status.closed.load(Ordering::Acquire)
+    }
+
+    /// A listener for the moment the connection closes.
+    ///
+    /// Arming one before reading the flag above is what makes the pair race-free: a connection
+    /// that closes between the two still wakes the listener.
+    pub(crate) fn closed_listener(&self) -> EventListener {
+        self.socket_status.closed_event.listen()
+    }
 }
 
 impl Drop for ConnectionInner {
@@ -104,13 +131,30 @@ pub(crate) type MsgBroadcaster = Broadcaster<Result<Message>>;
 ///
 /// For higher-level message handling (typed functions, introspection, documentation reasons etc),
 /// it is recommended to wrap the low-level D-Bus messages into Rust functions with the
-/// [`macro@crate::proxy`] and [`macro@crate::interface`] macros instead of doing it directly on a
-/// `Connection`.
+#[cfg_attr(
+    all(feature = "proxy", feature = "service"),
+    doc = "[`macro@crate::proxy`] and [`macro@crate::interface`] macros instead of doing it",
+    doc = "directly on a `Connection`."
+)]
+#[cfg_attr(
+    not(all(feature = "proxy", feature = "service")),
+    doc = "`proxy` and `interface` macros (requiring the `proxy` and `service` features",
+    doc = "respectively) instead of doing it directly on a `Connection`."
+)]
 ///
 /// Typically, a connection is made to the session bus with [`Connection::session`], or to the
-/// system bus with [`Connection::system`]. Then the connection is used with [`crate::Proxy`]
-/// instances or the on-demand [`ObjectServer`] instance that can be accessed through
-/// [`Connection::object_server`].
+#[cfg_attr(
+    all(feature = "proxy", feature = "service"),
+    doc = "system bus with [`Connection::system`]. Then the connection is used with",
+    doc = "[`crate::Proxy`] instances or the on-demand [`ObjectServer`] instance that can be",
+    doc = "accessed through [`Connection::object_server`]."
+)]
+#[cfg_attr(
+    not(all(feature = "proxy", feature = "service")),
+    doc = "system bus with [`Connection::system`]. Then the connection is used with `Proxy`",
+    doc = "instances (requires the `proxy` feature) or the on-demand `ObjectServer` instance that",
+    doc = "can be accessed through `Connection::object_server` (requires the `service` feature)."
+)]
 ///
 /// `Connection` implements [`Clone`] and cloning it is a very cheap operation, as the underlying
 /// data is not cloned. This makes it very convenient to share the connection between different
@@ -120,9 +164,8 @@ pub(crate) type MsgBroadcaster = Broadcaster<Result<Message>>;
 /// `Connection` keeps internal queues of incoming message. The default capacity of each of these is
 /// 64. The capacity of the main (unfiltered) queue is configurable through the [`set_max_queued`]
 /// method. When the queue is full, no more messages can be received until room is created for more.
-/// This is why it's important to ensure that all [`crate::MessageStream`] and
-/// [`crate::blocking::MessageIterator`] instances are continuously polled and iterated on,
-/// respectively.
+/// This is why it's important to ensure that all [`crate::MessageStream`] instances are
+/// continuously polled.
 ///
 /// For sending messages you can use the [`Connection::send`] method.
 ///
@@ -214,80 +257,6 @@ pub struct Connection {
     pub(crate) inner: Arc<ConnectionInner>,
 }
 
-/// A method call whose completion can be awaited or joined with other streams.
-///
-/// This is useful for cache population method calls, where joining the [`JoinableStream`] with
-/// an update signal stream can be used to ensure that cache updates are not overwritten by a cache
-/// population whose task is scheduled later.
-#[derive(Debug)]
-pub(crate) struct PendingMethodCall {
-    stream: Option<MessageStream>,
-    serial: NonZeroU32,
-}
-
-impl Future for PendingMethodCall {
-    type Output = Result<Message>;
-
-    fn poll(self: Pin<&mut Self>, cx: &mut Context<'_>) -> Poll<Self::Output> {
-        self.poll_before(cx, None).map(|ret| {
-            ret.map(|(_, r)| r).unwrap_or_else(|| {
-                Err(crate::Error::InputOutput(
-                    io::Error::new(ErrorKind::BrokenPipe, "socket closed").into(),
-                ))
-            })
-        })
-    }
-}
-
-impl OrderedFuture for PendingMethodCall {
-    type Output = Result<Message>;
-    type Ordering = zbus::message::Sequence;
-
-    fn poll_before(
-        self: Pin<&mut Self>,
-        cx: &mut Context<'_>,
-        before: Option<&Self::Ordering>,
-    ) -> Poll<Option<(Self::Ordering, Self::Output)>> {
-        let this = self.get_mut();
-        if let Some(stream) = &mut this.stream {
-            loop {
-                match Pin::new(&mut *stream).poll_next_before(cx, before) {
-                    Poll::Ready(PollResult::Item {
-                        data: Ok(msg),
-                        ordering,
-                    }) => {
-                        if msg.header().reply_serial() != Some(this.serial) {
-                            continue;
-                        }
-                        let res = match msg.message_type() {
-                            Type::Error => Err(msg.into()),
-                            Type::MethodReturn => Ok(msg),
-                            _ => continue,
-                        };
-                        this.stream = None;
-                        return Poll::Ready(Some((ordering, res)));
-                    }
-                    Poll::Ready(PollResult::Item {
-                        data: Err(e),
-                        ordering,
-                    }) => {
-                        return Poll::Ready(Some((ordering, Err(e))));
-                    }
-
-                    Poll::Ready(PollResult::NoneBefore) => {
-                        return Poll::Ready(None);
-                    }
-                    Poll::Ready(PollResult::Terminated) => {
-                        return Poll::Ready(None);
-                    }
-                    Poll::Pending => return Poll::Pending,
-                }
-            }
-        }
-        Poll::Ready(None)
-    }
-}
-
 impl Connection {
     /// Send `msg` to the peer.
     pub async fn send(&self, msg: &Message) -> Result<()> {
@@ -296,10 +265,39 @@ impl Connection {
             return Err(Error::Unsupported);
         }
 
-        self.inner.activity_event.notify(usize::MAX);
+        self.inner.socket_status.activity_event.notify(usize::MAX);
         let mut write = self.inner.socket_write.lock().await;
 
         write.send_message(msg).await
+    }
+
+    /// Send `msgs` to the peer, in order, with as few writes as the socket allows.
+    ///
+    /// [`Connection::send`] makes at least one write for each message. This hands all of `msgs` to
+    /// the socket at once instead, through [`WriteHalf::send_messages`], and the sockets that zbus
+    /// creates write several messages at a time. No other message is sent on the connection in
+    /// between.
+    ///
+    /// If any of `msgs` carries file descriptors and the connection can't pass them, this fails
+    /// with [`Error::Unsupported`] before it sends anything. If it fails after that, the messages
+    /// before the one that it failed on have been sent in full, and that one may have been sent in
+    /// part, which leaves the peer unable to make sense of anything sent on the connection after
+    /// it, as with `send`.
+    ///
+    /// [`WriteHalf::send_messages`]: socket::WriteHalf::send_messages
+    pub async fn send_all(&self, msgs: &[Message]) -> Result<()> {
+        #[cfg(unix)]
+        if !self.inner.cap_unix_fd && msgs.iter().any(|msg| !msg.data().fds().is_empty()) {
+            return Err(Error::Unsupported);
+        }
+        if msgs.is_empty() {
+            return Ok(());
+        }
+
+        self.inner.socket_status.activity_event.notify(usize::MAX);
+        let mut write = self.inner.socket_write.lock().await;
+
+        write.send_messages(msgs).await
     }
 
     /// Send a method call.
@@ -307,7 +305,8 @@ impl Connection {
     /// Create a method-call message, send it over the connection, then wait for the reply.
     ///
     /// On successful reply, an `Ok(Message)` is returned. On error, an `Err` is returned. D-Bus
-    /// error replies are returned as [`Error::MethodError`].
+    /// error replies whose name is defined by [`crate::fdo::Error`] are returned as
+    /// [`Error::FDO`], and all other error replies are returned as [`Error::MethodError`].
     pub async fn call_method<'d, 'p, 'i, 'm, D, P, I, M, B>(
         &self,
         destination: Option<D>,
@@ -325,7 +324,7 @@ impl Connection {
         P::Error: Into<Error>,
         I::Error: Into<Error>,
         M::Error: Into<Error>,
-        B: serde::ser::Serialize + zvariant::DynamicType,
+        B: serde::ser::Serialize + crate::DynamicType,
     {
         let method = self
             .call_method_raw(
@@ -333,14 +332,14 @@ impl Connection {
                 path,
                 interface,
                 method_name,
-                BitFlags::empty(),
+                Flags::empty(),
                 body,
             )
             .await?
             .expect("no reply");
 
         if let Some(tout) = self.method_timeout() {
-            timeout(method, tout).await
+            self.inner.runtime.timeout(method, tout).await
         } else {
             method.await
         }
@@ -352,17 +351,17 @@ impl Connection {
     /// object that allows the reply to be retrieved.  Typically you'd want to use
     /// [`Connection::call_method`] instead.
     ///
-    /// If the `flags` do not contain `MethodFlags::NoReplyExpected`, the return value is
+    /// If the `flags` do not contain `Flags::NO_REPLY_EXPECTED`, the return value is
     /// guaranteed to be `Ok(Some(_))`, if there was no error encountered.
     ///
-    /// INTERNAL NOTE: If this method is ever made pub, flags should become `BitFlags<MethodFlags>`.
+    /// INTERNAL NOTE: If this method is ever made pub, flags should become `MethodFlags`.
     pub(crate) async fn call_method_raw<'d, 'p, 'i, 'm, D, P, I, M, B>(
         &self,
         destination: Option<D>,
         path: P,
         interface: Option<I>,
         method_name: M,
-        flags: BitFlags<Flags>,
+        flags: Flags,
         body: &B,
     ) -> Result<Option<PendingMethodCall>>
     where
@@ -374,38 +373,67 @@ impl Connection {
         P::Error: Into<Error>,
         I::Error: Into<Error>,
         M::Error: Into<Error>,
-        B: serde::ser::Serialize + zvariant::DynamicType,
+        B: serde::ser::Serialize + crate::DynamicType,
     {
-        let _permit = acquire_serial_num_semaphore().await;
+        let destination = destination
+            .map(TryInto::try_into)
+            .transpose()
+            .map_err(Into::into)?;
+        let path = path.try_into().map_err(Into::into)?;
+        let interface = interface
+            .map(TryInto::try_into)
+            .transpose()
+            .map_err(Into::into)?;
+        let method_name = method_name.try_into().map_err(Into::into)?;
+        let msg = self
+            .method_call_builder(destination, path, interface, method_name, flags)
+            .build(body)?;
 
-        let mut builder = Message::method_call(path, method_name)?;
+        self.send_method_call(msg, flags).await
+    }
+
+    /// The builder for a method call message from this connection.
+    ///
+    /// The generic entry points convert their arguments and serialize the body; everything else
+    /// about sending a method call lives here and in [`Self::send_method_call`], compiled once.
+    fn method_call_builder<'b>(
+        &'b self,
+        destination: Option<BusName<'b>>,
+        path: ObjectPath<'b>,
+        interface: Option<InterfaceName<'b>>,
+        method_name: MemberName<'b>,
+        flags: Flags,
+    ) -> message::Builder<'b> {
+        let mut builder = Message::method_call(path, method_name);
         if let Some(sender) = self.unique_name() {
-            builder = builder.sender(sender)?
+            builder = builder.sender(sender)
         }
         if let Some(destination) = destination {
-            builder = builder.destination(destination)?
+            builder = builder.destination(destination)
         }
         if let Some(interface) = interface {
-            builder = builder.interface(interface)?
+            builder = builder.interface(interface)
         }
-        for flag in flags {
-            builder = builder.with_flags(flag)?;
-        }
-        let msg = builder.build(body)?;
 
-        let msg_receiver = self.inner.method_return_receiver.activate_cloned();
-        let stream = Some(MessageStream::for_subscription_channel(
-            msg_receiver,
-            // This is a lie but we only use the stream internally so it's fine.
-            None,
-            self,
-        ));
+        builder.with_flags(flags)
+    }
+
+    /// Send a method call message and register for its reply, unless none is expected.
+    async fn send_method_call(
+        &self,
+        msg: Message,
+        flags: Flags,
+    ) -> Result<Option<PendingMethodCall>> {
         let serial = msg.primary_header().serial_num();
-        self.send(&msg).await?;
-        if flags.contains(Flags::NoReplyExpected) {
+        if flags.contains(Flags::NO_REPLY_EXPECTED) {
+            self.send(&msg).await?;
+
             Ok(None)
         } else {
-            Ok(Some(PendingMethodCall { stream, serial }))
+            let pending_call = self.inner.pending_method_calls.register_call(serial);
+            self.send(&msg).await?;
+
+            Ok(Some(pending_call))
         }
     }
 
@@ -429,20 +457,41 @@ impl Connection {
         P::Error: Into<Error>,
         I::Error: Into<Error>,
         M::Error: Into<Error>,
-        B: serde::ser::Serialize + zvariant::DynamicType,
+        B: serde::ser::Serialize + crate::DynamicType,
     {
-        let _permit = acquire_serial_num_semaphore().await;
-
-        let mut b = Message::signal(path, interface, signal_name)?;
-        if let Some(sender) = self.unique_name() {
-            b = b.sender(sender)?;
-        }
-        if let Some(destination) = destination {
-            b = b.destination(destination)?;
-        }
-        let m = b.build(body)?;
+        let destination = destination
+            .map(TryInto::try_into)
+            .transpose()
+            .map_err(Into::into)?;
+        let path = path.try_into().map_err(Into::into)?;
+        let interface = interface.try_into().map_err(Into::into)?;
+        let signal_name = signal_name.try_into().map_err(Into::into)?;
+        let m = self
+            .signal_builder(destination, path, interface, signal_name)
+            .build(body)?;
 
         self.send(&m).await
+    }
+
+    /// The builder for a signal message from this connection.
+    ///
+    /// Kept non-generic so that it is compiled once; see [`Self::method_call_builder`].
+    fn signal_builder<'b>(
+        &'b self,
+        destination: Option<BusName<'b>>,
+        path: ObjectPath<'b>,
+        interface: InterfaceName<'b>,
+        signal_name: MemberName<'b>,
+    ) -> message::Builder<'b> {
+        let mut builder = Message::signal(path, interface, signal_name);
+        if let Some(sender) = self.unique_name() {
+            builder = builder.sender(sender);
+        }
+        if let Some(destination) = destination {
+            builder = builder.destination(destination);
+        }
+
+        builder
     }
 
     /// Reply to a message.
@@ -451,15 +500,9 @@ impl Connection {
     /// given `body`.
     pub async fn reply<B>(&self, call: &zbus::message::Header<'_>, body: &B) -> Result<()>
     where
-        B: serde::ser::Serialize + zvariant::DynamicType,
+        B: serde::ser::Serialize + crate::DynamicType,
     {
-        let _permit = acquire_serial_num_semaphore().await;
-
-        let mut b = Message::method_return(call)?;
-        if let Some(sender) = self.unique_name() {
-            b = b.sender(sender)?;
-        }
-        let m = b.build(body)?;
+        let m = self.reply_message(Message::method_return(call), &mut |b| b.build(body))?;
         self.send(&m).await
     }
 
@@ -474,18 +517,27 @@ impl Connection {
         body: &B,
     ) -> Result<()>
     where
-        B: serde::ser::Serialize + zvariant::DynamicType,
+        B: serde::ser::Serialize + crate::DynamicType,
         E: TryInto<ErrorName<'e>>,
         E::Error: Into<Error>,
     {
-        let _permit = acquire_serial_num_semaphore().await;
-
-        let mut b = Message::error(call, error_name)?;
-        if let Some(sender) = self.unique_name() {
-            b = b.sender(sender)?;
-        }
-        let m = b.build(body)?;
+        let m = self.reply_message(Message::error(call, error_name), &mut |b| b.build(body))?;
         self.send(&m).await
+    }
+
+    /// Build a reply from `builder`, with this connection's unique name as the sender.
+    ///
+    /// The body is written through a trait object so that this is compiled once rather than once
+    /// per body type.
+    fn reply_message<'b>(
+        &'b self,
+        mut builder: message::Builder<'b>,
+        build: &mut dyn FnMut(message::Builder<'_>) -> Result<Message>,
+    ) -> Result<Message> {
+        if let Some(sender) = self.unique_name() {
+            builder = builder.sender(sender);
+        }
+        build(builder)
     }
 
     /// Reply an error to a message.
@@ -497,8 +549,6 @@ impl Connection {
         call: &zbus::message::Header<'_>,
         err: impl DBusError,
     ) -> Result<()> {
-        let _permit = acquire_serial_num_semaphore().await;
-
         let m = err.create_reply(call)?;
         self.send(&m).await
     }
@@ -512,8 +562,8 @@ impl Connection {
     /// deregistering names registered through this method.
     ///
     /// Note that exclusive ownership without queueing is requested (using
-    /// [`RequestNameFlags::ReplaceExisting`] and [`RequestNameFlags::DoNotQueue`] flags) since that
-    /// is the most typical case. If that is not what you want, you should use
+    /// [`RequestNameFlags::REPLACE_EXISTING`] and [`RequestNameFlags::DO_NOT_QUEUE`] flags) since
+    /// that is the most typical case. If that is not what you want, you should use
     /// [`Connection::request_name_with_flags`] instead (but make sure then that name is requested
     /// **after** you've set up your service implementation with the `ObjectServer`).
     ///
@@ -537,7 +587,7 @@ impl Connection {
         W: TryInto<WellKnownName<'w>>,
         W::Error: Into<Error>,
     {
-        self.request_name_with_flags(well_known_name, BitFlags::default())
+        self.request_name_with_flags(well_known_name, RequestNameFlags::default())
             .await
             .map(|_| ())
     }
@@ -546,43 +596,58 @@ impl Connection {
     ///
     /// This is the same as [`Connection::request_name`] but allows to specify the flags to use when
     /// requesting the name.
-    ///
-    /// If the [`RequestNameFlags::DoNotQueue`] flag is not specified and request ends up in the
-    /// queue, you can use [`crate::fdo::NameAcquiredStream`] to be notified when the name is
-    /// acquired. A queued name request can be cancelled using [`Connection::release_name`].
-    ///
-    /// If the [`RequestNameFlags::AllowReplacement`] flag is specified, the requested name can be
-    /// lost if another peer requests the same name. You can use [`crate::fdo::NameLostStream`] to
-    /// be notified when the name is lost
+    #[cfg_attr(
+        feature = "proxy",
+        doc = "If the [`RequestNameFlags::DO_NOT_QUEUE`] flag is not specified and request ends",
+        doc = "up in the queue, you can use [`crate::fdo::NameAcquiredStream`] to be notified",
+        doc = "when the name is acquired. A queued name request can be cancelled using",
+        doc = "[`Connection::release_name`].",
+        doc = "",
+        doc = "If the [`RequestNameFlags::ALLOW_REPLACEMENT`] flag is specified, the requested",
+        doc = "name can be lost if another peer requests the same name. You can use",
+        doc = "[`crate::fdo::NameLostStream`] to be notified when the name is lost"
+    )]
+    #[cfg_attr(
+        not(feature = "proxy"),
+        doc = "If the [`RequestNameFlags::DO_NOT_QUEUE`] flag is not specified and request ends",
+        doc = "up in the queue, you can use `fdo::NameAcquiredStream` (requires the `proxy`",
+        doc = "feature) to be notified when the name is acquired. A queued name request can be",
+        doc = "cancelled using [`Connection::release_name`].",
+        doc = "",
+        doc = "If the [`RequestNameFlags::ALLOW_REPLACEMENT`] flag is specified, the requested",
+        doc = "name can be lost if another peer requests the same name. You can use",
+        doc = "`fdo::NameLostStream` (requires the `proxy` feature) to be notified when the name",
+        doc = "is lost"
+    )]
     ///
     /// # Example
     ///
     /// ```
-    /// #
+    /// # // The example waits for name acquisition and loss through the `DBusProxy` signals.
+    /// # #[cfg(feature = "proxy")]
     /// # zbus::block_on(async {
     /// use zbus::{Connection, fdo::{DBusProxy, RequestNameFlags, RequestNameReply}};
-    /// use enumflags2::BitFlags;
     /// use futures_util::stream::StreamExt;
     ///
     /// let name = "org.freedesktop.zbus.QueuedNameTest";
     /// let conn1 = Connection::session().await?;
     /// // This should just work right away.
-    /// conn1.request_name_with_flags(name, RequestNameFlags::DoNotQueue.into()).await?;
+    /// conn1.request_name_with_flags(name, RequestNameFlags::DO_NOT_QUEUE).await?;
     ///
     /// let conn2 = Connection::session().await?;
-    /// // A second request from the another connection will fail with `DoNotQueue` flag, which is
+    /// // A second request from the another connection will fail with `DO_NOT_QUEUE` flag, which is
     /// // implicit with `request_name` method.
     /// assert!(conn2.request_name(name).await.is_err());
     ///
-    /// // Now let's try w/o `DoNotQueue` and we should be queued.
+    /// // Now let's try w/o `DO_NOT_QUEUE` and we should be queued.
     /// let reply = conn2
-    ///     .request_name_with_flags(name, RequestNameFlags::AllowReplacement.into())
+    ///     .request_name_with_flags(name, RequestNameFlags::ALLOW_REPLACEMENT)
     ///     .await?;
     /// assert_eq!(reply, RequestNameReply::InQueue);
     /// // Another request should just give us the same response.
     /// let reply = conn2
     ///     // The flags on subsequent requests will however be ignored.
-    ///     .request_name_with_flags(name, BitFlags::empty())
+    ///     .request_name_with_flags(name, RequestNameFlags::empty())
     ///     .await?;
     /// assert_eq!(reply, RequestNameReply::InQueue);
     /// let mut acquired_stream = DBusProxy::new(&conn2)
@@ -611,14 +676,26 @@ impl Connection {
     /// # Caveats
     ///
     /// * Same as that of [`Connection::request_name`].
-    /// * If you wish to track changes to name ownership after this call, make sure that the
-    ///   [`crate::fdo::NameAcquired`] and/or [`crate::fdo::NameLostStream`] instance(s) are created
-    ///   **before** calling this method. Otherwise, you may loose the signal if it's emitted after
-    ///   this call but just before the stream instance get created.
+    #[cfg_attr(
+        feature = "proxy",
+        doc = "* If you wish to track changes to name ownership after this call, make sure that",
+        doc = "  the [`crate::fdo::NameAcquiredStream`] and/or [`crate::fdo::NameLostStream`]",
+        doc = "  instance(s) are created **before** calling this method. Otherwise, you may loose",
+        doc = "  the signal if it's emitted after this call but just before the stream instance",
+        doc = "  get created."
+    )]
+    #[cfg_attr(
+        not(feature = "proxy"),
+        doc = "* If you wish to track changes to name ownership after this call, make sure that",
+        doc = "  the `fdo::NameAcquiredStream` and/or `fdo::NameLostStream` instance(s) (requiring",
+        doc = "  the `proxy` feature) are created **before** calling this method. Otherwise, you",
+        doc = "  may loose the signal if it's emitted after this call but just before the stream",
+        doc = "  instance get created."
+    )]
     pub async fn request_name_with_flags<'w, W>(
         &self,
         well_known_name: W,
-        flags: BitFlags<RequestNameFlags>,
+        flags: RequestNameFlags,
     ) -> Result<RequestNameReply>
     where
         W: TryInto<WellKnownName<'w>>,
@@ -628,6 +705,7 @@ impl Connection {
 
         // Warn if requesting a name before setting up the object server, as this can cause
         // method calls to be lost.
+        #[cfg(feature = "service")]
         if self.is_bus() && self.inner.object_server.get().is_none() {
             warn!(
                 "Requesting name `{well_known_name}` before setting up the object server. \
@@ -653,13 +731,11 @@ impl Connection {
 
         let acquired_match_rule = MatchRule::fdo_signal_builder("NameAcquired")
             .arg(0, well_known_name.as_ref())
-            .unwrap()
-            .build();
+            .build()?;
         let mut acquired_stream = self.add_match(acquired_match_rule.into(), None).await?;
         let lost_match_rule = MatchRule::fdo_signal_builder("NameLost")
             .arg(0, well_known_name.as_ref())
-            .unwrap()
-            .build();
+            .build()?;
         let mut lost_stream = self.add_match(lost_match_rule.into(), None).await?;
         let reply = self
             .call_method(
@@ -674,22 +750,22 @@ impl Connection {
             .deserialize::<RequestNameReply>()?;
         let lost_task_name = format!("monitor_name_lost{{name={well_known_name}}}");
         let lost_task_name_span = info_span!("monitor_name_lost", name = %well_known_name);
-        let name_lost_fut = if flags.contains(RequestNameFlags::AllowReplacement) {
+        let name_lost_fut = if flags.contains(RequestNameFlags::ALLOW_REPLACEMENT) {
             let weak_conn = WeakConnection::from(self);
             let well_known_name = well_known_name.to_owned();
             Some(
                 async move {
                     loop {
-                        let signal = lost_stream.next().await;
+                        let signal = next(&mut lost_stream).await;
                         let inner = match weak_conn.upgrade() {
-                            Some(conn) => conn.inner.clone(),
+                            Some(conn) => conn.inner,
                             None => break,
                         };
 
                         match signal {
                             Some(signal) => match signal {
                                 Ok(_) => {
-                                    tracing::info!(
+                                    info!(
                                         "Connection `{}` lost name `{}`",
                                         // SAFETY: This is bus connection so unique name can't be
                                         // None.
@@ -728,12 +804,13 @@ impl Connection {
                 let well_known_name = well_known_name.to_owned();
                 let task_name = format!("monitor_name_acquired{{name={well_known_name}}}");
                 let task_name_span = info_span!("monitor_name_acquired", name = %well_known_name);
-                let task = self.executor().spawn(
+                let task = self.runtime().spawn(
+                    task_name,
                     async move {
                         loop {
-                            let signal = acquired_stream.next().await;
+                            let signal = next(&mut acquired_stream).await;
                             let inner = match weak_conn.upgrade() {
-                                Some(conn) => conn.inner.clone(),
+                                Some(conn) => conn.inner,
                                 None => break,
                             };
                             match signal {
@@ -742,7 +819,7 @@ impl Connection {
                                         let mut names = inner.registered_names.lock().await;
                                         if let Some(status) = names.get_mut(&well_known_name) {
                                             let task = name_lost_fut.map(|fut| {
-                                                inner.executor.spawn(fut, &lost_task_name)
+                                                inner.runtime.spawn(lost_task_name, fut)
                                             });
                                             *status = NameStatus::Owner(task);
 
@@ -762,13 +839,12 @@ impl Connection {
                         }
                     }
                     .instrument(task_name_span),
-                    &task_name,
                 );
 
                 NameStatus::Queued(task)
             }
             RequestNameReply::PrimaryOwner | RequestNameReply::AlreadyOwner => {
-                let task = name_lost_fut.map(|fut| self.executor().spawn(fut, &lost_task_name));
+                let task = name_lost_fut.map(|fut| self.runtime().spawn(lost_task_name, fut));
 
                 NameStatus::Owner(task)
             }
@@ -835,7 +911,11 @@ impl Connection {
     /// The unique name of the connection, if set/applicable.
     ///
     /// The unique name is assigned by the message bus, or set manually using
-    /// [`Connection::set_unique_name`].
+    #[cfg_attr(feature = "bus-impl", doc = "[`Connection::set_unique_name`].")]
+    #[cfg_attr(
+        not(feature = "bus-impl"),
+        doc = "`Connection::set_unique_name` (requires the `bus-impl` feature)."
+    )]
     pub fn unique_name(&self) -> Option<&OwnedUniqueName> {
         self.inner.unique_name.get()
     }
@@ -862,12 +942,24 @@ impl Connection {
     }
 
     /// The capacity of the main (unfiltered) queue.
-    pub fn max_queued(&self) -> usize {
+    pub fn max_queued(&self) -> NonZeroUsize {
         self.inner.msg_receiver.capacity()
     }
 
     /// Set the capacity of the main (unfiltered) queue.
-    pub fn set_max_queued(&mut self, max: usize) {
+    ///
+    /// The queue is shared by all the clones of this connection and by every [`MessageStream`]
+    /// created from it without a match rule, so the new capacity applies to all of them.
+    ///
+    /// Unlike [`MessageStream::set_max_queued`], this can lower the capacity. A message stays in
+    /// the queue until every stream that was there when it arrived has received it, so if `max` is
+    /// below the number of messages that are queued, the oldest ones are dropped, leaving the
+    /// newest `max`. A stream that had not received a dropped message skips it without any
+    /// indication, and carries on with the first message that is left.
+    ///
+    /// [`MessageStream`]: crate::MessageStream
+    /// [`MessageStream::set_max_queued`]: crate::MessageStream::set_max_queued
+    pub fn set_max_queued(&mut self, max: NonZeroUsize) {
         self.inner.msg_receiver.clone().set_capacity(max);
     }
 
@@ -876,59 +968,26 @@ impl Connection {
         &self.inner.server_guid
     }
 
-    /// The underlying executor.
+    /// Spawns `future` on the runtime this connection runs on, under the diagnostic name `name`.
     ///
-    /// When a connection is built with internal_executor set to false, zbus will not spawn a
-    /// thread to run the executor. You're responsible to continuously [tick the executor][tte].
-    /// Failure to do so will result in hangs.
-    ///
-    /// # Examples
-    ///
-    /// Here is how one would typically run the zbus executor through tokio's scheduler:
-    ///
-    /// ```
-    /// use zbus::connection::Builder;
-    /// use tokio::task::spawn;
-    ///
-    /// # struct SomeIface;
-    /// #
-    /// # #[zbus::interface]
-    /// # impl SomeIface {
-    /// # }
-    /// #
-    /// #[tokio::main]
-    /// async fn main() {
-    ///     let conn = Builder::session()
-    ///         .unwrap()
-    ///         .internal_executor(false)
-    /// #         // This is only for testing a deadlock that used to happen with this combo.
-    /// #         .serve_at("/some/iface", SomeIface)
-    /// #         .unwrap()
-    ///         .build()
-    ///         .await
-    ///         .unwrap();
-    ///     {
-    ///        let conn = conn.clone();
-    ///        spawn(async move {
-    ///            loop {
-    ///                conn.executor().tick().await;
-    ///            }
-    ///        });
-    ///     }
-    ///
-    ///     // All your other async code goes here.
-    /// }
-    /// ```
-    ///
-    /// **Note**: zbus 2.1 added support for tight integration with tokio. This means, if you use
-    /// zbus with tokio, you do not need to worry about this at all. All you need to do is enable
-    /// `tokio` feature. You should also disable the (default) `async-io` feature in your
-    /// `Cargo.toml` to avoid unused dependencies. Also note that **prior** to zbus 3.0, disabling
-    /// `async-io` was required to enable tight `tokio` integration.
-    ///
-    /// [tte]: https://docs.rs/async-executor/1.4.1/async_executor/struct.Executor.html#method.tick
-    pub fn executor(&self) -> &Executor<'static> {
-        &self.inner.executor
+    /// Hidden because it exists for zbus's own tests, which have to run a future alongside a
+    /// connection on whatever runtime that connection was built with. It is not part of the
+    /// public API and may change or go without notice.
+    #[doc(hidden)]
+    pub fn spawn<T>(
+        &self,
+        name: impl Into<Cow<'static, str>>,
+        future: impl Future<Output = T> + Send + 'static,
+    ) -> impl traits::TaskHandle<T>
+    where
+        T: Send + 'static,
+    {
+        self.inner.runtime.spawn(name, future)
+    }
+
+    /// The runtime this connection runs on.
+    pub(crate) fn runtime(&self) -> &Runtime {
+        &self.inner.runtime
     }
 
     /// Get a reference to the associated [`ObjectServer`].
@@ -938,16 +997,19 @@ impl Connection {
     /// **Note**: Once the `ObjectServer` is created, it will be replying to all method calls
     /// received on `self`. If you want to manually reply to method calls, do not use this
     /// method (or any of the `ObjectServer` related API).
+    #[cfg(feature = "service")]
     pub fn object_server(&self) -> &ObjectServer {
         self.ensure_object_server(true)
     }
 
+    #[cfg(feature = "service")]
     pub(crate) fn ensure_object_server(&self, start: bool) -> &ObjectServer {
         self.inner
             .object_server
             .get_or_init(move || self.setup_object_server(start, None))
     }
 
+    #[cfg(feature = "service")]
     fn setup_object_server(&self, start: bool, started_event: Option<Event>) -> ObjectServer {
         if start {
             self.start_object_server(started_event);
@@ -956,21 +1018,25 @@ impl Connection {
         ObjectServer::new(self)
     }
 
-    #[instrument(skip(self))]
+    #[cfg(feature = "service")]
+    #[cfg_attr(feature = "tracing", tracing::instrument(skip(self)))]
     pub(crate) fn start_object_server(&self, started_event: Option<Event>) {
         self.inner.object_server_dispatch_task.get_or_init(|| {
             trace!("starting ObjectServer task");
             let weak_conn = WeakConnection::from(self);
 
-            self.inner.executor.spawn(
+            self.inner.runtime.spawn(
+                "obj_server_task",
                 async move {
                     let mut stream = match weak_conn.upgrade() {
                         Some(conn) => {
                             let mut builder = MatchRule::builder().msg_type(Type::MethodCall);
                             if let Some(unique_name) = conn.unique_name() {
-                                builder = builder.destination(&**unique_name).expect("unique name");
+                                builder = builder.destination(&**unique_name);
                             }
-                            let rule = builder.build();
+                            let rule = builder
+                                .build()
+                                .expect("a unique name is a valid destination");
                             match conn.add_match(rule.into(), None).await {
                                 Ok(stream) => stream,
                                 Err(e) => {
@@ -992,7 +1058,7 @@ impl Connection {
                     }
 
                     trace!("waiting for incoming method call messages..");
-                    while let Some(msg) = stream.next().await.and_then(|m| {
+                    while let Some(msg) = next(&mut stream).await.and_then(|m| {
                         if let Err(e) = &m {
                             debug!("Error while reading from object server stream: {:?}", e);
                         }
@@ -1038,7 +1104,6 @@ impl Connection {
                     }
                 }
                 .instrument(info_span!("obj_server_task")),
-                "obj_server_task",
             )
         });
     }
@@ -1046,7 +1111,7 @@ impl Connection {
     pub(crate) async fn add_match(
         &self,
         rule: OwnedMatchRule,
-        max_queued: Option<usize>,
+        max_queued: Option<NonZeroUsize>,
     ) -> Result<Receiver<Result<Message>>> {
         use std::collections::hash_map::Entry;
 
@@ -1063,7 +1128,7 @@ impl Connection {
         match subscriptions.entry(rule.clone()) {
             Entry::Vacant(e) => {
                 let max_queued = max_queued.unwrap_or(DEFAULT_MAX_QUEUED);
-                let (sender, mut receiver) = broadcast(max_queued);
+                let (sender, mut receiver) = channel(max_queued);
                 receiver.set_await_active(false);
                 if self.is_bus() && msg_type == Type::Signal {
                     self.call_method(
@@ -1087,10 +1152,10 @@ impl Connection {
             Entry::Occupied(mut e) => {
                 let (num_subscriptions, receiver) = e.get_mut();
                 *num_subscriptions += 1;
-                if let Some(max_queued) = max_queued {
-                    if max_queued > receiver.capacity() {
-                        receiver.set_capacity(max_queued);
-                    }
+                if let Some(max_queued) = max_queued
+                    && max_queued > receiver.capacity()
+                {
+                    receiver.set_capacity(max_queued);
                 }
 
                 Ok(receiver.activate_cloned())
@@ -1135,9 +1200,12 @@ impl Connection {
     pub(crate) fn queue_remove_match(&self, rule: OwnedMatchRule) {
         let conn = self.clone();
         let task_name = format!("Remove match `{}`", *rule);
-        let remove_match =
-            async move { conn.remove_match(rule).await }.instrument(trace_span!("{}", task_name));
-        self.inner.executor.spawn(remove_match, &task_name).detach()
+        // Nobody is waiting for the outcome: the stream that held the rule is already gone.
+        let remove_match = async move {
+            let _ = conn.remove_match(rule).await;
+        }
+        .instrument(trace_span!("{}", task_name));
+        self.inner.runtime.spawn(task_name, remove_match).detach()
     }
 
     /// The method_timeout (if any). See [Builder::method_timeout] for details.
@@ -1148,7 +1216,7 @@ impl Connection {
     pub(crate) async fn new(
         auth: Authenticated,
         #[allow(unused)] bus_connection: bool,
-        executor: Executor<'static>,
+        runtime: Runtime,
         method_timeout: Option<Duration>,
     ) -> Result<Self> {
         #[cfg(unix)]
@@ -1156,7 +1224,7 @@ impl Connection {
 
         macro_rules! create_msg_broadcast_channel {
             ($size:expr) => {{
-                let (msg_sender, msg_receiver) = broadcast($size);
+                let (msg_sender, msg_receiver) = channel($size);
                 let mut msg_receiver = msg_receiver.deactivate();
                 msg_receiver.set_await_active(false);
 
@@ -1168,22 +1236,17 @@ impl Connection {
         let mut msg_senders = HashMap::new();
         msg_senders.insert(None, msg_sender);
 
-        // The special method return & error channel.
-        let (method_return_sender, method_return_receiver) =
-            create_msg_broadcast_channel!(DEFAULT_MAX_METHOD_RETURN_QUEUED);
-        let rule = MatchRule::builder()
-            .msg_type(Type::MethodReturn)
-            .build()
-            .into();
-        msg_senders.insert(Some(rule), method_return_sender.clone());
-        let rule = MatchRule::builder().msg_type(Type::Error).build().into();
-        msg_senders.insert(Some(rule), method_return_sender);
         let msg_senders = Arc::new(Mutex::new(msg_senders));
+        let pending_method_calls = PendingMethodCalls::default();
         let subscriptions = Mutex::new(HashMap::new());
 
         let connection = Self {
             inner: Arc::new(ConnectionInner {
-                activity_event: Arc::new(Event::new()),
+                socket_status: Arc::new(SocketStatus {
+                    activity_event: Event::new(),
+                    closed: AtomicBool::new(false),
+                    closed_event: Event::new(),
+                }),
                 socket_write: Mutex::new(auth.socket_write),
                 server_guid: auth.server_guid,
                 #[cfg(unix)]
@@ -1192,14 +1255,16 @@ impl Connection {
                 bus_conn: bus_connection,
                 unique_name: OnceLock::new(),
                 subscriptions,
+                #[cfg(feature = "service")]
                 object_server: OnceLock::new(),
+                #[cfg(feature = "service")]
                 object_server_dispatch_task: OnceLock::new(),
-                executor,
                 socket_reader_task: OnceLock::new(),
                 msg_senders,
+                pending_method_calls,
                 msg_receiver,
-                method_return_receiver,
                 registered_names: Mutex::new(HashMap::new()),
+                runtime,
                 drop_event: Event::new(),
                 method_timeout,
                 credentials: OnceLock::new(),
@@ -1215,19 +1280,45 @@ impl Connection {
 
     /// Create a `Connection` to the session/user message bus.
     pub async fn session() -> Result<Self> {
-        Builder::session()?.build().await
+        Builder::session().build().await
     }
 
     /// Create a `Connection` to the system-wide message bus.
     pub async fn system() -> Result<Self> {
-        Builder::system()?.build().await
+        Builder::system().build().await
     }
 
-    /// Return a listener, notified on various connection activity.
+    /// A listener notified on the next activity on the connection.
     ///
     /// This function is meant for the caller to implement idle or timeout on inactivity.
-    pub fn monitor_activity(&self) -> EventListener {
-        self.inner.activity_event.listen()
+    /// [`ActivityListener`] says what counts as activity, and what a notification does and does
+    /// not tell.
+    pub fn monitor_activity(&self) -> ActivityListener {
+        ActivityListener(self.inner.socket_status.activity_event.listen())
+    }
+
+    /// Returns `true` if the connection has been closed.
+    ///
+    /// A connection is considered closed either when the remote peer disconnects, an I/O error
+    /// occurs on the socket, or [`Connection::close`] is called.
+    pub fn is_closed(&self) -> bool {
+        self.inner.is_closed()
+    }
+
+    /// Waits until the connection is closed.
+    ///
+    /// A connection is considered closed either when the remote peer disconnects, an I/O error
+    /// occurs on the socket, or [`Connection::close`] is called.
+    ///
+    /// Returns immediately if the connection is already closed.
+    pub async fn closed(&self) {
+        loop {
+            let listener = self.inner.socket_status.closed_event.listen();
+            if self.inner.socket_status.closed.load(Ordering::Acquire) {
+                return;
+            }
+            listener.await;
+        }
     }
 
     /// Return the peer credentials.
@@ -1260,36 +1351,25 @@ impl Connection {
             .expect("credentials should have been set"))
     }
 
-    /// Return the peer credentials.
-    ///
-    /// The fields are populated on the best effort basis. Some or all fields may not even make
-    /// sense for certain sockets or on certain platforms and hence will be set to `None`.
-    ///
-    /// # Caveats
-    ///
-    /// Currently `linux_security_label` field is not populated.
-    #[deprecated(since = "5.13.0", note = "Use `peer_creds` instead")]
-    pub async fn peer_credentials(&self) -> io::Result<ConnectionCredentials> {
-        self.inner
-            .socket_write
-            .lock()
-            .await
-            .peer_credentials()
-            .await
-    }
-
     /// Close the connection.
     ///
     /// After this call, all reading and writing operations will fail.
     pub async fn close(self) -> Result<()> {
-        self.inner.activity_event.notify(usize::MAX);
-        self.inner
+        self.inner.socket_status.activity_event.notify(usize::MAX);
+        let result = self
+            .inner
             .socket_write
             .lock()
             .await
             .close()
             .await
-            .map_err(Into::into)
+            .map_err(Into::into);
+        self.inner
+            .socket_status
+            .closed
+            .store(true, Ordering::Release);
+        self.inner.socket_status.closed_event.notify(usize::MAX);
+        result
     }
 
     /// Gracefully close the connection, waiting for all other references to be dropped.
@@ -1308,22 +1388,31 @@ impl Connection {
     /// # Example
     ///
     /// ```
+    /// # #[cfg(feature = "service")]
     /// # use std::error::Error;
+    /// # #[cfg(feature = "service")]
     /// # use zbus::connection::Builder;
+    /// # #[cfg(feature = "service")]
     /// # use zbus::interface;
     /// #
+    /// # #[cfg(feature = "service")]
     /// # struct MyInterface;
     /// #
+    /// # #[cfg(feature = "service")]
     /// # #[interface(name = "foo.bar.baz")]
     /// # impl MyInterface {
     /// #     async fn do_thing(&self) {}
     /// # }
     /// #
+    /// # // The example serves an interface, which needs the `service` feature.
+    /// # #[cfg(not(feature = "service"))]
+    /// # fn main() {}
+    /// # #[cfg(feature = "service")]
     /// # #[tokio::main]
     /// # async fn main() -> Result<(), Box<dyn Error>> {
-    /// let conn = Builder::session()?
-    ///     .name("foo.bar.baz")?
-    ///     .serve_at("/foo/bar/baz", MyInterface)?
+    /// let conn = Builder::session()
+    ///     .name("foo.bar.baz")
+    ///     .serve_at("/foo/bar/baz", MyInterface)
     ///     .build()
     ///     .await?;
     ///
@@ -1346,6 +1435,7 @@ impl Connection {
         socket_read: Box<dyn socket::ReadHalf>,
         already_read: Vec<u8>,
         #[cfg(unix)] already_received_fds: Vec<std::os::fd::OwnedFd>,
+        #[cfg(feature = "bus-impl")] validate_bodies: bool,
     ) {
         let inner = &self.inner;
         inner
@@ -1354,12 +1444,15 @@ impl Connection {
                 SocketReader::new(
                     socket_read,
                     inner.msg_senders.clone(),
+                    inner.pending_method_calls.clone(),
                     already_read,
                     #[cfg(unix)]
                     already_received_fds,
-                    inner.activity_event.clone(),
+                    inner.socket_status.clone(),
+                    #[cfg(feature = "bus-impl")]
+                    validate_bodies,
                 )
-                .spawn(&inner.executor),
+                .spawn(&inner.runtime),
             )
             .expect("Attempted to set `socket_reader_task` twice");
     }
@@ -1370,13 +1463,6 @@ impl Connection {
             .set(name)
             // programmer (probably our) error if this fails.
             .expect("unique name already set");
-    }
-}
-
-#[cfg(feature = "blocking-api")]
-impl From<crate::blocking::Connection> for Connection {
-    fn from(conn: crate::blocking::Connection) -> Self {
-        conn.into_inner()
     }
 }
 
@@ -1409,26 +1495,26 @@ enum NameStatus {
     Queued(#[allow(unused)] Task<()>),
 }
 
-static SERIAL_NUM_SEMAPHORE: Semaphore = Semaphore::new(1);
-
-// Make message creation and sending an atomic operation, using an async
-// semaphore if flatpak portal is detected to workaround an xdg-dbus-proxy issue:
-//
-// https://github.com/flatpak/xdg-dbus-proxy/issues/46
-async fn acquire_serial_num_semaphore() -> Option<SemaphorePermit<'static>> {
-    if is_flatpak() {
-        Some(SERIAL_NUM_SEMAPHORE.acquire().await)
-    } else {
-        None
-    }
-}
-
 #[cfg(test)]
 mod tests {
+    #[cfg(all(feature = "service", any(feature = "default-rt", feature = "tokio")))]
     use super::*;
+    #[cfg(all(
+        feature = "proxy",
+        feature = "service",
+        any(feature = "default-rt", feature = "tokio")
+    ))]
     use crate::fdo::DBusProxy;
+    use crate::runtime::io::tests::RefusedPort;
+    #[cfg(all(feature = "service", any(feature = "default-rt", feature = "tokio")))]
     use ntest::timeout;
+    #[cfg(all(feature = "service", any(feature = "default-rt", feature = "tokio")))]
     use std::{pin::pin, time::Duration};
+    #[cfg(all(
+        feature = "proxy",
+        feature = "service",
+        any(feature = "default-rt", feature = "tokio")
+    ))]
     use test_log::test;
 
     #[cfg(windows)]
@@ -1437,7 +1523,11 @@ mod tests {
         let addr =
             crate::win32::autolaunch_bus_address().expect("Unable to get session bus address");
 
-        crate::block_on(async { addr.connect().await }).expect("Unable to connect to session bus");
+        crate::block_on(async {
+            addr.connect(&crate::runtime::Runtime::default_for_build()?)
+                .await
+        })
+        .expect("Unable to connect to session bus");
     }
 
     #[cfg(target_os = "macos")]
@@ -1448,11 +1538,100 @@ mod tests {
             let addr = Address::from(Transport::Launchd(Launchd::new(
                 "DBUS_LAUNCHD_SESSION_BUS_SOCKET",
             )));
-            addr.connect().await
+            addr.connect(&crate::runtime::Runtime::default_for_build()?)
+                .await
         })
         .expect("Unable to connect to session bus");
     }
 
+    #[test]
+    #[ntest::timeout(15000)]
+    fn a_session_connection_over_an_external_runtime() {
+        crate::utils::block_on(async {
+            let connection = super::Builder::session()
+                .runtime(crate::runtime::test_runtime::TestRuntime::new())
+                .build()
+                .await
+                .unwrap();
+
+            connection
+                .call_method(
+                    Some("org.freedesktop.DBus"),
+                    "/org/freedesktop/DBus",
+                    Some("org.freedesktop.DBus.Peer"),
+                    "Ping",
+                    &(),
+                )
+                .await
+                .unwrap();
+        });
+    }
+
+    #[test]
+    #[ntest::timeout(15000)]
+    fn a_tcp_host_name_resolves_through_spawn_blocking() {
+        let runtime = crate::runtime::test_runtime::TestRuntime::new();
+        // A connection to a name tries every address that name resolves to, so the port has to
+        // be refused on all of them.
+        let refused = RefusedPort::for_host("localhost");
+        let address = format!("tcp:host=localhost,port={}", refused.port());
+
+        let error = connection_error(address.as_str(), runtime.clone());
+
+        assert!(
+            matches!(&error, crate::Error::Connection(e, _)
+                if e.kind() == std::io::ErrorKind::ConnectionRefused),
+            "connecting to a closed port reported `{error}` rather than a refused connection",
+        );
+        // The test runtime connects on blocking work as well: one call for each address the name
+        // resolves to, since a refused connection moves on to the next one, and one for the
+        // lookup itself.
+        let addresses = std::net::ToSocketAddrs::to_socket_addrs(&("localhost", refused.port()))
+            .unwrap()
+            .count();
+        assert_eq!(
+            runtime.blocking_calls(),
+            addresses + 1,
+            "the host name was resolved without asking the runtime for blocking work",
+        );
+    }
+
+    #[test]
+    #[ntest::timeout(15000)]
+    fn a_tcp_literal_skips_resolution() {
+        let runtime = crate::runtime::test_runtime::TestRuntime::new();
+        let refused = RefusedPort::on(std::net::Ipv4Addr::LOCALHOST.into());
+        let address = format!("tcp:host=127.0.0.1,port={}", refused.port());
+
+        let error = connection_error(address.as_str(), runtime.clone());
+
+        assert!(
+            matches!(&error, crate::Error::Connection(e, _)
+                if e.kind() == std::io::ErrorKind::ConnectionRefused),
+            "connecting to a closed port reported `{error}` rather than a refused connection",
+        );
+        // The one call is the connect, which the test runtime makes on blocking work.
+        assert_eq!(
+            runtime.blocking_calls(),
+            1,
+            "an address that is already an IP address was handed to the resolver anyway",
+        );
+    }
+
+    /// The error a connection to `address` over `runtime` fails with.
+    fn connection_error(
+        address: &str,
+        runtime: crate::runtime::test_runtime::TestRuntime,
+    ) -> crate::Error {
+        crate::utils::block_on(super::Builder::address(address).runtime(runtime).build())
+            .unwrap_err()
+    }
+
+    #[cfg(all(
+        feature = "proxy",
+        feature = "service",
+        any(feature = "default-rt", feature = "tokio")
+    ))]
     #[test]
     #[timeout(15000)]
     fn disconnect_on_drop() {
@@ -1461,7 +1640,14 @@ mod tests {
         crate::utils::block_on(test_disconnect_on_drop());
     }
 
+    #[cfg(all(
+        feature = "proxy",
+        feature = "service",
+        any(feature = "default-rt", feature = "tokio")
+    ))]
     async fn test_disconnect_on_drop() {
+        use futures_lite::StreamExt;
+
         #[derive(Default)]
         struct MyInterface {}
 
@@ -1471,11 +1657,8 @@ mod tests {
         }
         let name = "dev.peelz.foobar";
         let connection = Builder::session()
-            .unwrap()
             .name(name)
-            .unwrap()
             .serve_at("/dev/peelz/FooBar", MyInterface::default())
-            .unwrap()
             .build()
             .await
             .unwrap();
@@ -1497,6 +1680,7 @@ mod tests {
         assert!(!name_has_owner);
     }
 
+    #[cfg(all(feature = "service", any(feature = "default-rt", feature = "tokio")))]
     #[tokio::test(start_paused = true)]
     #[timeout(15000)]
     async fn test_graceful_shutdown() {
@@ -1552,11 +1736,8 @@ mod tests {
         let name = "dev.peelz.TestGracefulShutdown";
         let obj = "/dev/peelz/TestGracefulShutdown";
         let connection = Builder::session()
-            .unwrap()
             .name(name)
-            .unwrap()
             .serve_at(obj, interface)
-            .unwrap()
             .build()
             .await
             .unwrap();
@@ -1592,16 +1773,19 @@ mod tests {
     }
 }
 
+// Every pipe here is a real socket, which only a backend can create.
 #[cfg(feature = "p2p")]
-#[cfg(test)]
+#[cfg(all(test, any(feature = "default-rt", feature = "tokio")))]
 mod p2p_tests {
-    use event_listener::Event;
+    use crate::wire::{Endian, NATIVE_ENDIAN};
     use futures_util::TryStreamExt;
     use ntest::timeout;
     use test_log::test;
-    use zvariant::{Endian, NATIVE_ENDIAN};
+    use zruntime::Event;
 
     use super::{Builder, Connection, socket};
+    #[cfg(all(unix, feature = "tokio", feature = "default-rt"))]
+    use crate::runtime::Runtime;
     use crate::{Guid, Message, MessageStream, Result, conn::AuthMechanism};
 
     // Same numbered client and server are already paired up.
@@ -1629,10 +1813,9 @@ mod p2p_tests {
                 async move { sink.send(&msg).await }
             })
         };
-        let _forward_task = client1.executor().spawn(
-            async move { futures_util::try_join!(forward1, forward2) },
-            "forward_task",
-        );
+        let _forward_task = client1.runtime().spawn("forward_task", async move {
+            let _ = futures_util::try_join!(forward1, forward2);
+        });
 
         let server_ready = Event::new();
         let server_ready_listener = server_ready.listen();
@@ -1670,8 +1853,8 @@ mod p2p_tests {
                 Endian::Little => Endian::Big,
                 Endian::Big => Endian::Little,
             };
-            let method = Message::method_call("/", "Test")?
-                .interface("org.zbus.p2p")?
+            let method = Message::method_call("/", "Test")
+                .interface("org.zbus.p2p")
                 .endian(endian)
                 .build(&64u64)?;
             client1.send(&method).await?;
@@ -1708,41 +1891,19 @@ mod p2p_tests {
     async fn tcp_p2p_pipe() -> Result<(Connection, Connection)> {
         let guid = Guid::generate();
 
-        #[cfg(not(feature = "tokio"))]
-        let (server_conn_builder, client_conn_builder) = {
-            let listener = std::net::TcpListener::bind("127.0.0.1:0").unwrap();
-            let addr = listener.local_addr().unwrap();
-            let p1 = std::net::TcpStream::connect(addr).unwrap();
-            let p0 = listener.incoming().next().unwrap().unwrap();
+        let listener = std::net::TcpListener::bind("127.0.0.1:0").unwrap();
+        let addr = listener.local_addr().unwrap();
+        let p1 = std::net::TcpStream::connect(addr).unwrap();
+        let p0 = listener.incoming().next().unwrap().unwrap();
 
-            (
-                Builder::tcp_stream(p0)
-                    .server(guid)
-                    .unwrap()
-                    .p2p()
-                    .auth_mechanism(AuthMechanism::Anonymous),
-                Builder::tcp_stream(p1).p2p(),
-            )
-        };
-
-        #[cfg(feature = "tokio")]
-        let (server_conn_builder, client_conn_builder) = {
-            let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
-            let addr = listener.local_addr().unwrap();
-            let p1 = tokio::net::TcpStream::connect(addr).await.unwrap();
-            let p0 = listener.accept().await.unwrap().0;
-
-            (
-                Builder::tcp_stream(p0)
-                    .server(guid)
-                    .unwrap()
-                    .p2p()
-                    .auth_mechanism(AuthMechanism::Anonymous),
-                Builder::tcp_stream(p1).p2p(),
-            )
-        };
-
-        futures_util::try_join!(server_conn_builder.build(), client_conn_builder.build())
+        futures_util::try_join!(
+            Builder::tcp_stream(p0)
+                .server(guid)
+                .p2p()
+                .auth_mechanism(AuthMechanism::Anonymous)
+                .build(),
+            Builder::tcp_stream(p1).p2p().build(),
+        )
     }
 
     #[cfg(unix)]
@@ -1762,12 +1923,7 @@ mod p2p_tests {
 
     #[cfg(unix)]
     async fn unix_p2p_pipe() -> Result<(Connection, Connection)> {
-        #[cfg(not(feature = "tokio"))]
         use std::os::unix::net::UnixStream;
-        #[cfg(feature = "tokio")]
-        use tokio::net::UnixStream;
-        #[cfg(all(windows, not(feature = "tokio")))]
-        use uds_windows::UnixStream;
 
         let guid = Guid::generate();
 
@@ -1775,122 +1931,47 @@ mod p2p_tests {
 
         futures_util::try_join!(
             Builder::unix_stream(p1).p2p().build(),
-            Builder::unix_stream(p0).server(guid).unwrap().p2p().build(),
+            Builder::unix_stream(p0).server(guid).p2p().build(),
         )
     }
 
-    #[cfg(any(
-        all(feature = "vsock", not(feature = "tokio")),
-        feature = "tokio-vsock"
-    ))]
+    // A connection built outside every Tokio context lands on zruntime, even where Tokio is
+    // compiled in, and carries a whole peer-to-peer conversation there. The driver is
+    // `futures_lite`, which leaves the calling thread free of a Tokio context;
+    // `crate::utils::block_on` would establish one on this build and so send the builder to the
+    // Tokio arm instead. The guard on the spawned task is that runtime's own timer, so the task
+    // and the timer are both under test here.
+    #[cfg(all(unix, feature = "tokio", feature = "default-rt"))]
     #[test]
     #[timeout(15000)]
-    fn vsock_connect() {
-        let _ = crate::utils::block_on(test_vsock_connect()).unwrap();
-    }
+    fn unix_p2p_zruntime_backend() {
+        use futures_lite::FutureExt;
+        use std::time::Duration;
 
-    #[cfg(any(
-        all(feature = "vsock", not(feature = "tokio")),
-        feature = "tokio-vsock"
-    ))]
-    async fn test_vsock_connect() -> Result<(Connection, Connection)> {
-        #[cfg(feature = "tokio-vsock")]
-        use futures_util::StreamExt;
+        futures_lite::future::block_on(async {
+            let (server1, client1) = unix_p2p_pipe().await.unwrap();
+            assert!(matches!(server1.runtime(), Runtime::ZRuntime(_)));
+            assert!(matches!(client1.runtime(), Runtime::ZRuntime(_)));
 
-        let guid = Guid::generate();
-
-        #[cfg(all(feature = "vsock", not(feature = "tokio")))]
-        let listener = vsock::VsockListener::bind_with_cid_port(vsock::VMADDR_CID_LOCAL, u32::MAX)?;
-        #[cfg(feature = "tokio-vsock")]
-        let listener = tokio_vsock::VsockListener::bind(tokio_vsock::VsockAddr::new(1, u32::MAX))?;
-
-        let addr = listener.local_addr()?;
-        let addr = format!("vsock:cid={},port={},guid={guid}", addr.cid(), addr.port());
-
-        let server = async {
-            #[cfg(all(feature = "vsock", not(feature = "tokio")))]
-            let server =
-                crate::Task::spawn_blocking(move || listener.incoming().next(), "").await?;
-            #[cfg(feature = "tokio-vsock")]
-            let server = listener.incoming().next().await;
-            Builder::vsock_stream(server.unwrap()?)
-                .server(guid)?
-                .p2p()
-                .auth_mechanism(AuthMechanism::Anonymous)
-                .build()
+            server1
+                .runtime()
+                .spawn("a task outside every Tokio context", async {
+                    assert!(
+                        tokio::runtime::Handle::try_current().is_err(),
+                        "the task unexpectedly entered a Tokio runtime",
+                    );
+                })
+                .or(async {
+                    client1.runtime().sleep(Duration::from_secs(5)).await;
+                    panic!("the spawned task did not run");
+                })
                 .await
-        };
+                .unwrap();
 
-        let client = crate::connection::Builder::address(addr.as_str())?
-            .p2p()
-            .build();
+            let (server2, client2) = unix_p2p_pipe().await.unwrap();
 
-        futures_util::try_join!(server, client)
-    }
-
-    #[cfg(any(
-        all(feature = "vsock", not(feature = "tokio")),
-        feature = "tokio-vsock"
-    ))]
-    #[test]
-    #[timeout(15000)]
-    fn vsock_p2p() {
-        crate::utils::block_on(test_vsock_p2p()).unwrap();
-    }
-
-    #[cfg(any(
-        all(feature = "vsock", not(feature = "tokio")),
-        feature = "tokio-vsock"
-    ))]
-    async fn test_vsock_p2p() -> Result<()> {
-        let (server1, client1) = vsock_p2p_pipe().await?;
-        let (server2, client2) = vsock_p2p_pipe().await?;
-
-        test_p2p(server1, client1, server2, client2).await
-    }
-
-    #[cfg(all(feature = "vsock", not(feature = "tokio")))]
-    async fn vsock_p2p_pipe() -> Result<(Connection, Connection)> {
-        let guid = Guid::generate();
-
-        let listener =
-            vsock::VsockListener::bind_with_cid_port(vsock::VMADDR_CID_LOCAL, u32::MAX).unwrap();
-        let addr = listener.local_addr().unwrap();
-        let client = vsock::VsockStream::connect(&addr).unwrap();
-        let server = listener.incoming().next().unwrap().unwrap();
-
-        futures_util::try_join!(
-            Builder::vsock_stream(server)
-                .server(guid)
-                .unwrap()
-                .p2p()
-                .auth_mechanism(AuthMechanism::Anonymous)
-                .build(),
-            Builder::vsock_stream(client).p2p().build(),
-        )
-    }
-
-    #[cfg(feature = "tokio-vsock")]
-    async fn vsock_p2p_pipe() -> Result<(Connection, Connection)> {
-        use futures_util::StreamExt;
-        use tokio_vsock::VsockAddr;
-
-        let guid = Guid::generate();
-
-        let listener = tokio_vsock::VsockListener::bind(VsockAddr::new(1, u32::MAX)).unwrap();
-        let addr = listener.local_addr().unwrap();
-        let client = tokio_vsock::VsockStream::connect(addr).await.unwrap();
-        let server = listener.incoming().next().await.unwrap().unwrap();
-
-        futures_util::try_join!(
-            Builder::vsock_stream(server)
-                .server(guid)
-                .unwrap()
-                .p2p()
-                .auth_mechanism(AuthMechanism::Anonymous)
-                .build(),
-            Builder::vsock_stream(client).p2p().build(),
-        )
+            test_p2p(server1, client1, server2, client2).await.unwrap();
+        });
     }
 
     #[test]
@@ -1911,18 +1992,159 @@ mod p2p_tests {
 
         let guid = crate::Guid::generate();
         let conn1 = Builder::authenticated_socket(a, guid.clone())
-            .unwrap()
             .p2p()
             .build()
             .await
             .unwrap();
         let conn2 = Builder::authenticated_socket(b, guid)
-            .unwrap()
             .p2p()
             .build()
             .await
             .unwrap();
 
         (conn1, conn2)
+    }
+
+    /// The messages of a `send_all` reach the peer in order, each with its own file descriptors,
+    /// over a unix socket, whose write half sends several at once, and over a channel, whose write
+    /// half sends them one by one.
+    #[cfg(unix)]
+    #[test]
+    #[timeout(15000)]
+    fn send_all() {
+        crate::utils::block_on(async {
+            let (server, client) = unix_p2p_pipe().await?;
+            assert_sent_all(&client, &server).await?;
+            let (server, client) = create_channel_pair().await;
+            assert_sent_all(&client, &server).await
+        })
+        .unwrap();
+    }
+
+    /// Has `sender` send 20 messages at once, every seventh of which, from the fourth on, carries
+    /// a file descriptor, and checks that `receiver` gets them as they were sent.
+    #[cfg(unix)]
+    async fn assert_sent_all(sender: &Connection, receiver: &Connection) -> Result<()> {
+        let mut stream = MessageStream::from(receiver);
+        let stdout = std::io::stdout();
+        let msgs = (0..20u32)
+            .map(|i| {
+                let builder = Message::signal("/", "org.zbus.p2p", "Batch");
+                if i % 7 == 3 {
+                    builder.build(&(i, crate::Fd::from(&stdout)))
+                } else {
+                    builder.build(&i)
+                }
+            })
+            .collect::<Result<Vec<_>>>()?;
+
+        sender.send_all(&msgs).await?;
+
+        for sent in &msgs {
+            let received = stream.try_next().await?.unwrap();
+            assert_eq!(
+                received.primary_header().serial_num(),
+                sent.primary_header().serial_num(),
+            );
+            assert_eq!(received.data().fds().len(), sent.data().fds().len());
+        }
+
+        Ok(())
+    }
+
+    /// A `send_all` over a connection that can't pass file descriptors fails if any of its
+    /// messages carries some, before it sends anything.
+    #[cfg(unix)]
+    #[test]
+    #[timeout(15000)]
+    fn send_all_of_fds_without_fd_passing() {
+        crate::utils::block_on(async {
+            let (server, client) = tcp_p2p_pipe().await?;
+            let mut stream = MessageStream::from(&server);
+            let stdout = std::io::stdout();
+            let msgs = [
+                Message::signal("/", "org.zbus.p2p", "First").build(&())?,
+                Message::signal("/", "org.zbus.p2p", "WithFd").build(&crate::Fd::from(&stdout))?,
+            ];
+
+            let error = client.send_all(&msgs).await.unwrap_err();
+            assert!(
+                matches!(error, crate::Error::Unsupported),
+                "the messages failed with `{error}` rather than as unsupported",
+            );
+
+            // Nothing went out: the next message is the first one that the peer gets.
+            let next = Message::signal("/", "org.zbus.p2p", "Next").build(&())?;
+            client.send_all(std::slice::from_ref(&next)).await?;
+            let received = stream.try_next().await?.unwrap();
+            assert_eq!(
+                received.primary_header().serial_num(),
+                next.primary_header().serial_num(),
+            );
+
+            Result::Ok(())
+        })
+        .unwrap();
+    }
+
+    /// `send_all` hands its messages to the write half of the socket all at once.
+    #[test]
+    #[timeout(15000)]
+    fn send_all_hands_the_messages_over_at_once() {
+        /// A write half that only takes several messages at a time.
+        #[derive(Debug)]
+        struct AtOnce(socket::channel::Writer);
+
+        #[async_trait::async_trait]
+        impl socket::WriteHalf for AtOnce {
+            async fn send_message(&mut self, _msg: &Message) -> Result<()> {
+                panic!("a message was handed over on its own");
+            }
+
+            async fn send_messages(&mut self, msgs: &[Message]) -> Result<()> {
+                for msg in msgs {
+                    self.0.send_message(msg).await?;
+                }
+
+                Ok(())
+            }
+
+            async fn close(&mut self) -> std::io::Result<()> {
+                self.0.close().await
+            }
+        }
+
+        crate::utils::block_on(async {
+            let (a, b) = socket::Channel::pair();
+            let (read, write) = socket::Socket::split(a).take();
+            let a = socket::Split::new(
+                Box::new(read) as Box<dyn socket::ReadHalf>,
+                Box::new(AtOnce(write)) as Box<dyn socket::WriteHalf>,
+            );
+            let guid = Guid::generate();
+            let sender = Builder::authenticated_socket(a, guid.clone())
+                .p2p()
+                .build()
+                .await?;
+            let receiver = Builder::authenticated_socket(b, guid).p2p().build().await?;
+            let mut stream = MessageStream::from(&receiver);
+            let msgs = [
+                Message::signal("/", "org.zbus.p2p", "First").build(&())?,
+                Message::signal("/", "org.zbus.p2p", "Second").build(&())?,
+            ];
+
+            sender.send_all(&msgs).await?;
+
+            for sent in &msgs {
+                let received = stream.try_next().await?.unwrap();
+                assert_eq!(
+                    received.primary_header().serial_num(),
+                    sent.primary_header().serial_num(),
+                );
+            }
+
+            Result::Ok(())
+        })
+        .unwrap();
     }
 }

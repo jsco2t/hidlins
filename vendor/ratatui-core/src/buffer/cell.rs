@@ -6,6 +6,67 @@ use crate::buffer::cell_width::CellWidth;
 use crate::style::{Color, Modifier, Style};
 use crate::symbols::merge::MergeStrategy;
 
+// Hidlins: erase both inline and heap symbols on every ownership release.
+// Keep Drop on this private field wrapper so Cell::new/EMPTY remain const.
+#[repr(transparent)]
+#[derive(Clone, Default)]
+#[cfg_attr(feature = "serde", derive(serde::Serialize, serde::Deserialize))]
+#[cfg_attr(feature = "serde", serde(transparent))]
+struct CellSymbol(CompactString);
+
+impl CellSymbol {
+    #[inline]
+    const fn const_new(symbol: &'static str) -> Self {
+        Self(CompactString::const_new(symbol))
+    }
+
+    #[inline]
+    fn new(symbol: &str) -> Self {
+        Self(CompactString::new(symbol))
+    }
+
+    #[inline]
+    fn push_str(&mut self, symbol: &str) {
+        let required = self
+            .0
+            .len()
+            .checked_add(symbol.len())
+            .expect("cell symbol capacity overflow");
+        if required > self.0.capacity() {
+            let capacity = required.max(self.0.capacity().saturating_mul(2));
+            let mut replacement = Self(CompactString::with_capacity(capacity));
+            replacement.0.push_str(self.0.as_str());
+            core::mem::swap(self, &mut replacement);
+            // replacement erases the original allocation before it is freed.
+        }
+        self.0.push_str(symbol);
+    }
+}
+
+impl core::ops::Deref for CellSymbol {
+    type Target = CompactString;
+
+    #[inline]
+    fn deref(&self) -> &Self::Target {
+        &self.0
+    }
+}
+
+impl core::fmt::Debug for CellSymbol {
+    fn fmt(&self, formatter: &mut core::fmt::Formatter<'_>) -> core::fmt::Result {
+        core::fmt::Debug::fmt(&self.0, formatter)
+    }
+}
+
+impl zeroize::ZeroizeOnDrop for CellSymbol {}
+
+impl Drop for CellSymbol {
+    #[inline]
+    fn drop(&mut self) {
+        zeroize::Zeroize::zeroize(&mut self.0);
+    }
+}
+
 /// Cell diffing options
 #[derive(Debug, Default, Clone, Eq, PartialEq, Hash, Copy)]
 #[cfg_attr(feature = "serde", derive(serde::Serialize, serde::Deserialize))]
@@ -43,7 +104,7 @@ pub struct Cell {
     /// buffer for short strings.
     ///
     /// See <https://github.com/ratatui/ratatui/pull/601> for more information.
-    symbol: Option<CompactString>,
+    symbol: Option<CellSymbol>,
 
     /// The foreground color of the cell.
     pub fg: Color,
@@ -93,7 +154,7 @@ impl Cell {
     /// details on this.
     pub const fn new(symbol: &'static str) -> Self {
         Self {
-            symbol: Some(CompactString::const_new(symbol)),
+            symbol: Some(CellSymbol::const_new(symbol)),
             ..Self::EMPTY
         }
     }
@@ -148,28 +209,31 @@ impl Cell {
             .symbol
             .as_ref()
             .map_or(symbol, |s| strategy.merge(s, symbol));
-        self.symbol = Some(CompactString::new(merged_symbol));
+        self.symbol = Some(CellSymbol::new(merged_symbol));
         self
     }
 
     /// Sets the symbol of the cell.
+    #[inline]
     pub fn set_symbol(&mut self, symbol: &str) -> &mut Self {
-        self.symbol = Some(CompactString::new(symbol));
+        self.symbol = Some(CellSymbol::new(symbol));
         self
     }
 
     /// Appends a symbol to the cell.
     ///
     /// This is particularly useful for adding zero-width characters to the cell.
+    #[inline]
     pub(crate) fn append_symbol(&mut self, symbol: &str) -> &mut Self {
         self.symbol.get_or_insert_default().push_str(symbol);
         self
     }
 
     /// Sets the symbol of the cell to a single character.
+    #[inline]
     pub fn set_char(&mut self, ch: char) -> &mut Self {
         let mut buf = [0; 4];
-        self.symbol = Some(CompactString::new(ch.encode_utf8(&mut buf)));
+        self.symbol = Some(CellSymbol::new(ch.encode_utf8(&mut buf)));
         self
     }
 
@@ -245,6 +309,7 @@ impl Cell {
 
     /// Resets the cell to the empty state.
     #[allow(deprecated)]
+    #[inline]
     pub fn reset(&mut self) {
         *self = Self::EMPTY;
     }
@@ -328,7 +393,7 @@ mod tests {
         assert_eq!(
             cell,
             Cell {
-                symbol: Some(CompactString::const_new("あ")),
+                symbol: Some(CellSymbol::const_new("あ")),
                 fg: Color::Reset,
                 bg: Color::Reset,
                 #[cfg(feature = "underline-color")]

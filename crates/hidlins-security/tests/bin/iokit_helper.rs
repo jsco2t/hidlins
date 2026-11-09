@@ -12,13 +12,15 @@
 //!
 //! Built only with `--features test-binaries,iokit`.
 
-#![cfg(all(target_os = "macos", feature = "iokit"))]
-
+#[cfg(all(target_os = "macos", feature = "iokit"))]
 use std::io::{BufRead, Write};
+#[cfg(all(target_os = "macos", feature = "iokit"))]
 use std::time::{Duration, Instant};
 
+#[cfg(all(target_os = "macos", feature = "iokit"))]
 use hidlins_security::{AutoLockConfig, AutoLockController, IoKitSource, LockState};
 
+#[cfg(all(target_os = "macos", feature = "iokit"))]
 fn main() {
     let mut controller = AutoLockController::new(AutoLockConfig {
         idle_timeout: Duration::from_secs(3600),
@@ -74,4 +76,10 @@ fn main() {
             }
         }
     }
+}
+
+#[cfg(not(all(target_os = "macos", feature = "iokit")))]
+fn main() {
+    eprintln!("iokit_helper requires macOS and the iokit feature");
+    std::process::exit(2);
 }

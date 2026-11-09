@@ -12,6 +12,7 @@ import unittest
 import emulator_matrix
 import redact_log
 import run_with_timeout
+from test_runner_startup import RunnerStartupTests
 
 
 class EmulatorMatrixTests(unittest.TestCase):

@@ -42,6 +42,7 @@ pub(crate) mod entry_actions;
 pub(crate) mod error;
 pub(crate) mod event;
 pub(crate) mod jump_history;
+pub(crate) mod native_lock;
 pub(crate) mod overlay;
 pub(crate) mod pairing_runtime;
 pub(crate) mod persistence;
@@ -52,15 +53,31 @@ pub(crate) mod session;
 pub(crate) mod sync_runtime;
 pub(crate) mod tabs;
 pub(crate) mod terminal_guard;
+pub(crate) mod terminal_output;
 pub(crate) mod theme;
 pub(crate) mod user_config;
 pub(crate) mod util;
+pub(crate) mod vault_view;
 pub(crate) mod widgets;
 
 #[cfg(test)]
 mod accessibility_contract_tests;
 #[cfg(test)]
+mod allocation_observer;
+#[cfg(test)]
+mod edit_validation_regressions;
+#[cfg(test)]
+mod framework_memory_regressions;
+#[cfg(test)]
 mod journey_tests;
+#[cfg(test)]
+mod note_memory_regressions;
+#[cfg(test)]
+mod paragraph_position_regressions;
+#[cfg(test)]
+mod password_memory_regressions;
+#[cfg(test)]
+mod render_memory_regressions;
 /// Hand-rolled snapshot harness + tree/detail golden tests (T3.5). In-crate
 /// because the render functions it exercises are `pub(crate)` (the lesson
 /// Phase 1/2 already hit: an integration test in `tests/` can't reach them).
@@ -68,11 +85,11 @@ mod journey_tests;
 mod snapshot_tests;
 #[cfg(test)]
 mod test_support;
+#[cfg(test)]
+mod ui_state_regressions;
 
 pub use args::{Args, DumpFormat, ParseOutcome};
 pub use error::TuiError;
-
-use std::io::stdout;
 
 use ratatui::backend::CrosstermBackend;
 use ratatui::Terminal;
@@ -138,7 +155,7 @@ fn launch_tui(args: &Args) -> Result<(), TuiError> {
     eprintln!("[hidlins-tui] theme: {}", app.theme.name);
 
     let _guard = TerminalGuard::new(app.mouse_enabled)?;
-    let terminal = Terminal::new(CrosstermBackend::new(stdout()))?;
+    let terminal = Terminal::new(CrosstermBackend::new(terminal_output::stdout_writer()?))?;
 
     event::run_event_loop(app, terminal)
 }

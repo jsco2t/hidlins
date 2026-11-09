@@ -2,12 +2,13 @@ use std::collections::HashMap;
 use tokio::sync::mpsc::Sender;
 use tracing::{debug, instrument};
 use zbus::{
+    Optional, OwnedVariant, Variant,
     connection::Connection,
     interface,
     message::{self, Header},
     object_server::{ObjectServer, ResponseDispatchNotifier, SignalEmitter},
+    runtime::traits::TaskHandle,
 };
-use zvariant::{Optional, OwnedValue, Value};
 
 use super::types::{ArgStructTest, IP4Adress, MyIfaceError, NextAction, RefType};
 
@@ -40,13 +41,13 @@ impl MyIface {
 
 #[interface(
     interface = "org.freedesktop.MyIface",
-    proxy(gen_blocking = true, assume_defaults = true, visibility = "pub(crate)")
+    proxy(assume_defaults = true, visibility = "pub(crate)")
 )]
 impl MyIface {
     #[instrument]
     async fn ping(&mut self, #[zbus(signal_emitter)] emitter: SignalEmitter<'_>) -> u32 {
         self.count += 1;
-        if self.count % 3 == 0 {
+        if self.count.is_multiple_of(3) {
             emitter
                 .alert_count(self.count)
                 .await
@@ -129,16 +130,12 @@ impl MyIface {
         debug!("`TestResponseNotify` called.");
         let (response, listener) = ResponseDispatchNotifier::new(String::from("Meaning of life"));
         let emitter = emitter.to_owned();
-        conn.executor()
-            .spawn(
-                async move {
-                    listener.await;
+        conn.spawn("TestResponseNotify", async move {
+            listener.await;
 
-                    Self::test_response_notified(emitter).await.unwrap();
-                },
-                "TestResponseNotify",
-            )
-            .detach();
+            Self::test_response_notified(emitter).await.unwrap();
+        })
+        .detach();
 
         Ok(response)
     }
@@ -172,6 +169,29 @@ impl MyIface {
         key: String,
     ) {
         debug!("`CreateObjInside` called.");
+        object_server
+            .at(
+                format!("/zbus/test/{key}"),
+                MyIface::new(self.next_tx.clone()),
+            )
+            .await
+            .unwrap();
+    }
+
+    // Same as `create_obj_inside`, but from a `&mut self` method. Dispatch holds a *write* lock on
+    // the calling interface for the whole duration of this method, so registering a secondary
+    // interface here exercises a different locking path than the `&self` variant above. Regression
+    // test for https://github.com/z-galaxy/zbus/issues/1845.
+    #[instrument]
+    async fn create_obj_inside_mut(
+        &mut self,
+        #[zbus(object_server)] object_server: &ObjectServer,
+        key: String,
+    ) {
+        debug!("`CreateObjInsideMut` called.");
+        // Mutate `self` so the write lock on this interface is genuinely held (and used) across the
+        // registration of the secondary interface below.
+        self.count += 1;
         object_server
             .at(
                 format!("/zbus/test/{key}"),
@@ -312,12 +332,12 @@ impl MyIface {
     // this works both ways.
     #[instrument]
     #[zbus(property)]
-    fn address_data2(&self) -> HashMap<String, OwnedValue> {
+    fn address_data2(&self) -> HashMap<String, OwnedVariant> {
         debug!("`AddressData2` getter called.");
         let mut map = HashMap::new();
         map.insert(
             "address".into(),
-            Value::from("127.0.0.1").try_into().unwrap(),
+            Variant::from("127.0.0.1").try_into().unwrap(),
         );
         map.insert("prefix".into(), 1234u32.into());
 
@@ -359,7 +379,7 @@ impl MyIface {
             header
                 .primary()
                 .flags()
-                .contains(zbus::message::Flags::NoReplyExpected)
+                .contains(zbus::message::Flags::NO_REPLY_EXPECTED)
         );
     }
 
@@ -372,7 +392,7 @@ impl MyIface {
             header
                 .primary()
                 .flags()
-                .contains(zbus::message::Flags::NoAutoStart)
+                .contains(zbus::message::Flags::NO_AUTO_START)
         );
     }
 
@@ -385,7 +405,7 @@ impl MyIface {
             header
                 .primary()
                 .flags()
-                .contains(zbus::message::Flags::AllowInteractiveAuth)
+                .contains(zbus::message::Flags::ALLOW_INTERACTIVE_AUTH)
         );
     }
 
@@ -524,6 +544,87 @@ impl MyIface {
             )));
         }
         Ok(())
+    }
+
+    /// A property whose getter fails with a custom `DBusError`, to check that its error name
+    /// reaches the client.
+    #[instrument]
+    #[zbus(property)]
+    fn fail_property_custom_error(&self) -> Result<u32, MyIfaceError> {
+        debug!("`FailPropertyCustomError` getter called.");
+        Err(MyIfaceError::SomethingWentWrong("oops".to_string()))
+    }
+
+    /// A property with a fallible `&self` setter that fails with a custom `DBusError`, to
+    /// exercise the `Interface::set` (`DispatchResult::Async`) path.
+    #[instrument]
+    #[zbus(property)]
+    fn custom_error_prop(&self) -> u32 {
+        debug!("`CustomErrorProp` getter called.");
+        0
+    }
+
+    #[instrument]
+    #[zbus(property)]
+    fn set_custom_error_prop(&self, val: u32) -> Result<(), MyIfaceError> {
+        debug!("`CustomErrorProp` setter called.");
+        if val > 60 {
+            return Err(MyIfaceError::SomethingWentWrong(format!(
+                "Provided value is {val}; values above 60 not accepted"
+            )));
+        }
+        Ok(())
+    }
+
+    /// A property with a fallible `&mut self` setter that fails with a custom `DBusError`, to
+    /// exercise the `Interface::set_mut` path.
+    #[instrument]
+    #[zbus(property)]
+    fn custom_error_mut_prop(&self) -> u32 {
+        debug!("`CustomErrorMutProp` getter called.");
+        0
+    }
+
+    #[instrument]
+    #[zbus(property)]
+    fn set_custom_error_mut_prop(&mut self, val: u32) -> Result<(), MyIfaceError> {
+        debug!("`CustomErrorMutProp` setter called.");
+        if val > 60 {
+            return Err(MyIfaceError::SomethingWentWrong(format!(
+                "Provided value is {val}; values above 60 not accepted"
+            )));
+        }
+        Ok(())
+    }
+
+    /// A property whose getter fails after a successful set, the way a locked Secret Service item
+    /// reports `IsLocked`. The setter emits `PropertiesChanged` with the new value, so the
+    /// getter's error name must survive that path into the `Set` reply.
+    #[instrument]
+    #[zbus(property)]
+    fn locked_prop(&self) -> zbus::fdo::Result<u32> {
+        debug!("`LockedProp` getter called.");
+        Err(zbus::fdo::Error::AccessDenied("locked".to_string()))
+    }
+
+    #[instrument]
+    #[zbus(property)]
+    fn set_locked_prop(&mut self, val: u32) {
+        debug!("`LockedProp` setter called with {val}.");
+    }
+
+    /// Like `locked_prop`, with the getter failing with a custom `DBusError` and a `&self` setter.
+    #[instrument]
+    #[zbus(property)]
+    fn custom_locked_prop(&self) -> Result<u32, MyIfaceError> {
+        debug!("`CustomLockedProp` getter called.");
+        Err(MyIfaceError::SomethingWentWrong("locked".to_string()))
+    }
+
+    #[instrument]
+    #[zbus(property)]
+    fn set_custom_locked_prop(&self, val: u32) {
+        debug!("`CustomLockedProp` setter called with {val}.");
     }
 
     async fn never_return(&self) {

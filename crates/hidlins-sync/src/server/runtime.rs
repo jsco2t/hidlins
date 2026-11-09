@@ -2,7 +2,7 @@
 
 use std::{
     collections::{BTreeMap, BTreeSet},
-    io::{self, Read, Write},
+    io,
     net::{Shutdown, SocketAddr, TcpListener, TcpStream},
     sync::{
         atomic::{AtomicBool, Ordering},
@@ -15,7 +15,7 @@ use std::{
 use crate::{
     address::{LocalBindEndpoint, LocalEndpoint},
     discovery::{Advertisement, AdvertisementSet, DiscoveryError},
-    framing::{Preface, PrefaceMode, PREFACE_LENGTH},
+    framing::{read_exact_until, write_all_until, Preface, PrefaceMode, PREFACE_LENGTH},
     noise::{HandshakeSession, NoiseKeypair, SecureTransport, SessionMode, HANDSHAKE_TIMEOUT},
     pairing::{
         ConfirmedPairing, PairingError, PairingTransaction, PairingWindow, SasCode, TransactionId,
@@ -28,12 +28,62 @@ use crate::{
 };
 
 use super::{
-    AuthorizationPermit, CanonicalSnapshot, HostOperation, HostQueue, HostResponse, ServerError,
-    StagedUpload,
+    AuthorizationPermit, CanonicalSnapshot, HostOperation, HostQueue, HostResponse, HostShutdown,
+    ServerError, StagedUpload,
 };
 
+#[cfg(test)]
+use std::io::Write;
+
 const POLL_INTERVAL: Duration = Duration::from_millis(100);
+
+#[cfg(test)]
+#[path = "deadline_regressions.rs"]
+mod deadline_regressions;
 const NOISE_OVERHEAD: usize = 16;
+
+/// Permission to activate trust during one particular local pairing window.
+///
+/// Closing or replacing that window cancels every clone. Restoring a peer key
+/// from disk cannot recreate this process-local permission.
+#[derive(Clone)]
+pub struct PairingAuthorization {
+    active: Arc<AtomicBool>,
+    deadline: Instant,
+}
+
+impl PairingAuthorization {
+    fn new(deadline: Instant) -> Self {
+        Self {
+            active: Arc::new(AtomicBool::new(true)),
+            deadline,
+        }
+    }
+
+    /// Check permission at the point trust becomes active. A successful check
+    /// linearizes activation before any later window cancellation.
+    pub fn check(&self) -> Result<(), PairingAuthorityError> {
+        if self.active.load(Ordering::Acquire) && Instant::now() < self.deadline {
+            Ok(())
+        } else {
+            Err(PairingAuthorityError::Canceled)
+        }
+    }
+
+    fn cancel(&self) {
+        self.active.store(false, Ordering::Release);
+    }
+
+    fn same_window(&self, other: &Self) -> bool {
+        Arc::ptr_eq(&self.active, &other.active)
+    }
+}
+
+impl std::fmt::Debug for PairingAuthorization {
+    fn fmt(&self, formatter: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        formatter.write_str("PairingAuthorization([REDACTED])")
+    }
+}
 
 /// Secret-free runtime setup failure.
 #[derive(Debug, thiserror::Error)]
@@ -67,6 +117,18 @@ pub trait PairingAuthority: Send + Sync {
     /// Atomically activate the exact prepared client.
     fn activate(&self, transaction: &PairingTransaction) -> Result<(), PairingAuthorityError>;
 
+    /// Activate within the original window. This default linearizes permission
+    /// before calling `activate`. Implementations that wait for application or
+    /// registry locks must override it and check inside their commit transaction.
+    fn activate_authorized(
+        &self,
+        transaction: &PairingTransaction,
+        authorization: &PairingAuthorization,
+    ) -> Result<(), PairingAuthorityError> {
+        authorization.check()?;
+        self.activate(transaction)
+    }
+
     /// Reload the exact unexpired transaction for an authenticated provisional or active peer.
     fn recover(
         &self,
@@ -97,6 +159,7 @@ pub struct ServerController {
     trusted: Arc<AuthorizationRegistry>,
     pairing: Arc<PairingRuntimeState>,
     stopped: Arc<AtomicBool>,
+    host_shutdown: Arc<HostShutdown>,
     listener: Option<JoinHandle<()>>,
 }
 
@@ -108,6 +171,7 @@ struct ListenerState {
 struct AuthorizationRegistry {
     permits: RwLock<BTreeMap<[u8; 32], AuthorizationPermit>>,
     provisional: RwLock<BTreeSet<[u8; 32]>>,
+    recovery: RwLock<BTreeMap<[u8; 32], PairingAuthorization>>,
 }
 
 enum TrustedAdmission {
@@ -124,6 +188,7 @@ impl AuthorizationRegistry {
                     .collect(),
             ),
             provisional: RwLock::new(BTreeSet::new()),
+            recovery: RwLock::new(BTreeMap::new()),
         }
     }
 
@@ -131,18 +196,43 @@ impl AuthorizationRegistry {
         if let Some(permit) = self.permits.read().ok()?.get(&peer).cloned() {
             return Some(TrustedAdmission::Active(permit));
         }
+        let eligible = self.recovery.read().ok()?.get(&peer)?.check().is_ok();
         self.provisional
             .read()
             .ok()?
             .contains(&peer)
             .then_some(TrustedAdmission::Provisional)
+            .filter(|_| eligible)
     }
 
-    fn prepare(&self, peer: [u8; 32]) {
+    fn prepare(&self, peer: [u8; 32], authorization: &PairingAuthorization) -> Result<(), ()> {
+        let mut recovery = self.recovery.write().map_err(|_| ())?;
+        authorization.check().map_err(|_| ())?;
+        recovery.insert(peer, authorization.clone());
         self.provisional
             .write()
             .unwrap_or_else(std::sync::PoisonError::into_inner)
             .insert(peer);
+        Ok(())
+    }
+
+    fn clear_recovery(&self) {
+        self.recovery
+            .write()
+            .unwrap_or_else(std::sync::PoisonError::into_inner)
+            .clear();
+        self.provisional
+            .write()
+            .unwrap_or_else(std::sync::PoisonError::into_inner)
+            .clear();
+    }
+
+    fn recovery_matches(&self, peer: [u8; 32], authorization: &PairingAuthorization) -> bool {
+        self.recovery.read().is_ok_and(|recovery| {
+            recovery.get(&peer).is_some_and(|receipt| {
+                receipt.same_window(authorization) && receipt.check().is_ok()
+            })
+        })
     }
 
     fn activate(&self, peer: [u8; 32]) {
@@ -195,7 +285,10 @@ struct LiveConnection {
 }
 
 struct PairingRuntimeState {
+    lifecycle: Mutex<()>,
     window: Mutex<Option<PairingWindow>>,
+    authorization: Mutex<Option<PairingAuthorization>>,
+    trusted: Arc<AuthorizationRegistry>,
     authority: Option<Arc<dyn PairingAuthority>>,
     sockets: Arc<Mutex<Vec<Option<LiveConnection>>>>,
     advertisements: Mutex<AdvertisementSet>,
@@ -208,6 +301,25 @@ struct PairingRuntimeState {
 
 impl PairingRuntimeState {
     fn open(self: &Arc<Self>) -> Result<(), ServerRuntimeError> {
+        let _lifecycle = self
+            .lifecycle
+            .lock()
+            .map_err(|_| ServerRuntimeError::Listener)?;
+        let previous_window = self
+            .window
+            .lock()
+            .map_err(|_| ServerRuntimeError::Listener)?
+            .is_some();
+        let previous_authorization = self
+            .authorization
+            .lock()
+            .map_err(|_| ServerRuntimeError::Listener)?
+            .is_some();
+        if previous_window || previous_authorization {
+            self.close_locked();
+        } else {
+            self.trusted.clear_recovery();
+        }
         let now = Instant::now();
         self.advertisements
             .lock()
@@ -231,10 +343,19 @@ impl PairingRuntimeState {
             }
             return Err(ServerRuntimeError::Discovery(DiscoveryError::Backend));
         }
-        *self
-            .window
-            .lock()
-            .map_err(|_| ServerRuntimeError::Listener)? = Some(PairingWindow::open_at(now));
+        {
+            let mut window = self
+                .window
+                .lock()
+                .map_err(|_| ServerRuntimeError::Listener)?;
+            let mut authorization = self
+                .authorization
+                .lock()
+                .map_err(|_| ServerRuntimeError::Listener)?;
+            let next = PairingWindow::open_at(now);
+            *authorization = Some(PairingAuthorization::new(next.deadline()));
+            *window = Some(next);
+        }
 
         let weak = Arc::downgrade(self);
         let _ = thread::Builder::new()
@@ -254,42 +375,83 @@ impl PairingRuntimeState {
             .is_ok_and(|window| window.as_ref().is_some_and(|window| window.is_open(now)))
     }
 
-    fn deadline(&self) -> Option<Instant> {
-        self.window
-            .lock()
-            .ok()?
-            .as_ref()
-            .map(PairingWindow::deadline)
+    fn authorization(&self) -> Option<PairingAuthorization> {
+        let window = self.window.lock().ok()?;
+        if !window.as_ref()?.is_open(Instant::now()) {
+            return None;
+        }
+        let authorization = self.authorization.lock().ok()?.clone()?;
+        authorization.check().ok()?;
+        Some(authorization)
     }
 
     fn begin_candidate(
         &self,
         peer: crate::identity::PublicIdentity,
         handshake_hash: [u8; 32],
+        admitted: &PairingAuthorization,
         now: Instant,
-    ) -> Result<SasCode, PairingError> {
-        self.window
+    ) -> Result<(SasCode, PairingAuthorization), PairingError> {
+        let _lifecycle = self.lifecycle.lock().map_err(|_| PairingError::Closed)?;
+        let mut window = self.window.lock().map_err(|_| PairingError::Closed)?;
+        let authorization = self
+            .authorization
             .lock()
             .map_err(|_| PairingError::Closed)?
+            .clone()
+            .ok_or(PairingError::Closed)?;
+        if !authorization.same_window(admitted) {
+            return Err(PairingError::Closed);
+        }
+        authorization.check().map_err(|_| PairingError::Closed)?;
+        let sas = window
             .as_mut()
             .ok_or(PairingError::Closed)?
-            .begin_candidate(peer, handshake_hash, now)
+            .begin_candidate(peer, handshake_hash, now)?;
+        Ok((sas, authorization))
     }
 
     fn confirm_candidate(
         &self,
         sas: SasCode,
+        authorization: &PairingAuthorization,
         now: Instant,
     ) -> Result<ConfirmedPairing, PairingError> {
-        self.window
+        let _lifecycle = self.lifecycle.lock().map_err(|_| PairingError::Closed)?;
+        let mut window = self.window.lock().map_err(|_| PairingError::Closed)?;
+        let current = self
+            .authorization
             .lock()
-            .map_err(|_| PairingError::Closed)?
+            .map_err(|_| PairingError::Closed)?;
+        if !current
+            .as_ref()
+            .is_some_and(|current| current.same_window(authorization))
+        {
+            return Err(PairingError::Closed);
+        }
+        authorization.check().map_err(|_| PairingError::Closed)?;
+        window
             .as_mut()
             .ok_or(PairingError::Closed)?
             .confirm(sas, now)
     }
 
-    fn reject_candidate(&self, now: Instant) {
+    fn owns_window(&self, authorization: &PairingAuthorization) -> bool {
+        self.authorization.lock().is_ok_and(|current| {
+            current
+                .as_ref()
+                .is_some_and(|current| current.same_window(authorization))
+        })
+    }
+
+    fn reject_candidate(&self, authorization: &PairingAuthorization, now: Instant) {
+        let _lifecycle = self
+            .lifecycle
+            .lock()
+            .unwrap_or_else(std::sync::PoisonError::into_inner);
+        if !self.owns_window(authorization) {
+            return;
+        }
         let exhausted = self.window.lock().map_or(true, |mut window| {
             let Some(window) = window.as_mut() else {
                 return true;
@@ -298,11 +460,18 @@ impl PairingRuntimeState {
             !window.is_open(now)
         });
         if exhausted {
-            self.close();
+            self.close_locked();
         }
     }
 
-    fn record_failed_attempt(&self, now: Instant) {
+    fn record_failed_attempt(&self, authorization: &PairingAuthorization, now: Instant) {
+        let _lifecycle = self
+            .lifecycle
+            .lock()
+            .unwrap_or_else(std::sync::PoisonError::into_inner);
+        if !self.owns_window(authorization) {
+            return;
+        }
         let exhausted = self.window.lock().map_or(true, |mut window| {
             let Some(window) = window.as_mut() else {
                 return true;
@@ -311,20 +480,57 @@ impl PairingRuntimeState {
             !window.is_open(now)
         });
         if exhausted {
-            self.close();
+            self.close_locked();
         }
     }
 
     fn expire(&self, now: Instant) {
-        if !self.is_open(now) {
-            self.close();
+        let expired = {
+            let Ok(window) = self.window.lock() else {
+                return;
+            };
+            if window.as_ref().is_some_and(|window| window.is_open(now)) {
+                return;
+            }
+            self.authorization
+                .lock()
+                .ok()
+                .and_then(|authorization| authorization.clone())
+        };
+        let Some(expired) = expired else {
+            return;
+        };
+        #[cfg(test)]
+        pairing_lifecycle_regressions::after_expiry_check();
+        let _lifecycle = self
+            .lifecycle
+            .lock()
+            .unwrap_or_else(std::sync::PoisonError::into_inner);
+        if self.owns_window(&expired) && !self.is_open(now) {
+            self.close_locked();
         }
     }
 
     fn close(&self) {
+        let _lifecycle = self
+            .lifecycle
+            .lock()
+            .unwrap_or_else(std::sync::PoisonError::into_inner);
+        self.close_locked();
+    }
+
+    // Caller serializes the complete transition with `lifecycle`. The inner
+    // window lock is released before application callbacks and socket cleanup.
+    fn close_locked(&self) {
         if let Ok(mut window) = self.window.lock() {
+            if let Ok(mut authorization) = self.authorization.lock() {
+                if let Some(previous) = authorization.take() {
+                    previous.cancel();
+                }
+            }
             *window = None;
         }
+        self.trusted.clear_recovery();
         if let Ok(mut advertisements) = self.advertisements.lock() {
             advertisements.close_pairing();
         }
@@ -351,6 +557,10 @@ impl PairingRuntimeState {
 
     fn active_advertisements(&self, now: Instant) -> Vec<Advertisement> {
         self.expire(now);
+        let _lifecycle = self
+            .lifecycle
+            .lock()
+            .unwrap_or_else(std::sync::PoisonError::into_inner);
         #[cfg(all(
             feature = "desktop-discovery",
             any(target_os = "macos", target_os = "linux")
@@ -373,6 +583,7 @@ impl PairingRuntimeState {
         test
     ))]
     fn replace_endpoint(&self, endpoint: LocalEndpoint, now: Instant) -> Result<(), ()> {
+        let _lifecycle = self.lifecycle.lock().map_err(|_| ())?;
         let pairing_open = self.is_open(now);
         let mut replacement = AdvertisementSet::start(endpoint.port()).map_err(|_| ())?;
         if pairing_open {
@@ -398,6 +609,10 @@ impl PairingRuntimeState {
         any(target_os = "macos", target_os = "linux")
     ))]
     fn suspend(&self) {
+        let _lifecycle = self
+            .lifecycle
+            .lock()
+            .unwrap_or_else(std::sync::PoisonError::into_inner);
         if let Ok(mut advertisements) = self.advertisements.lock() {
             advertisements.stop();
         }
@@ -418,20 +633,22 @@ impl PairingRuntimeState {
     any(target_os = "macos", target_os = "linux")
 ))]
 fn refresh_desktop_listener(listener_state: &Mutex<ListenerState>, pairing: &PairingRuntimeState) {
-    let current = match listener_state.lock() {
-        Ok(state) => state.endpoint,
+    let (current, listening) = match listener_state.lock() {
+        Ok(state) => (state.endpoint, state.listener.is_some()),
         Err(_) => return,
     };
-    let Ok(current_port_routes) =
-        crate::discovery::desktop::allowed_interface_endpoints(current.port())
-    else {
+    #[cfg(test)]
+    let routes = listener_recovery_regressions::routes(current.port());
+    #[cfg(not(test))]
+    let routes = crate::discovery::desktop::allowed_interface_endpoints(current.port());
+    let Ok(current_port_routes) = routes else {
         if let Ok(mut state) = listener_state.lock() {
             state.listener = None;
         }
         pairing.suspend();
         return;
     };
-    if current_port_routes.contains(&current) {
+    if listening && current_port_routes.contains(&current) {
         return;
     }
 
@@ -459,6 +676,14 @@ fn refresh_desktop_listener(listener_state: &Mutex<ListenerState>, pairing: &Pai
     }
     pairing.suspend();
 }
+
+#[cfg(all(
+    test,
+    feature = "desktop-discovery",
+    any(target_os = "macos", target_os = "linux")
+))]
+#[path = "listener_recovery_regressions.rs"]
+mod listener_recovery_regressions;
 
 #[cfg(any(
     all(
@@ -587,7 +812,10 @@ impl ServerController {
                 .collect::<Vec<Option<LiveConnection>>>(),
         ));
         let pairing = Arc::new(PairingRuntimeState {
+            lifecycle: Mutex::new(()),
             window: Mutex::new(None),
+            authorization: Mutex::new(None),
+            trusted: Arc::clone(&trusted),
             authority: pairing_authority,
             sockets: Arc::clone(&sockets),
             advertisements: Mutex::new(AdvertisementSet::start(bound.port())?),
@@ -610,6 +838,7 @@ impl ServerController {
         let worker_pairing = Arc::clone(&pairing);
         let worker_sockets = Arc::clone(&sockets);
         let worker_listener = Arc::clone(&listener_state);
+        let host_shutdown = Arc::clone(&host.shutdown);
         let listener_handle = thread::Builder::new()
             .name("hidlins-sync-listener".into())
             .spawn(move || {
@@ -704,6 +933,7 @@ impl ServerController {
             trusted,
             pairing,
             stopped,
+            host_shutdown,
             listener: Some(listener_handle),
         })
     }
@@ -762,6 +992,10 @@ impl ServerController {
     /// Stop admission and pairing. This is shared by UI stop, lock, and signal paths.
     pub fn stop(&mut self) {
         self.stopped.store(true, Ordering::Release);
+        // Reach queued, dequeued and executing host work even when an
+        // application has loaned its processor/vault to another thread.
+        // Finish any transaction already executing before reporting stop.
+        self.host_shutdown.stop();
         if let Some(authority) = self.pairing.authority.as_ref() {
             authority.shutdown();
         }
@@ -840,33 +1074,41 @@ fn serve_connection(
 ) {
     let started = Instant::now();
     let handshake_deadline = started + HANDSHAKE_TIMEOUT;
-    if configure_socket_deadline(&stream, handshake_deadline).is_err() {
-        return;
-    }
     let mut preface_bytes = [0_u8; PREFACE_LENGTH];
-    if stream.read_exact(&mut preface_bytes).is_err() {
+    if read_exact_until(&mut stream, &mut preface_bytes, handshake_deadline).is_err() {
         return;
     }
     let Ok(preface) = Preface::decode(&preface_bytes) else {
         return;
     };
-    let mode = match preface.mode() {
-        PrefaceMode::Trusted => SessionMode::Trusted,
-        PrefaceMode::Pairing if pairing.is_open(Instant::now()) => SessionMode::Pairing,
-        PrefaceMode::Pairing => return,
+    let (mode, pairing_authorization) = match preface.mode() {
+        PrefaceMode::Trusted => (SessionMode::Trusted, None),
+        PrefaceMode::Pairing => {
+            let Some(authorization) = pairing.authorization() else {
+                return;
+            };
+            (SessionMode::Pairing, Some(authorization))
+        }
     };
     if mode == SessionMode::Pairing {
         identify_connection(sockets, slot, ConnectionIdentity::Pairing);
     }
     let Ok(mut transport) = establish_transport(&mut stream, identity, mode, handshake_deadline)
     else {
-        if mode == SessionMode::Pairing {
-            pairing.record_failed_attempt(Instant::now());
+        if let Some(authorization) = pairing_authorization.as_ref() {
+            pairing.record_failed_attempt(authorization, Instant::now());
         }
         return;
     };
-    if mode == SessionMode::Pairing {
-        serve_pairing(&mut stream, &mut transport, identity, pairing, trusted);
+    if let Some(authorization) = pairing_authorization {
+        serve_pairing(
+            &mut stream,
+            &mut transport,
+            identity,
+            pairing,
+            trusted,
+            &authorization,
+        );
         return;
     }
     let peer = transport.peer_static();
@@ -884,7 +1126,7 @@ fn serve_connection(
                 &mut stream,
                 &mut transport,
                 &mut protocol,
-                pairing.authority.as_deref(),
+                pairing,
                 trusted,
                 crate::identity::PublicIdentity::new(peer),
                 started + SYNC_SESSION_TIMEOUT,
@@ -899,15 +1141,8 @@ fn serve_connection(
         if !authorization.is_authorized() {
             return;
         }
-        if configure_socket_deadline(
-            &stream,
-            session_deadline.min(Instant::now() + AUTHENTICATED_IDLE_TIMEOUT),
-        )
-        .is_err()
-        {
-            return;
-        }
-        let Ok(ciphertext) = read_frame(&mut stream) else {
+        let record_deadline = session_deadline.min(Instant::now() + AUTHENTICATED_IDLE_TIMEOUT);
+        let Ok(ciphertext) = read_frame(&mut stream, record_deadline) else {
             return;
         };
         let Ok(length) = transport.read_message(&ciphertext, &mut plain) else {
@@ -928,6 +1163,7 @@ fn serve_connection(
                 &Message::Error {
                     code: ErrorCode::InvalidRequest,
                 },
+                record_deadline,
             );
             return;
         }
@@ -937,7 +1173,7 @@ fn serve_connection(
                 decoded.request_id,
                 &mut transport,
                 &mut protocol,
-                pairing.authority.as_deref(),
+                pairing,
                 trusted,
                 crate::identity::PublicIdentity::new(peer),
                 &decoded.message,
@@ -960,20 +1196,13 @@ fn serve_connection(
         match result {
             Ok(HostReply::Messages(messages)) => {
                 for message in messages {
-                    if configure_socket_deadline(
-                        &stream,
-                        session_deadline.min(Instant::now() + AUTHENTICATED_IDLE_TIMEOUT),
-                    )
-                    .is_err()
-                    {
-                        return;
-                    }
                     if send_message(
                         &mut stream,
                         &mut transport,
                         &mut protocol,
                         decoded.request_id,
                         &message,
+                        session_deadline.min(Instant::now() + AUTHENTICATED_IDLE_TIMEOUT),
                     )
                     .is_err()
                     {
@@ -998,14 +1227,6 @@ fn serve_connection(
                 }
             }
             Err(error) => {
-                if configure_socket_deadline(
-                    &stream,
-                    session_deadline.min(Instant::now() + AUTHENTICATED_IDLE_TIMEOUT),
-                )
-                .is_err()
-                {
-                    return;
-                }
                 let _ = send_message(
                     &mut stream,
                     &mut transport,
@@ -1014,6 +1235,7 @@ fn serve_connection(
                     &Message::Error {
                         code: error_code(error),
                     },
+                    session_deadline.min(Instant::now() + AUTHENTICATED_IDLE_TIMEOUT),
                 );
             }
         }
@@ -1026,29 +1248,29 @@ fn serve_pairing(
     identity: &NoiseKeypair,
     pairing: &PairingRuntimeState,
     trusted: &AuthorizationRegistry,
+    admitted: &PairingAuthorization,
 ) {
     let peer = crate::identity::PublicIdentity::new(transport.peer_static());
     let handshake_hash = *transport.handshake_hash();
-    let Ok(sas) = pairing.begin_candidate(peer, handshake_hash, Instant::now()) else {
+    let Ok((sas, authorization)) =
+        pairing.begin_candidate(peer, handshake_hash, admitted, Instant::now())
+    else {
         return;
     };
     let Some(authority) = pairing.authority.as_deref() else {
-        pairing.reject_candidate(Instant::now());
+        pairing.reject_candidate(&authorization, Instant::now());
         return;
     };
-    let Some(deadline) = pairing.deadline() else {
-        pairing.reject_candidate(Instant::now());
-        return;
-    };
+    let deadline = authorization.deadline;
     let Some(timeout) = deadline.checked_duration_since(Instant::now()) else {
-        pairing.reject_candidate(Instant::now());
+        pairing.reject_candidate(&authorization, Instant::now());
         return;
     };
     let Ok(display_name) = authority.confirm(peer, sas.clone(), timeout) else {
-        pairing.reject_candidate(Instant::now());
+        pairing.reject_candidate(&authorization, Instant::now());
         return;
     };
-    let Ok(confirmation) = pairing.confirm_candidate(sas, Instant::now()) else {
+    let Ok(confirmation) = pairing.confirm_candidate(sas, &authorization, Instant::now()) else {
         return;
     };
     if complete_pairing(
@@ -1060,12 +1282,13 @@ fn serve_pairing(
         peer,
         handshake_hash,
         &confirmation,
+        &authorization,
         display_name,
         deadline,
     )
     .is_err()
     {
-        pairing.record_failed_attempt(Instant::now());
+        pairing.record_failed_attempt(&authorization, Instant::now());
     }
 }
 
@@ -1079,6 +1302,7 @@ fn complete_pairing(
     peer: crate::identity::PublicIdentity,
     handshake_hash: [u8; 32],
     confirmation: &ConfirmedPairing,
+    authorization: &PairingAuthorization,
     display_name: String,
     deadline: Instant,
 ) -> Result<(), ()> {
@@ -1105,8 +1329,7 @@ fn complete_pairing(
     {
         return Err(());
     }
-    trusted.prepare(peer.into_bytes());
-    configure_socket_deadline(stream, deadline)?;
+    trusted.prepare(peer.into_bytes(), authorization)?;
     if send_message(
         stream,
         transport,
@@ -1116,6 +1339,7 @@ fn complete_pairing(
             transaction_id,
             transcript_digest,
         },
+        deadline,
     )
     .is_err()
     {
@@ -1128,12 +1352,13 @@ fn complete_pairing(
                 transaction_id,
                 transcript_digest,
             })
-        || authority.activate(&transaction).is_err()
+        || authority
+            .activate_authorized(&transaction, authorization)
+            .is_err()
     {
         return Err(());
     }
     trusted.activate(peer.into_bytes());
-    configure_socket_deadline(stream, deadline)?;
     send_message(
         stream,
         transport,
@@ -1143,6 +1368,7 @@ fn complete_pairing(
             transaction_id,
             transcript_digest,
         },
+        deadline,
     )
 }
 
@@ -1151,16 +1377,20 @@ fn serve_pairing_recovery(
     stream: &mut TcpStream,
     transport: &mut SecureTransport,
     protocol: &mut ProtocolState,
-    authority: Option<&dyn PairingAuthority>,
+    pairing: &PairingRuntimeState,
     trusted: &AuthorizationRegistry,
     peer: crate::identity::PublicIdentity,
     deadline: Instant,
 ) {
+    let Some(authorization) = pairing.authorization() else {
+        return;
+    };
+    let deadline = deadline.min(authorization.deadline);
     let Ok((request_id, message)) = receive_message(stream, transport, protocol, deadline) else {
         return;
     };
     let _ = serve_pairing_recovery_message(
-        stream, request_id, transport, protocol, authority, trusted, peer, &message, deadline,
+        stream, request_id, transport, protocol, pairing, trusted, peer, &message, deadline,
     );
 }
 
@@ -1170,7 +1400,7 @@ fn serve_pairing_recovery_message(
     request_id: u32,
     transport: &mut SecureTransport,
     protocol: &mut ProtocolState,
-    authority: Option<&dyn PairingAuthority>,
+    pairing: &PairingRuntimeState,
     trusted: &AuthorizationRegistry,
     peer: crate::identity::PublicIdentity,
     message: &Message,
@@ -1183,7 +1413,12 @@ fn serve_pairing_recovery_message(
     else {
         return Err(());
     };
-    let authority = authority.ok_or(())?;
+    let authorization = pairing.authorization().ok_or(())?;
+    if !trusted.recovery_matches(peer.into_bytes(), &authorization) {
+        return Err(());
+    }
+    let deadline = deadline.min(authorization.deadline);
+    let authority = pairing.authority.as_deref().ok_or(())?;
     let transaction = authority.recover(peer).map_err(|_| ())?;
     if transaction.transaction_id().into_bytes() != *transaction_id
         || transaction.transcript_digest().into_bytes() != *transcript_digest
@@ -1191,9 +1426,10 @@ fn serve_pairing_recovery_message(
     {
         return Err(());
     }
-    authority.activate(&transaction).map_err(|_| ())?;
+    authority
+        .activate_authorized(&transaction, &authorization)
+        .map_err(|_| ())?;
     trusted.activate(peer.into_bytes());
-    configure_socket_deadline(stream, deadline)?;
     send_message(
         stream,
         transport,
@@ -1203,6 +1439,7 @@ fn serve_pairing_recovery_message(
             transaction_id: *transaction_id,
             transcript_digest: *transcript_digest,
         },
+        deadline,
     )
 }
 
@@ -1212,8 +1449,7 @@ fn receive_message(
     protocol: &mut ProtocolState,
     deadline: Instant,
 ) -> Result<(u32, Message), ()> {
-    configure_socket_deadline(stream, deadline)?;
-    let ciphertext = read_frame(stream).map_err(|_| ())?;
+    let ciphertext = read_frame(stream, deadline).map_err(|_| ())?;
     let mut plain = vec![0_u8; ciphertext.len()];
     let length = transport
         .read_message(&ciphertext, &mut plain)
@@ -1238,17 +1474,14 @@ fn establish_transport(
     let mut handshake = handshake.map_err(|_| ())?;
     let mut noise = vec![0_u8; u16::MAX as usize].into_boxed_slice();
     let mut plain = vec![0_u8; u16::MAX as usize].into_boxed_slice();
-    configure_socket_deadline(stream, deadline)?;
-    let first = read_frame(stream).map_err(|_| ())?;
+    let first = read_frame(stream, deadline).map_err(|_| ())?;
     handshake
         .read_handshake(&first, &mut plain)
         .map_err(|_| ())?;
     let length = handshake.write_handshake(&[], &mut noise).map_err(|_| ())?;
-    configure_socket_deadline(stream, deadline)?;
-    write_frame(stream, &noise[..length]).map_err(|_| ())?;
+    write_frame(stream, &noise[..length], deadline).map_err(|_| ())?;
     if mode == SessionMode::Pairing {
-        configure_socket_deadline(stream, deadline)?;
-        let third = read_frame(stream).map_err(|_| ())?;
+        let third = read_frame(stream, deadline).map_err(|_| ())?;
         handshake
             .read_handshake(&third, &mut plain)
             .map_err(|_| ())?;
@@ -1368,10 +1601,6 @@ fn send_fetch(
     session_deadline: Instant,
 ) -> Result<(), ()> {
     let version = snapshot.version();
-    configure_socket_deadline(
-        stream,
-        session_deadline.min(Instant::now() + AUTHENTICATED_IDLE_TIMEOUT),
-    )?;
     send_message(
         stream,
         transport,
@@ -1382,6 +1611,7 @@ fn send_fetch(
             total_length: snapshot.length(),
             digest: *version.as_bytes(),
         },
+        session_deadline.min(Instant::now() + AUTHENTICATED_IDLE_TIMEOUT),
     )?;
     let mut buffer = vec![0_u8; MAX_APPLICATION_CHUNK];
     let mut sequence = 0_u32;
@@ -1396,10 +1626,6 @@ fn send_fetch(
         if read == 0 {
             break;
         }
-        configure_socket_deadline(
-            stream,
-            session_deadline.min(Instant::now() + AUTHENTICATED_IDLE_TIMEOUT),
-        )?;
         send_message(
             stream,
             transport,
@@ -1409,13 +1635,10 @@ fn send_fetch(
                 sequence,
                 bytes: buffer[..read].to_vec(),
             },
+            session_deadline.min(Instant::now() + AUTHENTICATED_IDLE_TIMEOUT),
         )?;
         sequence = sequence.checked_add(1).ok_or(())?;
     }
-    configure_socket_deadline(
-        stream,
-        session_deadline.min(Instant::now() + AUTHENTICATED_IDLE_TIMEOUT),
-    )?;
     send_message(
         stream,
         transport,
@@ -1424,6 +1647,7 @@ fn send_fetch(
         &Message::FetchCommit {
             chunk_count: sequence,
         },
+        session_deadline.min(Instant::now() + AUTHENTICATED_IDLE_TIMEOUT),
     )
 }
 
@@ -1439,15 +1663,6 @@ fn wait(
         .min(AUTHENTICATED_IDLE_TIMEOUT);
     host.submit_authorized(operation, authorization)?
         .wait_timeout(remaining)
-}
-
-fn configure_socket_deadline(stream: &TcpStream, deadline: Instant) -> Result<(), ()> {
-    let remaining = deadline.checked_duration_since(Instant::now()).ok_or(())?;
-    if remaining.is_zero() {
-        return Err(());
-    }
-    stream.set_read_timeout(Some(remaining)).map_err(|_| ())?;
-    stream.set_write_timeout(Some(remaining)).map_err(|_| ())
 }
 
 fn identify_connection(
@@ -1468,6 +1683,7 @@ fn send_message(
     protocol: &mut ProtocolState,
     request_id: u32,
     message: &Message,
+    deadline: Instant,
 ) -> Result<(), ()> {
     protocol
         .apply(Direction::Send, request_id, message)
@@ -1477,28 +1693,28 @@ fn send_message(
     let length = transport
         .write_message(&payload, &mut encrypted)
         .map_err(|_| ())?;
-    write_frame(stream, &encrypted[..length]).map_err(|_| ())
+    write_frame(stream, &encrypted[..length], deadline).map_err(|_| ())
 }
 
-fn read_frame(stream: &mut TcpStream) -> io::Result<Vec<u8>> {
+fn read_frame(stream: &mut TcpStream, deadline: Instant) -> io::Result<Vec<u8>> {
     let mut prefix = [0_u8; 2];
-    stream.read_exact(&mut prefix)?;
+    read_exact_until(stream, &mut prefix, deadline)?;
     let length = usize::from(u16::from_be_bytes(prefix));
     if length == 0 {
         return Err(io::ErrorKind::InvalidData.into());
     }
     let mut bytes = vec![0_u8; length];
-    stream.read_exact(&mut bytes)?;
+    read_exact_until(stream, &mut bytes, deadline)?;
     Ok(bytes)
 }
 
-fn write_frame(stream: &mut TcpStream, bytes: &[u8]) -> io::Result<()> {
+fn write_frame(stream: &mut TcpStream, bytes: &[u8], deadline: Instant) -> io::Result<()> {
     let length = u16::try_from(bytes.len()).map_err(|_| io::ErrorKind::InvalidData)?;
     if length == 0 {
         return Err(io::ErrorKind::InvalidData.into());
     }
-    stream.write_all(&length.to_be_bytes())?;
-    stream.write_all(bytes)
+    write_all_until(stream, &length.to_be_bytes(), deadline)?;
+    write_all_until(stream, bytes, deadline)
 }
 
 const fn error_code(error: ServerError) -> ErrorCode {
@@ -1513,6 +1729,14 @@ const fn error_code(error: ServerError) -> ErrorCode {
         ServerError::Stopped | ServerError::Internal => ErrorCode::InternalFailure,
     }
 }
+
+#[cfg(test)]
+#[path = "pairing_window_regressions.rs"]
+mod pairing_window_regressions;
+
+#[cfg(test)]
+#[path = "pairing_lifecycle_regressions.rs"]
+mod pairing_lifecycle_regressions;
 
 #[cfg(test)]
 mod tests {
@@ -1586,7 +1810,10 @@ mod tests {
                 .collect(),
         ));
         let pairing = PairingRuntimeState {
+            lifecycle: Mutex::new(()),
             window: Mutex::new(None),
+            authorization: Mutex::new(None),
+            trusted: Arc::new(super::AuthorizationRegistry::new([])),
             authority: None,
             sockets,
             advertisements: Mutex::new(AdvertisementSet::start(initial_endpoint.port()).unwrap()),

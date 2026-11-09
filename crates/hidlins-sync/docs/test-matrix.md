@@ -8,16 +8,16 @@ change transport terminology.
 
 | Stable ID | Invariant | Current executable evidence |
 | --- | --- | --- |
-| `SYNC-STATE-001` | unchanged local and remote is already current | `sync::tests::second_sync_is_already_in_sync` (`TC-SYNC-001`) |
-| `SYNC-STATE-002` | local-only change conditionally pushes | `sync::tests::state_local_changed_only_pushes` (`TC-SYNC-002`) |
-| `SYNC-STATE-003` | remote-only change fast-replaces and creates backup | `sync::tests::state_remote_changed_only_fast_replaces` (`TC-SYNC-003`) and `tests/us_041_fast_replace_open.rs` |
+| `SYNC-STATE-001` | unchanged local and remote is already current | `us_043_disjoint_merge::merge_result_uploads_and_is_idempotent_on_resync` |
+| `SYNC-STATE-002` | local-only change conditionally pushes | `us_042_conditional_put::local_changed_remote_unchanged_pushes_conditionally` |
+| `SYNC-STATE-003` | remote-only change fast-replaces and creates backup | `us_041_fast_replace_open::remote_advanced_local_unchanged_fast_replaces` |
 | `SYNC-STATE-004` | both changed merges and conditionally commits | `tests/us_043_disjoint_merge.rs`, `tests/us_044_collision_merge.rs` |
-| `SYNC-CAS-001` | failed conditional commits re-fetch/re-merge within a bound | `sync::tests::merge_with_precondition_failed_retries_then_succeeds` (`TC-SYNC-005`) |
-| `SYNC-CAS-002` | retry exhaustion is explicit and preserves backup | `sync::tests::conditional_put_exhausted_when_remote_keeps_advancing` (`TC-SYNC-006`) |
-| `SYNC-KDF-001` | incompatible KDF aborts before replacement | `sync::tests::kdf_param_mismatch_aborts_before_merge` (`TC-SYNC-008`) |
+| `SYNC-CAS-001` | failed conditional commits re-fetch/re-merge within a bound | `sync_retry_delta_regressions::successful_retry_reports_imports_from_both_attempts` and `retry_delta_cancels_an_import_removed_by_the_next_authority_version` |
+| `SYNC-CAS-002` | retry exhaustion is explicit and preserves backup | `preserved_contract_characterization::default_cas_exhausts_after_two_real_races_and_preserves_original_backup` |
+| `SYNC-KDF-001` | incompatible KDF aborts before replacement | `preserved_contract_characterization::fast_replace_rejects_same_vault_kdf_mismatch_without_replacing_local_bytes` and `diverged_merge_rejects_same_vault_kdf_mismatch_and_keeps_pre_merge_backup` |
 | `SYNC-ID-001` | a different logical vault cannot replace the open vault | `hidlins-core` `Vault::replace_database` UUID tests and sync fast-replace tests |
-| `SYNC-PTR-001` | successful divergence pointers persist together | `sync::tests::successful_sync_updates_both_last_synced_pointers_atomically` (`TC-SYNC-014`) |
-| `SYNC-OFFLINE-001` | remote failure leaves local bytes and backup policy intact | `tests/us_045_sync_failure.rs` and `sync::tests::head_error_surfaces_remote_unreachable_without_backup` |
+| `SYNC-PTR-001` | successful divergence pointers persist together | `preserved_contract_characterization::successful_divergence_returns_both_current_pointers_for_noop_resync` and `local_configuration_persists_both_distinct_divergence_versions_together`; `client::sync_vault_with_cancellation` persists the returned pair |
+| `SYNC-OFFLINE-001` | remote failure leaves local bytes and backup policy intact | `us_045_sync_failure::remote_unreachable_leaves_local_vault_intact` |
 | `SYNC-BACKUP-001` | merge conflict keeps live file and pre-merge backup | `tests/fault_injection.rs::unresolvable_merge_surfaces_error_and_preserves_disk_state` |
 | `SYNC-BACKUP-002` | crash after backup/before fetch is recoverable | `TC-FAULT-001` |
 | `SYNC-BACKUP-003` | crash after save/before remote commit preserves backup | `TC-FAULT-002` |
@@ -30,10 +30,11 @@ change transport terminology.
 | `SYNC-OWNER-003` | TUI worker takes and returns one owned vault/registry pair | `sync_runtime::tests::drain_yields_activity_then_done_and_clears_inflight`; the consuming `start` signature is compile-time evidence |
 | `SYNC-OWNER-004` | lost TUI worker cannot leave a false in-flight state | `sync_runtime::tests::drain_on_worker_disconnect_yields_worker_lost_and_clears_inflight` |
 
-The current CAS tests intentionally characterize a configurable three-attempt
-budget. Protocol V1 deliberately replaces that with one retry after the initial
-attempt; Task 007 changes the assertion to exactly two attempts. Remote-version
-names are likewise current behavior to rename, not compatibility requirements.
+The current default CAS budget is two total commit attempts: the initial
+attempt plus one retry. `client_policy` asserts that default, and the exhaustion
+characterization drives two real stale-version races through the state machine.
+Run the focused retained-contract evidence with
+`make test-sync-preserved-contracts`. The full test suite also runs these cases.
 
 ## V1 automated requirement map
 
@@ -62,7 +63,7 @@ names are likewise current behavior to rename, not compatibility requirements.
 | `LNS-PROCESS-001..099` | real client/server processes, adversarial network, concurrency, crash and resource bounds | 013 |
 | `LNS-SECRET-001..099` | redaction across logs/errors/events/CLI/TUI/Flutter/native bridge | 013 |
 | `LNS-INTEROP-001..099` | KDBX3 read/KDBX4 write, KeePassXC round trip, merged history | 013 |
-| `LNS-MOBILE-SCENARIO-001..099` | real iPhone/iPad/Android phone/tablet against a separate CLI authority: native discovery, reject/accept pairing, import, startup/manual-only bidirectional sync, restart, address-churn reconnect, and revocation | 014, 021, 022 |
+| `LNS-MOBILE-SCENARIO-001..099` | iPhone/iPad simulator and Android phone/tablet emulator application processes against a separate CLI authority: native discovery, reject/accept pairing, import, startup/manual-only bidirectional sync, restart, address-churn reconnect, and revocation | 014, 021, 022 |
 
 Every concrete new test must include one ID from its family in the test name,
 adjacent comment, golden/scenario metadata, or harness case name. A behavior may
@@ -89,11 +90,12 @@ choosing an address, while the shipping client resolves and connects directly
 over emulator Wi-Fi. `LNS-DISC-006` separately exercises the real Rust desktop
 publisher/browser pair. Simulator networking does not represent arbitrary
 router multicast behavior; the physical desktop-to-Android observation remains
-optional and non-gating. The API 29 emulator scenario disables its synthetic
-cellular data because the legacy explicit Wi-Fi link otherwise gives cellular
-and Wi-Fi duplicate same-subnet paths; this models a Wi-Fi-only device and does
-not inject, select, or disclose a sync route. API 36 retains platform-default
-network state on shared emulator Wi-Fi.
+optional and non-gating. The current shared-LAN matrix uses API 30 phone and
+API 36 tablet emulators on shared emulator Wi-Fi, retaining platform-default
+cellular state. API 29 remains the product minimum and has separate native/UI
+coverage with API 36; its default image does not provide the required shared-LAN
+backend. Historical API 29 explicit-link results are retained as dated records
+in the release review and do not certify the current shared-LAN matrix.
 
 ## Five-finding repair coverage contract (2026-09-10)
 

@@ -3,6 +3,7 @@ import 'platform_result.dart';
 
 abstract interface class AttachmentExportCapability {
   Future<PlatformResult<String>> chooseDestination(String suggestedName);
+  Future<PlatformResult<String>> chooseSource();
 }
 
 final class MethodChannelAttachmentExport
@@ -26,6 +27,19 @@ final class MethodChannelAttachmentExport
       decode: (value) {
         if (value case final String path when path.isNotEmpty) return path;
         throw const FormatException('invalid attachment destination');
+      },
+    );
+  }
+
+  @override
+  Future<PlatformResult<String>> chooseSource() {
+    return invokePlatform(
+      client: _client,
+      channel: channelName,
+      method: 'chooseSource',
+      decode: (value) {
+        if (value case final String path when path.isNotEmpty) return path;
+        throw const FormatException('invalid attachment source');
       },
     );
   }

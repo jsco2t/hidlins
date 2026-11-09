@@ -8,20 +8,34 @@ import '../../platform/attachment_export.dart';
 import '../../platform/platform_result.dart';
 import '../../providers/providers.dart';
 import '../../ui/tokens.dart';
+import '../../ui/lock_guard.dart';
 import '../../ui/widgets/copy_row.dart';
 import '../../ui/widgets/section_card.dart';
 import '../../ui/widgets/secret_text.dart';
 import '../entries/totp_block.dart';
 import 'entry_edit.dart';
+import 'entry_history.dart';
+import 'entry_move_dialog.dart';
 import '../sync/sync_controller.dart';
 
 typedef FilePickerCallback = Future<String?> Function();
+typedef EntryMovedCallback = void Function(String uuid, String groupUuid);
 
 class EntryDetailPane extends ConsumerWidget {
-  const EntryDetailPane({super.key, required this.uuid, this.onPickFile});
+  const EntryDetailPane({
+    super.key,
+    required this.uuid,
+    this.onPickFile,
+    this.onMoved,
+    this.onPurged,
+  });
 
   final String uuid;
   final FilePickerCallback? onPickFile;
+  // The page owns navigation after a mutation, even if cache refresh replaces
+  // this detail before its native call completes.
+  final EntryMovedCallback? onMoved;
+  final ValueChanged<String>? onPurged;
 
   @override
   Widget build(BuildContext context, WidgetRef ref) {
@@ -41,9 +55,12 @@ class EntryDetailPane extends ConsumerWidget {
         ),
       ),
       data: (detail) => _DetailContent(
+        key: ValueKey((uuid, detail)),
         detail: detail,
         uuid: uuid,
         onPickFile: onPickFile,
+        onMoved: onMoved,
+        onPurged: onPurged,
         mutationsEnabled: mutationsEnabled,
       ),
     );
@@ -52,15 +69,20 @@ class EntryDetailPane extends ConsumerWidget {
 
 class _DetailContent extends ConsumerStatefulWidget {
   const _DetailContent({
+    super.key,
     required this.detail,
     required this.uuid,
     this.onPickFile,
+    this.onMoved,
+    this.onPurged,
     required this.mutationsEnabled,
   });
 
   final EntryDetail detail;
   final String uuid;
   final FilePickerCallback? onPickFile;
+  final EntryMovedCallback? onMoved;
+  final ValueChanged<String>? onPurged;
   final bool mutationsEnabled;
 
   @override
@@ -69,6 +91,7 @@ class _DetailContent extends ConsumerStatefulWidget {
 
 class _DetailContentState extends ConsumerState<_DetailContent> {
   final _passwordKey = GlobalKey<SecretTextState>();
+  bool _actionPending = false;
 
   @override
   Widget build(BuildContext context) {
@@ -103,7 +126,36 @@ class _DetailContentState extends ConsumerState<_DetailContent> {
             IconButton(
               icon: const Icon(Icons.edit_outlined),
               tooltip: l10n.actionEdit,
-              onPressed: widget.mutationsEnabled ? _openEdit : null,
+              onPressed: widget.mutationsEnabled && !_actionPending
+                  ? _openEdit
+                  : null,
+            ),
+          ],
+        ),
+        Wrap(
+          spacing: HidlinsSpacing.xs,
+          runSpacing: HidlinsSpacing.xs,
+          children: [
+            TextButton.icon(
+              onPressed: _actionPending
+                  ? null
+                  : () => EntryHistorySheet.show(context, widget.uuid),
+              icon: const Icon(Icons.history),
+              label: Text(l10n.entryHistoryTitle),
+            ),
+            TextButton.icon(
+              onPressed: widget.mutationsEnabled && !_actionPending
+                  ? _moveEntry
+                  : null,
+              icon: const Icon(Icons.drive_file_move_outline),
+              label: Text(l10n.entryMoveTitle),
+            ),
+            TextButton.icon(
+              onPressed: widget.mutationsEnabled && !_actionPending
+                  ? _purgeEntry
+                  : null,
+              icon: const Icon(Icons.delete_forever_outlined),
+              label: Text(l10n.entryPurgeConfirmTitle),
             ),
           ],
         ),
@@ -147,7 +199,7 @@ class _DetailContentState extends ConsumerState<_DetailContent> {
                     } else {
                       await state.reveal();
                     }
-                    setState(() {});
+                    if (mounted) setState(() {});
                   },
                 ),
                 IconButton(
@@ -273,11 +325,16 @@ class _DetailContentState extends ConsumerState<_DetailContent> {
 
   Future<void> _openEdit() async {
     final sync = ref.read(syncControllerProvider).asData?.value;
-    if (!widget.mutationsEnabled || sync == null || sync.inFlight) return;
+    if (_actionPending ||
+        !widget.mutationsEnabled ||
+        sync == null ||
+        sync.inFlight) {
+      return;
+    }
     final detail = await ref
         .read(entryRepositoryProvider)
         .entryDetail(widget.uuid);
-    if (!mounted || !widget.mutationsEnabled) return;
+    if (!mounted || _actionPending || !widget.mutationsEnabled) return;
     final current = ref.read(syncControllerProvider).asData?.value;
     if (current == null ||
         current.inFlight ||
@@ -289,6 +346,125 @@ class _DetailContentState extends ConsumerState<_DetailContent> {
     );
     if (mounted && changed == true) {
       ref.invalidate(entryDetailProvider(widget.uuid));
+    }
+  }
+
+  bool _canMutate([int? revision]) {
+    if (!mounted || !widget.mutationsEnabled) return false;
+    final sync = ref.read(syncControllerProvider).asData?.value;
+    return sync != null &&
+        !sync.inFlight &&
+        (revision == null || sync.terminalRevision == revision);
+  }
+
+  void _showActionError(String message) {
+    if (!mounted) return;
+    ScaffoldMessenger.of(context)
+        .showSnackBar(SnackBar(content: Text(message)));
+  }
+
+  Future<void> _moveEntry() async {
+    if (_actionPending || !_canMutate()) return;
+    final revision = ref
+        .read(syncControllerProvider)
+        .asData!
+        .value
+        .terminalRevision;
+    final uuid = widget.uuid;
+    final onMoved = widget.onMoved;
+    final l10n = AppLocalizations.of(context)!;
+    setState(() => _actionPending = true);
+    try {
+      final tree = await ref.read(vaultTreeProvider.future);
+      if (!mounted || !_canMutate(revision)) return;
+      String? currentGroup;
+      for (final entry in tree.entries) {
+        if (entry.uuid == uuid) {
+          currentGroup = entry.groupUuid;
+          break;
+        }
+      }
+      final destination = await showDialog<String>(
+        context: context,
+        builder: (_) => LockGuard(
+          child: EntryMoveDialog(
+            root: tree.root,
+            currentGroupUuid: currentGroup,
+          ),
+        ),
+      );
+      if (destination == null || !mounted) return;
+      if (!_canMutate(revision)) {
+        _showActionError(l10n.entryActionChanged);
+        return;
+      }
+      await ref.read(entryRepositoryProvider).moveEntry(uuid, destination);
+      onMoved?.call(uuid, destination);
+    } on Exception {
+      _showActionError(l10n.errorGeneric);
+    } finally {
+      if (mounted) setState(() => _actionPending = false);
+    }
+  }
+
+  Future<void> _purgeEntry() async {
+    if (_actionPending || !_canMutate()) return;
+    final revision = ref
+        .read(syncControllerProvider)
+        .asData!
+        .value
+        .terminalRevision;
+    final uuid = widget.uuid;
+    final onPurged = widget.onPurged;
+    final l10n = AppLocalizations.of(context)!;
+    setState(() => _actionPending = true);
+    try {
+      final confirmed = await showDialog<bool>(
+        context: context,
+        builder: (context) => LockGuard(
+          child: AlertDialog(
+            title: Text(l10n.entryPurgeConfirmTitle),
+            content: Column(
+              mainAxisSize: MainAxisSize.min,
+              crossAxisAlignment: CrossAxisAlignment.start,
+              children: [
+                Text(widget.detail.title),
+                const SizedBox(height: HidlinsSpacing.sm),
+                Text(l10n.entryPurgeConfirmMessage),
+              ],
+            ),
+            actions: [
+              TextButton(
+                onPressed: () => Navigator.of(context).pop(false),
+                child: Text(l10n.actionCancel),
+              ),
+              FilledButton(
+                style: FilledButton.styleFrom(
+                  backgroundColor: Theme.of(context).colorScheme.error,
+                  foregroundColor: Theme.of(context).colorScheme.onError,
+                ),
+                onPressed: () => Navigator.of(context).pop(true),
+                child: Text(l10n.actionDelete),
+              ),
+            ],
+          ),
+        ),
+      );
+      if (confirmed != true || !mounted) return;
+      if (!_canMutate(revision)) {
+        _showActionError(l10n.entryActionChanged);
+        return;
+      }
+      await ref.read(entryRepositoryProvider).purgeEntry(uuid);
+      if (onPurged != null) {
+        onPurged(uuid);
+      } else if (mounted && ref.read(selectedEntryProvider) == uuid) {
+        ref.read(selectedEntryProvider.notifier).select(null);
+      }
+    } on Exception {
+      _showActionError(l10n.errorGeneric);
+    } finally {
+      if (mounted) setState(() => _actionPending = false);
     }
   }
 
@@ -445,6 +621,7 @@ class _AttachmentSection extends ConsumerStatefulWidget {
 
 class _AttachmentSectionState extends ConsumerState<_AttachmentSection> {
   String? _error;
+  bool _attaching = false;
 
   bool _supportsExport(BuildContext context) {
     final platform = Theme.of(context).platform;
@@ -502,7 +679,9 @@ class _AttachmentSectionState extends ConsumerState<_AttachmentSection> {
           Padding(
             padding: const EdgeInsets.only(top: HidlinsSpacing.sm),
             child: TextButton.icon(
-              onPressed: widget.mutationsEnabled ? _attach : null,
+              onPressed: widget.mutationsEnabled && !_attaching
+                  ? _attach
+                  : null,
               icon: const Icon(Icons.add, size: 18),
               label: Text(l10n.actionAttach),
             ),
@@ -513,21 +692,47 @@ class _AttachmentSectionState extends ConsumerState<_AttachmentSection> {
   }
 
   Future<void> _attach() async {
-    if (!_canMutate()) return;
+    if (_attaching || !_canMutate()) return;
     final revision = ref
         .read(syncControllerProvider)
         .asData!
         .value
         .terminalRevision;
-    final picker = widget.onPickFile;
-    if (picker == null) return;
-
-    final path = await picker();
-    if (path == null || !mounted || !_canMutate(revision)) return;
-
+    final uuid = widget.uuid;
+    setState(() {
+      _attaching = true;
+      _error = null;
+    });
     try {
+      String? path;
+      final picker = widget.onPickFile;
+      if (picker != null) {
+        path = await picker();
+      } else {
+        final selection = await ref
+            .read(attachmentExportCapabilityProvider)
+            .chooseSource();
+        if (!mounted || widget.uuid != uuid || !_canMutate(revision)) return;
+        switch (selection) {
+          case PlatformSuccess<String>(:final value):
+            path = value;
+          case PlatformCanceled<String>():
+            return;
+          default:
+            setState(() {
+              _error = AppLocalizations.of(context)!.attachmentSourceFailed;
+            });
+            return;
+        }
+      }
+      if (path == null ||
+          !mounted ||
+          widget.uuid != uuid ||
+          !_canMutate(revision)) {
+        return;
+      }
       final repo = ref.read(entryRepositoryProvider);
-      await repo.addAttachment(widget.uuid, path);
+      await repo.addAttachment(uuid, path);
       if (mounted) setState(() => _error = null);
     } on AppFailure catch (e) {
       if (!mounted) return;
@@ -544,6 +749,8 @@ class _AttachmentSectionState extends ConsumerState<_AttachmentSection> {
       setState(() {
         _error = AppLocalizations.of(context)!.errorGeneric;
       });
+    } finally {
+      if (mounted) setState(() => _attaching = false);
     }
   }
 
@@ -641,7 +848,10 @@ class _TimestampRow extends StatelessWidget {
         '${dt.year}-${dt.month.toString().padLeft(2, '0')}-${dt.day.toString().padLeft(2, '0')} ${dt.hour.toString().padLeft(2, '0')}:${dt.minute.toString().padLeft(2, '0')}';
     return Padding(
       padding: const EdgeInsets.symmetric(vertical: 2),
-      child: Row(
+      child: Wrap(
+        spacing: HidlinsSpacing.sm,
+        runSpacing: HidlinsSpacing.xs,
+        crossAxisAlignment: WrapCrossAlignment.center,
         children: [
           Text(
             label,
@@ -649,7 +859,6 @@ class _TimestampRow extends StatelessWidget {
               color: Theme.of(context).colorScheme.onSurfaceVariant,
             ),
           ),
-          const SizedBox(width: HidlinsSpacing.sm),
           Text(formatted, style: Theme.of(context).textTheme.bodySmall),
         ],
       ),

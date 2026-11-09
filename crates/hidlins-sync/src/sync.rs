@@ -158,7 +158,7 @@ where
     // edits the file between reads and we commit one byte stream while
     // recording the SHA of another. Holding the bytes in memory is
     // cheap — KDBX vaults are typically <5 MiB.
-    let local_bytes = read_vault_bytes(vault.path())?;
+    let local_bytes = read_vault_bytes(vault.backing_path())?;
     let local_sha = sha256_of(&local_bytes);
 
     // 3. Compare against the last-synced pointers
@@ -224,15 +224,14 @@ where
             }
 
             // .kdbx.bak even on fast-replace (TC-SYNC-003 acceptance)
-            backup::snapshot_pre_merge(vault.path())?;
+            backup::snapshot_pre_merge(vault.backing_path())?;
             ping(&mut opts);
 
-            vault.replace_database(remote_db)?;
-            vault.save()?;
+            vault.replace_database_and_save(remote_db)?;
             // Re-hash the on-disk bytes — Vault::save re-encrypts with a
             // fresh AES IV + KDF seed, so the saved bytes have a SHA
             // distinct from the snapshot's `bytes`.
-            let new_local_sha = sha256_of(&read_vault_bytes(vault.path())?);
+            let new_local_sha = sha256_of(&read_vault_bytes(vault.backing_path())?);
             Ok((
                 SyncOutcome::FastReplaced,
                 SyncPointers {
@@ -249,10 +248,17 @@ where
             // .kdbx.bak BEFORE any merge work. Keep the returned path: the
             // orchestrator is the only place that has it, and an
             // unresolvable merge must carry it to the caller.
-            let backup_path = backup::snapshot_pre_merge(vault.path())?;
+            let backup_path = backup::snapshot_pre_merge(vault.backing_path())?;
+            // A retry starts from the preceding attempt's saved merge. Keep
+            // the cycle's original state for an accurate net result, including
+            // an imported entry that a later authority version deletes again.
+            let cycle_before = merge::entry_times(vault.database());
+            // The encrypted bytes already read above describe the last
+            // complete local save. Retain them across retries for error-only
+            // restoration, avoiding another database clone on successful sync.
+            let mut saved_bytes = local_bytes;
 
             let mut attempts: usize = 0;
-            let mut total_delta: EntryDelta;
             let max = opts.max_commit_attempts.max(1);
             loop {
                 attempts += 1;
@@ -272,6 +278,15 @@ where
                 if vault.database().config.kdf_config != remote_db.config.kdf_config {
                     return Err(SyncError::MasterPasswordMismatch);
                 }
+                let expected = vault.database().root().id().uuid();
+                let found = remote_db.root().id().uuid();
+                if expected != found {
+                    return Err(hidlins_core::VaultError::DatabaseIdentityMismatch {
+                        expected,
+                        found,
+                    }
+                    .into());
+                }
 
                 // Merge in place. An unresolvable merge (same-second
                 // divergence with differing content) must surface as the
@@ -286,28 +301,36 @@ where
                 // exhaustive without a wildcard; a future variant would fail
                 // to compile here, forcing an explicit exit-code decision
                 // rather than silently defaulting to internal.
-                let summary = match merge::reconcile(vault.database_mut(), &remote_db) {
-                    Ok(summary) => summary,
+                match merge::reconcile(vault.database_mut(), &remote_db) {
+                    Ok(_) => {}
                     Err(merge::MergeError::Unresolvable { reason }) => {
+                        // Backend reconciliation can mutate before detecting a
+                        // conflict. API/TUI callers may retain this handle and
+                        // save more local work, so discard the incomplete merge.
+                        let restored =
+                            Vault::open_from_bytes(&saved_bytes, master_password, keyfile)?;
+                        vault.replace_database(restored)?;
                         return Err(SyncError::Unresolvable {
                             reason,
                             backup_path: backup_path.clone(),
                         });
                     }
-                };
-                total_delta = summary.delta;
+                }
                 ping(&mut opts);
 
                 vault.save()?;
 
-                let merged_bytes = read_vault_bytes(vault.path())?;
+                let merged_bytes = read_vault_bytes(vault.backing_path())?;
                 match transport.commit_conditional(&merged_bytes, Some(&snapshot.version)) {
                     Ok(new_version) => {
                         ping(&mut opts);
                         let merged_sha = sha256_of(&merged_bytes);
                         return Ok((
                             SyncOutcome::Merged {
-                                delta: total_delta,
+                                delta: merge::delta_between(
+                                    &cycle_before,
+                                    &merge::entry_times(vault.database()),
+                                ),
                                 attempts,
                             },
                             SyncPointers {
@@ -323,6 +346,7 @@ where
                         if attempts >= max {
                             return Err(SyncError::ConditionalCommitExhausted { attempts: max });
                         }
+                        saved_bytes = merged_bytes;
                         // else: precondition failed → loop and refetch.
                     }
                 }

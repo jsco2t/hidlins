@@ -1,6 +1,26 @@
 //! Valid-state ownership for the registry and unlocked vault.
 
-use hidlins_core::{Vault, VaultRegistry};
+use hidlins_core::{Vault, VaultReadOnly, VaultRegistry};
+
+use crate::vault_view::VaultView;
+
+/// Keep the core capability and its actual lock for the entire session.
+pub(crate) enum OpenVault {
+    Writable(Box<Vault>),
+    ReadOnly(Box<VaultReadOnly>),
+}
+
+impl From<Vault> for OpenVault {
+    fn from(vault: Vault) -> Self {
+        Self::Writable(Box::new(vault))
+    }
+}
+
+impl From<VaultReadOnly> for OpenVault {
+    fn from(vault: VaultReadOnly) -> Self {
+        Self::ReadOnly(Box::new(vault))
+    }
+}
 
 /// Resources owned by the UI thread across locked, ready, and syncing states.
 pub(crate) enum SessionResources {
@@ -8,7 +28,7 @@ pub(crate) enum SessionResources {
     Locked { registry: VaultRegistry },
     /// The UI owns both the unlocked vault and its registry.
     Ready {
-        vault: Box<Vault>,
+        vault: OpenVault,
         registry: VaultRegistry,
     },
     /// The background sync worker owns both resources.
@@ -34,17 +54,47 @@ impl SessionResources {
         }
     }
 
-    pub(crate) fn vault(&self) -> Option<&Vault> {
+    pub(crate) fn vault(&self) -> Option<VaultView<'_>> {
         match self {
-            Self::Ready { vault, .. } => Some(vault.as_ref()),
+            Self::Ready {
+                vault: OpenVault::Writable(vault),
+                ..
+            } => Some(vault.as_ref().into()),
+            Self::Ready {
+                vault: OpenVault::ReadOnly(vault),
+                ..
+            } => Some(vault.as_ref().into()),
             Self::Locked { .. } | Self::Syncing => None,
+        }
+    }
+
+    pub(crate) fn writable_vault(&self) -> Option<&Vault> {
+        match self {
+            Self::Ready {
+                vault: OpenVault::Writable(vault),
+                ..
+            } => Some(vault.as_ref()),
+            Self::Ready {
+                vault: OpenVault::ReadOnly(_),
+                ..
+            }
+            | Self::Locked { .. }
+            | Self::Syncing => None,
         }
     }
 
     pub(crate) fn vault_mut(&mut self) -> Option<&mut Vault> {
         match self {
-            Self::Ready { vault, .. } => Some(vault.as_mut()),
-            Self::Locked { .. } | Self::Syncing => None,
+            Self::Ready {
+                vault: OpenVault::Writable(vault),
+                ..
+            } => Some(vault.as_mut()),
+            Self::Ready {
+                vault: OpenVault::ReadOnly(_),
+                ..
+            }
+            | Self::Locked { .. }
+            | Self::Syncing => None,
         }
     }
 
@@ -52,14 +102,12 @@ impl SessionResources {
         matches!(self, Self::Syncing)
     }
 
-    pub(crate) fn unlock(&mut self, vault: Vault) -> bool {
+    pub(crate) fn unlock(&mut self, vault: impl Into<OpenVault>) -> bool {
+        let vault = vault.into();
         let previous = std::mem::replace(self, Self::Syncing);
         match previous {
             Self::Locked { registry } => {
-                *self = Self::Ready {
-                    vault: Box::new(vault),
-                    registry,
-                };
+                *self = Self::Ready { vault, registry };
                 true
             }
             other => {
@@ -73,7 +121,10 @@ impl SessionResources {
     pub(crate) fn begin_sync(&mut self) -> Option<(Vault, VaultRegistry)> {
         let previous = std::mem::replace(self, Self::Syncing);
         match previous {
-            Self::Ready { vault, registry } => Some((*vault, registry)),
+            Self::Ready {
+                vault: OpenVault::Writable(vault),
+                registry,
+            } => Some((*vault, registry)),
             other => {
                 *self = other;
                 None
@@ -84,7 +135,7 @@ impl SessionResources {
     pub(crate) fn finish_sync(&mut self, vault: Vault, registry: VaultRegistry) {
         debug_assert!(self.is_syncing());
         *self = Self::Ready {
-            vault: Box::new(vault),
+            vault: vault.into(),
             registry,
         };
     }

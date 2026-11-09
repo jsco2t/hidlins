@@ -17,17 +17,15 @@ fn issue_813() {
     // `Unexpected FDs during handshake` error.
     use futures_util::try_join;
     use rustix::process::geteuid;
-    #[cfg(not(feature = "tokio"))]
-    use std::os::unix::net::UnixStream;
-    use std::{os::fd::AsFd, vec};
-    #[cfg(feature = "tokio")]
-    use tokio::net::UnixStream;
-    use zbus::{conn::socket::WriteHalf, connection::Builder};
-    use zvariant::Fd;
+    use std::{
+        os::{fd::AsFd, unix::net::UnixStream},
+        vec,
+    };
+    use zbus::{Fd, connection::Builder};
 
     #[derive(Debug)]
     struct Issue813Iface {
-        event: event_listener::Event,
+        event: zruntime::Event,
         call_count: u8,
     }
     #[zbus::interface(interface = "org.zbus.Issue813")]
@@ -41,11 +39,7 @@ fn issue_813() {
             }
         }
     }
-    #[zbus::proxy(
-        gen_blocking = false,
-        default_path = "/org/zbus/Issue813",
-        interface = "org.zbus.Issue813"
-    )]
+    #[zbus::proxy(default_path = "/org/zbus/Issue813", interface = "org.zbus.Issue813")]
     trait Issue813 {
         fn pass_fd(&self, fd: Fd<'_>) -> zbus::Result<()>;
     }
@@ -54,13 +48,13 @@ fn issue_813() {
         let guid = zbus::Guid::generate();
         let (p0, p1) = UnixStream::pair().unwrap();
 
-        let client_event = event_listener::Event::new();
+        let client_event = zruntime::Event::new();
         let client_listener = client_event.listen();
-        let server_event = event_listener::Event::new();
+        let server_event = zruntime::Event::new();
         let server_listener = server_event.listen();
         let server = async move {
             let _conn = Builder::unix_stream(p0)
-                .server(guid)?
+                .server(guid)
                 .p2p()
                 .serve_at(
                     "/org/zbus/Issue813",
@@ -68,8 +62,8 @@ fn issue_813() {
                         event: server_event,
                         call_count: 0,
                     },
-                )?
-                .name("org.zbus.Issue813")?
+                )
+                .name("org.zbus.Issue813")
                 .build()
                 .await?;
             client_listener.await;
@@ -88,9 +82,9 @@ fn issue_813() {
             );
             let mut bytes: Vec<u8> = commands.bytes().collect();
             let fd = std::io::stdin();
-            let msg = zbus::message::Message::method_call("/org/zbus/Issue813", "PassFd")?
-                .destination("org.zbus.Issue813")?
-                .interface("org.zbus.Issue813")?
+            let msg = zbus::message::Message::method_call("/org/zbus/Issue813", "PassFd")
+                .destination("org.zbus.Issue813")
+                .interface("org.zbus.Issue813")
                 .build(&(Fd::from(fd.as_fd())))?;
             let msg_data = msg.data();
             let mut fds = vec![];
@@ -99,11 +93,7 @@ fn issue_813() {
                 fds.push(fd.as_fd());
             }
 
-            #[cfg(feature = "tokio")]
-            let mut split = zbus::conn::Socket::split(p1);
-            #[cfg(not(feature = "tokio"))]
-            let mut split = zbus::conn::Socket::split(async_io::Async::new(p1)?);
-            split.write_mut().sendmsg(&bytes, &fds).await?;
+            send_with_fds(&p1, &bytes, &fds)?;
 
             server_listener.await;
             client_event.notify(1);
@@ -115,4 +105,36 @@ fn issue_813() {
         Result::<()>::Ok(())
     })
     .unwrap();
+}
+
+/// Sends `bytes` down `socket` in one `sendmsg`, with `fds` attached.
+///
+/// The socket is blocking, so the call returns once the whole buffer is with the kernel; a
+/// shorter count is a failure of the test's premise, not a reason to send the rest.
+fn send_with_fds(
+    socket: &std::os::unix::net::UnixStream,
+    bytes: &[u8],
+    fds: &[std::os::fd::BorrowedFd<'_>],
+) -> std::io::Result<()> {
+    use std::{io::IoSlice, mem::MaybeUninit};
+
+    use rustix::net::{SendAncillaryBuffer, SendAncillaryMessage, SendFlags, sendmsg};
+
+    let mut space = [MaybeUninit::uninit(); rustix::cmsg_space!(ScmRights(2))];
+    let mut ancillary = SendAncillaryBuffer::new(&mut space);
+    assert!(ancillary.push(SendAncillaryMessage::ScmRights(fds)));
+
+    let sent = sendmsg(
+        socket,
+        &[IoSlice::new(bytes)],
+        &mut ancillary,
+        SendFlags::empty(),
+    )?;
+    assert_eq!(
+        sent,
+        bytes.len(),
+        "a blocking stream socket takes the whole buffer"
+    );
+
+    Ok(())
 }

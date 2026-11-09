@@ -1,19 +1,18 @@
-use event_listener::Event;
 use futures_util::{StreamExt, TryStreamExt};
 use std::convert::TryInto;
 use tracing::{debug, instrument};
+#[cfg(feature = "object-manager")]
+use zbus::fdo::ObjectManagerProxy;
 use zbus::{
-    Connection, DBusError, Error, Message, MessageStream,
-    fdo::{ObjectManagerProxy, PropertiesProxy},
-    message,
+    Connection, DBusError, Error, Message, MessageStream, Variant, fdo::PropertiesProxy, message,
     proxy::CacheProperties,
 };
-use zvariant::Value;
+use zruntime::Event;
 
 use super::{
     helpers::{check_hash_map, check_ipv4_address, check_ipv4_address_hashmap},
     iface::MyIfaceProxy,
-    types::{ArgStructTest, IP4Adress, MyIfaceError},
+    types::{ArgStructTest, IP4Adress, MyIfaceError, RefType},
 };
 
 #[instrument]
@@ -22,9 +21,9 @@ pub async fn my_iface_test(conn: Connection, event: Event) -> zbus::Result<u32> 
     // Use low-level API for `TestResponseNotify` because we need to ensure that the signal is
     // always received after the response.
     let mut stream = MessageStream::from(&conn);
-    let method = Message::method_call("/org/freedesktop/MyService", "TestResponseNotify")?
-        .interface("org.freedesktop.MyIface")?
-        .destination("org.freedesktop.MyService")?
+    let method = Message::method_call("/org/freedesktop/MyService", "TestResponseNotify")
+        .interface("org.freedesktop.MyIface")
+        .destination("org.freedesktop.MyService")
         .build(&())?;
     let serial = method.primary_header().serial_num();
     conn.send(&method).await?;
@@ -48,8 +47,8 @@ pub async fn my_iface_test(conn: Connection, event: Event) -> zbus::Result<u32> 
     drop(stream);
 
     let root_introspect_proxy = zbus::fdo::IntrospectableProxy::builder(&conn)
-        .destination("org.freedesktop.MyService")?
-        .path("/")?
+        .destination("org.freedesktop.MyService")
+        .path("/")
         .build()
         .await?;
     debug!("Created: {:?}", root_introspect_proxy);
@@ -71,13 +70,12 @@ pub async fn my_iface_test(conn: Connection, event: Event) -> zbus::Result<u32> 
         .find(|i| i.name() == "org.freedesktop.MyIface")
         .unwrap();
     // Test if the r# prefix for the keyword was removed
-    assert!(my_iface.methods().iter().any(|m| m.name() == "Type"));
-    assert!(my_iface.properties().iter().any(|p| p.name() == "Let"));
-    assert!(my_iface.signals().iter().any(|s| s.name() == "Match"));
+    assert!(my_iface.methods().any(|m| m.name() == "Type"));
+    assert!(my_iface.properties().any(|p| p.name() == "Let"));
+    assert!(my_iface.signals().any(|s| s.name() == "Match"));
     assert_eq!(
         my_iface
             .methods()
-            .iter()
             .find(|m| m.name() == "RawIdentifierParameter")
             .unwrap()
             .args()
@@ -90,8 +88,8 @@ pub async fn my_iface_test(conn: Connection, event: Event) -> zbus::Result<u32> 
     );
 
     let proxy = MyIfaceProxy::builder(&conn)
-        .destination("org.freedesktop.MyService")?
-        .path("/org/freedesktop/MyService")?
+        .destination("org.freedesktop.MyService")
+        .path("/org/freedesktop/MyService")
         // the server isn't yet running
         .cache_properties(CacheProperties::No)
         .build()
@@ -110,8 +108,8 @@ pub async fn my_iface_test(conn: Connection, event: Event) -> zbus::Result<u32> 
     );
 
     let props_proxy = PropertiesProxy::builder(&conn)
-        .destination("org.freedesktop.MyService")?
-        .path("/org/freedesktop/MyService")?
+        .destination("org.freedesktop.MyService")
+        .path("/org/freedesktop/MyService")
         .build()
         .await?;
     debug!("Created: {:?}", props_proxy);
@@ -158,6 +156,25 @@ pub async fn my_iface_test(conn: Connection, event: Event) -> zbus::Result<u32> 
         MyIfaceError::SomethingWentWrong("oops".to_string())
     );
 
+    // Arguments that don't deserialize get the error that D-Bus has for them, and so does a
+    // property value that doesn't.
+    let err = proxy
+        .inner()
+        .call_method("CreateObj", &42u32)
+        .await
+        .unwrap_err();
+    let err = zbus::fdo::Error::from(err);
+    assert!(matches!(err, zbus::fdo::Error::InvalidArgs(_)), "{err}");
+    let err = props_proxy
+        .set(
+            "org.freedesktop.MyIface".try_into()?,
+            "Count",
+            &Variant::from("not a number"),
+        )
+        .await
+        .unwrap_err();
+    assert!(matches!(err, zbus::fdo::Error::InvalidArgs(_)), "{err}");
+
     check_hash_map(proxy.test_hashmap_return().await?);
     check_hash_map(proxy.hash_map().await?);
     proxy
@@ -169,6 +186,14 @@ pub async fn my_iface_test(conn: Connection, event: Event) -> zbus::Result<u32> 
     proxy.set_str_prop("This is an str ref").await?;
     check_ipv4_address(proxy.address_data().await?);
     check_ipv4_address_hashmap(proxy.address_data2().await?);
+
+    let expected_ref_prop = ("Hello".to_string(),);
+    assert_eq!(proxy.ref_prop::<(String,)>().await?, expected_ref_prop);
+    proxy
+        .set_ref_prop(RefType {
+            field1: "borrowed setter".into(),
+        })
+        .await?;
 
     proxy.test_no_reply().await?;
     proxy.test_no_autostart().await?;
@@ -209,6 +234,67 @@ pub async fn my_iface_test(conn: Connection, event: Event) -> zbus::Result<u32> 
         zbus::Error::FDO(Box::new(zbus::fdo::Error::UnknownProperty(
             "FailProperty".into()
         ))),
+    );
+
+    // A property getter failing with a custom `DBusError` should surface its error name too.
+    let err = proxy.fail_property_custom_error().await.unwrap_err();
+    let Error::MethodError(name, ..) = &err else {
+        panic!("Expected Error::MethodError, got {err:?}");
+    };
+    assert_eq!(
+        name.as_str(),
+        "org.freedesktop.MyIface.Error.SomethingWentWrong"
+    );
+    assert_eq!(
+        MyIfaceError::from(err),
+        MyIfaceError::SomethingWentWrong("oops".to_string())
+    );
+
+    // Property setters (both `&self` and `&mut self`) failing with a custom `DBusError` should
+    // likewise surface their error name to the client.
+    proxy.set_custom_error_prop(60).await?;
+    let err = proxy
+        .set_custom_error_prop(61)
+        .await
+        .expect_err("Setting value above 60 should fail");
+    assert_eq!(
+        MyIfaceError::from(err),
+        MyIfaceError::SomethingWentWrong(
+            "Provided value is 61; values above 60 not accepted".to_string()
+        )
+    );
+
+    proxy.set_custom_error_mut_prop(60).await?;
+    let err = proxy
+        .set_custom_error_mut_prop(61)
+        .await
+        .expect_err("Setting value above 60 should fail");
+    assert_eq!(
+        MyIfaceError::from(err),
+        MyIfaceError::SomethingWentWrong(
+            "Provided value is 61; values above 60 not accepted".to_string()
+        )
+    );
+
+    // A successful set is followed by the getter for the `PropertiesChanged` emission. A getter
+    // failing there must keep its own error name in the `Set` reply, for a standard error and a
+    // custom one alike.
+    let err = proxy
+        .set_locked_prop(1)
+        .await
+        .expect_err("Setting a locked property should fail");
+    let Error::FDO(fdo_err) = err else {
+        panic!("Expected Error::FDO, got {err:?}");
+    };
+    assert!(matches!(*fdo_err, zbus::fdo::Error::AccessDenied(_)));
+    assert_eq!(fdo_err.name(), "org.freedesktop.DBus.Error.AccessDenied");
+    let err = proxy
+        .set_custom_locked_prop(1)
+        .await
+        .expect_err("Setting a locked property should fail");
+    assert_eq!(
+        MyIfaceError::from(err),
+        MyIfaceError::SomethingWentWrong("locked".to_string())
     );
 
     assert_eq!(proxy.optional_property().await?, Some(42).into());
@@ -261,28 +347,36 @@ pub async fn my_iface_test(conn: Connection, event: Event) -> zbus::Result<u32> 
 
     let val = proxy.ping().await?;
 
+    #[cfg(feature = "object-manager")]
     let obj_manager_proxy = ObjectManagerProxy::builder(&conn)
-        .destination("org.freedesktop.MyService")?
-        .path("/zbus/test")?
+        .destination("org.freedesktop.MyService")
+        .path("/zbus/test")
         .build()
         .await?;
-    debug!("Created: {:?}", obj_manager_proxy);
-    let mut ifaces_added_stream = obj_manager_proxy.receive_interfaces_added().await?;
-    debug!("Created: {:?}", ifaces_added_stream);
+    #[cfg(feature = "object-manager")]
+    let ifaces_added = {
+        debug!("Created: {:?}", obj_manager_proxy);
+        let mut ifaces_added_stream = obj_manager_proxy.receive_interfaces_added().await?;
+        debug!("Created: {:?}", ifaces_added_stream);
 
-    // Must process in parallel, so the stream listener does not block receiving
-    // the method return message.
-    let (ifaces_added, _) = futures_util::future::join(
-        async {
-            let ret = ifaces_added_stream.next().await.unwrap();
-            drop(ifaces_added_stream);
-            ret
-        },
-        async {
-            proxy.create_obj("MyObj").await.unwrap();
-        },
-    )
-    .await;
+        // Must process in parallel, so the stream listener does not block receiving
+        // the method return message.
+        let (ifaces_added, _) = futures_util::future::join(
+            async {
+                let ret = ifaces_added_stream.next().await.unwrap();
+                drop(ifaces_added_stream);
+                ret
+            },
+            async {
+                proxy.create_obj("MyObj").await.unwrap();
+            },
+        )
+        .await;
+
+        ifaces_added
+    };
+    #[cfg(not(feature = "object-manager"))]
+    proxy.create_obj("MyObj").await.unwrap();
 
     #[cfg(feature = "option-as-array")]
     {
@@ -293,18 +387,21 @@ pub async fn my_iface_test(conn: Connection, event: Event) -> zbus::Result<u32> 
         );
     }
 
-    assert_eq!(ifaces_added.args()?.object_path(), "/zbus/test/MyObj");
-    let args = ifaces_added.args()?;
-    let ifaces = args.interfaces_and_properties();
-    let _ = ifaces.get("org.freedesktop.MyIface").unwrap();
-    // TODO: Check if the properties are correct.
+    #[cfg(feature = "object-manager")]
+    {
+        assert_eq!(ifaces_added.args()?.object_path(), "/zbus/test/MyObj");
+        let args = ifaces_added.args()?;
+        let ifaces = args.interfaces_and_properties();
+        let _ = ifaces.get("org.freedesktop.MyIface").unwrap();
+        // TODO: Check if the properties are correct.
+    }
 
     // issue#207: interface panics on incorrect number of args.
     assert!(proxy.inner().call_method("CreateObj", &()).await.is_err());
 
     let my_obj_proxy = MyIfaceProxy::builder(&conn)
-        .destination("org.freedesktop.MyService")?
-        .path("/zbus/test/MyObj")?
+        .destination("org.freedesktop.MyService")
+        .path("/zbus/test/MyObj")
         .build()
         .await?;
     debug!("Created: {:?}", my_obj_proxy);
@@ -316,7 +413,7 @@ pub async fn my_iface_test(conn: Connection, event: Event) -> zbus::Result<u32> 
     assert_eq!(my_obj_proxy.cached_count()?, Some(0));
     assert_eq!(
         my_obj_proxy.inner().cached_property_raw("Count").as_deref(),
-        Some(&Value::from(0u32))
+        Some(&Variant::from(0u32))
     );
     my_obj_proxy.ping().await?;
 
@@ -330,25 +427,30 @@ pub async fn my_iface_test(conn: Connection, event: Event) -> zbus::Result<u32> 
         assert_eq!(test_case, value);
     }
 
-    let mut ifaces_removed_stream = obj_manager_proxy.receive_interfaces_removed().await?;
-    debug!("Created: {:?}", ifaces_removed_stream);
-    // Must process in parallel, so the stream listener does not block receiving
-    // the method return message.
-    let (ifaces_removed, _) = futures_util::future::join(
-        async {
-            let ret = ifaces_removed_stream.next().await.unwrap();
-            drop(ifaces_removed_stream);
-            ret
-        },
-        async {
-            proxy.destroy_obj("MyObj").await.unwrap();
-        },
-    )
-    .await;
+    #[cfg(feature = "object-manager")]
+    {
+        let mut ifaces_removed_stream = obj_manager_proxy.receive_interfaces_removed().await?;
+        debug!("Created: {:?}", ifaces_removed_stream);
+        // Must process in parallel, so the stream listener does not block receiving
+        // the method return message.
+        let (ifaces_removed, _) = futures_util::future::join(
+            async {
+                let ret = ifaces_removed_stream.next().await.unwrap();
+                drop(ifaces_removed_stream);
+                ret
+            },
+            async {
+                proxy.destroy_obj("MyObj").await.unwrap();
+            },
+        )
+        .await;
 
-    let args = ifaces_removed.args()?;
-    assert_eq!(args.object_path(), "/zbus/test/MyObj");
-    assert_eq!(args.interfaces().as_ref(), &["org.freedesktop.MyIface"]);
+        let args = ifaces_removed.args()?;
+        assert_eq!(args.object_path(), "/zbus/test/MyObj");
+        assert_eq!(args.interfaces().as_ref(), &["org.freedesktop.MyIface"]);
+    }
+    #[cfg(not(feature = "object-manager"))]
+    proxy.destroy_obj("MyObj").await.unwrap();
 
     assert!(my_obj_proxy.inner().introspect().await.is_err());
     assert!(my_obj_proxy.ping().await.is_err());
@@ -360,12 +462,26 @@ pub async fn my_iface_test(conn: Connection, event: Event) -> zbus::Result<u32> 
         .call_method("CreateObjInside", &("CreatedInside"))
         .await?;
     let created_inside_proxy = MyIfaceProxy::builder(&conn)
-        .destination("org.freedesktop.MyService")?
-        .path("/zbus/test/CreatedInside")?
+        .destination("org.freedesktop.MyService")
+        .path("/zbus/test/CreatedInside")
         .build()
         .await?;
     created_inside_proxy.ping().await?;
     proxy.destroy_obj("CreatedInside").await?;
+
+    // Same, but from a `&mut self` method, which holds a *write* lock on the calling interface
+    // across the registration. Regression test for #1845.
+    proxy
+        .inner()
+        .call_method("CreateObjInsideMut", &("CreatedInsideMut"))
+        .await?;
+    let created_inside_mut_proxy = MyIfaceProxy::builder(&conn)
+        .destination("org.freedesktop.MyService")
+        .path("/zbus/test/CreatedInsideMut")
+        .build()
+        .await?;
+    created_inside_mut_proxy.ping().await?;
+    proxy.destroy_obj("CreatedInsideMut").await?;
 
     // Test that interfaces emit signals when properties change
     // according to their emits_changed_signal flags.
@@ -385,7 +501,7 @@ pub async fn my_iface_test(conn: Connection, event: Event) -> zbus::Result<u32> 
 
     let changed_value = &args.changed_properties()[expected_property_key];
     assert_eq!(
-        <&Value as TryInto<u32>>::try_into(changed_value).unwrap(),
+        <&Variant as TryInto<u32>>::try_into(changed_value).unwrap(),
         expected_property_value
     );
     assert!(args.invalidated_properties().is_empty());
@@ -403,7 +519,7 @@ pub async fn my_iface_test(conn: Connection, event: Event) -> zbus::Result<u32> 
 
     let changed_value = &args.changed_properties()[expected_property_key];
     assert_eq!(
-        <&Value as TryInto<u32>>::try_into(changed_value).unwrap(),
+        <&Variant as TryInto<u32>>::try_into(changed_value).unwrap(),
         expected_property_value
     );
     assert!(args.invalidated_properties().is_empty());

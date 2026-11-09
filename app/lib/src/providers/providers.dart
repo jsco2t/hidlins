@@ -8,6 +8,22 @@ import 'repository_providers.dart';
 
 export 'repository_providers.dart';
 
+final _entryMutationRevisionProvider =
+    NotifierProvider<_EntryMutationRevision, int>(_EntryMutationRevision.new);
+
+class _EntryMutationRevision extends Notifier<int> {
+  @override
+  int build() {
+    final repo = ref.watch(entryRepositoryProvider);
+    void onMutation() => state++;
+    repo.onMutation = onMutation;
+    ref.onDispose(() {
+      if (identical(repo.onMutation, onMutation)) repo.onMutation = null;
+    });
+    return 0;
+  }
+}
+
 final vaultTreeProvider = AsyncNotifierProvider<VaultTreeNotifier, VaultTree>(
   VaultTreeNotifier.new,
 );
@@ -15,8 +31,8 @@ final vaultTreeProvider = AsyncNotifierProvider<VaultTreeNotifier, VaultTree>(
 class VaultTreeNotifier extends AsyncNotifier<VaultTree> {
   @override
   Future<VaultTree> build() async {
+    ref.watch(_entryMutationRevisionProvider);
     final repo = ref.watch(entryRepositoryProvider);
-    repo.onMutation = invalidate;
     ref.listen(syncEventsProvider, (_, next) {
       final event = next.valueOrNull;
       if (event is SyncEvent_Done) {
@@ -35,6 +51,7 @@ final entryDetailProvider = FutureProvider.family<EntryDetail, String>((
   ref,
   uuid,
 ) {
+  ref.watch(_entryMutationRevisionProvider);
   final repo = ref.watch(entryRepositoryProvider);
   ref.listen(syncEventsProvider, (_, next) {
     if (next.valueOrNull is SyncEvent_Done) ref.invalidateSelf();

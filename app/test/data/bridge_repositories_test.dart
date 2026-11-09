@@ -180,6 +180,18 @@ final class _FakeBridgeSession implements bridge_api.AppSession {
   }
 
   @override
+  Future<bridge.SyncStatusDto> syncStatus() async => bridge.SyncStatusDto(
+    configured: true,
+    inFlight: false,
+    role: bridge.LocalSyncRoleDto.client,
+    paired: true,
+    activePeerCount: BigInt.zero,
+    serverEnabled: false,
+    serverRunning: false,
+    pairingOpen: false,
+  );
+
+  @override
   Future<void> startStartupSync() async {
     startupOrder?.add('sync');
   }

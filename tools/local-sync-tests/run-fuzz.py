@@ -3,6 +3,7 @@
 
 from __future__ import annotations
 
+import json
 import os
 from pathlib import Path
 import shutil
@@ -31,6 +32,13 @@ def main() -> int:
 
     environment = os.environ.copy()
     environment["CARGO_NET_OFFLINE"] = "true"
+    helper = ROOT / "tools/dev/vendor_cache.py"
+    description = subprocess.run(
+        [sys.executable, str(helper), "describe", "--workspace", str(FUZZ), "--", "cargo", f"+{TOOLCHAIN}"],
+        env=environment, capture_output=True, text=True, check=True,
+    )
+    data = json.loads(description.stdout)
+    target_directory = data["target_directory"]
     with tempfile.TemporaryDirectory(prefix="hidlins-fuzz-corpus-") as temporary:
         scratch = Path(temporary)
         for index, target in enumerate(TARGETS, start=1):
@@ -42,6 +50,8 @@ def main() -> int:
                 "fuzz",
                 "run",
                 target,
+                "--target-dir",
+                target_directory,
                 "--features",
                 "fuzzing",
                 str(corpus),
@@ -50,7 +60,11 @@ def main() -> int:
                 f"-seed={0x4849444C + index}",
                 "-max_len=262144",
             ]
-            subprocess.run(command, cwd=FUZZ, env=environment, check=True)
+            subprocess.run(
+                [sys.executable, str(helper), "run", "--source-root", str(ROOT),
+                 "--workspace", str(FUZZ), "--target-dir", target_directory, "--", *command],
+                cwd=FUZZ, env=environment, check=True,
+            )
     return 0
 
 

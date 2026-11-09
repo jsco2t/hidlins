@@ -86,13 +86,13 @@ pub(crate) enum Overlay {
 
 impl Overlay {
     /// A short label for the contextual status-bar hint while the overlay is up.
-    pub(crate) fn hints(&self) -> &'static str {
-        match self {
+    pub(crate) fn hints(&self, keys: &crate::command::Keymap) -> std::borrow::Cow<'static, str> {
+        let hints = match self {
             Overlay::Search(_) => {
                 "type to search   Enter/Tab: copy/open   ↑/↓: select   Esc: cancel"
             }
             Overlay::Edit(state) => state.hints(),
-            Overlay::History(_) => "↑/↓: browse versions   Esc: close",
+            Overlay::History(_) => "↑/↓: browse versions  PgUp/PgDn: detail  Esc: close",
             Overlay::ConfirmDelete { .. } => "y: delete   n / Esc: cancel",
             Overlay::ConfirmBulkDelete { .. } => "y: delete all   n / Esc: cancel",
             Overlay::ConfirmQuit => "y: quit   n / Esc: cancel",
@@ -103,7 +103,16 @@ impl Overlay {
             Overlay::PairingSas(_) => "y: codes match and pair   n / Esc: reject",
             Overlay::Peers(_) => "↑/↓: select   r: revoke   Esc: close",
             Overlay::Palette(_) => "type to filter   ↑/↓ select   Enter run   Esc close",
+        };
+        if matches!(self, Overlay::Edit(_)) && hints.contains("Ctrl+G") {
+            return std::borrow::Cow::Owned(
+                match keys.rendered_keys(crate::command::Command::Generate) {
+                    Some(binding) => hints.replace("Ctrl+G", &binding),
+                    None => hints.replace("   Ctrl+G: generate", ""),
+                },
+            );
         }
+        std::borrow::Cow::Borrowed(hints)
     }
 }
 
@@ -114,7 +123,7 @@ pub(crate) fn render(app: &App, frame: &mut Frame) {
     };
     match overlay {
         Overlay::Search(state) => search::render(app, state, frame),
-        Overlay::Edit(state) => edit::render(state, frame, &app.theme),
+        Overlay::Edit(state) => edit::render(state, frame, &app.theme, &app.keys),
         Overlay::History(state) => history::render(state, frame, &app.theme),
         Overlay::ConfirmDelete { title, .. } => render_confirm_delete(title, frame, &app.theme),
         Overlay::ConfirmBulkDelete { titles, .. } => {

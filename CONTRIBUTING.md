@@ -7,9 +7,9 @@ supply-chain hygiene as **non-negotiable**. Please read this document — and
 
 Authoritative source documents (read these for scope):
 
-- **Project PRD** and **engineering plans** live in the project notebook
+- **Project PRD** and **engineering plans** live in the external project workspace
   (paths referenced in [`CLAUDE.md`](CLAUDE.md) — section "Planning docs").
-- **Supply-chain policy:** `notebook/.../hidlins/kb/supply-chain-policy.md`.
+- **Supply-chain policy:** `$HOME/Developer/sources/personal/projects/hidlins/kb/supply-chain-policy.md`.
 - **Test plan:** the test conventions in this document are the canonical
   summary of Test Plan §8.1 in the vault-core implementation plan.
 
@@ -326,12 +326,6 @@ ecosystem components maintained by the SDK's own team; no feature reduction
 exists on the SDK dependency. The vendored trees, hosted hashes, lockfile,
 curated allowlist, and byte-integrity manifest were reviewed together;
 `make pub-vendor-check` gates their exact bytes.
-
-The dependency cost is therefore zero new Rust transitives and one already
-vendored 10 KiB AAR. No feature reduction is available: Android system trust
-verification requires the Rust verifier and its JVM companion. The checked
-release/R8 verifier APK is repository-only and adds no shipped product
-dependency.
 
 #### Flutter app Dart dependencies (flutter-app T2.4, 2026-07-24)
 
@@ -671,10 +665,15 @@ Two specific test categories require `unsafe`:
    Tests that mutate env vars use an `EnvGuard` RAII helper that
    serializes via a module-local `Mutex<()>`.
 
-Production code in `hidlins-core` is `#![cfg_attr(not(test), forbid(unsafe_code))]`.
-The two test exceptions above are the only `unsafe` allowed in the
-crate at Phase 0. `mlock` of the master key — the only other
-candidate for `unsafe` — is deferred (design §3.9).
+Production `hidlins-core` uses `#![deny(unsafe_code)]`. Narrow, audited
+allowances cover Unix page-size lookup and `mlock`/`munlock`
+in `secret.rs`, plus Android advisory `flock` in `locking.rs`.
+
+`MasterPassword` already uses a stable allocation with private, page-aligned
+lock ranges. Unix memory locking is best-effort under OS quotas; the password
+bytes are zeroized before unlocking and freeing them. This covers the owned
+password buffer, not key material or Argon2 output allocated inside
+`keepass-rs`. Review the actual `SAFETY` comments and preserve those limits.
 
 ---
 
@@ -710,9 +709,15 @@ Wayland, or macOS Pasteboard) so they're `#[ignore]`d by default.
   `xvfb-run -a make test-clipboard` so an X11-headed display is
   available. The matching test filter is `us_053_clipboard`.
 - `make test-os-events` runs the shipped `LogindSource` integration on Linux
-  and the shipped `IoKitSource` integration on macOS, serially under the
-  `us_052_post_mvp` test targets. Each path requires its native desktop/session
-  services; the compile-only cross-target coverage remains in `make check`.
+  against a private `dbus-daemon` with a fixture that owns the logind service
+  name and emits from that connection. It also checks cancellation during
+  stalled bus authentication. Linux needs `dbus-daemon` on `PATH`, with no
+  root privileges, host bus, policy override, display or active logind session.
+  This tests the production adapter/controller contract; physical host sleep
+  and screensaver delivery still requires observing the native desktop.
+  On macOS the target runs the shipped `IoKitSource` integration and needs
+  native desktop/session services and manual event triggers. The compile-only
+  cross-target coverage remains in `make check`.
 
 Both targets are wrappers over `cargo test`; the actual `#[ignore]`
 filtering happens in code. The Makefile targets exist primarily for
@@ -731,7 +736,8 @@ breaking.
 
 There is no `--master-password` (or `--password`) flag anywhere in the
 CLI, on any subcommand. The master password is collected *only* via the
-no-echo secure stdin prompt (`rpassword`). A unit test in
+no-echo secure stdin prompt (the in-repository `nix`/termios implementation
+in `crates/hidlins-cli/src/prompt.rs`). A unit test in
 `crates/hidlins-cli/src/cli.rs` walks the entire clap command tree at
 build time and fails the build if any flag with this name appears.
 
@@ -915,6 +921,6 @@ source shell-completions/hidlins.bash
   chain, technical constraints).
 - [`README.md`](README.md) — project overview.
 - **PRD** and **engineering plans** — referenced from `CLAUDE.md`.
-- **Supply-chain policy:** `notebook/.../hidlins/kb/supply-chain-policy.md`.
+- **Supply-chain policy:** `$HOME/Developer/sources/personal/projects/hidlins/kb/supply-chain-policy.md`.
 - **Test plan:** Test Plan §8.1 in
-  `notebook/.../features/vault-core/plans/implementation-plan.md`.
+  `$HOME/Developer/sources/personal/projects/hidlins/features/vault-core/plans/implementation-plan.md`.

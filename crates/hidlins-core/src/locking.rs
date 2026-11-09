@@ -318,7 +318,12 @@ pub(crate) fn unlock_file(file: &File) -> io::Result<()> {
 /// Resolve an existing backing file, or a missing filename under its real
 /// parent. Resolving the parent also unifies directory aliases before a new
 /// vault or registry has been created.
-pub(crate) fn resolve_file_path(path: &Path) -> Result<PathBuf, VaultError> {
+///
+/// # Errors
+///
+/// Returns [`VaultError::Io`] if the file identity or its parent cannot be resolved.
+#[doc(hidden)]
+pub fn resolve_file_path(path: &Path) -> Result<PathBuf, VaultError> {
     let resolve = || -> io::Result<PathBuf> {
         match std::fs::canonicalize(path) {
             Ok(resolved) => Ok(resolved),

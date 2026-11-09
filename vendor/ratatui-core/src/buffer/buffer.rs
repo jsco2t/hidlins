@@ -416,12 +416,21 @@ impl Buffer {
     /// length is equal to area.width * area.height
     pub fn resize(&mut self, area: Rect) {
         let length = area.area() as usize;
-        if self.content.len() > length {
-            self.content.truncate(length);
-        } else {
-            self.content.resize(length, Cell::EMPTY);
-        }
+        self.resize_content(length);
         self.area = area;
+    }
+
+    // Vec::resize may relocate live inline symbols without dropping their old
+    // storage. Clone into a final allocation and drop the populated old vector
+    // first, so its CellSymbol owners erase that storage before release.
+    fn resize_content(&mut self, length: usize) {
+        if length > self.content.capacity() {
+            let capacity = length.max(self.content.capacity().saturating_mul(2));
+            let mut replacement = Vec::with_capacity(capacity);
+            replacement.extend(self.content.iter().cloned());
+            self.content = replacement;
+        }
+        self.content.resize(length, Cell::EMPTY);
     }
 
     /// Reset all cells in the buffer
@@ -434,7 +443,7 @@ impl Buffer {
     /// Merge an other buffer into this one
     pub fn merge(&mut self, other: &Self) {
         let area = self.area.union(other.area);
-        self.content.resize(area.area() as usize, Cell::EMPTY);
+        self.resize_content(area.area() as usize);
 
         // Move original content to the appropriate space
         let size = self.area.area() as usize;

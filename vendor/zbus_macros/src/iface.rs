@@ -1,19 +1,20 @@
-use proc_macro2::TokenStream;
-use quote::{format_ident, quote};
+use proc_macro2::{Span, TokenStream};
+use quote::{format_ident, quote, quote_spanned};
 use std::collections::BTreeMap;
 use syn::{
-    AngleBracketedGenericArguments, Attribute, Error, Expr, ExprLit, FnArg, GenericArgument, Ident,
-    ImplItem, ImplItemFn, ItemImpl,
+    AngleBracketedGenericArguments, Attribute, Error, Expr, ExprLit, FnArg, Ident, ImplItem,
+    ImplItemFn, ItemImpl,
     Lit::Str,
     Meta, MetaNameValue, PatType, PathArguments, ReturnType, Signature, Token, Type, TypePath,
-    Visibility,
+    TypeReference, Visibility,
+    fold::Fold,
     parse::{Parse, ParseStream},
     parse_quote, parse_str,
     punctuated::Punctuated,
     spanned::Spanned,
     token::{Async, Comma},
 };
-use zvariant_utils::{case, def_attrs};
+use zbus_utils::{case, def_attrs, names};
 
 use crate::utils::*;
 
@@ -34,9 +35,6 @@ def_attrs! {
                 default_path str,
                 default_service str,
                 async_name str,
-                blocking_name str,
-                gen_async bool,
-                gen_blocking bool,
                 visibility str
             }
         }
@@ -56,8 +54,9 @@ def_attrs! {
             // TODO: Find a way to share code with proxy module.
             pub ProxyMethodAttributes("proxy") {
                 object str,
+                proxy_type_name str,
+                // Accepted as another name for `proxy_type_name`.
                 async_object str,
-                blocking_object str,
                 object_vec none,
                 no_reply none,
                 no_autostart none,
@@ -70,7 +69,6 @@ def_attrs! {
         object_server none,
         connection none,
         header none,
-        signal_context none,
         signal_emitter none
     };
 }
@@ -172,7 +170,7 @@ impl MethodInfo {
                     }
                 })
                 .collect();
-            to_xml_docs(docs)
+            to_xml_docs(docs, zbus)
         } else {
             quote!()
         };
@@ -204,7 +202,7 @@ impl MethodInfo {
             .first()
             .ok_or_else(|| Error::new_spanned(ident, "not &self method"))?
         {
-            r.mutability.is_some()
+            matches!(r.kind, syn::ReceiverKind::Reference(_, _, Some(_)))
         } else if is_signal {
             false
         } else {
@@ -320,10 +318,13 @@ pub fn expand(args: Punctuated<Meta, Token![,]>, mut input: ItemImpl) -> syn::Re
     };
     let iface_name = {
         match (impl_attrs.name, impl_attrs.interface) {
-            // Ensure the interface name is valid.
-            (Some(name), None) | (None, Some(name)) => zbus_names::InterfaceName::try_from(name)
-                .map_err(|e| Error::new(input.span(), format!("{e}")))
-                .map(|i| i.to_string())?,
+            (Some(name), None) | (None, Some(name)) => {
+                // Ensure the interface name is valid.
+                names::validate_interface_name(name.as_bytes())
+                    .map_err(|e| Error::new(input.span(), e))?;
+
+                name
+            }
             (None, None) => format!("org.freedesktop.{ty}"),
             (Some(_), Some(_)) => {
                 return Err(syn::Error::new(
@@ -334,9 +335,12 @@ pub fn expand(args: Punctuated<Meta, Token![,]>, mut input: ItemImpl) -> syn::Re
         }
     };
     let with_spawn = impl_attrs.spawn.unwrap_or(true);
+    let crate_attr = impl_attrs.crate_path.clone();
+    // Whether the proxy is actually generated is decided by the `proxy` feature of `zbus`, not by
+    // the features of this crate. See `Proxy::gen`.
     let mut proxy = impl_attrs
         .proxy
-        .map(|p| Proxy::new(ty, &iface_name, p, &zbus));
+        .map(|p| Proxy::new(ty, &iface_name, p, &zbus, crate_attr));
     let introspect_docs = impl_attrs.introspection_docs.unwrap_or(true);
 
     // Store parsed information about each method
@@ -352,7 +356,7 @@ pub fn expand(args: Punctuated<Meta, Token![,]>, mut input: ItemImpl) -> syn::Re
                 *item = ImplItem::Fn(ImplItemFn {
                     attrs,
                     vis,
-                    defaultness: None,
+                    modifiers: syn::FnModifiers::default(),
                     sig,
                     // This empty block will be replaced below.
                     block: parse_quote!({}),
@@ -439,6 +443,7 @@ pub fn expand(args: Punctuated<Meta, Token![,]>, mut input: ItemImpl) -> syn::Re
             reply,
             member_name,
             cfg_attrs,
+            doc_attrs,
             ..
         } = method_info;
 
@@ -471,7 +476,14 @@ pub fn expand(args: Punctuated<Meta, Token![,]>, mut input: ItemImpl) -> syn::Re
                 *method_clone.sig.inputs.first_mut().unwrap() = parse_quote!(&self);
                 method_clone.vis = Visibility::Inherited;
                 let sig = &method_clone.sig;
+                let signal_docs = if doc_attrs.is_empty() {
+                    let doc = format!("Emit the “{member_name}” signal.");
+                    quote! { #[doc = #doc] }
+                } else {
+                    quote! { #(#doc_attrs)* }
+                };
                 signals_trait_methods.extend(quote! {
+                    #signal_docs
                     #sig;
                 });
                 method_clone.block = parse_quote!({
@@ -523,34 +535,11 @@ pub fn expand(args: Punctuated<Meta, Token![,]>, mut input: ItemImpl) -> syn::Re
                         )
                     };
 
-                    // * For reference arg, we convert from `&Value` (so `TryFrom<&Value<'_>>` is
-                    //   required).
-                    //
-                    // * For argument type with lifetimes, we convert from `Value` (so
-                    //   `TryFrom<Value<'_>>` is required).
-                    //
-                    // * For all other arg types, we convert the passed value to `OwnedValue` first
-                    //   and then pass it as `Value` (so `TryFrom<OwnedValue>` is required).
-                    let value_to_owned = quote! {
-                        match ::zbus::zvariant::Value::try_to_owned(value) {
-                            ::std::result::Result::Ok(val) => ::zbus::zvariant::Value::from(val),
-                            ::std::result::Result::Err(e) => {
-                                return ::std::result::Result::Err(
-                                    ::std::convert::Into::into(#zbus::Error::Variant(::std::convert::Into::into(e)))
-                                );
-                            }
-                        }
-                    };
-
                     let value_param = typed_inputs
                         .iter()
                         .find(|input| {
                             let a = ArgAttributes::parse(&input.attrs).unwrap();
-                            !a.object_server
-                                && !a.connection
-                                && !a.header
-                                && !a.signal_context
-                                && !a.signal_emitter
+                            !a.object_server && !a.connection && !a.header && !a.signal_emitter
                         })
                         .ok_or_else(|| Error::new_spanned(inputs, "Expected a value argument"))?;
 
@@ -561,40 +550,45 @@ pub fn expand(args: Punctuated<Meta, Token![,]>, mut input: ItemImpl) -> syn::Re
                         p.emits_changed_signal = PropertyEmitsChangedSignal::False;
                     }
 
-                    let value_arg = match &*value_param.ty {
-                        Type::Reference(_) => quote!(value),
-                        Type::Path(path) => path
-                            .path
-                            .segments
-                            .first()
-                            .map(|segment| match &segment.arguments {
-                                PathArguments::AngleBracketed(angled) => angled
-                                    .args
-                                    .first()
-                                    .filter(|arg| matches!(arg, GenericArgument::Lifetime(_)))
-                                    .map(|_| quote!(match ::zbus::zvariant::Value::try_clone(value) {
-                                        ::std::result::Result::Ok(val) => val,
-                                        ::std::result::Result::Err(e) => {
-                                            return ::std::result::Result::Err(
-                                                ::std::convert::Into::into(#zbus::Error::Variant(::std::convert::Into::into(e)))
-                                            );
-                                        }
-                                    }))
-                                    .unwrap_or_else(|| value_to_owned.clone()),
-                                _ => value_to_owned.clone(),
-                            })
-                            .unwrap_or_else(|| value_to_owned.clone()),
-                        _ => value_to_owned,
-                    };
-
                     let value_param_name = &value_param.pat;
+                    let value_ty = &value_param.ty;
+                    let storage = format_ident!("__zbus__value");
+                    let (value_ty, value_arg) = match borrow_ref_arg(value_ty, &storage) {
+                        // The compiler infers the type the value is deserialized into.
+                        Some(borrow) => {
+                            let items = ref_arg_items(RefArgsOf::Setter, &zbus);
+
+                            (
+                                quote! { _ },
+                                quote! {
+                                    #items
+                                    let #value_param_name = #borrow;
+                                },
+                            )
+                        }
+                        None => {
+                            let value_ty = elide_lifetimes(value_ty);
+
+                            (
+                                quote! { #value_ty },
+                                quote! {
+                                    let #value_param_name = #storage;
+                                },
+                            )
+                        }
+                    };
+                    // Each arm yields `Result<(), BoxDBusError>`. A getter's failure inside the
+                    // `*_changed` helper is carried by `Error::DBus`, which the conversion boxes
+                    // as is, so its error name reaches the caller of `Set` unchanged.
                     let prop_changed_method = match p.emits_changed_signal {
                         PropertyEmitsChangedSignal::True => {
                             quote!({
                                 self
                                     .#prop_changed_method_name(&__zbus__signal_emitter)
                                     .await
-                                    .map(|_| set_result)
+                                    .map_err(|e| {
+                                        #zbus::object_server::IntoDBusError::into_dbus_error(e)
+                                    })
                             })
                         }
                         PropertyEmitsChangedSignal::Invalidates => {
@@ -602,32 +596,37 @@ pub fn expand(args: Punctuated<Meta, Token![,]>, mut input: ItemImpl) -> syn::Re
                                 self
                                     .#prop_invalidate_method_name(&__zbus__signal_emitter)
                                     .await
-                                    .map(|_| set_result)
+                                    .map_err(|e| {
+                                        #zbus::object_server::IntoDBusError::into_dbus_error(e)
+                                    })
                             })
                         }
                         PropertyEmitsChangedSignal::False | PropertyEmitsChangedSignal::Const => {
-                            quote!({ ::std::result::Result::<_, #zbus::Error>::Ok(()) })
+                            quote!({ ::std::result::Result::<_, #zbus::BoxDBusError>::Ok(()) })
                         }
                     };
                     let do_set = quote!({
                         #args_from_msg
-                        let value = #value_arg;
-                        match ::std::convert::TryInto::try_into(value) {
-                            ::std::result::Result::Ok(val) => {
-                                let #value_param_name = val;
+                        match #zbus::as_variant::deserialize_for_property::<#value_ty>(value) {
+                            ::std::result::Result::Ok(__zbus__value) => {
+                                #value_arg
                                 match #set_call {
-                                    ::std::result::Result::Ok(set_result) => {
-                                        (#prop_changed_method)
-                                            .map_err(|e| #zbus::fdo::Error::from(e))
-                                    }
+                                    ::std::result::Result::Ok(()) => #prop_changed_method,
                                     ::std::result::Result::Err(e) => {
-                                        ::std::result::Result::Err(#zbus::fdo::Error::from(e))
+                                        ::std::result::Result::Err(
+                                            #zbus::object_server::IntoDBusError::into_dbus_error(e),
+                                        )
                                     }
                                 }
                             }
+                            // A value that doesn't deserialize is an invalid argument of `Set`.
                             ::std::result::Result::Err(e) => {
                                 ::std::result::Result::Err(
-                                    ::std::convert::Into::into(#zbus::Error::Variant(::std::convert::Into::into(e))),
+                                    #zbus::object_server::IntoDBusError::into_dbus_error(
+                                        #zbus::fdo::Error::InvalidArgs(
+                                            ::std::string::ToString::to_string(&e),
+                                        ),
+                                    ),
                                 )
                             }
                         }
@@ -644,14 +643,14 @@ pub fn expand(args: Punctuated<Meta, Token![,]>, mut input: ItemImpl) -> syn::Re
 
                         let q = quote!(
                             #(#cfg_attrs)*
-                            #member_name => #zbus::object_server::DispatchResult2::RequiresMut,
+                            #member_name => #zbus::object_server::DispatchResult::RequiresMut,
                         );
                         set_dispatch.extend(q);
                     } else {
                         let q = quote!(
                             #(#cfg_attrs)*
                             #member_name => {
-                                #zbus::object_server::DispatchResult2::Async(::std::boxed::Box::pin(async move {
+                                #zbus::object_server::DispatchResult::Async(::std::boxed::Box::pin(async move {
                                     #do_set
                                 }))
                             }
@@ -664,15 +663,21 @@ pub fn expand(args: Punctuated<Meta, Token![,]>, mut input: ItemImpl) -> syn::Re
                     p.ty = Some(get_return_type(output)?.clone());
 
                     let value_convert = quote!(
-                        <#zbus::zvariant::OwnedValue as ::std::convert::TryFrom<_>>::try_from(
-                            <#zbus::zvariant::Value as ::std::convert::From<_>>::from(
-                                value,
-                            ),
-                        )
-                        .map_err(|e| #zbus::fdo::Error::Failed(e.to_string()))
+                        #zbus::as_variant::to_owned_variant(&value).map_err(|e| {
+                            #zbus::object_server::IntoDBusError::into_dbus_error(
+                                #zbus::fdo::Error::Failed(e.to_string()),
+                            )
+                        })
                     );
                     let inner = if is_fallible_property {
-                        quote!(self.#ident(#args_names) #method_await .and_then(|value| #value_convert))
+                        quote!(
+                            match self.#ident(#args_names)#method_await {
+                                ::std::result::Result::Ok(value) => #value_convert,
+                                ::std::result::Result::Err(e) => ::std::result::Result::Err(
+                                    #zbus::object_server::IntoDBusError::into_dbus_error(e),
+                                ),
+                            }
+                        )
                     } else {
                         quote!({
                             let value = self.#ident(#args_names)#method_await;
@@ -695,12 +700,8 @@ pub fn expand(args: Punctuated<Meta, Token![,]>, mut input: ItemImpl) -> syn::Re
                             if let Ok(prop) = self.#ident(#args_names)#method_await {
                             props.insert(
                                 ::std::string::ToString::to_string(#member_name),
-                                <#zbus::zvariant::OwnedValue as ::std::convert::TryFrom<_>>::try_from(
-                                    <#zbus::zvariant::Value as ::std::convert::From<_>>::from(
-                                        prop,
-                                    ),
-                                )
-                                .map_err(|e| #zbus::fdo::Error::Failed(e.to_string()))?,
+                                #zbus::as_variant::to_owned_variant(&prop)
+                                    .map_err(|e| #zbus::fdo::Error::Failed(e.to_string()))?,
                             );
                         }})
                     } else {
@@ -708,12 +709,11 @@ pub fn expand(args: Punctuated<Meta, Token![,]>, mut input: ItemImpl) -> syn::Re
                             #args_from_msg
                             props.insert(
                                 ::std::string::ToString::to_string(#member_name),
-                                <#zbus::zvariant::OwnedValue as ::std::convert::TryFrom<_>>::try_from(
-                                    <#zbus::zvariant::Value as ::std::convert::From<_>>::from(
-                                        self.#ident(#args_names)#method_await,
-                                    ),
-                                )
-                                .map_err(|e| #zbus::fdo::Error::Failed(e.to_string()))?,
+                                {
+                                    let value = self.#ident(#args_names)#method_await;
+                                    #zbus::as_variant::to_owned_variant(&value)
+                                        .map_err(|e| #zbus::fdo::Error::Failed(e.to_string()))?
+                                },
                             );
                         })
                     };
@@ -721,7 +721,14 @@ pub fn expand(args: Punctuated<Meta, Token![,]>, mut input: ItemImpl) -> syn::Re
                     get_all.extend(q);
 
                     let prop_value_handled = if is_fallible_property {
-                        quote!(self.#ident(#args_names)#method_await?)
+                        quote!(match self.#ident(#args_names)#method_await {
+                            ::std::result::Result::Ok(value) => value,
+                            ::std::result::Result::Err(e) => {
+                                return ::std::result::Result::Err(
+                                    #zbus::object_server::IntoDBusError::into_error(e),
+                                );
+                            }
+                        })
                     } else {
                         quote!(self.#ident(#args_names)#method_await)
                     };
@@ -743,14 +750,22 @@ pub fn expand(args: Punctuated<Meta, Token![,]>, mut input: ItemImpl) -> syn::Re
                                 let __zbus__connection = __zbus__signal_emitter.connection();
                                 let __zbus__object_server = __zbus__connection.object_server();
                                 #args_from_msg
+                                let value = #prop_value_handled;
                                 let mut changed = ::std::collections::HashMap::new();
-                                let value = <#zbus::zvariant::Value as ::std::convert::From<_>>::from(#prop_value_handled);
-                                changed.insert(#member_name, value);
-                                #zbus::fdo::Properties::properties_changed(
-                                    __zbus__signal_emitter,
-                                    #zbus::names::InterfaceName::from_static_str_unchecked(#iface_name),
-                                    changed,
-                                    ::std::borrow::Cow::Borrowed(&[]),
+                                changed.insert(
+                                    #member_name,
+                                    #zbus::as_variant::Serialize(&value),
+                                );
+                                __zbus__signal_emitter.emit(
+                                    "org.freedesktop.DBus.Properties",
+                                    "PropertiesChanged",
+                                    &(
+                                        #zbus::names::InterfaceName::from_static_str_unchecked(
+                                            #iface_name,
+                                        ),
+                                        changed,
+                                        ::std::borrow::Cow::<[&str]>::Borrowed(&[]),
+                                    ),
                                 ).await
                             }
                         );
@@ -796,25 +811,24 @@ pub fn expand(args: Punctuated<Meta, Token![,]>, mut input: ItemImpl) -> syn::Re
                             #args_from_msg
                             let reply = self.#ident(#args_names)#method_await;
                             let hdr = __zbus__message.header();
-                            if hdr.primary().flags().contains(zbus::message::Flags::NoReplyExpected) {
+                            if hdr
+                                .primary()
+                                .flags()
+                                .contains(#zbus::message::Flags::NO_REPLY_EXPECTED)
+                            {
                                 Ok(())
                             } else {
                                 #reply
                             }
                         };
-                        #zbus::object_server::DispatchResult2::Async(::std::boxed::Box::pin(async move {
-                            future.await.map_err(|e| match e {
-                                #zbus::Error::FDO(e) => *e,
-                                e => #zbus::fdo::Error::Failed(::std::format!("{e}")),
-                            })
-                        }))
+                        #zbus::object_server::DispatchResult::from_handler(future)
                     },
                 };
 
                 if is_mut {
                     call_dispatch.extend(quote! {
                         #(#cfg_attrs)*
-                        #member_name => #zbus::object_server::DispatchResult2::RequiresMut,
+                        #member_name => #zbus::object_server::DispatchResult::RequiresMut,
                     });
                     call_mut_dispatch.extend(m);
                 } else {
@@ -886,14 +900,17 @@ pub fn expand(args: Punctuated<Meta, Token![,]>, mut input: ItemImpl) -> syn::Re
         impl #generics #zbus::object_server::Interface for #self_ty
         #where_clause
         {
+            #[doc = "Return the name of the interface."]
             fn name() -> #zbus::names::InterfaceName<'static> {
                 #zbus::names::InterfaceName::from_static_str_unchecked(#iface_name)
             }
 
+            #[doc = "Whether each method call will be handled from a different spawned task."]
             fn spawn_tasks_for_methods(&self) -> bool {
                 #with_spawn
             }
 
+            #[doc = "Get a property value. Returns `None` if the property doesn't exist."]
             async fn get(
                 &self,
                 __zbus__property_name: &str,
@@ -901,13 +918,16 @@ pub fn expand(args: Punctuated<Meta, Token![,]>, mut input: ItemImpl) -> syn::Re
                 __zbus__connection: &#zbus::Connection,
                 __zbus__header: Option<&#zbus::message::Header<'_>>,
                 __zbus__signal_emitter: &#zbus::object_server::SignalEmitter<'_>,
-            ) -> ::std::option::Option<#zbus::fdo::Result<#zbus::zvariant::OwnedValue>> {
+            ) -> ::std::option::Option<
+                ::std::result::Result<#zbus::OwnedVariant, #zbus::BoxDBusError>,
+            > {
                 match __zbus__property_name {
                     #get_dispatch
                     _ => ::std::option::Option::None,
                 }
             }
 
+            #[doc = "Return all the properties."]
             async fn get_all(
                 &self,
                 __zbus__object_server: &#zbus::ObjectServer,
@@ -916,72 +936,77 @@ pub fn expand(args: Punctuated<Meta, Token![,]>, mut input: ItemImpl) -> syn::Re
                 __zbus__signal_emitter: &#zbus::object_server::SignalEmitter<'_>,
             ) -> #zbus::fdo::Result<::std::collections::HashMap<
                 ::std::string::String,
-                #zbus::zvariant::OwnedValue,
+                #zbus::OwnedVariant,
             >> {
                 let mut props: ::std::collections::HashMap<
                     ::std::string::String,
-                    #zbus::zvariant::OwnedValue,
+                    #zbus::OwnedVariant,
                 > = ::std::collections::HashMap::new();
                 #get_all
                 Ok(props)
             }
 
+            #[doc = "Set a property value (`&self`)."]
             fn set<'call>(
                 &'call self,
                 __zbus__property_name: &'call str,
-                value: &'call #zbus::zvariant::Value<'_>,
+                value: &'call #zbus::Variant<'_>,
                 __zbus__object_server: &'call #zbus::ObjectServer,
                 __zbus__connection: &'call #zbus::Connection,
                 __zbus__header: Option<&'call #zbus::message::Header<'_>>,
                 __zbus__signal_emitter: &'call #zbus::object_server::SignalEmitter<'_>,
-            ) -> #zbus::object_server::DispatchResult2<'call> {
+            ) -> #zbus::object_server::DispatchResult<'call> {
                 match __zbus__property_name {
                     #set_dispatch
-                    _ => #zbus::object_server::DispatchResult2::NotFound,
+                    _ => #zbus::object_server::DispatchResult::NotFound,
                 }
             }
 
+            #[doc = "Set a property value (`&mut self`). Invoked when `set` returns `RequiresMut`."]
             async fn set_mut(
                 &mut self,
                 __zbus__property_name: &str,
-                value: &#zbus::zvariant::Value<'_>,
+                value: &#zbus::Variant<'_>,
                 __zbus__object_server: &#zbus::ObjectServer,
                 __zbus__connection: &#zbus::Connection,
                 __zbus__header: Option<&#zbus::message::Header<'_>>,
                 __zbus__signal_emitter: &#zbus::object_server::SignalEmitter<'_>,
-            ) -> ::std::option::Option<#zbus::fdo::Result<()>> {
+            ) -> ::std::option::Option<::std::result::Result<(), #zbus::BoxDBusError>> {
                 match __zbus__property_name {
                     #set_mut_dispatch
                     _ => ::std::option::Option::None,
                 }
             }
 
+            #[doc = "Call a method (`&self`)."]
             fn call<'call>(
                 &'call self,
                 __zbus__object_server: &'call #zbus::ObjectServer,
                 __zbus__connection: &'call #zbus::Connection,
                 __zbus__message: &'call #zbus::message::Message,
                 name: #zbus::names::MemberName<'call>,
-            ) -> #zbus::object_server::DispatchResult2<'call> {
+            ) -> #zbus::object_server::DispatchResult<'call> {
                 match name.as_str() {
                     #call_dispatch
-                    _ => #zbus::object_server::DispatchResult2::NotFound,
+                    _ => #zbus::object_server::DispatchResult::NotFound,
                 }
             }
 
+            #[doc = "Call a method (`&mut self`). Invoked when `call` returns `RequiresMut`."]
             fn call_mut<'call>(
                 &'call mut self,
                 __zbus__object_server: &'call #zbus::ObjectServer,
                 __zbus__connection: &'call #zbus::Connection,
                 __zbus__message: &'call #zbus::message::Message,
                 name: #zbus::names::MemberName<'call>,
-            ) -> #zbus::object_server::DispatchResult2<'call> {
+            ) -> #zbus::object_server::DispatchResult<'call> {
                 match name.as_str() {
                     #call_mut_dispatch
-                    _ => #zbus::object_server::DispatchResult2::NotFound,
+                    _ => #zbus::object_server::DispatchResult::NotFound,
                 }
             }
 
+            #[doc = "Write introspection XML to the writer, with the given indentation level."]
             fn introspect_to_writer(&self, writer: &mut dyn ::std::fmt::Write, level: usize) {
                 ::std::writeln!(
                     writer,
@@ -990,7 +1015,7 @@ pub fn expand(args: Punctuated<Meta, Token![,]>, mut input: ItemImpl) -> syn::Re
                     indent = level
                 ).unwrap();
                 {
-                    use #zbus::zvariant::Type;
+                    use #zbus::Type;
 
                     let level = level + 2;
                     #introspect
@@ -1001,6 +1026,143 @@ pub fn expand(args: Punctuated<Meta, Token![,]>, mut input: ItemImpl) -> syn::Re
 
         #proxy
     })
+}
+
+/// The arguments, of a method or of a property setter, that `ref_arg_items` are for.
+#[derive(Clone, Copy)]
+enum RefArgsOf {
+    Method,
+    Setter,
+}
+
+/// The items through which `borrow_ref_arg` picks the type a `&T` argument is deserialized into.
+///
+/// The choice is between `&T` itself, which borrows from the message, `T`, and `Vec<E>` for a
+/// slice `[E]`. Trait implementations for those would overlap, so the items leave it to the method
+/// resolution instead: the `__ZbusRefArg` trait is implemented for `&&&__ZbusRefArgOf<T>`,
+/// `&&__ZbusRefArgOf<T>` and `&__ZbusRefArgOf<[E]>`, each with the bounds of one choice, and
+/// calling its method on a `&&&__ZbusRefArgOf<T>` picks the first implementation that applies,
+/// from the outermost reference inwards. A method argument is first borrowed, as it was in 5.x,
+/// then owned, as in 6.0, and then collected. A property value doesn't keep the bytes of an array
+/// together, so a setter argument is first collected, then owned, and only then borrowed.
+///
+/// The items go in each block that needs them, rather than in `zbus`, so that the code generated
+/// works with the earlier `zbus` 6 releases as well.
+fn ref_arg_items(of: RefArgsOf, zbus: &TokenStream) -> TokenStream {
+    let serde = quote! { #zbus::export::serde };
+    let borrowed = |refs: TokenStream| {
+        quote! {
+            impl<'de, T> __ZbusRefArg<'de> for #refs __ZbusRefArgOf<T>
+            where
+                T: ?::std::marker::Sized + 'de,
+                &'de T: #zbus::Type + #serde::Deserialize<'de>,
+            {
+                type Storage = &'de T;
+                type Target = T;
+
+                fn __zbus_ref_arg<'s>(self, storage: &'s &'de T) -> &'s T {
+                    storage
+                }
+            }
+        }
+    };
+    // `Deserialize` implies `Sized`. Without the relaxed bound, the compiler would suggest relaxing
+    // it when no implementation applies.
+    let owned = |refs: TokenStream| {
+        quote! {
+            impl<'de, T> __ZbusRefArg<'de> for #refs __ZbusRefArgOf<T>
+            where
+                T: ?::std::marker::Sized + #zbus::Type + #serde::Deserialize<'de>,
+            {
+                type Storage = T;
+                type Target = T;
+
+                fn __zbus_ref_arg(self, storage: &T) -> &T {
+                    storage
+                }
+            }
+        }
+    };
+    let collected = |refs: TokenStream| {
+        quote! {
+            impl<'de, E> __ZbusRefArg<'de> for #refs __ZbusRefArgOf<[E]>
+            where
+                E: #zbus::Type + #serde::Deserialize<'de>,
+            {
+                type Storage = ::std::vec::Vec<E>;
+                type Target = [E];
+
+                fn __zbus_ref_arg(self, storage: &::std::vec::Vec<E>) -> &[E] {
+                    storage
+                }
+            }
+        }
+    };
+    let impls = match of {
+        RefArgsOf::Method => [
+            borrowed(quote! { &&& }),
+            owned(quote! { && }),
+            collected(quote! { & }),
+        ],
+        RefArgsOf::Setter => [
+            collected(quote! { &&& }),
+            owned(quote! { && }),
+            borrowed(quote! { & }),
+        ],
+    };
+
+    quote! {
+        trait __ZbusRefArg<'de> {
+            type Storage: #zbus::Type + #serde::Deserialize<'de>;
+            type Target: ?::std::marker::Sized;
+
+            fn __zbus_ref_arg(self, storage: &Self::Storage) -> &Self::Target;
+        }
+
+        struct __ZbusRefArgOf<T: ?::std::marker::Sized>(::std::marker::PhantomData<T>);
+
+        #(#impls)*
+    }
+}
+
+/// The expression borrowing an argument of type `&T` from `storage`, the value it's deserialized
+/// into, through the items from `ref_arg_items`. These decide the type of `storage`, so the
+/// compiler infers it from this expression.
+fn borrow_ref_arg(ty: &Type, storage: &Ident) -> Option<TokenStream> {
+    // A type from a `macro_rules!` fragment comes in an invisible group.
+    let mut pointee = ty;
+    while let Type::Group(group) = pointee {
+        pointee = &group.elem;
+    }
+    let Type::Reference(reference) = pointee else {
+        return None;
+    };
+    let pointee = elide_lifetimes(&reference.elem);
+
+    // The span makes the compiler point at the argument if no implementation applies.
+    Some(quote_spanned! {ty.span()=>
+        (&&&__ZbusRefArgOf::<#pointee>(::std::marker::PhantomData)).__zbus_ref_arg(&#storage)
+    })
+}
+
+/// `ty` with its lifetimes, other than `'static`, elided.
+///
+/// The generated code names the types of the arguments outside of the methods and setters taking
+/// them, where the lifetime parameters of those aren't declared.
+fn elide_lifetimes(ty: &Type) -> Type {
+    struct ElideLifetimes;
+
+    impl Fold for ElideLifetimes {
+        fn fold_lifetime(&mut self, lifetime: syn::Lifetime) -> syn::Lifetime {
+            if lifetime.ident == "static" {
+                return lifetime;
+            }
+
+            syn::Lifetime::new("'_", lifetime.span())
+        }
+    }
+
+    ElideLifetimes.fold_type(ty.clone())
 }
 
 fn get_args_from_inputs(
@@ -1024,7 +1186,6 @@ fn get_args_from_inputs(
                 connection,
                 header,
                 signal_emitter,
-                signal_context,
             } = ArgAttributes::parse(&input.attrs)?;
 
             if object_server {
@@ -1066,22 +1227,22 @@ fn get_args_from_inputs(
                     }),
                     _ => Some(quote! { let #header_arg = __zbus__message.header(); }),
                 };
-            } else if signal_context || signal_emitter {
+            } else if signal_emitter {
                 if signal_emitter_arg_decl.is_some() {
                     return Err(Error::new_spanned(
                         input,
-                        "There can only be one `signal_emitter` or `signal_context` argument",
+                        "There can only be one `signal_emitter` argument",
                     ));
                 }
 
-                let signal_context_arg = &input.pat;
+                let signal_emitter_arg = &input.pat;
 
                 signal_emitter_arg_decl = match method_type {
                     MethodType::Property(_) => Some(
-                        quote! { let #signal_context_arg = ::std::clone::Clone::clone(__zbus__signal_emitter); },
+                        quote! { let #signal_emitter_arg = ::std::clone::Clone::clone(__zbus__signal_emitter); },
                     ),
                     _ => Some(quote! {
-                        let #signal_context_arg = match hdr.path() {
+                        let #signal_emitter_arg = match hdr.path() {
                             ::std::option::Option::Some(p) => {
                                 #zbus::object_server::SignalEmitter::new(__zbus__connection, p).expect("Infallible conversion failed")
                             }
@@ -1094,10 +1255,11 @@ fn get_args_from_inputs(
                 };
             } else {
                 args_names.push(pat_ident(input).unwrap());
-                tys.push(&input.ty);
+                tys.push(&*input.ty);
             }
         }
 
+        let mut ref_items = None;
         let (hdr_init, msg_init, args_decl) = match method_type {
             MethodType::Property(PropertyType::Getter) => (quote! {}, quote! {}, quote! {}),
             MethodType::Property(PropertyType::Setter) => (
@@ -1108,20 +1270,52 @@ fn get_args_from_inputs(
             _ => (
                 quote! { let hdr = __zbus__message.header(); },
                 quote! { let msg_body = __zbus__message.body(); },
-                quote! {
-                    let (#(#args_names),*): (#(#tys),*) =
-                        match msg_body.deserialize() {
-                            ::std::result::Result::Ok(r) => r,
-                            ::std::result::Result::Err(e) => {
-                                let err = <#zbus::fdo::Error as ::std::convert::From<_>>::from(e);
-                                return __zbus__connection.reply_dbus_error(&hdr, err).await;
+                {
+                    let mut storages = vec![];
+                    let mut storage_tys = vec![];
+                    let mut borrows = quote! {};
+                    for (i, (ty, arg_name)) in tys.iter().zip(&args_names).enumerate() {
+                        let storage = format_ident!("__zbus__arg_{i}", span = Span::mixed_site());
+                        match borrow_ref_arg(ty, &storage) {
+                            Some(borrow) => {
+                                borrows.extend(quote! {
+                                    let #arg_name = #borrow;
+                                });
+                                storages.push(storage);
+                                // The compiler infers the type the argument is deserialized into.
+                                storage_tys.push(quote! { _ });
                             }
-                        };
+                            None => {
+                                storages.push((*arg_name).clone());
+                                storage_tys.push(quote! { #ty });
+                            }
+                        }
+                    }
+                    if !borrows.is_empty() {
+                        ref_items = Some(ref_arg_items(RefArgsOf::Method, zbus));
+                    }
+                    quote! {
+                        let (#(#storages),*): (#(#storage_tys),*) =
+                            match msg_body.deserialize() {
+                                ::std::result::Result::Ok(r) => r,
+                                // Arguments that don't deserialize, be it for their signature
+                                // or for their values, are invalid ones.
+                                ::std::result::Result::Err(e) => {
+                                    let err = #zbus::fdo::Error::InvalidArgs(
+                                        ::std::string::ToString::to_string(&e),
+                                    );
+                                    return __zbus__connection.reply_dbus_error(&hdr, err).await;
+                                }
+                            };
+                        #borrows
+                    }
                 },
             ),
         };
 
         let args_from_msg = quote! {
+            #ref_items
+
             #hdr_init
 
             #msg_init
@@ -1232,7 +1426,6 @@ fn is_special_arg(attrs: &[Attribute]) -> bool {
                 if path.is_ident("object_server") ||
                     path.is_ident("connection") ||
                     path.is_ident("header") ||
-                    path.is_ident("signal_context") ||
                     path.is_ident("signal_emitter")
             )
         })
@@ -1266,10 +1459,9 @@ fn get_result_inner_type(p: &TypePath) -> syn::Result<&Type> {
         .last()
         .ok_or_else(|| Error::new_spanned(p, "unsupported result type"))?
         .arguments
+        && let Some(syn::GenericArgument::Type(ty)) = args.first()
     {
-        if let Some(syn::GenericArgument::Type(ty)) = args.first() {
-            return Ok(ty);
-        }
+        return Ok(ty);
     }
 
     Err(Error::new_spanned(p, "unhandled Result return"))
@@ -1300,17 +1492,17 @@ fn introspect_add_output_args(
         }
 
         if let Type::Tuple(t) = ty {
-            if let Some(arg_names) = arg_names {
-                if t.elems.len() != arg_names.len() {
-                    return Err(Error::new_spanned(
-                        ty,
-                        format!(
-                            "out_args specifies {} names but method returns {} values",
-                            arg_names.len(),
-                            t.elems.len()
-                        ),
-                    ));
-                }
+            if let Some(arg_names) = arg_names
+                && t.elems.len() != arg_names.len()
+            {
+                return Err(Error::new_spanned(
+                    ty,
+                    format!(
+                        "out_args specifies {} names but method returns {} values",
+                        arg_names.len(),
+                        t.elems.len()
+                    ),
+                ));
             }
             for i in 0..t.elems.len() {
                 let name = arg_names.map(|names| &names[i]);
@@ -1318,7 +1510,7 @@ fn introspect_add_output_args(
             }
         } else {
             // Note: The type might still serialize as a DBus struct/tuple if it has a custom
-            // signature (e.g., `#[zvariant(signature = "(...)")]`), but we can't detect this
+            // signature (e.g., `#[zbus(signature = "(...)")]`), but we can't detect this
             // from the Rust type structure alone.
             //
             // If out_args has exactly one name, apply it to this output.
@@ -1412,9 +1604,11 @@ fn introspect_properties(
     Ok(())
 }
 
-pub fn to_xml_docs(lines: Vec<String>) -> TokenStream {
-    let mut docs = quote!();
-
+/// The code writing `lines` as an XML comment in the introspection data.
+///
+/// The lines are joined into one literal and written by a runtime helper, rather than a `writeln!`
+/// per line, to keep the generated code small.
+pub fn to_xml_docs(lines: Vec<String>, zbus: &TokenStream) -> TokenStream {
     let mut lines: Vec<&str> = lines
         .iter()
         .skip_while(|s| is_blank(s))
@@ -1426,22 +1620,12 @@ pub fn to_xml_docs(lines: Vec<String>) -> TokenStream {
     }
 
     if lines.is_empty() {
-        return docs;
+        return quote!();
     }
 
-    docs.extend(quote!(::std::writeln!(writer, "{:indent$}<!--", "", indent = level).unwrap();));
-    for line in lines {
-        if !line.is_empty() {
-            docs.extend(
-                quote!(::std::writeln!(writer, "{:indent$}{}", "", #line, indent = level).unwrap();),
-            );
-        } else {
-            docs.extend(quote!(::std::writeln!(writer, "").unwrap();));
-        }
-    }
-    docs.extend(quote!(::std::writeln!(writer, "{:indent$} -->", "", indent = level).unwrap();));
+    let lines = lines.join("\n");
 
-    docs
+    quote!(#zbus::object_server::introspect_doc_comment(writer, level, #lines);)
 }
 
 // Like ImplItemFn, but with a semicolon at the end instead of a body block
@@ -1470,6 +1654,8 @@ struct Proxy {
     iface_name: String,
     // The zbus crate
     zbus: TokenStream,
+    // The value of the `crate` attribute, to forward to the generated proxy macro invocation.
+    crate_path: Option<String>,
 
     // Input
     attrs: ProxyAttributes,
@@ -1479,11 +1665,18 @@ struct Proxy {
 }
 
 impl Proxy {
-    fn new(ty: &Ident, iface_name: &str, attrs: ProxyAttributes, zbus: &TokenStream) -> Self {
+    fn new(
+        ty: &Ident,
+        iface_name: &str,
+        attrs: ProxyAttributes,
+        zbus: &TokenStream,
+        crate_path: Option<String>,
+    ) -> Self {
         Self {
             iface_name: iface_name.to_string(),
             ty: ty.clone(),
             zbus: zbus.clone(),
+            crate_path,
             attrs,
             methods: quote!(),
         }
@@ -1499,15 +1692,21 @@ impl Proxy {
             .iter()
             .filter(|input| {
                 let a = ArgAttributes::parse(&input.attrs).unwrap();
-                !a.object_server
-                    && !a.connection
-                    && !a.header
-                    && !a.signal_context
-                    && !a.signal_emitter
+                !a.object_server && !a.connection && !a.header && !a.signal_emitter
             })
             .cloned()
             .collect();
         let zbus = &self.zbus;
+        let proxy_object = method_info
+            .proxy_attrs
+            .as_ref()
+            .is_some_and(|attrs| attrs.object.is_some());
+        let generic_property = matches!(
+            method_info.method_type,
+            MethodType::Property(PropertyType::Getter)
+        ) && !proxy_object
+            && type_borrows(get_return_type(&method_info.output)?);
+        let generic_type = format_ident!("__ZbusProxyProperty");
         let ret = match &method_info.output {
             ReturnType::Type(_, ty) => {
                 let ty = ty.as_ref();
@@ -1539,6 +1738,27 @@ impl Proxy {
             }
             ReturnType::Default => quote! { #zbus::Result<()> },
         };
+        let (generics, ret, where_clause) = if generic_property {
+            (
+                quote! { <#generic_type> },
+                quote! { #zbus::Result<#generic_type> },
+                quote! {
+                    where
+                        #generic_type: #zbus::export::serde::de::DeserializeOwned
+                            + #zbus::Type
+                },
+            )
+        } else {
+            (quote! {}, ret, quote! {})
+        };
+        let generic_property_doc = generic_property.then(|| {
+            let doc = concat!(
+                "Callers select a `DeserializeOwned + Type` result with the same D-Bus ",
+                "signature as the interface property.",
+            );
+
+            quote! { #[doc = #doc] }
+        });
         let ident = &method_info.ident;
         let member_name = method_info.member_name;
         let mut proxy_method_attrs = quote! { name = #member_name, };
@@ -1560,11 +1780,18 @@ impl Proxy {
             if let Some(object) = attrs.object {
                 proxy_method_attrs.extend(quote! { object = #object, });
             }
-            if let Some(async_object) = attrs.async_object {
-                proxy_method_attrs.extend(quote! { async_object = #async_object, });
-            }
-            if let Some(blocking_object) = attrs.blocking_object {
-                proxy_method_attrs.extend(quote! { blocking_object = #blocking_object, });
+            match (attrs.proxy_type_name, attrs.async_object) {
+                (Some(_), Some(_)) => {
+                    return Err(Error::new(
+                        method_info.ident.span(),
+                        "`proxy_type_name` and `async_object` name the same thing; use \
+                         `proxy_type_name`",
+                    ));
+                }
+                (Some(name), None) | (None, Some(name)) => {
+                    proxy_method_attrs.extend(quote! { proxy_type_name = #name, });
+                }
+                (None, None) => {}
             }
             if attrs.object_vec {
                 proxy_method_attrs.extend(quote! { object_vec, });
@@ -1584,8 +1811,10 @@ impl Proxy {
         self.methods.extend(quote! {
             #(#cfg_attrs)*
             #(#doc_attrs)*
+            #generic_property_doc
             #[zbus(#proxy_method_attrs)]
-            fn #ident(&self, #inputs) -> #ret;
+            fn #ident #generics(&self, #inputs) -> #ret
+            #where_clause;
         });
 
         Ok(())
@@ -1593,17 +1822,7 @@ impl Proxy {
 
     fn r#gen(&self) -> syn::Result<TokenStream> {
         let attrs = &self.attrs;
-        let (
-            assume_defaults,
-            default_path,
-            default_service,
-            async_name,
-            blocking_name,
-            gen_async,
-            gen_blocking,
-            ty,
-            methods,
-        ) = (
+        let (assume_defaults, default_path, default_service, async_name, ty, methods) = (
             attrs
                 .assume_defaults
                 .map(|value| quote! { assume_defaults = #value, }),
@@ -1619,14 +1838,6 @@ impl Proxy {
                 .async_name
                 .as_ref()
                 .map(|value| quote! { async_name = #value, }),
-            attrs
-                .blocking_name
-                .as_ref()
-                .map(|value| quote! { blocking_name = #value, }),
-            attrs.gen_async.map(|value| quote! { gen_async = #value, }),
-            attrs
-                .gen_blocking
-                .map(|value| quote! { gen_blocking = #value, }),
             &self.ty,
             &self.methods,
         );
@@ -1636,22 +1847,87 @@ impl Proxy {
             None => Visibility::Public(Token![pub](ty.span())),
         };
         let zbus = &self.zbus;
+        let crate_path = self
+            .crate_path
+            .as_ref()
+            .map(|value| quote! { crate = #value, });
         let proxy_doc = format!("Proxy for the `{iface_name}` interface.");
+        // The `proxy` feature of the `zbus` the generated code is compiled against decides whether
+        // the proxy is generated, through a `zbus` macro that either forwards or drops its input.
+        // The `proxy` feature of this crate can differ from it: Cargo unifies the features of host
+        // dependencies, such as proc-macros and build scripts, separately from the target ones.
         Ok(quote! {
-            #[doc = #proxy_doc]
-            #[#zbus::proxy(
-                name = #iface_name,
-                #assume_defaults
-                #default_path
-                #default_service
-                #async_name
-                #blocking_name
-                #gen_async
-                #gen_blocking
-            )]
-            #vis trait #ty {
-                #methods
+            #zbus::__if_proxy_feature! {
+                #[doc = #proxy_doc]
+                #[#zbus::proxy(
+                    name = #iface_name,
+                    #crate_path
+                    #assume_defaults
+                    #default_path
+                    #default_service
+                    #async_name
+                )]
+                #vis trait #ty {
+                    #methods
+                }
             }
         })
+    }
+}
+
+fn type_borrows(ty: &Type) -> bool {
+    struct FindBorrow(bool);
+
+    impl Fold for FindBorrow {
+        fn fold_type_reference(&mut self, node: TypeReference) -> TypeReference {
+            self.0 = true;
+
+            node
+        }
+
+        fn fold_lifetime(&mut self, lifetime: syn::Lifetime) -> syn::Lifetime {
+            self.0 |= lifetime.ident != "static";
+
+            lifetime
+        }
+    }
+
+    let mut finder = FindBorrow(false);
+    finder.fold_type(ty.clone());
+
+    finder.0
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use syn::parse::Parser;
+
+    /// Property setters must name the crate the user asked for, not a literal `::zbus`.
+    #[test]
+    fn property_setter_honours_crate_attribute() {
+        let args = Punctuated::<Meta, Token![,]>::parse_terminated
+            .parse2(quote! { name = "org.freedesktop.CrateAttrTest", crate = "mybus" })
+            .unwrap();
+        let input: ItemImpl = parse_quote! {
+            impl CrateAttrTest {
+                #[zbus(property)]
+                fn set_owned(&self, _value: u32) {}
+
+                #[zbus(property)]
+                fn set_borrowed(&self, _value: Variant<'_>) {}
+            }
+        };
+
+        let expanded = expand(args, input).unwrap().to_string();
+
+        assert!(
+            !expanded.contains(":: zbus ::"),
+            "generated code names ::zbus instead of the requested crate: {expanded}"
+        );
+        assert!(
+            expanded.contains(":: mybus :: as_variant :: deserialize_for_property"),
+            "generated code lost the value deserialization: {expanded}"
+        );
     }
 }

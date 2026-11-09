@@ -8,6 +8,7 @@ import '../../data/models.dart';
 import '../../data/repositories.dart';
 import '../../providers/providers.dart';
 import '../../providers/lock_state_provider.dart';
+import 'foreground_lifecycle.dart';
 
 class SyncViewState {
   const SyncViewState({
@@ -60,6 +61,8 @@ class SyncViewState {
 
 const _unset = Object();
 
+typedef _ForegroundToken = ({int session, int foreground});
+
 final syncControllerProvider =
     AsyncNotifierProvider<SyncController, SyncViewState>(SyncController.new);
 
@@ -67,6 +70,10 @@ class SyncController extends AsyncNotifier<SyncViewState> {
   Timer? _pairingTimer;
   SyncRepository? _repository;
   int _generation = 0;
+  int _foregroundEpoch = 0;
+  late SyncForegroundLifecycle _foregroundLifecycle;
+  Object _foregroundOwner = Object();
+  LocalEndpoint? _manualEndpoint;
   int _eventRevision = 0;
   int _terminalRevision = 0;
   bool _locked = false;
@@ -77,14 +84,27 @@ class SyncController extends AsyncNotifier<SyncViewState> {
 
   bool _isCurrent(int generation) => generation == _generation && !_locked;
 
+  _ForegroundToken get _foregroundToken =>
+      (session: _generation, foreground: _foregroundEpoch);
+
+  bool _isForegroundCurrent(_ForegroundToken token) =>
+      _isCurrent(token.session) && token.foreground == _foregroundEpoch;
+
   @override
   Future<SyncViewState> build() async {
+    final lifecycle = _foregroundLifecycle = ref.read(
+      syncForegroundLifecycleProvider,
+    );
+    final owner = _foregroundOwner = Object();
+    _manualEndpoint = null;
     _locked = ref.read(lockStateProvider).valueOrNull == LockEvent.locked;
     ref.listen(lockStateProvider, (_, next) {
       final event = next.valueOrNull;
       if (event == null) return;
       final locked = event == LockEvent.locked;
       if (locked == _locked) return;
+      if (locked) unawaited(lifecycle.releaseOwner(owner));
+      if (locked) _manualEndpoint = null;
       _locked = locked;
       _generation++;
       _pairingTimer?.cancel();
@@ -101,8 +121,8 @@ class SyncController extends AsyncNotifier<SyncViewState> {
     _repository = repository;
     ref.onDispose(() {
       _pairingTimer?.cancel();
+      unawaited(lifecycle.releaseOwner(owner));
       if (_generation == generation) _generation++;
-      unawaited(repository.stopDiscovery());
     });
     ref.listen(syncEventsProvider, (_, next) {
       final event = next.valueOrNull;
@@ -130,18 +150,20 @@ class SyncController extends AsyncNotifier<SyncViewState> {
   }
 
   Future<void> discover(DiscoveryKind kind) async {
-    await _run((generation) async {
-      final discovery = await _repo.discover(kind);
-      _replace(discovery: discovery, generation: generation);
+    await _run((token, lease) async {
+      final discovery = await lease.track(_repo.discover(kind));
+      _replace(discovery: discovery, foreground: token);
     });
   }
 
   Future<void> useManualEndpoint(String value) async {
-    await _run((generation) async {
+    await _run((token, lease) async {
       final endpoint = _parseEndpoint(value);
-      await _repo.setManualEndpoint(endpoint);
+      await lease.track(_repo.setManualEndpoint(endpoint));
+      if (!_isForegroundCurrent(token)) return;
+      _manualEndpoint = endpoint;
       _replace(
-        generation: generation,
+        foreground: token,
         discovery: LocalDiscoveryStatus(
           permission: LocalDiscoveryPermission.granted,
           candidates: [endpoint],
@@ -151,18 +173,28 @@ class SyncController extends AsyncNotifier<SyncViewState> {
   }
 
   Future<void> pairThisVault() async {
-    await _run((generation) async {
+    await _run((token, lease) async {
       final repository = _repo;
       if (!_value.status.configured) {
-        await repository.configureLocalSync(LocalSyncRole.client);
+        await lease.track(repository.configureLocalSync(LocalSyncRole.client));
       }
-      if (!_isCurrent(generation)) return;
-      final discovered = await repository.discover(DiscoveryKind.pairing);
-      if (!_isCurrent(generation)) return;
-      _replace(discovery: discovered, generation: generation);
+      if (!_isForegroundCurrent(token)) return;
+      final discovered = await _operationRoute(
+        repository,
+        lease,
+        DiscoveryKind.pairing,
+      );
+      if (!_isForegroundCurrent(token)) return;
+      _replace(discovery: discovered, foreground: token);
       _requireDiscovery(discovered);
-      final prompt = await repository.beginPairing();
-      _replace(prompt: prompt, generation: generation);
+      final prompt = await _ownedPrompt(
+        lease,
+        token,
+        repository,
+        repository.beginPairing(),
+      );
+      if (!_isForegroundCurrent(token)) return;
+      _replace(prompt: prompt, foreground: token);
     });
   }
 
@@ -170,86 +202,111 @@ class SyncController extends AsyncNotifier<SyncViewState> {
     required String name,
     required String masterPassword,
   }) async {
-    await _run((generation) async {
+    await _run((token, lease) async {
       final repository = _repo;
-      final discovered = await repository.discover(DiscoveryKind.pairing);
-      if (!_isCurrent(generation)) return;
-      _replace(discovery: discovered, generation: generation);
-      _requireDiscovery(discovered);
-      _replace(
-        generation: generation,
-        prompt: await repository.beginPairImport(
-          name: name,
-          masterPassword: masterPassword,
-        ),
+      final discovered = await _operationRoute(
+        repository,
+        lease,
+        DiscoveryKind.pairing,
       );
+      if (!_isForegroundCurrent(token)) return;
+      _replace(discovery: discovered, foreground: token);
+      _requireDiscovery(discovered);
+      final prompt = await _ownedPrompt(
+        lease,
+        token,
+        repository,
+        repository.beginPairImport(name: name, masterPassword: masterPassword),
+      );
+      if (!_isForegroundCurrent(token)) return;
+      _replace(foreground: token, prompt: prompt);
     });
   }
 
   Future<VaultSummary?> confirmPairing({
     required bool accepted,
     String peerName = 'Nearby Hidlins',
+    String? transactionHandle,
   }) async {
-    final generation = _generation;
-    if (!_isCurrent(generation)) return null;
+    if (!_isCurrent(_generation)) return null;
     final prompt = _value.prompt;
-    if (prompt == null) return null;
-    _replace(prompt: null, failure: null, working: true);
+    if (prompt == null ||
+        (transactionHandle != null &&
+            prompt.transactionHandle != transactionHandle)) {
+      return null;
+    }
+    final lease = _acquireForeground();
+    final token = _foregroundToken;
+    final repository = _repo;
+    await lease.ready;
+    if (!_isForegroundCurrent(token) ||
+        _value.prompt?.transactionHandle != prompt.transactionHandle) {
+      return null;
+    }
+    _replace(prompt: null, failure: null, working: true, foreground: token);
     try {
-      final imported = await _repo.confirmPairing(
-        transactionHandle: prompt.transactionHandle,
-        accepted: accepted,
-        peerDisplayName: peerName.trim().isEmpty
-            ? 'Nearby Hidlins'
-            : peerName.trim(),
+      final imported = await lease.track(
+        repository.confirmPairing(
+          transactionHandle: prompt.transactionHandle,
+          accepted: accepted,
+          peerDisplayName: peerName.trim().isEmpty
+              ? 'Nearby Hidlins'
+              : peerName.trim(),
+        ),
       );
-      if (!_isCurrent(generation)) return null;
-      await refresh(expectedGeneration: generation);
-      return _isCurrent(generation) ? imported : null;
+      if (!_isForegroundCurrent(token)) return null;
+      await refresh(
+        expectedGeneration: token.session,
+        expectedForegroundEpoch: token.foreground,
+      );
+      return _isForegroundCurrent(token) ? imported : null;
     } on AppFailure catch (failure) {
-      _setFailure(failure, generation: generation);
+      _setFailure(failure, foreground: token);
       return null;
     } on Exception {
-      _setFailure(
-        const InternalFailure('pairing failed'),
-        generation: generation,
-      );
+      _setFailure(const InternalFailure('pairing failed'), foreground: token);
       return null;
     }
   }
 
   Future<void> startServer() async {
-    await _run((generation) async {
+    await _run((token, lease) async {
       final repository = _repo;
       if (!_value.status.configured) {
-        await repository.configureLocalSync(LocalSyncRole.server);
+        await lease.track(repository.configureLocalSync(LocalSyncRole.server));
       }
-      if (!_isCurrent(generation)) return;
-      final endpoints = await repository.serverEndpoints();
-      if (!_isCurrent(generation)) return;
+      if (!_isForegroundCurrent(token)) return;
+      final endpoints = await lease.track(repository.serverEndpoints());
+      if (!_isForegroundCurrent(token)) return;
       if (endpoints.isEmpty) throw const SyncUnreachable();
-      await repository.startServer(endpoints.first);
-      await refresh(expectedGeneration: generation);
+      await lease.track(repository.startServer(endpoints.first));
+      await refresh(
+        expectedGeneration: token.session,
+        expectedForegroundEpoch: token.foreground,
+      );
     });
   }
 
   Future<void> stopServer() async {
-    await _run((generation) async {
-      await _repo.stopServer();
-      if (!_isCurrent(generation)) return;
+    await _run((token, lease) async {
+      await lease.track(_repo.stopServer());
+      if (!_isForegroundCurrent(token)) return;
       _pairingTimer?.cancel();
-      await refresh(expectedGeneration: generation);
+      await refresh(
+        expectedGeneration: token.session,
+        expectedForegroundEpoch: token.foreground,
+      );
     });
   }
 
   Future<void> openPairingWindow() async {
-    await _run((generation) async {
-      await _repo.openPairingWindow();
-      if (!_isCurrent(generation)) return;
+    await _run((token, lease) async {
+      await lease.track(_repo.openPairingWindow());
+      if (!_isForegroundCurrent(token)) return;
       _pairingTimer?.cancel();
       _replace(pairingSecondsRemaining: 180);
       _pairingTimer = Timer.periodic(const Duration(seconds: 1), (timer) {
-        if (!_isCurrent(generation)) {
+        if (!_isCurrent(token.session)) {
           timer.cancel();
           return;
         }
@@ -262,79 +319,184 @@ class SyncController extends AsyncNotifier<SyncViewState> {
           _replace(pairingSecondsRemaining: remaining);
         }
       });
-      await refresh(preserveCountdown: true, expectedGeneration: generation);
+      await refresh(
+        preserveCountdown: true,
+        expectedGeneration: token.session,
+        expectedForegroundEpoch: token.foreground,
+      );
     });
   }
 
   Future<void> syncNow() async {
-    final generation = _generation;
-    if (!_isCurrent(generation)) return;
-    if (_value.inFlight) return;
-    _replace(working: true, failure: null);
+    if (!_isCurrent(_generation) || _value.inFlight) return;
+    final lease = _acquireForeground();
+    final token = _foregroundToken;
+    await lease.ready;
+    if (!_isForegroundCurrent(token) || _value.inFlight) return;
+    final repository = _repo;
+    _replace(working: true, failure: null, foreground: token);
     try {
-      await _repo.discover(DiscoveryKind.trusted);
-      if (!_isCurrent(generation)) return;
-      await _repo.syncNow();
+      await _operationRoute(repository, lease, DiscoveryKind.trusted);
+      if (!_isForegroundCurrent(token)) return;
+      await lease.track(repository.syncNow());
     } on AppFailure catch (failure) {
-      _setFailure(failure, generation: generation);
+      _setFailure(failure, foreground: token);
     } on Exception {
-      _setFailure(const InternalFailure('sync failed'), generation: generation);
+      _setFailure(const InternalFailure('sync failed'), foreground: token);
     }
   }
 
   Future<void> renamePeer(String peerId, String displayName) async {
-    await _run((generation) async {
-      await _repo.renamePeer(peerId, displayName);
-      await refresh(expectedGeneration: generation);
+    await _run((token, lease) async {
+      await lease.track(_repo.renamePeer(peerId, displayName));
+      await refresh(
+        expectedGeneration: token.session,
+        expectedForegroundEpoch: token.foreground,
+      );
     });
   }
 
   Future<void> revokePeer(String peerId) async {
-    await _run((generation) async {
-      await _repo.revokePeer(peerId);
-      await refresh(expectedGeneration: generation);
+    await _run((token, lease) async {
+      await lease.track(_repo.revokePeer(peerId));
+      await refresh(
+        expectedGeneration: token.session,
+        expectedForegroundEpoch: token.foreground,
+      );
     });
   }
 
   Future<void> openDiscoverySettings() => _repo.openDiscoverySettings();
 
-  Future<void> cancelForegroundOperations({bool updateState = true}) async {
-    final generation = _generation;
-    _pairingTimer?.cancel();
+  Future<void> _rejectPairing(
+    SyncRepository repository,
+    PairingPrompt prompt,
+  ) async {
+    await repository
+        .confirmPairing(
+          transactionHandle: prompt.transactionHandle,
+          accepted: false,
+          peerDisplayName: '',
+        )
+        .onError((_, _) => null);
+  }
+
+  SyncForegroundLease _acquireForeground() {
+    final repository = _repo;
+    return _foregroundLifecycle.acquire(
+      _foregroundOwner,
+      () => _prepareCleanup(repository),
+    );
+  }
+
+  Future<LocalDiscoveryStatus> _operationRoute(
+    SyncRepository repository,
+    SyncForegroundLease lease,
+    DiscoveryKind kind,
+  ) async {
+    final manual = _manualEndpoint;
+    if (manual == null) return lease.track(repository.discover(kind));
+    // Discovery may update its candidate list independently. A user-selected
+    // route remains separate and is admitted by Rust again before this effect.
+    await lease.track(repository.setManualEndpoint(manual));
+    return LocalDiscoveryStatus(
+      permission: LocalDiscoveryPermission.granted,
+      candidates: [manual],
+    );
+  }
+
+  Future<PairingPrompt> _ownedPrompt(
+    SyncForegroundLease lease,
+    _ForegroundToken token,
+    SyncRepository repository,
+    Future<PairingPrompt> operation,
+  ) => lease.track(
+    operation.then((prompt) async {
+      if (!_isForegroundCurrent(token)) {
+        await _rejectPairing(repository, prompt);
+      }
+      return prompt;
+    }),
+  );
+
+  Future<void> cancelForegroundOperations({bool updateState = true}) =>
+      _foregroundLifecycle.cancel(
+        _foregroundOwner,
+        () =>
+            _prepareCleanup(_repo, updateState: updateState, cancelTimer: true),
+      );
+
+  ForegroundCleanup _prepareCleanup(
+    SyncRepository repository, {
+    bool updateState = true,
+    bool cancelTimer = false,
+  }) {
+    final token = (session: _generation, foreground: ++_foregroundEpoch);
     final prompt = _value.prompt;
+    if (cancelTimer) _pairingTimer?.cancel();
     if (updateState) {
-      _replace(prompt: null, pairingSecondsRemaining: 0, working: false);
+      _replace(
+        prompt: null,
+        pairingSecondsRemaining: cancelTimer ? 0 : null,
+        working: false,
+      );
     }
-    if (prompt != null) {
-      await _repo
-          .confirmPairing(
-            transactionHandle: prompt.transactionHandle,
-            accepted: false,
-            peerDisplayName: '',
-          )
-          .onError((_, _) => null);
-    }
-    if (!_isCurrent(generation)) return;
-    await _repo.cancelSync();
-    if (!_isCurrent(generation)) return;
-    await _repo.stopDiscovery();
+    return (mayCancelNative) async {
+      try {
+        try {
+          if (prompt != null) await _rejectPairing(repository, prompt);
+          if (mayCancelNative && _isCurrent(token.session)) {
+            await repository.cancelSync();
+          }
+        } finally {
+          if (mayCancelNative) await repository.stopDiscovery();
+        }
+      } on AppFailure catch (failure) {
+        _setFailure(failure, foreground: token);
+      } catch (_) {
+        _setFailure(
+          const InternalFailure('local sync cancellation failed'),
+          foreground: token,
+        );
+      } finally {
+        if (_isForegroundCurrent(token)) {
+          final clearPrompt =
+              _value.prompt?.transactionHandle == prompt?.transactionHandle;
+          _replace(
+            foreground: token,
+            prompt: clearPrompt ? null : _unset,
+            pairingSecondsRemaining: cancelTimer ? 0 : null,
+            working: false,
+          );
+        }
+      }
+    };
   }
 
   Future<void> refresh({
     bool preserveCountdown = false,
     int? expectedGeneration,
+    int? expectedForegroundEpoch,
   }) async {
     final generation = expectedGeneration ?? _generation;
-    if (!_isCurrent(generation)) return;
+    bool isCurrent() =>
+        _isCurrent(generation) &&
+        (expectedForegroundEpoch == null ||
+            expectedForegroundEpoch == _foregroundEpoch);
+    if (!isCurrent()) return;
     final eventRevision = _eventRevision;
     final repository = _repo;
     final status = await repository.syncStatus();
-    if (!_isCurrent(generation)) return;
+    if (!isCurrent()) return;
     final peers = status.configured
         ? await repository.listPeers().onError((_, _) => const <SyncPeer>[])
         : const <SyncPeer>[];
+    if (!isCurrent()) return;
     _replace(
       generation: generation,
+      foreground: expectedForegroundEpoch == null
+          ? null
+          : (session: generation, foreground: expectedForegroundEpoch),
       status: eventRevision == _eventRevision ? status : null,
       peers: peers,
       working: false,
@@ -348,24 +510,30 @@ class SyncController extends AsyncNotifier<SyncViewState> {
 
   void clearFailure() => _replace(failure: null);
 
-  Future<void> _run(Future<void> Function(int generation) action) async {
-    final generation = _generation;
-    if (!_isCurrent(generation)) return;
-    _replace(working: true, failure: null);
+  Future<void> _run(
+    Future<void> Function(_ForegroundToken token, SyncForegroundLease lease)
+    action,
+  ) async {
+    if (!_isCurrent(_generation)) return;
+    final lease = _acquireForeground();
+    final token = _foregroundToken;
+    await lease.ready;
+    if (!_isForegroundCurrent(token)) return;
+    _replace(working: true, failure: null, foreground: token);
     try {
-      await action(generation);
-      _replace(working: false, generation: generation);
+      await action(token, lease);
+      _replace(working: false, foreground: token);
     } on AppFailure catch (failure) {
-      _setFailure(failure, generation: generation);
+      _setFailure(failure, foreground: token);
     } on FormatException catch (error) {
       _setFailure(
         InvalidInputFailure(field: 'endpoint', reason: error.message),
-        generation: generation,
+        foreground: token,
       );
     } on Exception {
       _setFailure(
         const InternalFailure('local sync operation failed'),
-        generation: generation,
+        foreground: token,
       );
     }
   }
@@ -435,6 +603,7 @@ class SyncController extends AsyncNotifier<SyncViewState> {
 
   void _replace({
     int? generation,
+    _ForegroundToken? foreground,
     SyncStatusDto? status,
     LocalDiscoveryStatus? discovery,
     List<SyncPeer>? peers,
@@ -443,7 +612,11 @@ class SyncController extends AsyncNotifier<SyncViewState> {
     bool? working,
     Object? failure = _unset,
   }) {
-    if (_locked || (generation != null && !_isCurrent(generation))) return;
+    if (_locked ||
+        (generation != null && !_isCurrent(generation)) ||
+        (foreground != null && !_isForegroundCurrent(foreground))) {
+      return;
+    }
     state = AsyncValue.data(
       _value.copyWith(
         status: status,
@@ -457,8 +630,13 @@ class SyncController extends AsyncNotifier<SyncViewState> {
     );
   }
 
-  void _setFailure(AppFailure failure, {int? generation}) => _replace(
+  void _setFailure(
+    AppFailure failure, {
+    int? generation,
+    _ForegroundToken? foreground,
+  }) => _replace(
     generation: generation,
+    foreground: foreground,
     status: _statusCopy(_value.status, inFlight: false),
     working: false,
     failure: failure,

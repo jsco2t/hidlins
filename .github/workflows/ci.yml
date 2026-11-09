@@ -97,6 +97,10 @@ jobs:
       - name: Test
         run: make test
 
+      - name: Isolated logind adapter contracts
+        if: runner.os == 'Linux'
+        run: make test-os-events
+
       - name: Local-sync security and adversarial tests
         run: make test-local-sync-security
 

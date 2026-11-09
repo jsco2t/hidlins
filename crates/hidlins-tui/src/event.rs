@@ -6,7 +6,7 @@
 //! *press* (not repeat/release, not resize) at the loop level, so it counts
 //! even for keys the active phase ignores.
 
-use std::io::Stdout;
+use std::io::Write;
 use std::time::{Duration, Instant};
 
 use crossterm::event::{self, Event, KeyEventKind};
@@ -20,9 +20,9 @@ use crate::error::TuiError;
 /// live without busy-spinning.
 pub(crate) const FRAME_BUDGET: Duration = Duration::from_millis(50);
 
-pub(crate) fn run_event_loop(
+pub(crate) fn run_event_loop<W: Write>(
     mut app: App,
-    mut terminal: Terminal<CrosstermBackend<Stdout>>,
+    mut terminal: Terminal<CrosstermBackend<W>>,
 ) -> Result<(), TuiError> {
     loop {
         let now = Instant::now();

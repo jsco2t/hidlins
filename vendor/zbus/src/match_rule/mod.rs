@@ -1,19 +1,17 @@
 //! Bus match rule API.
 
 use std::{
-    borrow::Borrow,
+    borrow::{Borrow, Cow},
     fmt::{Display, Write},
     ops::Deref,
 };
 
 use serde::{Deserialize, Serialize, de};
-use zvariant::Structure;
 
 use crate::{
-    Error, Result,
+    Error, ObjectPath, Result, Str, Structure, Type as VariantType,
     message::Type,
     names::{BusName, InterfaceName, MemberName, UniqueName},
-    zvariant::{ObjectPath, Str, Type as VariantType},
 };
 
 mod builder;
@@ -35,13 +33,13 @@ pub use builder::Builder;
 /// // Let's take the most typical example of match rule to subscribe to properties' changes:
 /// let rule = MatchRule::builder()
 ///     .msg_type(zbus::message::Type::Signal)
-///     .sender("org.freedesktop.DBus")?
-///     .interface("org.freedesktop.DBus.Properties")?
-///     .member("PropertiesChanged")?
-///     .add_arg("org.zbus")?
+///     .sender("org.freedesktop.DBus")
+///     .interface("org.freedesktop.DBus.Properties")
+///     .member("PropertiesChanged")
+///     .add_arg("org.zbus")
 ///     // Sometimes it's useful to match empty strings (null check).
-///     .add_arg("")?
-///     .build();
+///     .add_arg("")
+///     .build()?;
 /// let rule_str = rule.to_string();
 /// assert_eq!(
 ///     rule_str,
@@ -60,11 +58,11 @@ pub use builder::Builder;
 /// // Now for the `ObjectManager::InterfacesAdded` signal.
 /// let rule = MatchRule::builder()
 ///     .msg_type(zbus::message::Type::Signal)
-///     .sender("org.zbus")?
-///     .interface("org.freedesktop.DBus.ObjectManager")?
-///     .member("InterfacesAdded")?
-///     .arg_path(0, "/org/zbus/NewPath")?
-///     .build();
+///     .sender("org.zbus")
+///     .interface("org.freedesktop.DBus.ObjectManager")
+///     .member("InterfacesAdded")
+///     .arg_path(0, "/org/zbus/NewPath")
+///     .build()?;
 /// let rule_str = rule.to_string();
 /// assert_eq!(
 ///     rule_str,
@@ -89,7 +87,7 @@ pub use builder::Builder;
 ///
 /// [mrs]: https://dbus.freedesktop.org/doc/dbus-specification.html#message-bus-routing-match-rules
 #[derive(Clone, Debug, PartialEq, Eq, Hash, VariantType)]
-#[zvariant(signature = "s")]
+#[zbus(signature = "s")]
 pub struct MatchRule<'m> {
     pub(crate) msg_type: Option<Type>,
     pub(crate) sender: Option<BusName<'m>>,
@@ -100,6 +98,7 @@ pub struct MatchRule<'m> {
     pub(crate) args: Vec<(u8, Str<'m>)>,
     pub(crate) arg_paths: Vec<(u8, ObjectPath<'m>)>,
     pub(crate) arg0ns: Option<Str<'m>>,
+    pub(crate) eavesdrop: bool,
 }
 
 impl<'m> MatchRule<'m> {
@@ -153,6 +152,25 @@ impl<'m> MatchRule<'m> {
         self.arg0ns.as_ref()
     }
 
+    /// Whether the rule has `eavesdrop='true'`.
+    ///
+    /// This is the `eavesdrop` key of the match rules of the D-Bus specification. Since D-Bus
+    /// 1.5.6, a rule only matches the messages that are sent to other connections if it has this.
+    /// A connection gets the messages that are sent to it whatever its rules are, so this makes no
+    /// difference to those.
+    ///
+    /// It is deprecated, in favour of the `BecomeMonitor` method of the bus, which treats every
+    /// rule it is given as if it had this. [`Connection`] has an example of using it. A bus may
+    /// restrict such rules to privileged connections, and dbus-broker refuses them in `AddMatch`.
+    ///
+    /// [`MatchRule::matches`] doesn't look at this, as it is the bus that decides which messages a
+    /// connection gets.
+    ///
+    /// [`Connection`]: crate::Connection#monitoring-all-messages
+    pub fn eavesdrop(&self) -> bool {
+        self.eavesdrop
+    }
+
     /// Create an owned clone of `self`.
     pub fn to_owned(&self) -> MatchRule<'static> {
         MatchRule {
@@ -169,6 +187,7 @@ impl<'m> MatchRule<'m> {
                 .map(|(i, p)| (*i, p.to_owned()))
                 .collect(),
             arg0ns: self.arg0ns.as_ref().map(|a| a.to_owned()),
+            eavesdrop: self.eavesdrop,
         }
     }
 
@@ -192,6 +211,7 @@ impl<'m> MatchRule<'m> {
                 .map(|(i, p)| (i, p.into_owned()))
                 .collect(),
             arg0ns: self.arg0ns.map(|a| a.into_owned()),
+            eavesdrop: self.eavesdrop,
         }
     }
 
@@ -206,14 +226,17 @@ impl<'m> MatchRule<'m> {
     ///   always a unique name.
     /// * `destination` in the rule when `destination` on the `msg` is a well-known name. The
     ///   `destination` on a match rule is always a unique name.
+    ///
+    /// Whether the rule has [`eavesdrop`](MatchRule::eavesdrop) makes no difference, as it is the
+    /// bus that decides which messages a connection gets.
     pub fn matches(&self, msg: &zbus::message::Message) -> Result<bool> {
         let hdr = msg.header();
 
         // Start with message type.
-        if let Some(msg_type) = self.msg_type() {
-            if msg_type != msg.message_type() {
-                return Ok(false);
-            }
+        if let Some(msg_type) = self.msg_type()
+            && msg_type != msg.message_type()
+        {
+            return Ok(false);
         }
 
         // Then check sender.
@@ -275,7 +298,7 @@ impl<'m> MatchRule<'m> {
 
         // The arg0 namespace.
         if let Some(arg0_ns) = self.arg0ns() {
-            if let Ok(arg0) = msg.body().deserialize_unchecked::<BusName<'_>>() {
+            if let Ok(arg0) = msg.body().deserialize_ignore_signature::<BusName<'_>>() {
                 match arg0.strip_prefix(arg0_ns.as_str()) {
                     None => return Ok(false),
                     Some(s) if !s.is_empty() && !s.starts_with('.') => return Ok(false),
@@ -331,14 +354,15 @@ impl<'m> MatchRule<'m> {
         Builder::new()
             .msg_type(Type::Signal)
             .sender("org.freedesktop.DBus")
-            .unwrap()
             .interface("org.freedesktop.DBus")
-            .unwrap()
             .member(signal_name)
-            .unwrap()
     }
 }
 
+/// The match rule string, which [`MatchRule::try_from`] parses back to an equal rule.
+///
+/// Each value is written within single quotes, and an apostrophe in a value is written as `'\''`:
+/// the quotes are closed, the apostrophe is escaped and the quotes are opened again.
 impl Display for MatchRule<'_> {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         let mut first_component = true;
@@ -371,16 +395,23 @@ impl Display for MatchRule<'_> {
             write_match_rule_string_component(f, key, value, &mut first_component)?;
         }
         for (i, arg) in self.args() {
-            write_comma(f, &mut first_component)?;
-            write!(f, "arg{i}='{arg}'")?;
+            let key = format_args!("arg{i}");
+            write_match_rule_string_component(f, key, arg, &mut first_component)?;
         }
         for (i, arg_path) in self.arg_paths() {
-            write_comma(f, &mut first_component)?;
-            write!(f, "arg{i}path='{arg_path}'")?;
+            let key = format_args!("arg{i}path");
+            write_match_rule_string_component(f, key, arg_path, &mut first_component)?;
         }
         if let Some(arg0namespace) = self.arg0ns() {
-            write_comma(f, &mut first_component)?;
-            write!(f, "arg0namespace='{arg0namespace}'")?;
+            write_match_rule_string_component(
+                f,
+                "arg0namespace",
+                arg0namespace,
+                &mut first_component,
+            )?;
+        }
+        if self.eavesdrop() {
+            write_match_rule_string_component(f, "eavesdrop", "true", &mut first_component)?;
         }
 
         Ok(())
@@ -389,14 +420,19 @@ impl Display for MatchRule<'_> {
 
 fn write_match_rule_string_component(
     f: &mut std::fmt::Formatter<'_>,
-    key: &str,
+    key: impl Display,
     value: &str,
     first_component: &mut bool,
 ) -> std::fmt::Result {
     write_comma(f, first_component)?;
-    f.write_str(key)?;
-    f.write_str("='")?;
-    f.write_str(value)?;
+    write!(f, "{key}='")?;
+    // Within quotes an apostrophe would end them, so they're closed around the escaped apostrophe.
+    for (i, part) in value.split('\'').enumerate() {
+        if i > 0 {
+            f.write_str("'\\''")?;
+        }
+        f.write_str(part)?;
+    }
     f.write_char('\'')?;
 
     Ok(())
@@ -412,28 +448,51 @@ fn write_comma(f: &mut std::fmt::Formatter<'_>, first_component: &mut bool) -> s
     Ok(())
 }
 
+/// Parse a match rule string.
+///
+/// The string is a list of `key=value` pairs, separated by commas, as described in the [match
+/// rules section of the D-Bus specification][mrs]. A value is a sequence of quoted and unquoted
+/// text, which is concatenated:
+///
+/// * Within single quotes everything stands for itself, up to the apostrophe that ends them. This
+///   includes commas and backslashes.
+/// * Outside single quotes a comma ends the pair and `\'` (backslash, apostrophe) stands for an
+///   apostrophe. Any other backslash stands for itself.
+///
+/// For example, `arg0=a'b,c'd` has the value `ab,cd`, and `arg0=''\'''` has the value `'`.
+///
+/// Whitespace before a key and between a key and its `=` is skipped, while the whitespace of a
+/// value is part of it. The last pair can be followed by a comma, and the empty string is the rule
+/// with no conditions. Anything else, like an unterminated quote or an unknown key, is an error.
+///
+/// # Examples
+///
+/// ```
+/// # fn main() -> Result<(), Box<dyn std::error::Error>> {
+/// # use zbus::MatchRule;
+/// // The quotes are optional, unless they protect a comma.
+/// let rule = MatchRule::try_from("type=signal,arg0='a,b'")?;
+/// assert_eq!(rule, MatchRule::try_from("type='signal',arg0='a,b'")?);
+/// assert_eq!(rule.args()[0].1, "a,b");
+///
+/// // An apostrophe is escaped outside of the quotes.
+/// let rule = MatchRule::try_from(r"arg0='it'\''s'")?;
+/// assert_eq!(rule.args()[0].1, "it's");
+/// # Ok(())
+/// # }
+/// ```
+///
+/// [mrs]: https://dbus.freedesktop.org/doc/dbus-specification.html#message-bus-routing-match-rules
 impl<'m> TryFrom<&'m str> for MatchRule<'m> {
     type Error = Error;
 
     fn try_from(s: &'m str) -> Result<Self> {
-        let components = s.split(',');
-        if components.clone().peekable().peek().is_none() {
-            return Err(Error::InvalidMatchRule);
-        }
         let mut builder = MatchRule::builder();
-        for component in components {
-            let (key, value) = component.split_once('=').ok_or(Error::InvalidMatchRule)?;
-            if key.is_empty()
-                || value.len() < 2
-                || !value.starts_with('\'')
-                || !value.ends_with('\'')
-            {
-                return Err(Error::InvalidMatchRule);
-            }
-            let value = &value[1..value.len() - 1];
+        for pair in Pairs(s) {
+            let (key, value) = pair?;
             builder = match key {
                 "type" => {
-                    let msg_type = match value {
+                    let msg_type = match value.as_ref() {
                         "error" => Type::Error,
                         "method_call" => Type::MethodCall,
                         "method_return" => Type::MethodReturn,
@@ -442,32 +501,174 @@ impl<'m> TryFrom<&'m str> for MatchRule<'m> {
                     };
                     builder.msg_type(msg_type)
                 }
-                "sender" => builder.sender(value)?,
-                "interface" => builder.interface(value)?,
-                "member" => builder.member(value)?,
-                "path" => builder.path(value)?,
-                "path_namespace" => builder.path_namespace(value)?,
-                "destination" => builder.destination(value)?,
-                "arg0namespace" => builder.arg0ns(value)?,
+                "eavesdrop" => {
+                    let eavesdrop = match value.as_ref() {
+                        "true" => true,
+                        "false" => false,
+                        _ => return Err(Error::InvalidMatchRule),
+                    };
+                    builder.eavesdrop(eavesdrop)
+                }
+                // Each component is converted here, rather than left to the builder, so that an
+                // invalid rule string is reported by the component that's actually at fault.
+                "sender" => builder.sender(BusName::try_from(value)?),
+                "interface" => builder.interface(InterfaceName::try_from(value)?),
+                "member" => builder.member(MemberName::try_from(value)?),
+                "path" => builder.path(ObjectPath::try_from(value)?),
+                "path_namespace" => builder.path_namespace(ObjectPath::try_from(value)?),
+                "destination" => builder.destination(UniqueName::try_from(value)?),
+                "arg0namespace" => builder.arg0ns(builder::validate_arg0ns(value.into())?),
                 key if key.starts_with("arg") => {
                     if let Some(trailing_idx) = key.find("path") {
                         let idx = key[3..trailing_idx]
                             .parse::<u8>()
                             .map_err(|_| Error::InvalidMatchRule)?;
-                        builder.arg_path(idx, value)?
+                        builder.arg_path(idx, ObjectPath::try_from(value)?)
                     } else {
                         let idx = key[3..]
                             .parse::<u8>()
                             .map_err(|_| Error::InvalidMatchRule)?;
-                        builder.arg(idx, value)?
+                        builder.arg(idx, value)
                     }
                 }
                 _ => return Err(Error::InvalidMatchRule),
             };
         }
 
-        Ok(builder.build())
+        builder.build()
     }
+}
+
+/// The `key=value` pairs of a match rule string.
+///
+/// The keys are left alone, other than for the whitespace around them, and the values are
+/// unquoted. An error ends the iteration.
+struct Pairs<'m>(&'m str);
+
+impl<'m> Iterator for Pairs<'m> {
+    type Item = Result<(&'m str, Cow<'m, str>)>;
+
+    fn next(&mut self) -> Option<Self::Item> {
+        // The whitespace before a key is skipped. Once only whitespace is left there's no other
+        // key, which is what lets the last pair be followed by a comma.
+        let input = self.0.trim_start_matches(is_space);
+        if input.is_empty() {
+            return None;
+        }
+
+        match split_pair(input) {
+            Ok((key, value, rest)) => {
+                self.0 = rest;
+
+                Some(Ok((key, value)))
+            }
+            Err(e) => {
+                self.0 = "";
+
+                Some(Err(e))
+            }
+        }
+    }
+}
+
+/// Split the first pair off `input`.
+///
+/// The key is what precedes the first `=`, minus the whitespace right before the `=`. Returns the
+/// key, the unquoted value and the rest of `input`, after the comma that ends the pair.
+fn split_pair(input: &str) -> Result<(&str, Cow<'_, str>, &str)> {
+    // A comma before the `=` ends a pair without a value, so it's not part of the key.
+    let pos = input.find(['=', ',']).ok_or(Error::InvalidMatchRule)?;
+    let (key, input) = input.split_at(pos);
+    let input = input.strip_prefix('=').ok_or(Error::InvalidMatchRule)?;
+    let (value, rest) = split_value(input)?;
+
+    Ok((key.trim_end_matches(is_space), unquote(value), rest))
+}
+
+/// Split the value off `input`, which starts right after the `=` of a pair.
+///
+/// The value ends at the first comma that's not within single quotes, or at the end of `input`.
+/// Returns the value, still quoted, and the rest of `input`, after that comma.
+fn split_value(input: &str) -> Result<(&str, &str)> {
+    let mut quoted = false;
+    // Whether the last character was a backslash outside quotes, which escapes an apostrophe.
+    let mut escaping = false;
+    // The characters looked for are ASCII, so the slices start and end on character boundaries.
+    for (i, c) in input.bytes().enumerate() {
+        match c {
+            b'\'' if quoted => quoted = false,
+            b'\'' if !escaping => quoted = true,
+            b',' if !quoted => return Ok((&input[..i], &input[i + 1..])),
+            _ => (),
+        }
+        escaping = !quoted && c == b'\\';
+    }
+    if quoted {
+        return Err(Error::InvalidMatchRule);
+    }
+
+    Ok((input, ""))
+}
+
+/// Unquote a value that [`split_value`] split off, so its quotes are all closed.
+///
+/// Within single quotes, a backslash stands for itself and an apostrophe ends them. Outside them,
+/// `\'` stands for an apostrophe and any other backslash for itself.
+///
+/// The value borrows from `value` when it's a single piece of it, quoted or not, as most values
+/// are. Otherwise, its pieces are copied into one string, big enough for all of them.
+fn unquote(value: &str) -> Cow<'_, str> {
+    let mut unquoted = Cow::Borrowed("");
+    let mut rest = value;
+    while let Some((text, after)) = rest.split_once('\'') {
+        match text.strip_suffix('\\') {
+            // The apostrophe is escaped. It's part of the value and does not start a quote.
+            Some(text) => {
+                push(&mut unquoted, text, value.len());
+                push(&mut unquoted, "'", value.len());
+                rest = after;
+            }
+            None => {
+                // `split_value` made sure that the quote is closed.
+                let (quoted, after) = after.split_once('\'').unwrap_or((after, ""));
+                push(&mut unquoted, text, value.len());
+                push(&mut unquoted, quoted, value.len());
+                rest = after;
+            }
+        }
+    }
+    push(&mut unquoted, rest, value.len());
+
+    unquoted
+}
+
+/// Add `piece` to the end of `value`.
+///
+/// `value` borrows its only non-empty piece. Once it gets another one, it's copied into a string of
+/// `capacity`, which has to be enough for every piece that's added to it.
+fn push<'a>(value: &mut Cow<'a, str>, piece: &'a str, capacity: usize) {
+    if piece.is_empty() {
+        return;
+    }
+
+    match value {
+        Cow::Borrowed("") => *value = Cow::Borrowed(piece),
+        Cow::Borrowed(borrowed) => {
+            let mut owned = String::with_capacity(capacity);
+            owned.push_str(borrowed);
+            owned.push_str(piece);
+            *value = Cow::Owned(owned);
+        }
+        Cow::Owned(owned) => owned.push_str(piece),
+    }
+}
+
+/// Whether `c` is whitespace to skip around the key of a pair.
+///
+/// These are the characters dbus-daemon skips. `char::is_ascii_whitespace` is not used, as it also
+/// takes the form feed.
+fn is_space(c: char) -> bool {
+    matches!(c, ' ' | '\t' | '\n' | '\r')
 }
 
 impl<'de: 'm, 'm> Deserialize<'de> for MatchRule<'m> {
@@ -493,7 +694,10 @@ impl Serialize for MatchRule<'_> {
 /// The path or path namespace.
 #[derive(Clone, Debug, PartialEq, Eq, Hash)]
 pub enum PathSpec<'m> {
+    /// Match messages sent from or to exactly this object path, the `path` key of a match rule.
     Path(ObjectPath<'m>),
+    /// Match messages sent from or to this object path or any object path below it, the
+    /// `path_namespace` key of a match rule.
     PathNamespace(ObjectPath<'m>),
 }
 
@@ -576,13 +780,29 @@ impl<'de> Deserialize<'de> for OwnedMatchRule {
     where
         D: de::Deserializer<'de>,
     {
-        String::deserialize(deserializer)
-            .and_then(|r| {
-                MatchRule::try_from(r.as_str())
-                    .map(|r| r.to_owned())
-                    .map_err(|e| de::Error::custom(e.to_string()))
-            })
-            .map(Self)
+        deserializer.deserialize_str(OwnedMatchRuleVisitor)
+    }
+}
+
+/// Parses an [`OwnedMatchRule`] right from the string that the deserializer has, rather than from
+/// a copy of it.
+struct OwnedMatchRuleVisitor;
+
+impl de::Visitor<'_> for OwnedMatchRuleVisitor {
+    type Value = OwnedMatchRule;
+
+    fn expecting(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.write_str("a match rule string")
+    }
+
+    fn visit_str<E>(self, rule: &str) -> std::result::Result<Self::Value, E>
+    where
+        E: de::Error,
+    {
+        // `to_owned`, unlike `into_owned`, doesn't keep the spare capacity of the parsed rule.
+        MatchRule::try_from(rule)
+            .map(|rule| OwnedMatchRule(rule.to_owned()))
+            .map_err(E::custom)
     }
 }
 

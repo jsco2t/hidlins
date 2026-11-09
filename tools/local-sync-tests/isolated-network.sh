@@ -16,8 +16,9 @@ if ! sudo -n true >/dev/null 2>&1; then
   exit 0
 fi
 
+artifact_root="$(python3 tools/dev/cargo_artifacts.py target-dir)"
 test_binary=""
-for candidate in target/debug/deps/cli_local_sync_process-*; do
+for candidate in "$artifact_root"/debug/deps/cli_local_sync_process-*; do
   case "$candidate" in
     *.d) continue ;;
   esac
@@ -43,12 +44,11 @@ sudo ip -n "$namespace" address add 10.77.0.1/24 dev hidlins0
 sudo ip -n "$namespace" -6 address add fd42:4849:444c::1/64 dev hidlins0
 sudo ip -n "$namespace" link set hidlins0 up
 
-repo="$(pwd)"
 sudo ip netns exec "$namespace" env \
   HIDLINS_TEST_SYNC_ADDRESS=10.77.0.1 \
-  "$repo/$test_binary" --test-threads=1
+  "$test_binary" --test-threads=1
 sudo ip netns exec "$namespace" env \
   HIDLINS_TEST_SYNC_ADDRESS=fd42:4849:444c::1 \
-  "$repo/$test_binary" --test-threads=1
+  "$test_binary" --test-threads=1
 
 echo "PASS: real CLI/client/server journey completed on isolated private IPv4 and IPv6 ULA links."

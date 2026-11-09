@@ -2,6 +2,7 @@ import 'dart:async';
 
 import 'package:material_ui/material_ui.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
+import 'package:go_router/go_router.dart';
 
 import '../../data/failures.dart';
 import '../../data/models.dart';
@@ -122,6 +123,8 @@ class _UnlockScreenState extends ConsumerState<UnlockScreen> {
     final isLoading = _state != _UnlockState.idle;
 
     if (vaults.value?.isEmpty == true) {
+      _selectedVault = null;
+      _keyfileReference = null;
       return Scaffold(body: FirstRunPage(onChoice: _handleFirstRunChoice));
     }
 
@@ -151,12 +154,16 @@ class _UnlockScreenState extends ConsumerState<UnlockScreen> {
                         if (list.isEmpty) {
                           return const SizedBox.shrink();
                         }
-                        _selectedVault ??= list.first.name;
+                        if (!list.any((v) => v.name == _selectedVault)) {
+                          _selectedVault = list.first.name;
+                          _keyfileReference = null;
+                        }
                         return Padding(
                           padding: const EdgeInsets.only(
                             bottom: HidlinsSpacing.md,
                           ),
                           child: DropdownButtonFormField<String>(
+                            key: ValueKey(_selectedVault),
                             initialValue: _selectedVault,
                             decoration: InputDecoration(
                               labelText: l10n.lockScreenSelectVault,
@@ -224,41 +231,42 @@ class _UnlockScreenState extends ConsumerState<UnlockScreen> {
                       ),
                     ),
 
-                    // Keyfile row (shown when vault has keyfile)
+                    // Import metadata cannot determine the encrypted vault's
+                    // credentials. Always allow an explicit optional keyfile.
                     if (_selectedVault != null)
                       vaults.whenData((list) {
                             final vault = list.where(
                               (v) => v.name == _selectedVault,
                             );
-                            if (vault.isEmpty || !vault.first.hasKeyfile) {
+                            if (vault.isEmpty) {
                               return const SizedBox.shrink();
                             }
                             return Padding(
                               padding: const EdgeInsets.only(
                                 top: HidlinsSpacing.md,
                               ),
-                              child: Row(
+                              child: Wrap(
+                                spacing: HidlinsSpacing.sm,
+                                runSpacing: HidlinsSpacing.xs,
+                                crossAxisAlignment: WrapCrossAlignment.center,
                                 children: [
                                   Icon(
                                     Icons.vpn_key,
                                     size: 20,
                                     color: colorScheme.onSurfaceVariant,
                                   ),
-                                  const SizedBox(width: HidlinsSpacing.sm),
-                                  Expanded(
-                                    child: Text(
-                                      _keyfileReference?.displayName ??
-                                          l10n.lockScreenKeyfileSelect,
-                                      style: Theme.of(context)
-                                          .textTheme
-                                          .bodyMedium
-                                          ?.copyWith(
-                                            color: _keyfileReference != null
-                                                ? null
-                                                : colorScheme.onSurfaceVariant,
-                                          ),
-                                      overflow: TextOverflow.ellipsis,
-                                    ),
+                                  Text(
+                                    _keyfileReference?.displayName ??
+                                        l10n.lockScreenKeyfileLabel,
+                                    style: Theme.of(context)
+                                        .textTheme
+                                        .bodyMedium
+                                        ?.copyWith(
+                                          color: _keyfileReference != null
+                                              ? null
+                                              : colorScheme.onSurfaceVariant,
+                                        ),
+                                    overflow: TextOverflow.ellipsis,
                                   ),
                                   TextButton(
                                     onPressed: isLoading
@@ -300,6 +308,17 @@ class _UnlockScreenState extends ConsumerState<UnlockScreen> {
                               )
                             : Text(l10n.lockScreenUnlockButton),
                       ),
+                    ),
+
+                    TextButton.icon(
+                      onPressed: isLoading
+                          ? null
+                          : () {
+                              _passwordController.clear();
+                              unawaited(context.push<void>('/vaults'));
+                            },
+                      icon: const Icon(Icons.folder_outlined),
+                      label: Text(l10n.navVaults),
                     ),
 
                     // Offline warning banner

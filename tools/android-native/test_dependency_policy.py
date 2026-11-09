@@ -32,6 +32,44 @@ CASES = (
     'vaultImportReportsProviderPermissionDenial',
 )
 
+LIFECYCLE_CASES = {
+    'lifecycleRejectsStaleAfterPause': 'staleAfterPause',
+    'lifecycleRejectsResumePauseResumeABA': 'staleAcrossResumeABA',
+    'lifecycleRejectsUnnumberedAcknowledgement': 'unnumberedCannotHide',
+    'lifecycleAcceptsCurrentAcknowledgement': 'currentAcknowledgementHides',
+    'lifecycleBootstrapReplaysCurrentObservation': 'bootstrapReplaysCurrent',
+}
+
+
+SAF_CASES = {'safVaultQueryKeepsMainResponsive': ('SafWorkerRegressions',
+                                      'vaultStageDoesNotBlockMain(this, "query")'),
+ 'safVaultOpenKeepsMainResponsive': ('SafWorkerRegressions',
+                                     'vaultStageDoesNotBlockMain(this, "open")'),
+ 'safVaultReadKeepsMainResponsive': ('SafWorkerRegressions',
+                                     'vaultStageDoesNotBlockMain(this, "read")'),
+ 'safKeyfileQueryKeepsMainResponsive': ('SafWorkerRegressions',
+                                        'keyfileQueryDoesNotBlockMain(this)'),
+ 'safDestroyDuringVaultQueryCompletesPromptly': ('SafWorkerRegressions',
+                                                 'destroyDuringProviderWork(this, "query", false)'),
+ 'safDestroyDuringVaultOpenClosesLateReader': ('SafWorkerRegressions',
+                                               'destroyDuringProviderWork(this, "open", false)'),
+ 'safDestroyDuringVaultReadCleansPartialCopy': ('SafWorkerRegressions',
+                                                'destroyDuringProviderWork(this, "read", false)'),
+ 'safDestroyDuringKeyfileQueryRollsBack': ('SafWorkerRegressions',
+                                           'destroyDuringProviderWork(this, "query", true)'),
+ 'safDeliveredImportSurvivesDestroy': ('SafWorkerRegressions',
+                                       'deliveredImportSurvivesDestruction(this)'),
+ 'safDisposeAfterInstallCleansUndeliveredFile': ('SafWorkerRegressions',
+                                                 'disposalAfterInstallBeforeDelivery(this)'),
+ 'safInputClosesOnSetupFailure': ('SafStorageRegressions', 'closesInputOnSetupFailure(this)'),
+ 'safPartialReadFailureCleansStaging': ('SafStorageRegressions', 'cleansPartialReadFailure(this)'),
+ 'safOverlappingActivitiesNeverOverwriteImports': ('SafStorageRegressions',
+                                                   'overlappingImportsNeverOverwrite(this)'),
+ 'safFailedKeyfileSavePreservesExistingGrant': ('SafKeyfileRegressions',
+                                                'failedSavePreservesEarlierGrant(this)'),
+ 'safFailedNewKeyfileSaveLeavesNoGrant': ('SafKeyfileRegressions',
+                                          'failedNewSaveLeavesNoGrant(this)')}
+
 
 class DependencyPolicyTests(unittest.TestCase):
     def test_device_ui_diagnostics_emit_only_fixed_categories(self):
@@ -83,14 +121,14 @@ fi
                         set(verify_app_apk.EXPECTED_ABIS), valid + b'\0' + marker, 'fixture')
 
     def test_native_result_requires_all_cases_and_successful_instrumentation(self):
-        passed = 'INSTRUMENTATION_RESULT: stream=HIDLINS_DEVICE_TESTS 11 passed, 0 failed\n'
+        passed = 'INSTRUMENTATION_RESULT: stream=HIDLINS_DEVICE_TESTS 31 passed, 0 failed\n'
         status = 'INSTRUMENTATION_CODE: -1\n'
         cases = (
             (passed + status, True),
             ('', False),
             (passed, False),
             (status, False),
-            (passed.replace('11 passed', '10 passed') + status, False),
+            (passed.replace('31 passed', '30 passed') + status, False),
             (passed.replace('0 failed', '1 failed') + status, False),
             (passed + 'INSTRUMENTATION_CODE: 0\n', False),
             (passed + status + 'INSTRUMENTATION_FAILED: crash\n', False),
@@ -153,7 +191,9 @@ public final class AssertionsProbe {
 
     def test_native_instrumentation_timeout_fails_and_preserves_its_output(self):
         source = (ROOT / 'tools/android-native/run_app_tests.sh').read_text()
-        reporting = source[source.index('"$ADB" install -r "$TEST_APK"'):]
+        start = source.index('adb_bounded() {')
+        bounded = source[start:source.index('\n}\n', start) + 3]
+        reporting = source[source.index('adb_bounded install -r "$TEST_APK"'):]
         with tempfile.TemporaryDirectory(prefix='hidlins-instrumentation-timeout-') as scratch:
             root = Path(scratch)
             adb = root / 'adb'
@@ -166,10 +206,10 @@ exec sleep 60
             adb.chmod(0o755)
             env = dict(os.environ, ROOT=str(ROOT), ADB=str(adb), TEST_APK='fixture',
                        TEST_COMPONENT='app.hidlins.test/app.hidlins.HidlinsAndroidTest',
-                       TEST_COMMAND_LOG=str(root / 'commands'),
+                       TEST_COMMAND_LOG=str(root / 'commands'), ADB_TIMEOUT_SECONDS='1',
                        HIDLINS_ANDROID_INSTRUMENTATION_TIMEOUT_SECONDS='0.1')
             process = subprocess.Popen(
-                ['bash', '-c', 'set -euo pipefail\nsource "$ROOT/tools/android-native/instrumentation-result.sh"\n' + reporting],
+                ['bash', '-c', 'set -euo pipefail\nsource "$ROOT/tools/android-native/instrumentation-result.sh"\n' + bounded + '\n' + reporting],
                 env=env, text=True, stdout=subprocess.PIPE, stderr=subprocess.PIPE,
                 start_new_session=True)
             try:
@@ -250,7 +290,19 @@ exec sleep 60
         for name in CASES:
             self.assertIn('void ' + name + '()', source)
             self.assertIn('this::' + name, source)
-        self.assertEqual(len(re.findall(r'runCase\("', source)), len(CASES))
+        companion = (ANDROID / 'app/src/androidTest/java/app/hidlins/LifecycleAckRegressions.java').read_text()
+        self.assertNotIn('org.junit', companion)
+        self.assertNotIn('androidx.test', companion)
+        for name, method in LIFECYCLE_CASES.items():
+            self.assertIn(f'runCase("{name}", () -> LifecycleAckRegressions.{method}(this))', source)
+            self.assertIn(f'static void {method}(Instrumentation instrumentation)', companion)
+        for name, (companion_name, invocation) in SAF_CASES.items():
+            self.assertIn(f'runCase("{name}", () -> {companion_name}.{invocation})', source)
+            fixture = (ANDROID / f'app/src/androidTest/java/app/hidlins/{companion_name}.java').read_text()
+            self.assertNotIn('org.junit', fixture)
+            self.assertNotIn('androidx.test', fixture)
+            self.assertIn(f'static void {invocation.split("(")[0]}(Instrumentation instrumentation', fixture)
+        self.assertCountEqual(re.findall(r'runCase\("([^"]+)"', source), [*CASES, *LIFECYCLE_CASES, *SAF_CASES])
         app_gradle = (ANDROID / 'app/build.gradle.kts').read_text()
         self.assertIn('testInstrumentationRunner = "app.hidlins.HidlinsAndroidTest"', app_gradle)
 

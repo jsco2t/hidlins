@@ -129,6 +129,10 @@ impl From<VaultError> for HidlinsApiError {
                 field: "uuid".to_string(),
                 reason: format!("entry not found: {uuid}"),
             },
+            VaultError::ReservedCustomField => Self::InvalidInput {
+                field: "custom_fields".to_string(),
+                reason: "standard fields must use their dedicated setters".to_string(),
+            },
             VaultError::GroupNotFound { uuid } => Self::InvalidInput {
                 field: "group".to_string(),
                 reason: format!("group not found: {uuid}"),

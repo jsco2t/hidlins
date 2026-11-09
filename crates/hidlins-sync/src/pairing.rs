@@ -238,14 +238,21 @@ pub struct ConfirmedPairing {
     #[zeroize(skip)]
     peer_key: PublicIdentity,
     handshake_hash: Zeroizing<[u8; 32]>,
+    #[zeroize(skip)]
+    deadline: Instant,
 }
 
 impl ConfirmedPairing {
     /// Construct from a completed fixed-suite XX transcript.
-    pub(crate) fn from_authenticated(peer_key: PublicIdentity, handshake_hash: [u8; 32]) -> Self {
+    pub(crate) fn from_authenticated(
+        peer_key: PublicIdentity,
+        handshake_hash: [u8; 32],
+        deadline: Instant,
+    ) -> Self {
         Self {
             peer_key,
             handshake_hash: Zeroizing::new(handshake_hash),
+            deadline,
         }
     }
 
@@ -266,6 +273,12 @@ impl ConfirmedPairing {
 
     pub(crate) fn handshake_hash(&self) -> &[u8; 32] {
         &self.handshake_hash
+    }
+
+    pub(crate) fn remaining_seconds(&self) -> Option<u64> {
+        let remaining = self.deadline.checked_duration_since(Instant::now())?;
+        (!remaining.is_zero())
+            .then(|| remaining.as_secs() + u64::from(remaining.subsec_nanos() != 0))
     }
 }
 
@@ -340,6 +353,7 @@ impl PairingWindow {
         Ok(ConfirmedPairing {
             peer_key: candidate.peer_key,
             handshake_hash: candidate.handshake_hash,
+            deadline: self.deadline,
         })
     }
 

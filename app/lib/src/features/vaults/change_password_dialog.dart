@@ -8,7 +8,10 @@ import '../../ui/activity_capture.dart';
 import '../../ui/tokens.dart';
 
 class ChangePasswordDialog extends ConsumerStatefulWidget {
-  const ChangePasswordDialog({super.key});
+  const ChangePasswordDialog({super.key, this.vaultName});
+
+  /// Null retains the legacy current-vault operation for existing callers.
+  final String? vaultName;
 
   @override
   ConsumerState<ChangePasswordDialog> createState() =>
@@ -157,7 +160,16 @@ class _ChangePasswordDialogState extends ConsumerState<ChangePasswordDialog> {
 
     try {
       final repo = ref.read(sessionRepositoryProvider);
-      await repo.changeMasterPassword(currentPassword, newPassword);
+      final vaultName = widget.vaultName;
+      if (vaultName == null) {
+        await repo.changeMasterPassword(currentPassword, newPassword);
+      } else {
+        await repo.changeVaultMasterPassword(
+          vaultName,
+          currentPassword,
+          newPassword,
+        );
+      }
       if (mounted) {
         ScaffoldMessenger.of(context).showSnackBar(
           SnackBar(
@@ -175,6 +187,9 @@ class _ChangePasswordDialogState extends ConsumerState<ChangePasswordDialog> {
         _working = false;
         _error = switch (e) {
           BadCredentials() => l10n.lockScreenWrongPassword,
+          VaultIsLocked() => l10n.vaultChangePasswordUnlockTarget,
+          InvalidInputFailure(field: 'vault') =>
+            l10n.vaultChangePasswordUnlockTarget,
           InternalFailure(context: final ctx) when ctx == 'registry changed' =>
             () {
               _registryRemediation = true;

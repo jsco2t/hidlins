@@ -1,15 +1,12 @@
-use serde_core::de::IntoDeserializer as _;
+use serde::de::IntoDeserializer as _;
 
-use crate::de::ArrayDeserializer;
 use crate::de::DatetimeDeserializer;
 use crate::de::Error;
-use crate::de::TableDeserializer;
 
 /// Deserialization implementation for TOML [values][crate::Value].
 ///
 /// Can be created either directly from TOML strings, using [`std::str::FromStr`],
-/// or from parsed [values][crate::Value] using
-/// [`IntoDeserializer::into_deserializer`][serde_core::de::IntoDeserializer::into_deserializer].
+/// or from parsed [values][crate::Value] using [`serde::de::IntoDeserializer::into_deserializer`].
 ///
 /// # Example
 ///
@@ -56,12 +53,14 @@ impl ValueDeserializer {
     }
 }
 
-impl<'de> serde_core::Deserializer<'de> for ValueDeserializer {
+// Note: this is wrapped by `toml::de::ValueDeserializer` and any trait methods
+// implemented here need to be wrapped there
+impl<'de> serde::Deserializer<'de> for ValueDeserializer {
     type Error = Error;
 
     fn deserialize_any<V>(self, visitor: V) -> Result<V::Value, Self::Error>
     where
-        V: serde_core::de::Visitor<'de>,
+        V: serde::de::Visitor<'de>,
     {
         let span = self.input.span();
         match self.input {
@@ -74,17 +73,13 @@ impl<'de> serde_core::Deserializer<'de> for ValueDeserializer {
                 visitor.visit_map(DatetimeDeserializer::new(v.into_value()))
             }
             crate::Item::Value(crate::Value::Array(v)) => {
-                ArrayDeserializer::new(v.values, v.span).deserialize_any(visitor)
+                v.into_deserializer().deserialize_any(visitor)
             }
             crate::Item::Value(crate::Value::InlineTable(v)) => {
-                TableDeserializer::new(v.items, v.span).deserialize_any(visitor)
+                v.into_deserializer().deserialize_any(visitor)
             }
-            crate::Item::Table(v) => {
-                TableDeserializer::new(v.items, v.span).deserialize_any(visitor)
-            }
-            crate::Item::ArrayOfTables(v) => {
-                ArrayDeserializer::new(v.values, v.span).deserialize_any(visitor)
-            }
+            crate::Item::Table(v) => v.into_deserializer().deserialize_any(visitor),
+            crate::Item::ArrayOfTables(v) => v.into_deserializer().deserialize_any(visitor),
         }
         .map_err(|mut e: Self::Error| {
             if e.span().is_none() {
@@ -98,7 +93,7 @@ impl<'de> serde_core::Deserializer<'de> for ValueDeserializer {
     // as a present field.
     fn deserialize_option<V>(self, visitor: V) -> Result<V::Value, Error>
     where
-        V: serde_core::de::Visitor<'de>,
+        V: serde::de::Visitor<'de>,
     {
         let span = self.input.span();
         visitor.visit_some(self).map_err(|mut e: Self::Error| {
@@ -115,7 +110,7 @@ impl<'de> serde_core::Deserializer<'de> for ValueDeserializer {
         visitor: V,
     ) -> Result<V::Value, Error>
     where
-        V: serde_core::de::Visitor<'de>,
+        V: serde::de::Visitor<'de>,
     {
         let span = self.input.span();
         visitor
@@ -135,19 +130,15 @@ impl<'de> serde_core::Deserializer<'de> for ValueDeserializer {
         visitor: V,
     ) -> Result<V::Value, Error>
     where
-        V: serde_core::de::Visitor<'de>,
+        V: serde::de::Visitor<'de>,
     {
-        if serde_spanned::de::is_spanned(name) {
+        if serde_spanned::__unstable::is_spanned(name, fields) {
             if let Some(span) = self.input.span() {
-                return visitor.visit_map(
-                    serde_spanned::de::SpannedDeserializer::<Self, Error>::new(self, span),
-                );
-            } else {
-                return Err(Error::custom("value is missing a span", None));
+                return visitor.visit_map(super::SpannedDeserializer::new(self, span));
             }
         }
 
-        if toml_datetime::de::is_datetime(name) {
+        if name == toml_datetime::__unstable::NAME && fields == [toml_datetime::__unstable::FIELD] {
             let span = self.input.span();
             if let crate::Item::Value(crate::Value::Datetime(d)) = self.input {
                 return visitor
@@ -164,9 +155,9 @@ impl<'de> serde_core::Deserializer<'de> for ValueDeserializer {
         if self.validate_struct_keys {
             let span = self.input.span();
             match &self.input {
-                crate::Item::Table(values) => validate_struct_keys(&values.items, fields),
+                crate::Item::Table(values) => super::validate_struct_keys(&values.items, fields),
                 crate::Item::Value(crate::Value::InlineTable(values)) => {
-                    validate_struct_keys(&values.items, fields)
+                    super::validate_struct_keys(&values.items, fields)
                 }
                 _ => Ok(()),
             }
@@ -189,7 +180,7 @@ impl<'de> serde_core::Deserializer<'de> for ValueDeserializer {
         visitor: V,
     ) -> Result<V::Value, Error>
     where
-        V: serde_core::de::Visitor<'de>,
+        V: serde::de::Visitor<'de>,
     {
         let span = self.input.span();
         match self.input {
@@ -208,13 +199,13 @@ impl<'de> serde_core::Deserializer<'de> for ValueDeserializer {
                         v.span(),
                     ))
                 } else {
-                    TableDeserializer::new(v.items, v.span)
+                    v.into_deserializer()
                         .deserialize_enum(name, variants, visitor)
                 }
             }
-            crate::Item::Table(v) => {
-                TableDeserializer::new(v.items, v.span).deserialize_enum(name, variants, visitor)
-            }
+            crate::Item::Table(v) => v
+                .into_deserializer()
+                .deserialize_enum(name, variants, visitor),
             e => Err(Error::custom("wanted string or table", e.span())),
         }
         .map_err(|mut e: Self::Error| {
@@ -225,14 +216,14 @@ impl<'de> serde_core::Deserializer<'de> for ValueDeserializer {
         })
     }
 
-    serde_core::forward_to_deserialize_any! {
+    serde::forward_to_deserialize_any! {
         bool u8 u16 u32 u64 i8 i16 i32 i64 f32 f64 char str string seq
         bytes byte_buf map unit
         ignored_any unit_struct tuple_struct tuple identifier
     }
 }
 
-impl serde_core::de::IntoDeserializer<'_, Error> for ValueDeserializer {
+impl serde::de::IntoDeserializer<'_, Error> for ValueDeserializer {
     type Deserializer = Self;
 
     fn into_deserializer(self) -> Self::Deserializer {
@@ -240,11 +231,17 @@ impl serde_core::de::IntoDeserializer<'_, Error> for ValueDeserializer {
     }
 }
 
-impl serde_core::de::IntoDeserializer<'_, Error> for crate::Value {
+impl serde::de::IntoDeserializer<'_, Error> for crate::Value {
     type Deserializer = ValueDeserializer;
 
     fn into_deserializer(self) -> Self::Deserializer {
         ValueDeserializer::new(crate::Item::Value(self))
+    }
+}
+
+impl crate::Item {
+    pub(crate) fn into_deserializer(self) -> ValueDeserializer {
+        ValueDeserializer::new(self)
     }
 }
 
@@ -256,38 +253,5 @@ impl std::str::FromStr for ValueDeserializer {
     fn from_str(s: &str) -> Result<Self, Self::Err> {
         let value = s.parse::<crate::Value>().map_err(Error::from)?;
         Ok(value.into_deserializer())
-    }
-}
-
-pub(crate) fn validate_struct_keys(
-    table: &crate::table::KeyValuePairs,
-    fields: &'static [&'static str],
-) -> Result<(), Error> {
-    let extra_fields = table
-        .keys()
-        .filter_map(|key| {
-            if !fields.contains(&key.get()) {
-                Some(key.clone())
-            } else {
-                None
-            }
-        })
-        .collect::<Vec<_>>();
-
-    if extra_fields.is_empty() {
-        Ok(())
-    } else {
-        Err(Error::custom(
-            format!(
-                "unexpected keys in table: {}, available keys: {}",
-                extra_fields
-                    .iter()
-                    .map(|k| k.get())
-                    .collect::<Vec<_>>()
-                    .join(", "),
-                fields.join(", "),
-            ),
-            extra_fields[0].span(),
-        ))
     }
 }
