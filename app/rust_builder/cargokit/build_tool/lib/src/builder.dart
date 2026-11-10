@@ -221,6 +221,12 @@ class RustBuilder {
             (target.flutter?.startsWith('linux-') ?? false)
         ? ['--features', 'logind']
         : <String>[];
+    // Hidlins patch: Cocoa builds need the existing macOS lock/sleep adapter
+    // in every profile. iOS shares Darwin but must retain its native boundary.
+    final macosArgs = environment.crateInfo.packageName == 'hidlins-api' &&
+            target.darwinPlatform == 'macosx'
+        ? ['--features', 'iokit']
+        : <String>[];
     final manifestPath = path.join(environment.manifestDir, 'Cargo.toml');
     // Hidlins patch: --offline --locked enforces the vendored/pinned
     // build posture. Cargo resolves from vendor/ via .cargo/config.toml.
@@ -260,6 +266,7 @@ class RustBuilder {
             '--locked',
             ...mobileArgs,
             ...linuxArgs,
+            ...macosArgs,
             ...extraArgs,
             '--manifest-path',
             manifestPath,

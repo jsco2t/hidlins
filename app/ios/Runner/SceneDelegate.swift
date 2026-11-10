@@ -23,8 +23,8 @@ class SceneDelegate: FlutterSceneDelegate {
 
   override func sceneDidBecomeActive(_ scene: UIScene) {
     super.sceneDidBecomeActive(scene)
-    // The shield stays installed until Dart has synchronously reported the
-    // raw signal to Rust and sends an acknowledgement on the same channel.
+    // The shield stays installed until Dart reports the raw signal to Rust
+    // and acknowledges this exact native observation on the same channel.
     HidlinsPlatformServices.shared.reportLifecycle("resumed", window: window)
   }
 }

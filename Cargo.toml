@@ -44,7 +44,7 @@ unsafe_code = "deny"
 # previously suppressed the lint crate-wide, which would have silently accepted
 # a typo'd `#[cfg(feature = "desktop")]` on the security-critical cfg gates that
 # compile `take_secret_for_clipboard` out of desktop builds.
-unexpected_cfgs = { level = "warn", check-cfg = ['cfg(frb_expand)'] }
+unexpected_cfgs = { level = "warn", check-cfg = ['cfg(frb_expand)', 'cfg(hidlins_ios_publication_fixture)'] }
 
 [workspace.lints.clippy]
 pedantic = { level = "warn", priority = -1 }

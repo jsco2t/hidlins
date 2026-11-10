@@ -103,6 +103,8 @@ def check(binary, action, redirected):
             if action == "quit":
                 if not os.WIFEXITED(status) or os.WEXITSTATUS(status) != 0:
                     problems.append(f"normal quit status was {status}")
+                if b"terminal I/O error:" in output:
+                    problems.append("normal quit reported a terminal input/output error")
             elif not os.WIFSIGNALED(status) or os.WTERMSIG(status) != getattr(signal, "SIG" + action):
                 problems.append(f"fatal signal status was {status}")
             if termios.tcgetattr(master) != original:

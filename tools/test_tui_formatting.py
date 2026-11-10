@@ -2,7 +2,9 @@
 """Verify canonical formatting reaches external TUI include! modules."""
 
 import pathlib
+import shlex
 import subprocess
+import sys
 import tempfile
 import unittest
 
@@ -39,7 +41,7 @@ class TuiFormattingTests(unittest.TestCase):
                 "-f",
                 str(ROOT / "Makefile"),
                 target,
-                "CARGO=/bin/true",
+                "CARGO=" + shlex.join([sys.executable, "-c", "pass"]),
             ],
             cwd=self.directory,
             capture_output=True,

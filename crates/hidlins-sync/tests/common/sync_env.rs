@@ -51,7 +51,12 @@ impl SyncTestEnv {
     /// Create a fresh tempdir, a vault on disk, and register it.
     #[must_use]
     pub fn new(name: &str) -> Self {
-        let tmp = TempDir::new().expect("tempdir");
+        // Match the physical identity used by vault registration and backups.
+        // macOS may expose the temporary parent through the /var symlink.
+        let parent = std::env::temp_dir()
+            .canonicalize()
+            .expect("physical tempdir");
+        let tmp = TempDir::new_in(parent).expect("tempdir");
         let paths = HidlinsPaths::with_state_dir(tmp.path().join("state"));
         paths.ensure_exists().expect("state dir");
 

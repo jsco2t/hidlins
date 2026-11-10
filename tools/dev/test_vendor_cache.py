@@ -36,7 +36,7 @@ import 'package:build_tool/src/rustup.dart';
 import 'package:build_tool/src/target.dart';
 Future<void> main(List<String> args) async {
   final builder = RustBuilder(
-    target: Target.forFlutterName(args[2])!,
+    target: Target.forRustTriple(args[2])!,
     environment: BuildEnvironment(configuration: BuildConfiguration.debug,
       crateOptions: CargokitCrateOptions(), targetTempDir: args[1],
       manifestDir: args[0], crateInfo: CrateInfo.load(args[0]), isAndroid: false));
@@ -340,8 +340,7 @@ sys.exit(subprocess.run([os.environ['CACHE_REAL_CARGO'],'build','--offline','--l
         config = bootstrap / '.dart_tool/package_config.json'
         driver = self.root / 'driver.dart'
         driver.write_text(DRIVER)
-        target = 'linux-arm64' if HOST.startswith('aarch64') else 'linux-x64'
-        return [DART, '--packages=' + str(config), str(driver), str(self.root), str(self.root / 'cargokit-cache'), target]
+        return [DART, '--packages=' + str(config), str(driver), str(self.root), str(self.root / 'cargokit-cache'), HOST]
 
     def test_real_cargokit_explicit_target_compiles_patched_vendor(self):
         command = self.dart_package()

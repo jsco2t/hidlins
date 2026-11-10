@@ -87,6 +87,12 @@ thiserror = "2.0"
 [target.'cfg(unix)'.dependencies]
 libc = "0.2"
 
+[target.'cfg(target_os = "macos")'.dependencies]
+# macOS kqueue cannot register the /dev/tty fallback used with redirected
+# stdin. Crossterm's established select backend supports controlling TTYs.
+# MIT; activates already-vendored filedescriptor/thiserror1 on macOS only.
+crossterm = { version = "=0.29.0", features = ["use-dev-tty"] }
+
 [dev-dependencies]
 # Unlock/lock state-machine tests build a real fast-KDF KDBX fixture in a
 # tempdir and register it in an in-memory `VaultRegistry`. (`toml` for the

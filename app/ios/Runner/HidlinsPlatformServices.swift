@@ -461,6 +461,8 @@ final class HidlinsPlatformServices: NSObject, UIDocumentPickerDelegate {
   private let keyfiles = SecurityScopedKeyfileStore()
   private let localDiscovery = LocalDiscoveryService()
   private var lifecycleChannel: FlutterMethodChannel?
+  private var lifecycleState = "inactive"
+  private var lifecycleObservationToken = UUID().uuidString
   private var pendingPickerResult: FlutterResult?
   private var pickerPurpose: PickerPurpose?
   fileprivate var pendingClipboardTTL = 30
@@ -471,14 +473,30 @@ final class HidlinsPlatformServices: NSObject, UIDocumentPickerDelegate {
   func register(with messenger: FlutterBinaryMessenger) {
     let lifecycle = FlutterMethodChannel(name: "app.hidlins/lifecycle", binaryMessenger: messenger)
     lifecycle.setMethodCallHandler { [weak self] call, result in
-      guard call.method == "reportState",
-            let arguments = call.arguments as? [String: Any],
-            let acknowledgement = LifecycleAcknowledgement(arguments: arguments)
+      guard let self,
+            call.method == "reportState",
+            let arguments = call.arguments as? [String: Any]
       else {
         result(PlatformEnvelope.failure(code: "invalid-lifecycle-ack"))
         return
       }
-      if acknowledgement.state == "resumed" { self?.snapshotShield.hide() }
+      if arguments["requestObservation"] as? Bool == true {
+        self.sendLifecycleObservation()
+        result(PlatformEnvelope.success())
+        return
+      }
+      guard let acknowledgement = LifecycleAcknowledgement(arguments: arguments) else {
+        result(PlatformEnvelope.failure(code: "invalid-lifecycle-ack"))
+        return
+      }
+      guard arguments["observationToken"] as? String == self.lifecycleObservationToken,
+            acknowledgement.state == self.lifecycleState
+      else {
+        self.sendLifecycleObservation()
+        result(PlatformEnvelope.stale())
+        return
+      }
+      if acknowledgement.state == "resumed" { self.snapshotShield.hide() }
       result(PlatformEnvelope.success())
     }
     lifecycleChannel = lifecycle
@@ -524,9 +542,19 @@ final class HidlinsPlatformServices: NSObject, UIDocumentPickerDelegate {
   }
 
   func reportLifecycle(_ state: String, window: UIWindow?) {
+    // Record ownership before changing the cover or publishing the observation.
+    lifecycleState = state
+    lifecycleObservationToken = UUID().uuidString
     if state != "resumed" { snapshotShield.show(in: window) }
     if state != "resumed" { localDiscovery.stop() }
-    lifecycleChannel?.invokeMethod("reportState", arguments: ["state": state])
+    sendLifecycleObservation()
+  }
+
+  private func sendLifecycleObservation() {
+    lifecycleChannel?.invokeMethod("reportState", arguments: [
+      "state": lifecycleState,
+      "observationToken": lifecycleObservationToken,
+    ])
   }
 
   private func handleLocalDiscovery(call: FlutterMethodCall, result: @escaping FlutterResult) {

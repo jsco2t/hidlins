@@ -135,7 +135,9 @@ class DriftRecipeTests(unittest.TestCase):
                 + "\n.PHONY: api-gen completions app-deps pub-vendor-hash-test\n"
                 + "api-gen completions app-deps:\n"
                 + f"\t{shlex.quote(sys.executable)} generator.py\n"
-                + "pub-vendor-hash-test:\n\t@true\n"
+                # Native Make may exec `true` directly instead of using the
+                # shell builtin. Use a tool explicitly present in this PATH.
+                + "pub-vendor-hash-test:\n\t@python3 -c pass\n"
             )
             (root / "Makefile").write_text(makefile)
             environment = dict(os.environ)

@@ -76,7 +76,7 @@
 //! `IoKitSource` holds a shared `AtomicBool`. The [`ShutdownHandle`]
 //! returned by [`OsLockEventSource::shutdown_handle`] sets it. The run
 //! loop pumps `CFRunLoopRunInMode` in bounded slices
-//! ([`RUN_LOOP_TICK_SECONDS`]) and checks the flag between slices, so
+//! (`RUN_LOOP_TICK_SECONDS`) and checks the flag between slices, so
 //! `run` returns `Ok(())` within one slice of the signal. Before
 //! returning it deregisters both observers, releasing the notification
 //! centers' references to the observer object (no leak). Setting an
@@ -175,7 +175,7 @@ pub struct IoKitSource {
 impl IoKitSource {
     /// Construct an [`IoKitSource`].
     ///
-    /// Lazy, like [`crate::os_events::LogindSource::new`]: registers no
+    /// Lazy, like `LogindSource::new`: registers no
     /// observers and starts no run loop here. The OS resources are
     /// acquired in [`OsLockEventSource::run`] on the source's own
     /// thread, because notification delivery is bound to the run loop

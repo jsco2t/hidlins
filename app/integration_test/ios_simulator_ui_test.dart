@@ -8,7 +8,20 @@ import 'package:app/src/data/models.dart';
 import '../test/helpers/feature_test_helpers.dart';
 
 void main() {
-  IntegrationTestWidgetsFlutterBinding.ensureInitialized();
+  final binding = IntegrationTestWidgetsFlutterBinding.ensureInitialized();
+  setUpAll(() async {
+    // iOS acknowledges framework semantics asynchronously. Establish both
+    // suite and platform ownership before testWidgets records its leak baseline.
+    final semantics = binding.ensureSemantics();
+    addTearDown(semantics.dispose);
+    final deadline = DateTime.now().add(const Duration(seconds: 5));
+    while (!binding.platformDispatcher.semanticsEnabled) {
+      if (DateTime.now().isAfter(deadline)) {
+        throw TestFailure('iOS semantics startup did not complete');
+      }
+      await Future<void>.delayed(const Duration(milliseconds: 10));
+    }
+  });
 
   testWidgets('shipping iOS surface reaches every alpha destination', (
     tester,

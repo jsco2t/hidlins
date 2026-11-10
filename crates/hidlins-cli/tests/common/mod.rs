@@ -166,7 +166,12 @@ impl VaultsToml {
     /// The file itself is not created; the CLI will create it lazily
     /// on first registry save.
     pub fn new() -> Self {
-        let tempdir = TempDir::new().expect("create tempdir");
+        // macOS's default /var temp root aliases /private/var. Use the
+        // physical parent so exact fixture expectations match registration.
+        let parent = std::env::temp_dir()
+            .canonicalize()
+            .expect("resolve temp root");
+        let tempdir = TempDir::new_in(parent).expect("create tempdir");
         let vaults_toml = tempdir.path().join("vaults.toml");
         Self {
             tempdir,

@@ -1,3 +1,4 @@
+import Flutter
 import Foundation
 import UniformTypeIdentifiers
 import UIKit
@@ -360,5 +361,168 @@ final class RunnerTests: XCTestCase {
       UIPasteboard.general.data(forPasteboardType: UTType.utf8PlainText.identifier),
       Data(canary)
     )
+  }
+}
+
+// Exercise the installed production method channel, including its codec boundary.
+// Native lifecycle events are captured without automatically acknowledging them.
+private final class LifecycleTestMessenger: NSObject, FlutterBinaryMessenger {
+  private let codec = FlutterStandardMethodCodec.sharedInstance()
+  private var handlers: [String: (FlutterBinaryMessengerConnection, FlutterBinaryMessageHandler)] = [:]
+  private var nextConnection: FlutterBinaryMessengerConnection = 0
+  private(set) var observations: [[String: Any]] = []
+
+  func send(onChannel channel: String, message: Data?) {
+    send(onChannel: channel, message: message, binaryReply: nil)
+  }
+
+  func send(onChannel channel: String, message: Data?, binaryReply callback: FlutterBinaryReply?) {
+    if channel == "app.hidlins/lifecycle", let message {
+      let call = codec.decodeMethodCall(message)
+      if call.method == "reportState", let arguments = call.arguments as? [String: Any] {
+        observations.append(arguments)
+      }
+    }
+    callback?(codec.encodeSuccessEnvelope(nil))
+  }
+
+  func setMessageHandlerOnChannel(
+    _ channel: String,
+    binaryMessageHandler handler: FlutterBinaryMessageHandler?
+  ) -> FlutterBinaryMessengerConnection {
+    nextConnection += 1
+    if let handler {
+      handlers[channel] = (nextConnection, handler)
+    } else {
+      handlers.removeValue(forKey: channel)
+    }
+    return nextConnection
+  }
+
+  func cleanUpConnection(_ connection: FlutterBinaryMessengerConnection) {
+    if let channel = handlers.first(where: { $0.value.0 == connection })?.key {
+      handlers.removeValue(forKey: channel)
+    }
+  }
+
+  func call(_ arguments: [String: Any]) -> [String: Any]? {
+    guard let handler = handlers["app.hidlins/lifecycle"]?.1 else {
+      XCTFail("Production lifecycle handler was not installed")
+      return nil
+    }
+    var result: [String: Any]?
+    handler(codec.encode(FlutterMethodCall(methodName: "reportState", arguments: arguments))) { data in
+      if let data { result = self.codec.decodeEnvelope(data) as? [String: Any] }
+    }
+    return result
+  }
+}
+
+extension RunnerTests {
+  @MainActor
+  func testLifecycleDelayedResumeAcknowledgementCannotUncoverInactiveOrPaused() {
+    for laterState in ["inactive", "paused"] {
+      let services = HidlinsPlatformServices()
+      let messenger = LifecycleTestMessenger()
+      services.register(with: messenger)
+      let window = UIWindow(frame: CGRect(x: 0, y: 0, width: 320, height: 640))
+      services.reportLifecycle("resumed", window: window)
+      let resumedToken = messenger.observations.last?["observationToken"] as? String
+      XCTAssertNotNil(resumedToken)
+      services.reportLifecycle(laterState, window: window)
+      let current = messenger.observations.last
+      let token = current?["observationToken"] as? String
+      XCTAssertNotNil(token)
+      XCTAssertNotEqual(resumedToken, token)
+      XCTAssertTrue(services.snapshotShield.isVisible)
+
+      let reply = messenger.call([
+        "state": "resumed", "acknowledged": true, "lockState": "unlocked",
+        "observationToken": resumedToken ?? "absent-before-repair",
+      ])
+      XCTAssertEqual(reply?["status"] as? String, "stale")
+      XCTAssertTrue(services.snapshotShield.isVisible, "Delayed resumed acknowledgement must retain cover")
+      XCTAssertEqual(window.subviews.last?.accessibilityIdentifier, "hidlins.snapshot-shield")
+      XCTAssertEqual(messenger.observations.last?["state"] as? String, laterState)
+      XCTAssertEqual(messenger.observations.last?["observationToken"] as? String, token)
+    }
+  }
+
+  @MainActor
+  func testLifecycleResumeInactiveResumeRejectsFirstResumeToken() {
+    let services = HidlinsPlatformServices()
+    let messenger = LifecycleTestMessenger()
+    services.register(with: messenger)
+    let window = UIWindow(frame: CGRect(x: 0, y: 0, width: 320, height: 640))
+    services.reportLifecycle("resumed", window: window)
+    let old = messenger.observations.last?["observationToken"] as? String
+    services.reportLifecycle("inactive", window: window)
+    services.reportLifecycle("resumed", window: window)
+    let current = messenger.observations.last?["observationToken"] as? String
+    XCTAssertNotNil(old)
+    XCTAssertNotNil(current)
+    XCTAssertNotEqual(old, current, "A resumed state must not reuse an earlier observation token")
+    let reply = messenger.call([
+      "state": "resumed", "acknowledged": true, "lockState": "unlocked",
+      "observationToken": old ?? "absent-before-repair",
+    ])
+    XCTAssertEqual(reply?["status"] as? String, "stale")
+    XCTAssertTrue(services.snapshotShield.isVisible, "ABA acknowledgement must retain cover")
+    XCTAssertEqual(messenger.observations.last?["state"] as? String, "resumed")
+    XCTAssertEqual(messenger.observations.last?["observationToken"] as? String, current)
+  }
+
+  @MainActor
+  func testLifecycleTokenlessStartupCannotUncoverAndBootstrapReplaysSameObservation() {
+    let services = HidlinsPlatformServices()
+    let messenger = LifecycleTestMessenger()
+    services.register(with: messenger)
+    let window = UIWindow(frame: CGRect(x: 0, y: 0, width: 320, height: 640))
+    services.snapshotShield.show(in: window)
+    let reply = messenger.call(["state": "resumed", "acknowledged": true, "lockState": "locked"])
+    XCTAssertEqual(reply?["status"] as? String, "stale")
+    XCTAssertTrue(services.snapshotShield.isVisible, "Tokenless startup must retain native cover")
+    let startupToken = messenger.observations.last?["observationToken"] as? String
+    XCTAssertNotNil(startupToken)
+    XCTAssertEqual(messenger.observations.last?["state"] as? String, "inactive")
+    for _ in 0..<2 {
+      let replay = messenger.call(["requestObservation": true])
+      XCTAssertEqual(replay?["status"] as? String, "success")
+      XCTAssertEqual(messenger.observations.last?["observationToken"] as? String, startupToken)
+      XCTAssertEqual(messenger.observations.last?["state"] as? String, "inactive")
+      XCTAssertTrue(services.snapshotShield.isVisible)
+    }
+  }
+
+  @MainActor
+  func testLifecycleOnlyExactCurrentResumedAcknowledgementCanHideShield() {
+    for lockState in ["locked", "unlocked"] {
+      let services = HidlinsPlatformServices()
+      let messenger = LifecycleTestMessenger()
+      services.register(with: messenger)
+      let window = UIWindow(frame: CGRect(x: 0, y: 0, width: 320, height: 640))
+      services.reportLifecycle("inactive", window: window)
+      let inactive = messenger.observations.last?["observationToken"] as? String
+      let inactiveReply = messenger.call([
+        "state": "inactive", "acknowledged": true, "lockState": lockState,
+        "observationToken": inactive ?? "absent-before-repair",
+      ])
+      XCTAssertEqual(inactiveReply?["status"] as? String, "success")
+      XCTAssertTrue(services.snapshotShield.isVisible)
+      services.reportLifecycle("resumed", window: window)
+      let current = messenger.observations.last?["observationToken"] as? String
+      XCTAssertNotNil(current)
+      let replay = messenger.call(["requestObservation": true])
+      XCTAssertEqual(replay?["status"] as? String, "success")
+      XCTAssertEqual(messenger.observations.last?["observationToken"] as? String, current)
+      XCTAssertTrue(services.snapshotShield.isVisible)
+      let reply = messenger.call([
+        "state": "resumed", "acknowledged": true, "lockState": lockState,
+        "observationToken": current ?? "absent-before-repair",
+      ])
+      XCTAssertEqual(reply?["status"] as? String, "success")
+      XCTAssertFalse(services.snapshotShield.isVisible)
+      XCTAssertFalse(window.subviews.contains { $0.accessibilityIdentifier == "hidlins.snapshot-shield" })
+    }
   }
 }

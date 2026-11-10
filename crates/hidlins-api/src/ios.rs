@@ -17,6 +17,11 @@ pub type ClipboardReceiver =
 /// 0 success, 1 invalid ABI input, 2 missing/expired/consumed ticket,
 /// 3 native pasteboard rejection, 4 contained panic.
 ///
+/// # Panics
+///
+/// Rust panics during consumption are contained and returned as status 4.
+/// Native callbacks must not unwind across the C ABI.
+///
 /// # Safety
 ///
 /// `ticket` must reference `ticket_len` readable bytes for this call.

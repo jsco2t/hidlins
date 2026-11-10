@@ -213,6 +213,8 @@ pub(crate) fn purge_clipboard_transfers(owner: u64) {
             .lock()
             .unwrap_or_else(std::sync::PoisonError::into_inner);
         while !*done {
+            #[cfg(hidlins_ios_publication_fixture)]
+            super::ios_publication_fixture::note_wait(owner);
             done = completion
                 .finished
                 .wait(done)
