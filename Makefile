@@ -26,6 +26,8 @@ CARGO          := cargo
 CARGO_ARTIFACT_DIR = $(or $(shell python3 tools/dev/cargo_artifacts.py target-dir -- $(CARGO)),$(error Cargo artifact directory could not be resolved))
 CARGO_COMPILE = python3 tools/dev/cargo_artifacts.py run $(CARGO) --
 CARGO_FLAGS    := --workspace --offline --locked
+# Synthetic Cargo fixtures can clear this because they have no security crate.
+CARGO_TEST_FLAGS ?= --features hidlins-security/test-binaries
 CLIPPY_FLAGS   := --workspace --all-targets --offline --locked -- -D warnings
 APP_TEST_FLAGS ?=
 SPEC_POLICY_ROOT ?=
@@ -809,7 +811,9 @@ endif
 # Headless tests need a real nonterminal pipe, not host-specific /dev/null
 # terminal errors (ENODEV on macOS). Keep prompt error handling fail-closed.
 test:  ## Run default-parallel tests with empty pipe stdin (offline, vendored).
-	printf '' | $(CARGO_COMPILE) test $(CARGO_FLAGS)
+	# Acceptance wrappers spawn OS-event helpers even in the non-ignored sweep.
+	# Build them here so a clean checkout needs no earlier test-os-events run.
+	printf '' | $(CARGO_COMPILE) test $(CARGO_TEST_FLAGS) $(CARGO_FLAGS)
 
 .PHONY: test-cli-foreground-lock
 test-cli-foreground-lock:  ## Verify foreground CLI lock/sleep shutdown with owned processes/private D-Bus.

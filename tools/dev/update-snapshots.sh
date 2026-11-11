@@ -91,7 +91,9 @@ if [[ "${1:-}" == "--check" ]]; then
         fi
     done <<< "$OUTPUT"
 
-    if [[ ${#MISSING[@]} -eq 0 && ${#STALE[@]} -eq 0 ]]; then
+    # Bash 3.2 (macOS /bin/bash) treats empty arrays as unset under nounset.
+    # Test for content before counting; guard each possibly empty expansion.
+    if [[ -z "${MISSING[*]-}" && -z "${STALE[*]-}" ]]; then
         # No recognized snapshot problem. If cargo itself failed, it's something
         # this parser doesn't understand (compile error, render panic, or a
         # changed harness message) — surface it instead of reporting a false pass.
@@ -108,16 +110,16 @@ if [[ "${1:-}" == "--check" ]]; then
     fi
 
     echo "Issues found:"
-    if [[ ${#MISSING[@]} -gt 0 ]]; then
+    if [[ -n "${MISSING[*]-}" ]]; then
         echo "  Missing goldens (${#MISSING[@]}):"
-        for name in "${MISSING[@]}"; do
+        for name in ${MISSING[@]+"${MISSING[@]}"}; do
             echo "    - ${name}.txt"
         done
         echo ""
     fi
-    if [[ ${#STALE[@]} -gt 0 ]]; then
+    if [[ -n "${STALE[*]-}" ]]; then
         echo "  Stale goldens (${#STALE[@]}):"
-        for name in "${STALE[@]}"; do
+        for name in ${STALE[@]+"${STALE[@]}"}; do
             echo "    - ${name}.txt"
         done
         echo ""
@@ -166,8 +168,8 @@ fi
 CREATED=()
 UPDATED=()
 
-for f in "${EXISTING_AFTER[@]}"; do
-    if [[ ! " ${EXISTING_BEFORE[*]} " =~ " $f " ]]; then
+for f in ${EXISTING_AFTER[@]+"${EXISTING_AFTER[@]}"}; do
+    if [[ ! " ${EXISTING_BEFORE[*]-} " =~ " $f " ]]; then
         CREATED+=("$f")
     else
         UPDATED+=("$f")
@@ -176,21 +178,21 @@ done
 
 echo "Done."
 echo ""
-if [[ ${#CREATED[@]} -gt 0 ]]; then
+if [[ -n "${CREATED[*]-}" ]]; then
     echo "Created (${#CREATED[@]}):"
-    for f in "${CREATED[@]}"; do
+    for f in ${CREATED[@]+"${CREATED[@]}"}; do
         echo "  + $f"
     done
     echo ""
 fi
-if [[ ${#UPDATED[@]} -gt 0 ]]; then
+if [[ -n "${UPDATED[*]-}" ]]; then
     echo "Updated (${#UPDATED[@]}):"
-    for f in "${UPDATED[@]}"; do
+    for f in ${UPDATED[@]+"${UPDATED[@]}"}; do
         echo "  ~ $f"
     done
     echo ""
 fi
-if [[ ${#CREATED[@]} -eq 0 && ${#UPDATED[@]} -eq 0 ]]; then
+if [[ -z "${CREATED[*]-}" && -z "${UPDATED[*]-}" ]]; then
     echo "No changes — all goldens were already up to date."
     echo ""
 fi

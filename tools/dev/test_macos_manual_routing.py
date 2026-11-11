@@ -18,21 +18,21 @@ with open(os.environ['HIDLINS_MANUAL_ROUTING_LOG'], 'a') as output:
 
 
 class MacManualRoutingTests(unittest.TestCase):
-    def dispatch(self, target, host):
+    def dispatch(self, target, host, flags='--workspace --offline --locked'):
         with tempfile.TemporaryDirectory(prefix='hidlins manual routing ') as directory:
             directory = Path(directory)
             probe = directory / 'command probe.py'
             log = directory / 'calls.jsonl'
             probe.write_text(PROBE)
             environment = os.environ.copy()
-            for key in ('MAKEFLAGS', 'MFLAGS'):
+            for key in ('MAKEFLAGS', 'MFLAGS', 'CARGO_TEST_FLAGS'):
                 environment.pop(key, None)
             environment['HIDLINS_MANUAL_ROUTING_LOG'] = str(log)
             command = shlex.join([sys.executable, str(probe)])
             result = subprocess.run(
                 ['make', '--no-print-directory', '-f', str(ROOT / 'Makefile'),
                  target, 'UNAME_S=' + host, 'CARGO_COMPILE=' + command,
-                 'MAKE=' + command], cwd=ROOT, env=environment,
+                 'MAKE=' + command, 'CARGO_FLAGS=' + flags], cwd=ROOT, env=environment,
                 stdin=subprocess.DEVNULL, stdout=subprocess.PIPE,
                 stderr=subprocess.STDOUT, text=True, timeout=15)
             self.assertEqual(result.returncode, 0, result.stdout)
@@ -55,6 +55,22 @@ class MacManualRoutingTests(unittest.TestCase):
         self.assertEqual(skipped, {
             'framework_memory_regressions::render_workload_performance_baseline'})
         self.assertIn('--test-threads=1', ordinary)
+
+    def test_default_sweep_builds_the_helpers_used_by_acceptance_wrappers(self):
+        for host in ('Linux', 'Darwin'):
+            with self.subTest(host=host):
+                calls = self.dispatch('test', host,
+                                      '--workspace --offline --locked -- --nocapture')
+                self.assertEqual(len(calls), 1)
+                args = calls[0]
+                self.assertEqual(args[0], 'test')
+                features = args[args.index('--features') + 1].split(',') if '--features' in args else []
+                self.assertIn('hidlins-security/test-binaries', features,
+                              'default tests must build helpers without a preceding OS-event run')
+                self.assertLess(args.index('--features'), args.index('--'),
+                                'helper features belong to Cargo, before test-runner arguments')
+                self.assertNotIn('--ignored', args)
+                self.assertNotIn('--skip', args)
 
     def test_explicit_darwin_command_retains_real_observers_and_manual_file(self):
         calls = self.dispatch('test-os-events', 'Darwin')

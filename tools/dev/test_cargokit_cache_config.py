@@ -15,14 +15,26 @@ class CargokitConfigTests(unittest.TestCase):
         case = fixtures.CacheTests(); case.setUp()
         self.addCleanup(case.doCleanups)
         command = case.dart_package()
+        rustup = shutil.which('rustup', path=case.env['PATH'])
+        self.assertIsNotNone(rustup, 'installed rustup required for real toolchain regression')
+        original_home = Path(case.env['HOME'])
+        home = case.root / 'isolated home'
+        home_bin = home / '.cargo/bin'; home_bin.mkdir(parents=True)
         binary = case.root / 'minimal bin'; binary.mkdir()
         (binary / 'python3').symlink_to(sys.executable)
         paths = [p for p in case.env['PATH'].split(os.pathsep)
                  if p and not (Path(p) / 'rustup').is_file()]
-        environment = dict(case.env, PATH=os.pathsep.join([str(binary), *paths]))
+        # Hosted macOS may install rustup via Homebrew. Own the home fallback
+        # layout while reusing the installed toolchain and offline Cargo cache.
+        environment = dict(case.env, HOME=str(home),
+                           RUSTUP_HOME=case.env.get('RUSTUP_HOME', str(original_home / '.rustup')),
+                           CARGO_HOME=case.env.get('CARGO_HOME', str(original_home / '.cargo')),
+                           PATH=os.pathsep.join([str(binary), *paths]))
         self.assertIsNone(shutil.which('rustup', path=environment['PATH']))
-        self.assertTrue((Path(environment['HOME']) / '.cargo/bin/rustup').is_file(),
-                        'INSTALLED_HOME_TOOLCHAIN_REQUIRED')
+        missing = case.execute(command, env=environment)
+        self.assertNotEqual(missing.returncode, 0)
+        self.assertIn('rustup not found', missing.stdout + missing.stderr)
+        (home_bin / 'rustup').symlink_to(rustup)
         case.run_ok(command, env=environment)
         output = case.root / 'cargokit-cache' / fixtures.HOST / 'debug/cache-fixture'
         self.assertEqual(case.run_ok([str(output)]).stdout.strip(), 'A|A|A')

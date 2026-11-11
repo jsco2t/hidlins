@@ -112,6 +112,7 @@ class NestedCompletionsTests(unittest.TestCase):
             with self.subTest(roots=mode):
                 case = self.fixture(mode)
                 command = ["make", "--no-print-directory", "test",
+                           "CARGO_TEST_FLAGS=",  # This tiny fixture has no security crate/helpers.
                            "CARGO_FLAGS=--offline --locked --test nested_completions -- --nocapture --test-threads=1"]
                 result = self.bounded(case, command)
                 self.assertEqual(result.returncode, 0, result.stdout + result.stderr)

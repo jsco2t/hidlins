@@ -43,7 +43,7 @@ class HeadlessStdinTests(unittest.TestCase):
     def environment(self, failure=False):
         environment = os.environ.copy()
         for key in ('MAKEFLAGS', 'MFLAGS', 'MAKELEVEL', 'MAKEFILES',
-                    'HIDLINS_HEADLESS_STDIN_EXIT'):
+                    'HIDLINS_HEADLESS_STDIN_EXIT', 'CARGO_TEST_FLAGS'):
             environment.pop(key, None)
         environment['HIDLINS_HEADLESS_STDIN_LOG'] = str(self.log)
         if failure:
@@ -74,7 +74,8 @@ class HeadlessStdinTests(unittest.TestCase):
         self.assertEqual(result.returncode, 0, result.stdout)
         self.assertEqual(len(calls), 1)
         self.assertEqual(calls[0]['args'],
-                         ['test', '--workspace', '--offline', '--locked'])
+                         ['test', '--features', 'hidlins-security/test-binaries',
+                          '--workspace', '--offline', '--locked'])
         self.assertTrue(calls[0]['fifo'])
         self.assertEqual(calls[0]['errno'], errno.ENOTTY)
         self.assertTrue(calls[0]['empty'])

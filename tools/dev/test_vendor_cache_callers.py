@@ -6,6 +6,7 @@ from pathlib import Path
 import shutil
 import subprocess
 import sys
+import tempfile
 import time
 import unittest
 
@@ -26,6 +27,77 @@ if args[0]=='bench':
               'bench_fuzzy_matcher_5k','bench_search_5k_unicode_substring','bench_search_5k_unicode_wildcard']:
   for stat in ['median','p99']:print(name+'_'+stat+'_ms=1.0')
 '''
+
+SNAPSHOT_DRIVER = r'''
+import os, pathlib, sys
+root = pathlib.Path(__file__).resolve().parents[2]
+if os.environ.get('SNAPSHOT_CREATE'):
+ (root/'crates/hidlins-tui/tests/snapshots/new.txt').write_text('new golden\n')
+print(os.environ.get('SNAPSHOT_OUTPUT', ''))
+sys.exit(int(os.environ.get('SNAPSHOT_EXIT', '0')))
+'''
+
+
+class SnapshotReportingTests(unittest.TestCase):
+    def run_report(self, *, check=False, output='', status=0, create=False, existing=False):
+        with tempfile.TemporaryDirectory(prefix='hidlins snapshot reporting ') as directory:
+            root = Path(directory)
+            tools = root / 'tools/dev'; tools.mkdir(parents=True)
+            script = tools / 'update-snapshots.sh'
+            shutil.copyfile(fixtures.ROOT / 'tools/dev/update-snapshots.sh', script)
+            (tools / 'cargo_artifacts.py').write_text(SNAPSHOT_DRIVER)
+            snapshots = root / 'crates/hidlins-tui/tests/snapshots'
+            snapshots.mkdir(parents=True)
+            if existing:
+                (snapshots / 'keep.txt').write_text('existing golden\n')
+            environment = dict(os.environ, SNAPSHOT_OUTPUT=output, SNAPSHOT_EXIT=str(status))
+            environment.pop('SNAPSHOT_CREATE', None)
+            if create:
+                environment['SNAPSHOT_CREATE'] = '1'
+            # macOS /bin/bash is Bash 3.2. Exercise the native shell even when
+            # a newer Homebrew Bash precedes it on PATH.
+            result = subprocess.run(['/bin/bash', str(script), *(['--check'] if check else [])],
+                                    cwd=root, env=environment, text=True, capture_output=True,
+                                    timeout=10)
+            if existing:
+                self.assertEqual((snapshots / 'keep.txt').read_text(), 'existing golden\n')
+            if create:
+                self.assertEqual((snapshots / 'new.txt').read_text(), 'new golden\n')
+            return result
+
+    def test_empty_snapshot_reports_succeed_in_native_bash(self):
+        for check, message in [(False, 'No changes'), (True, 'present and up to date')]:
+            with self.subTest(check=check):
+                result = self.run_report(check=check)
+                self.assertEqual(result.returncode, 0, result.stdout + result.stderr)
+                self.assertIn(message, result.stdout)
+
+    def test_new_and_existing_snapshot_reports(self):
+        for existing in (False, True):
+            with self.subTest(existing=existing):
+                result = self.run_report(create=True, existing=existing)
+                self.assertEqual(result.returncode, 0, result.stdout + result.stderr)
+                self.assertIn('Created (1):\n  + new.txt', result.stdout)
+                self.assertEqual('Updated (1):\n  ~ keep.txt' in result.stdout, existing)
+
+    def test_missing_and_stale_reports_preserve_failed_status(self):
+        for output, expected in [
+            ('missing snapshot golden `new` at fixture', ['Missing goldens (1):', 'new.txt']),
+            ('--- snapshot mismatch: old ---', ['Stale goldens (1):', 'old.txt']),
+            ('missing snapshot golden `new` at fixture\n--- snapshot mismatch: old ---',
+             ['Missing goldens (1):', 'Stale goldens (1):']),
+        ]:
+            with self.subTest(output=output):
+                result = self.run_report(check=True, output=output, status=101)
+                self.assertEqual(result.returncode, 1, result.stdout + result.stderr)
+                for message in expected:
+                    self.assertIn(message, result.stdout)
+
+    def test_unrecognized_cargo_failure_is_not_reported_as_clean(self):
+        result = self.run_report(check=True, output='fixture compile failure', status=101)
+        self.assertEqual(result.returncode, 1)
+        self.assertIn('fixture compile failure', result.stderr)
+        self.assertIn('unrecognized reason', result.stderr)
 
 
 class CallerTests(unittest.TestCase):
