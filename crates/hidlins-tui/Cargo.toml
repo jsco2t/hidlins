@@ -1,5 +1,6 @@
 [package]
 name = "hidlins-tui"
+autobins = false
 description = "Hidlins keyboard-driven terminal UI for vault, entry, generator, security, and local sync operations."
 version.workspace = true
 edition.workspace = true

@@ -27,7 +27,7 @@ Enter a disposable master password only at the secure prompts. Do not reuse a
 real vault or production secret. Launch from the terminal under test:
 
 ```bash
-HOME="$TEST_HOME" "$REPO_ROOT/target/debug/hidlins-tui" --vault acceptance
+HOME="$TEST_HOME" "$REPO_ROOT/target/debug/hidlins" --vault acceptance
 ```
 
 Record the OS version, terminal application name/version, session protocol,

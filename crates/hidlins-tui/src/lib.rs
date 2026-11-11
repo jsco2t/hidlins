@@ -88,7 +88,7 @@ mod test_support;
 #[cfg(test)]
 mod ui_state_regressions;
 
-pub use args::{Args, DumpFormat, ParseOutcome};
+pub use args::{Args, DumpFormat};
 pub use error::TuiError;
 
 use ratatui::backend::CrosstermBackend;
@@ -101,7 +101,7 @@ use crate::command::Keymap;
 use crate::terminal_guard::TerminalGuard;
 use crate::user_config::UserConfig;
 
-/// Top-level entry point invoked by `main.rs`.
+/// Top-level TUI entry point invoked by the console application.
 ///
 /// Builds the `App` (registry I/O) before touching the terminal. An empty
 /// registry is a valid first-run state rendered after the alternate screen is
@@ -126,14 +126,7 @@ fn run_hardened(args: &Args) -> Result<(), TuiError> {
     if let Some(message) = args.deferred_option_error() {
         return Err(TuiError::UnsupportedOption(message));
     }
-    dispatch_startup(
-        args,
-        |format| {
-            dump_keys(args, format);
-            Ok(())
-        },
-        || launch_tui(args),
-    )
+    dispatch_startup(args, |format| dump_keys(args, format), || launch_tui(args))
 }
 
 fn dispatch_startup<T>(
@@ -163,10 +156,11 @@ fn launch_tui(args: &Args) -> Result<(), TuiError> {
 /// Handle `--dump-keys`: load the effective keymap (config `[keymap]` preset +
 /// patch, honoring `--config`) and print it to stdout. Never touches the
 /// terminal or the vault registry, so it works even with no vaults registered.
-/// Infallible: an unresolvable home directory falls back to the compiled-default
-/// keymap rather than failing a read-only introspection command.
-fn dump_keys(args: &Args, format: DumpFormat) {
-    let (cfg, warnings) = load_dump_config(args, HidlinsPaths::from_env());
+/// An unresolvable home directory falls back to the compiled-default keymap.
+/// Output failures return an error rather than panicking on a closed pipe.
+fn dump_keys(args: &Args, format: DumpFormat) -> Result<(), TuiError> {
+    use std::io::Write;
+    let (cfg, warnings) = load_dump_config(args, args.paths());
     for warning in warnings {
         eprintln!("[hidlins-tui] {warning}");
     }
@@ -174,7 +168,10 @@ fn dump_keys(args: &Args, format: DumpFormat) {
     for warning in keymap_warnings {
         eprintln!("[hidlins-tui] {}", warning.message);
     }
-    print!("{}", args::dump_keys(&keymap, format));
+    std::io::stdout()
+        .lock()
+        .write_all(args::dump_keys(&keymap, format).as_bytes())?;
+    Ok(())
 }
 
 fn load_dump_config(

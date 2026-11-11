@@ -1,17 +1,22 @@
 //! Real binary cleanup; every case owns its controlling terminal and child.
-#![cfg(unix)]
+#![cfg(all(unix, feature = "desktop"))]
 
 use std::path::Path;
 use std::process::Command;
 
 fn run_case(action: &str, redirected: bool) {
+    run_startup_case(action, redirected, "options");
+}
+
+fn run_startup_case(action: &str, redirected: bool, startup: &str) {
     let script =
         Path::new(env!("CARGO_MANIFEST_DIR")).join("../../tools/tui-terminal-tests/check.py");
     let output = Command::new("python3")
         .arg(script)
-        .arg(env!("CARGO_BIN_EXE_hidlins-tui"))
+        .arg(env!("CARGO_BIN_EXE_hidlins"))
         .arg(action)
         .arg(if redirected { "redirected" } else { "tty" })
+        .arg(startup)
         .output()
         .expect("Python stdlib controlling-PTY fixture starts");
     assert!(
@@ -20,6 +25,16 @@ fn run_case(action: &str, redirected: bool) {
         String::from_utf8_lossy(&output.stdout),
         String::from_utf8_lossy(&output.stderr)
     );
+}
+
+#[test]
+fn no_arguments_launches_tui_and_quits_cleanly() {
+    run_startup_case("quit", false, "default");
+}
+
+#[test]
+fn shared_registry_override_launches_tui_and_quits_cleanly() {
+    run_startup_case("quit", false, "shared");
 }
 
 macro_rules! terminal_case {

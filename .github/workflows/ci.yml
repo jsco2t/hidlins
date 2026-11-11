@@ -94,6 +94,9 @@ jobs:
       - name: Shell completions drift gate
         run: make completions-check
 
+      - name: Unified console modes and terminal cleanup
+        run: make test-console
+
       - name: Test
         run: make test
 

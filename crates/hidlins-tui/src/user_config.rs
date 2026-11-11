@@ -591,7 +591,7 @@ pub(crate) const DEFAULT_CONFIG_CATALOG: &str = r#"# Hidlins TUI configuration (
 #   search = ["/", "ctrl+f"] # ...or several keys
 #   pin-toggle = false       # ...or false to unbind it
 #
-# Run `hidlins-tui --dump-keys` to print the effective keymap. Unknown or
+# Run `hidlins --dump-keys` to print the effective keymap. Unknown or
 # conflicting rebinds are reported at startup and otherwise ignored.
 "#;
 

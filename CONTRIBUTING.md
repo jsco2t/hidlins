@@ -128,7 +128,7 @@ warnings as errors; the native settings are deliberately scoped away from
 vendored crates, packages, plugins, and Pods.
 
 `make release` builds optimized Rust binaries for the current host only:
-`target/release/hidlins` (CLI), `target/release/hidlins-tui`, and
+`target/release/hidlins` (TUI by default; CLI for subcommands or `--cli`) and
 `target/release/hidlins-agent`. Flutter artifacts are likewise host/platform
 specific: `make app-build-linux` writes beneath
 `app/build/linux/<architecture>/release/bundle/`, while

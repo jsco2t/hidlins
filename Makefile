@@ -111,9 +111,9 @@ fuzz-toolchain:  ## Install exact cargo-fuzz and pinned nightly (development/tes
 build:  ## Build the workspace (offline, vendored).
 	$(CARGO_COMPILE) build $(CARGO_FLAGS)
 
-release: ncsa-boundary-precheck asset-license-check  ## Build optimized CLI, TUI, and agent artifacts in target/release/ (host platform).
+release: ncsa-boundary-precheck asset-license-check  ## Build optimized console and agent artifacts in target/release/ (host platform).
 	$(CARGO_COMPILE) build $(CARGO_FLAGS) --release
-	python3 tools/dev/ncsa-boundary-check.py artifacts "$(CARGO_ARTIFACT_DIR)/release/hidlins" "$(CARGO_ARTIFACT_DIR)/release/hidlins-tui" "$(CARGO_ARTIFACT_DIR)/release/hidlins-agent"
+	python3 tools/dev/ncsa-boundary-check.py artifacts "$(CARGO_ARTIFACT_DIR)/release/hidlins" "$(CARGO_ARTIFACT_DIR)/release/hidlins-agent"
 
 demo-vault:  ## Create a disposable kitchen-sink KDBX vault at DEMO_VAULT (absolute path; refuses overwrite).
 	@output="$(DEMO_VAULT)"; \
@@ -141,9 +141,9 @@ build-policy-check:  ## Prove first-party warnings are fatal and platform build 
 _build-policy-check:
 	tools/dev/build-policy-check.sh
 
-run-tui:  ## Launch the interactive terminal UI (hidlins-tui).
-	$(CARGO_COMPILE) build -p hidlins-tui --offline --locked
-	"$(CARGO_ARTIFACT_DIR)/debug/hidlins-tui"
+run-tui:  ## Launch the interactive terminal UI (hidlins).
+	$(CARGO_COMPILE) build -p hidlins-cli --offline --locked
+	"$(CARGO_ARTIFACT_DIR)/debug/hidlins"
 
 # ---------------------------------------------------------------------------
 # Flutter app (app/) — bridge codegen, builds, analysis, formatting.
@@ -780,7 +780,7 @@ app-test-discovery-stop: app-deps  ## Verify discovery stop through the actual g
 test-api-expiration-save:  ## Verify entry fields and expiration share one validated atomic save.
 	$(CARGO_COMPILE) test -p hidlins-api --test expiration_save_regressions --offline --locked
 
-check-feature-gates: test-api-lock-features test-api-lock-cache-native-ticket test-api-worker-panic-ticket test-api-copy-origin-native test-api-pairing-lifetime-native  ## Type-check gated suites and verify native API lock/cache behavior.
+check-feature-gates: test-console-features test-api-lock-features test-api-lock-cache-native-ticket test-api-worker-panic-ticket test-api-copy-origin-native test-api-pairing-lifetime-native  ## Type-check gated suites and verify native API lock/cache behavior.
 	# Compile-only drift gate. The display-dependent clipboard suites
 	# (`clipboard-tests`) and the OS-event helper binaries are excluded
 	# from every runtime CI sweep by design — but without this gate they
@@ -1017,7 +1017,7 @@ test-tui-formatting: test-tui-formatting-host  ## Verify formatting of TUI inclu
 
 .PHONY: test-tui-terminal
 test-tui-terminal:  ## Verify real TUI signal/quit cleanup on owned controlling terminals.
-	$(CARGO_COMPILE) test -p hidlins-tui --test terminal_signal_regressions --offline --locked
+	$(CARGO_COMPILE) test -p hidlins-cli --test terminal_signal_regressions --offline --locked
 
 .PHONY: test-tui-terminal-backend
 test-tui-terminal-backend:  ## Verify actual macOS controlling-TTY and Linux terminal feature boundaries.
@@ -1267,3 +1267,18 @@ s3-removal-check:  ## Reject reintroduction of the retired cloud-object sync sur
 
 clean:  ## Remove build artifacts (target/).
 	$(CARGO_COMPILE) clean
+
+.PHONY: test-console test-console-features
+test-console:  ## Verify unified console routing, introspection and real terminal cleanup.
+	$(CARGO_COMPILE) test -p hidlins-cli --test console_modes --test console_registry_preferences --test console_keymap_output --test terminal_signal_regressions --test asset_notices --offline --locked
+
+test-console-features:  ## Verify CLI-only authority behavior and Android graphs exclude desktop TUI code.
+	python3 -m py_compile tools/android-native/scenario_boundary.py tools/dev/test_console_features.py
+	# The host CLI-only fixture uses desktop discovery without the TUI.
+	# Type-check the actual Android authority separately: its target-specific
+	# dependency aliases must not be enabled alongside desktop discovery.
+	$(CARGO_COMPILE) check -p hidlins-cli --no-default-features --features hidlins-sync/desktop-discovery --offline --locked
+	$(CARGO_COMPILE) test -p hidlins-cli --no-default-features --features hidlins-sync/desktop-discovery --test console_cli_only --offline --locked
+	$(CARGO_COMPILE) check -p hidlins-cli --no-default-features --features android-scenario-authority --target aarch64-linux-android --offline --locked
+	$(CARGO_COMPILE) check -p hidlins-cli --no-default-features --features android-scenario-authority --target x86_64-linux-android --offline --locked
+	python3 tools/dev/test_console_features.py -- $(CARGO)

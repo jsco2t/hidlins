@@ -23,8 +23,17 @@ def drain(master, output, timeout):
                 raise
 
 
-def check(binary, action, redirected):
+def check(binary, action, redirected, startup="options"):
     with tempfile.TemporaryDirectory(prefix="hidlins-tui-pty-") as directory:
+        arguments = ["--no-mouse"] if startup == "options" else []
+        if startup == "shared":
+            # The shared override must bypass a broken default registry and
+            # enter the TUI with the selected empty registry.
+            state = os.path.join(directory, ".local", "state", "hidlins")
+            os.makedirs(state)
+            with open(os.path.join(state, "vaults.toml"), "w") as handle:
+                handle.write("not valid TOML [")
+            arguments = ["--registry", os.path.join(directory, "selected.toml")]
         ready_read, ready_write = os.pipe()
         master, slave = pty.openpty()
         pid = os.fork()
@@ -46,7 +55,7 @@ def check(binary, action, redirected):
             environment.update(HOME=directory, XDG_CONFIG_HOME=directory, TERM="xterm-256color")
             environment.pop("DISPLAY", None)
             environment.pop("WAYLAND_DISPLAY", None)
-            os.execve(binary, [binary, "--no-mouse"], environment)
+            os.execve(binary, [binary, *arguments], environment)
 
         os.close(ready_read)
         status = None
@@ -129,4 +138,5 @@ def check(binary, action, redirected):
 
 
 if __name__ == "__main__":
-    check(sys.argv[1], sys.argv[2], sys.argv[3] == "redirected")
+    check(sys.argv[1], sys.argv[2], sys.argv[3] == "redirected",
+          sys.argv[4] if len(sys.argv) > 4 else "options")

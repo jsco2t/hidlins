@@ -111,9 +111,9 @@ impl HidlinsPaths {
         }
     }
 
-    /// Override the config directory (builder-style, for tests). Lets a
-    /// test root `config.toml` inside a `tempfile::TempDir` independently
-    /// of the state directory. Not for production use.
+    /// Override the config directory independently of the state directory.
+    /// The console TUI preserves environment-resolved preferences when using
+    /// a registry override; tests also use this to isolate `config.toml`.
     #[must_use]
     pub fn with_config_dir(mut self, config_dir: PathBuf) -> Self {
         self.config_dir = config_dir;

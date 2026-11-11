@@ -254,7 +254,6 @@ def self_test() -> None:
 
         for relative in (
             "target/release/hidlins",
-            "target/release/hidlins-tui",
             "target/release/hidlins-agent",
             "app/build/linux/Hidlins",
             "app/build/macos/Hidlins.app/Contents/MacOS/Hidlins",

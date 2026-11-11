@@ -1,13 +1,17 @@
 use std::process::Command;
 
 #[test]
-fn help_distributes_the_embedded_eff_wordlist_attribution() {
+fn help_distributes_the_embedded_eff_wordlist_attribution_before_terminal_setup() {
     let output = Command::new(env!("CARGO_BIN_EXE_hidlins"))
         .arg("--help")
         .output()
-        .expect("run help without opening a vault");
+        .expect("run help without a terminal or vault");
     assert!(output.status.success());
     let help = String::from_utf8(output.stdout).expect("UTF-8 help");
+    assert!(
+        !help.contains('\u{1b}'),
+        "help must not enter the terminal UI"
+    );
     for required in [
         "EFF Large Wordlist",
         "Electronic Frontier Foundation",

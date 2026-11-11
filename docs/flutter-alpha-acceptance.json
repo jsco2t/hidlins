@@ -11,7 +11,7 @@
   },
   "android_runtime_coverage": {"native_ui_apis": [29, 36], "shared_lan_apis": [30, 36]},
   "artifacts": [
-    {"platform": "rust", "host": "Linux or macOS", "make_target": "release", "locations": ["target/release/hidlins", "target/release/hidlins-tui", "target/release/hidlins-agent"], "signing": "not applicable"},
+    {"platform": "rust", "host": "Linux or macOS", "make_target": "release", "locations": ["target/release/hidlins", "target/release/hidlins-agent"], "signing": "not applicable"},
     {"platform": "linux", "host": "Linux", "make_target": "app-build-linux", "locations": ["app/build/linux/<architecture>/release/bundle/"], "signing": "unsigned alpha bundle"},
     {"platform": "macos", "host": "macOS", "make_target": "app-build-macos", "locations": ["app/build/macos/Build/Products/Release/Hidlins.app"], "signing": "local Flutter build only; no notarization"},
     {"platform": "ios", "host": "macOS", "make_target": "app-build-ios", "locations": ["app/build/ios/iphonesimulator/Runner.app", "app/build/ios/iphoneos/Runner.app"], "signing": "simulator plus no-codesign device artifact"},

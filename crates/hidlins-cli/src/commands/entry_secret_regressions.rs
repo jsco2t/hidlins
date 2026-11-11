@@ -21,7 +21,7 @@ fn generated_entry_password_owner_erases_its_allocation() {
         "--generate",
     ])
     .unwrap();
-    let Command::Entry(args) = cli.command else {
+    let Some(Command::Entry(args)) = cli.command else {
         unreachable!();
     };
     let Some(EntryVerb::Add(args)) = args.verb else {

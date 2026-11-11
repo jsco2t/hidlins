@@ -46,7 +46,7 @@ if name=='cargo':
  for profile in ['debug','release']:
   directory=out/profile;directory.mkdir(parents=True,exist_ok=True)
   (directory/env['FIXTURE_LIBRARY_NAME']).write_text('FRESH_LIBRARY')
-  for binary in ['hidlins','hidlins-tui','hidlins-agent','hidlins-test-driver','merge-interop-driver','api-test-driver','deps/hidlins_api','deps/cli_local_sync_process-fresh']:
+  for binary in ['hidlins','hidlins-agent','hidlins-test-driver','merge-interop-driver','api-test-driver','deps/hidlins_api','deps/cli_local_sync_process-fresh']:
    artifact=directory/binary;artifact.parent.mkdir(exist_ok=True)
    artifact.write_text('#!'+sys.executable+'\n'+(root/'spy.py').read_text());artifact.chmod(0o755)
  if args[0]=='test':
@@ -63,7 +63,7 @@ elif name=='flutter':
  record('flutter',library=expected)
  if env.get('FIXTURE_PERFORMANCE'): sys.exit(73) # Stop after the consumer, before unchanged budget parsing.
 elif name=='inspect.py':
- require(args==['artifacts',*[str(out/'release'/x) for x in ['hidlins','hidlins-tui','hidlins-agent']]],'release inspection paths')
+ require(args==['artifacts',*[str(out/'release'/x) for x in ['hidlins','hidlins-agent']]],'release inspection paths')
  record('release-inspection')
 elif name=='artifacts.py':
  require(args==['stage'],'Android staging invocation');record('android-stage')

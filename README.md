@@ -42,8 +42,8 @@ this project wish to make the following **VERY** clear:
 | `hidlins-genpw`   | Library: random password and diceware passphrase generation        |
 | `hidlins-security`| Library: auto-lock, OS lock events, clipboard, core-dump suppression |
 | `hidlins-sync`    | Library: secure local sync, discovery, trust, and three-way merge  |
-| `hidlins-cli`     | Binary: one-shot scriptable CLI (`hidlins`)                        |
-| `hidlins-tui`     | Binary: interactive terminal UI (`hidlins-tui`)                    |
+| `hidlins-cli`     | Binary: unified console app (`hidlins`), TUI by default or one-shot CLI |
+| `hidlins-tui`     | Library: interactive terminal UI used by `hidlins`                  |
 | `hidlins-agent`   | Binary: (placeholder) optional long-running unlock agent           |
 
 ## Supported platforms
@@ -54,8 +54,23 @@ claims.
 
 ## Terminal UI
 
-The TUI (`hidlins-tui`) is the reference UX. Launch it with `make run-tui` or
-`cargo run -p hidlins-tui --offline --locked`.
+The TUI is the reference UX. Launch it with `hidlins` or `make run-tui`.
+The console application selects its mode after parsing arguments:
+
+| Invocation | Behavior |
+| --- | --- |
+| `hidlins` | Start the TUI |
+| `hidlins --registry /path/vaults.toml` | Start the TUI with the shared registry override |
+| `hidlins --vault work --read-only` | Start the TUI with these settings |
+| `hidlins vault list --format json` | Run the one-shot CLI command |
+| `hidlins --cli` | Force CLI mode and print help |
+| `hidlins --cli vault list` | Force CLI mode and run the command |
+
+Explicit `--format` also selects CLI mode; without a command it prints help.
+`--help` and `--version` print and exit before terminal setup. TUI-only options
+cannot be combined with CLI commands or `--cli`; `--config` is also accepted
+by `keys` to select its effective keymap. There is one installed console
+executable, `hidlins`; replace old `hidlins-tui` invocations with `hidlins`.
 
 Startup stays inside the alternate-screen TUI. With no registered vaults it
 prompts for an existing KDBX path, authenticates the vault, and only then saves
@@ -80,7 +95,7 @@ search = ["/", "ctrl+f"]     # multiple triggers
 pin-toggle = false            # unbind
 ```
 
-Run `hidlins-tui --dump-keys` to print the effective keymap, or
+Run `hidlins --dump-keys` to print the effective keymap, or
 `hidlins keys` from the CLI.
 
 ### Themes
@@ -137,12 +152,12 @@ hidlins entry search --vault work --mode fuzzy --format json "api"  # JSON with 
 ### Other flags
 
 ```sh
-hidlins-tui --vault work        # skip vault list, open directly
-hidlins-tui --theme slate       # override theme
-hidlins-tui --no-mouse          # keyboard-only session
-hidlins-tui --read-only         # refuse vault mutations
-hidlins-tui --config /path      # custom config location
-hidlins-tui --dump-keys=json    # print keymap as JSON
+hidlins --vault work        # skip vault list, open directly
+hidlins --theme slate       # override theme
+hidlins --no-mouse          # keyboard-only session
+hidlins --read-only         # refuse vault mutations
+hidlins --config /path      # custom config location
+hidlins --dump-keys=json    # print keymap as JSON
 ```
 
 ### Mouse

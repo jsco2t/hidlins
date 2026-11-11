@@ -341,12 +341,28 @@ _hidlins() {
 
     case "${cmd}" in
         hidlins)
-            opts="-h -V --format --registry --help --version vault entry gen sync ssh completions keys help"
+            opts="-h -V --cli --vault --theme --config --no-mouse --read-only --dump-keys --format --registry --help --version vault entry gen sync ssh completions keys help"
             if [[ ${cur} == -* || ${COMP_CWORD} -eq 1 ]] ; then
                 COMPREPLY=( $(compgen -W "${opts}" -- "${cur}") )
                 return 0
             fi
             case "${prev}" in
+                --vault)
+                    COMPREPLY=($(compgen -f "${cur}"))
+                    return 0
+                    ;;
+                --theme)
+                    COMPREPLY=($(compgen -f "${cur}"))
+                    return 0
+                    ;;
+                --config)
+                    COMPREPLY=($(compgen -f "${cur}"))
+                    return 0
+                    ;;
+                --dump-keys)
+                    COMPREPLY=($(compgen -W "text json" -- "${cur}"))
+                    return 0
+                    ;;
                 --format)
                     COMPREPLY=($(compgen -W "human json" -- "${cur}"))
                     return 0
@@ -363,12 +379,16 @@ _hidlins() {
             return 0
             ;;
         hidlins__subcmd__completions)
-            opts="-h --format --registry --help bash elvish fish powershell zsh"
+            opts="-h --cli --config --format --registry --help bash elvish fish powershell zsh"
             if [[ ${cur} == -* || ${COMP_CWORD} -eq 2 ]] ; then
                 COMPREPLY=( $(compgen -W "${opts}" -- "${cur}") )
                 return 0
             fi
             case "${prev}" in
+                --config)
+                    COMPREPLY=($(compgen -f "${cur}"))
+                    return 0
+                    ;;
                 --format)
                     COMPREPLY=($(compgen -W "human json" -- "${cur}"))
                     return 0
@@ -385,12 +405,16 @@ _hidlins() {
             return 0
             ;;
         hidlins__subcmd__entry)
-            opts="-h --format --registry --help add get edit rm list search help"
+            opts="-h --cli --config --format --registry --help add get edit rm list search help"
             if [[ ${cur} == -* || ${COMP_CWORD} -eq 2 ]] ; then
                 COMPREPLY=( $(compgen -W "${opts}" -- "${cur}") )
                 return 0
             fi
             case "${prev}" in
+                --config)
+                    COMPREPLY=($(compgen -f "${cur}"))
+                    return 0
+                    ;;
                 --format)
                     COMPREPLY=($(compgen -W "human json" -- "${cur}"))
                     return 0
@@ -407,7 +431,7 @@ _hidlins() {
             return 0
             ;;
         hidlins__subcmd__entry__subcmd__add)
-            opts="-h --vault --title --username --url --notes --password-stdin --generate --length --tag --show-password --no-lowercase --no-uppercase --no-digits --no-symbols --exclude-ambiguous --format --registry --help"
+            opts="-h --vault --title --username --url --notes --password-stdin --generate --length --tag --show-password --no-lowercase --no-uppercase --no-digits --no-symbols --exclude-ambiguous --cli --config --format --registry --help"
             if [[ ${cur} == -* || ${COMP_CWORD} -eq 3 ]] ; then
                 COMPREPLY=( $(compgen -W "${opts}" -- "${cur}") )
                 return 0
@@ -441,6 +465,10 @@ _hidlins() {
                     COMPREPLY=($(compgen -f "${cur}"))
                     return 0
                     ;;
+                --config)
+                    COMPREPLY=($(compgen -f "${cur}"))
+                    return 0
+                    ;;
                 --format)
                     COMPREPLY=($(compgen -W "human json" -- "${cur}"))
                     return 0
@@ -457,7 +485,7 @@ _hidlins() {
             return 0
             ;;
         hidlins__subcmd__entry__subcmd__edit)
-            opts="-h --vault --uuid --title --username --url --notes --password-stdin --add-tag --rm-tag --format --registry --help"
+            opts="-h --vault --uuid --title --username --url --notes --password-stdin --add-tag --rm-tag --cli --config --format --registry --help"
             if [[ ${cur} == -* || ${COMP_CWORD} -eq 3 ]] ; then
                 COMPREPLY=( $(compgen -W "${opts}" -- "${cur}") )
                 return 0
@@ -495,6 +523,10 @@ _hidlins() {
                     COMPREPLY=($(compgen -f "${cur}"))
                     return 0
                     ;;
+                --config)
+                    COMPREPLY=($(compgen -f "${cur}"))
+                    return 0
+                    ;;
                 --format)
                     COMPREPLY=($(compgen -W "human json" -- "${cur}"))
                     return 0
@@ -511,7 +543,7 @@ _hidlins() {
             return 0
             ;;
         hidlins__subcmd__entry__subcmd__get)
-            opts="-h --vault --uuid --title --show-password --show-totp --copy --format --registry --help"
+            opts="-h --vault --uuid --title --show-password --show-totp --copy --cli --config --format --registry --help"
             if [[ ${cur} == -* || ${COMP_CWORD} -eq 3 ]] ; then
                 COMPREPLY=( $(compgen -W "${opts}" -- "${cur}") )
                 return 0
@@ -526,6 +558,10 @@ _hidlins() {
                     return 0
                     ;;
                 --title)
+                    COMPREPLY=($(compgen -f "${cur}"))
+                    return 0
+                    ;;
+                --config)
                     COMPREPLY=($(compgen -f "${cur}"))
                     return 0
                     ;;
@@ -657,7 +693,7 @@ _hidlins() {
             return 0
             ;;
         hidlins__subcmd__entry__subcmd__list)
-            opts="-h --vault --tag --include-expired --limit --offset --format --registry --help"
+            opts="-h --vault --tag --include-expired --limit --offset --cli --config --format --registry --help"
             if [[ ${cur} == -* || ${COMP_CWORD} -eq 3 ]] ; then
                 COMPREPLY=( $(compgen -W "${opts}" -- "${cur}") )
                 return 0
@@ -679,6 +715,10 @@ _hidlins() {
                     COMPREPLY=($(compgen -f "${cur}"))
                     return 0
                     ;;
+                --config)
+                    COMPREPLY=($(compgen -f "${cur}"))
+                    return 0
+                    ;;
                 --format)
                     COMPREPLY=($(compgen -W "human json" -- "${cur}"))
                     return 0
@@ -695,7 +735,7 @@ _hidlins() {
             return 0
             ;;
         hidlins__subcmd__entry__subcmd__rm)
-            opts="-h --vault --uuid --permanent --format --registry --help"
+            opts="-h --vault --uuid --permanent --cli --config --format --registry --help"
             if [[ ${cur} == -* || ${COMP_CWORD} -eq 3 ]] ; then
                 COMPREPLY=( $(compgen -W "${opts}" -- "${cur}") )
                 return 0
@@ -706,6 +746,10 @@ _hidlins() {
                     return 0
                     ;;
                 --uuid)
+                    COMPREPLY=($(compgen -f "${cur}"))
+                    return 0
+                    ;;
+                --config)
                     COMPREPLY=($(compgen -f "${cur}"))
                     return 0
                     ;;
@@ -725,7 +769,7 @@ _hidlins() {
             return 0
             ;;
         hidlins__subcmd__entry__subcmd__search)
-            opts="-h --vault --mode --scope --limit --include-recycled --format --registry --help <QUERY>"
+            opts="-h --vault --mode --scope --limit --include-recycled --cli --config --format --registry --help <QUERY>"
             if [[ ${cur} == -* || ${COMP_CWORD} -eq 3 ]] ; then
                 COMPREPLY=( $(compgen -W "${opts}" -- "${cur}") )
                 return 0
@@ -747,6 +791,10 @@ _hidlins() {
                     COMPREPLY=($(compgen -f "${cur}"))
                     return 0
                     ;;
+                --config)
+                    COMPREPLY=($(compgen -f "${cur}"))
+                    return 0
+                    ;;
                 --format)
                     COMPREPLY=($(compgen -W "human json" -- "${cur}"))
                     return 0
@@ -763,12 +811,16 @@ _hidlins() {
             return 0
             ;;
         hidlins__subcmd__gen)
-            opts="-h --format --registry --help password passphrase help"
+            opts="-h --cli --config --format --registry --help password passphrase help"
             if [[ ${cur} == -* || ${COMP_CWORD} -eq 2 ]] ; then
                 COMPREPLY=( $(compgen -W "${opts}" -- "${cur}") )
                 return 0
             fi
             case "${prev}" in
+                --config)
+                    COMPREPLY=($(compgen -f "${cur}"))
+                    return 0
+                    ;;
                 --format)
                     COMPREPLY=($(compgen -W "human json" -- "${cur}"))
                     return 0
@@ -841,7 +893,7 @@ _hidlins() {
             return 0
             ;;
         hidlins__subcmd__gen__subcmd__passphrase)
-            opts="-h --word-count --separator --copy --show --format --registry --help"
+            opts="-h --word-count --separator --copy --show --cli --config --format --registry --help"
             if [[ ${cur} == -* || ${COMP_CWORD} -eq 3 ]] ; then
                 COMPREPLY=( $(compgen -W "${opts}" -- "${cur}") )
                 return 0
@@ -852,6 +904,10 @@ _hidlins() {
                     return 0
                     ;;
                 --separator)
+                    COMPREPLY=($(compgen -f "${cur}"))
+                    return 0
+                    ;;
+                --config)
                     COMPREPLY=($(compgen -f "${cur}"))
                     return 0
                     ;;
@@ -871,13 +927,17 @@ _hidlins() {
             return 0
             ;;
         hidlins__subcmd__gen__subcmd__password)
-            opts="-h --length --no-lowercase --no-uppercase --no-digits --no-symbols --exclude-ambiguous --copy --show --format --registry --help"
+            opts="-h --length --no-lowercase --no-uppercase --no-digits --no-symbols --exclude-ambiguous --copy --show --cli --config --format --registry --help"
             if [[ ${cur} == -* || ${COMP_CWORD} -eq 3 ]] ; then
                 COMPREPLY=( $(compgen -W "${opts}" -- "${cur}") )
                 return 0
             fi
             case "${prev}" in
                 --length)
+                    COMPREPLY=($(compgen -f "${cur}"))
+                    return 0
+                    ;;
+                --config)
                     COMPREPLY=($(compgen -f "${cur}"))
                     return 0
                     ;;
@@ -1373,12 +1433,16 @@ _hidlins() {
             return 0
             ;;
         hidlins__subcmd__keys)
-            opts="-h --format --registry --help"
+            opts="-h --cli --config --format --registry --help"
             if [[ ${cur} == -* || ${COMP_CWORD} -eq 2 ]] ; then
                 COMPREPLY=( $(compgen -W "${opts}" -- "${cur}") )
                 return 0
             fi
             case "${prev}" in
+                --config)
+                    COMPREPLY=($(compgen -f "${cur}"))
+                    return 0
+                    ;;
                 --format)
                     COMPREPLY=($(compgen -W "human json" -- "${cur}"))
                     return 0
@@ -1395,12 +1459,16 @@ _hidlins() {
             return 0
             ;;
         hidlins__subcmd__ssh)
-            opts="-h --format --registry --help add load generate help"
+            opts="-h --cli --config --format --registry --help add load generate help"
             if [[ ${cur} == -* || ${COMP_CWORD} -eq 2 ]] ; then
                 COMPREPLY=( $(compgen -W "${opts}" -- "${cur}") )
                 return 0
             fi
             case "${prev}" in
+                --config)
+                    COMPREPLY=($(compgen -f "${cur}"))
+                    return 0
+                    ;;
                 --format)
                     COMPREPLY=($(compgen -W "human json" -- "${cur}"))
                     return 0
@@ -1417,7 +1485,7 @@ _hidlins() {
             return 0
             ;;
         hidlins__subcmd__ssh__subcmd__add)
-            opts="-h --vault --key-path --comment --format --registry --help"
+            opts="-h --vault --key-path --comment --cli --config --format --registry --help"
             if [[ ${cur} == -* || ${COMP_CWORD} -eq 3 ]] ; then
                 COMPREPLY=( $(compgen -W "${opts}" -- "${cur}") )
                 return 0
@@ -1432,6 +1500,10 @@ _hidlins() {
                     return 0
                     ;;
                 --comment)
+                    COMPREPLY=($(compgen -f "${cur}"))
+                    return 0
+                    ;;
+                --config)
                     COMPREPLY=($(compgen -f "${cur}"))
                     return 0
                     ;;
@@ -1451,7 +1523,7 @@ _hidlins() {
             return 0
             ;;
         hidlins__subcmd__ssh__subcmd__generate)
-            opts="-h --vault --algorithm --comment --format --registry --help"
+            opts="-h --vault --algorithm --comment --cli --config --format --registry --help"
             if [[ ${cur} == -* || ${COMP_CWORD} -eq 3 ]] ; then
                 COMPREPLY=( $(compgen -W "${opts}" -- "${cur}") )
                 return 0
@@ -1466,6 +1538,10 @@ _hidlins() {
                     return 0
                     ;;
                 --comment)
+                    COMPREPLY=($(compgen -f "${cur}"))
+                    return 0
+                    ;;
+                --config)
                     COMPREPLY=($(compgen -f "${cur}"))
                     return 0
                     ;;
@@ -1555,7 +1631,7 @@ _hidlins() {
             return 0
             ;;
         hidlins__subcmd__ssh__subcmd__load)
-            opts="-h --vault --uuid --ttl --format --registry --help"
+            opts="-h --vault --uuid --ttl --cli --config --format --registry --help"
             if [[ ${cur} == -* || ${COMP_CWORD} -eq 3 ]] ; then
                 COMPREPLY=( $(compgen -W "${opts}" -- "${cur}") )
                 return 0
@@ -1570,6 +1646,10 @@ _hidlins() {
                     return 0
                     ;;
                 --ttl)
+                    COMPREPLY=($(compgen -f "${cur}"))
+                    return 0
+                    ;;
+                --config)
                     COMPREPLY=($(compgen -f "${cur}"))
                     return 0
                     ;;
@@ -1589,12 +1669,16 @@ _hidlins() {
             return 0
             ;;
         hidlins__subcmd__sync)
-            opts="-h --format --registry --help now serve pair import status peers help"
+            opts="-h --cli --config --format --registry --help now serve pair import status peers help"
             if [[ ${cur} == -* || ${COMP_CWORD} -eq 2 ]] ; then
                 COMPREPLY=( $(compgen -W "${opts}" -- "${cur}") )
                 return 0
             fi
             case "${prev}" in
+                --config)
+                    COMPREPLY=($(compgen -f "${cur}"))
+                    return 0
+                    ;;
                 --format)
                     COMPREPLY=($(compgen -W "human json" -- "${cur}"))
                     return 0
@@ -1765,7 +1849,7 @@ _hidlins() {
             return 0
             ;;
         hidlins__subcmd__sync__subcmd__import)
-            opts="-h --id --path --keyfile --address --port --name --format --registry --help"
+            opts="-h --id --path --keyfile --address --port --name --cli --config --format --registry --help"
             if [[ ${cur} == -* || ${COMP_CWORD} -eq 3 ]] ; then
                 COMPREPLY=( $(compgen -W "${opts}" -- "${cur}") )
                 return 0
@@ -1795,6 +1879,10 @@ _hidlins() {
                     COMPREPLY=($(compgen -f "${cur}"))
                     return 0
                     ;;
+                --config)
+                    COMPREPLY=($(compgen -f "${cur}"))
+                    return 0
+                    ;;
                 --format)
                     COMPREPLY=($(compgen -W "human json" -- "${cur}"))
                     return 0
@@ -1811,7 +1899,7 @@ _hidlins() {
             return 0
             ;;
         hidlins__subcmd__sync__subcmd__now)
-            opts="-h --vault --address --port --format --registry --help"
+            opts="-h --vault --address --port --cli --config --format --registry --help"
             if [[ ${cur} == -* || ${COMP_CWORD} -eq 3 ]] ; then
                 COMPREPLY=( $(compgen -W "${opts}" -- "${cur}") )
                 return 0
@@ -1826,6 +1914,10 @@ _hidlins() {
                     return 0
                     ;;
                 --port)
+                    COMPREPLY=($(compgen -f "${cur}"))
+                    return 0
+                    ;;
+                --config)
                     COMPREPLY=($(compgen -f "${cur}"))
                     return 0
                     ;;
@@ -1845,7 +1937,7 @@ _hidlins() {
             return 0
             ;;
         hidlins__subcmd__sync__subcmd__pair)
-            opts="-h --vault --address --port --name --format --registry --help"
+            opts="-h --vault --address --port --name --cli --config --format --registry --help"
             if [[ ${cur} == -* || ${COMP_CWORD} -eq 3 ]] ; then
                 COMPREPLY=( $(compgen -W "${opts}" -- "${cur}") )
                 return 0
@@ -1867,6 +1959,10 @@ _hidlins() {
                     COMPREPLY=($(compgen -f "${cur}"))
                     return 0
                     ;;
+                --config)
+                    COMPREPLY=($(compgen -f "${cur}"))
+                    return 0
+                    ;;
                 --format)
                     COMPREPLY=($(compgen -W "human json" -- "${cur}"))
                     return 0
@@ -1883,12 +1979,16 @@ _hidlins() {
             return 0
             ;;
         hidlins__subcmd__sync__subcmd__peers)
-            opts="-h --format --registry --help list rename revoke help"
+            opts="-h --cli --config --format --registry --help list rename revoke help"
             if [[ ${cur} == -* || ${COMP_CWORD} -eq 3 ]] ; then
                 COMPREPLY=( $(compgen -W "${opts}" -- "${cur}") )
                 return 0
             fi
             case "${prev}" in
+                --config)
+                    COMPREPLY=($(compgen -f "${cur}"))
+                    return 0
+                    ;;
                 --format)
                     COMPREPLY=($(compgen -W "human json" -- "${cur}"))
                     return 0
@@ -1975,13 +2075,17 @@ _hidlins() {
             return 0
             ;;
         hidlins__subcmd__sync__subcmd__peers__subcmd__list)
-            opts="-h --vault --format --registry --help"
+            opts="-h --vault --cli --config --format --registry --help"
             if [[ ${cur} == -* || ${COMP_CWORD} -eq 4 ]] ; then
                 COMPREPLY=( $(compgen -W "${opts}" -- "${cur}") )
                 return 0
             fi
             case "${prev}" in
                 --vault)
+                    COMPREPLY=($(compgen -f "${cur}"))
+                    return 0
+                    ;;
+                --config)
                     COMPREPLY=($(compgen -f "${cur}"))
                     return 0
                     ;;
@@ -2001,7 +2105,7 @@ _hidlins() {
             return 0
             ;;
         hidlins__subcmd__sync__subcmd__peers__subcmd__rename)
-            opts="-h --vault --peer --name --format --registry --help"
+            opts="-h --vault --peer --name --cli --config --format --registry --help"
             if [[ ${cur} == -* || ${COMP_CWORD} -eq 4 ]] ; then
                 COMPREPLY=( $(compgen -W "${opts}" -- "${cur}") )
                 return 0
@@ -2016,6 +2120,10 @@ _hidlins() {
                     return 0
                     ;;
                 --name)
+                    COMPREPLY=($(compgen -f "${cur}"))
+                    return 0
+                    ;;
+                --config)
                     COMPREPLY=($(compgen -f "${cur}"))
                     return 0
                     ;;
@@ -2035,7 +2143,7 @@ _hidlins() {
             return 0
             ;;
         hidlins__subcmd__sync__subcmd__peers__subcmd__revoke)
-            opts="-h --vault --peer --format --registry --help"
+            opts="-h --vault --peer --cli --config --format --registry --help"
             if [[ ${cur} == -* || ${COMP_CWORD} -eq 4 ]] ; then
                 COMPREPLY=( $(compgen -W "${opts}" -- "${cur}") )
                 return 0
@@ -2046,6 +2154,10 @@ _hidlins() {
                     return 0
                     ;;
                 --peer)
+                    COMPREPLY=($(compgen -f "${cur}"))
+                    return 0
+                    ;;
+                --config)
                     COMPREPLY=($(compgen -f "${cur}"))
                     return 0
                     ;;
@@ -2065,7 +2177,7 @@ _hidlins() {
             return 0
             ;;
         hidlins__subcmd__sync__subcmd__serve)
-            opts="-h --vault --address --port --pairing-window --format --registry --help"
+            opts="-h --vault --address --port --pairing-window --cli --config --format --registry --help"
             if [[ ${cur} == -* || ${COMP_CWORD} -eq 3 ]] ; then
                 COMPREPLY=( $(compgen -W "${opts}" -- "${cur}") )
                 return 0
@@ -2080,6 +2192,10 @@ _hidlins() {
                     return 0
                     ;;
                 --port)
+                    COMPREPLY=($(compgen -f "${cur}"))
+                    return 0
+                    ;;
+                --config)
                     COMPREPLY=($(compgen -f "${cur}"))
                     return 0
                     ;;
@@ -2099,13 +2215,17 @@ _hidlins() {
             return 0
             ;;
         hidlins__subcmd__sync__subcmd__status)
-            opts="-h --vault --format --registry --help"
+            opts="-h --vault --cli --config --format --registry --help"
             if [[ ${cur} == -* || ${COMP_CWORD} -eq 3 ]] ; then
                 COMPREPLY=( $(compgen -W "${opts}" -- "${cur}") )
                 return 0
             fi
             case "${prev}" in
                 --vault)
+                    COMPREPLY=($(compgen -f "${cur}"))
+                    return 0
+                    ;;
+                --config)
                     COMPREPLY=($(compgen -f "${cur}"))
                     return 0
                     ;;
@@ -2125,12 +2245,16 @@ _hidlins() {
             return 0
             ;;
         hidlins__subcmd__vault)
-            opts="-h --format --registry --help create register open list set-lock help"
+            opts="-h --cli --config --format --registry --help create register open list set-lock help"
             if [[ ${cur} == -* || ${COMP_CWORD} -eq 2 ]] ; then
                 COMPREPLY=( $(compgen -W "${opts}" -- "${cur}") )
                 return 0
             fi
             case "${prev}" in
+                --config)
+                    COMPREPLY=($(compgen -f "${cur}"))
+                    return 0
+                    ;;
                 --format)
                     COMPREPLY=($(compgen -W "human json" -- "${cur}"))
                     return 0
@@ -2147,7 +2271,7 @@ _hidlins() {
             return 0
             ;;
         hidlins__subcmd__vault__subcmd__create)
-            opts="-h --id --path --keyfile --no-recovery-warning --format --registry --help"
+            opts="-h --id --path --keyfile --no-recovery-warning --cli --config --format --registry --help"
             if [[ ${cur} == -* || ${COMP_CWORD} -eq 3 ]] ; then
                 COMPREPLY=( $(compgen -W "${opts}" -- "${cur}") )
                 return 0
@@ -2162,6 +2286,10 @@ _hidlins() {
                     return 0
                     ;;
                 --keyfile)
+                    COMPREPLY=($(compgen -f "${cur}"))
+                    return 0
+                    ;;
+                --config)
                     COMPREPLY=($(compgen -f "${cur}"))
                     return 0
                     ;;
@@ -2279,12 +2407,16 @@ _hidlins() {
             return 0
             ;;
         hidlins__subcmd__vault__subcmd__list)
-            opts="-h --format --registry --help"
+            opts="-h --cli --config --format --registry --help"
             if [[ ${cur} == -* || ${COMP_CWORD} -eq 3 ]] ; then
                 COMPREPLY=( $(compgen -W "${opts}" -- "${cur}") )
                 return 0
             fi
             case "${prev}" in
+                --config)
+                    COMPREPLY=($(compgen -f "${cur}"))
+                    return 0
+                    ;;
                 --format)
                     COMPREPLY=($(compgen -W "human json" -- "${cur}"))
                     return 0
@@ -2301,13 +2433,17 @@ _hidlins() {
             return 0
             ;;
         hidlins__subcmd__vault__subcmd__open)
-            opts="-h --id --format --registry --help"
+            opts="-h --id --cli --config --format --registry --help"
             if [[ ${cur} == -* || ${COMP_CWORD} -eq 3 ]] ; then
                 COMPREPLY=( $(compgen -W "${opts}" -- "${cur}") )
                 return 0
             fi
             case "${prev}" in
                 --id)
+                    COMPREPLY=($(compgen -f "${cur}"))
+                    return 0
+                    ;;
+                --config)
                     COMPREPLY=($(compgen -f "${cur}"))
                     return 0
                     ;;
@@ -2327,7 +2463,7 @@ _hidlins() {
             return 0
             ;;
         hidlins__subcmd__vault__subcmd__register)
-            opts="-h --id --path --keyfile --format --registry --help"
+            opts="-h --id --path --keyfile --cli --config --format --registry --help"
             if [[ ${cur} == -* || ${COMP_CWORD} -eq 3 ]] ; then
                 COMPREPLY=( $(compgen -W "${opts}" -- "${cur}") )
                 return 0
@@ -2342,6 +2478,10 @@ _hidlins() {
                     return 0
                     ;;
                 --keyfile)
+                    COMPREPLY=($(compgen -f "${cur}"))
+                    return 0
+                    ;;
+                --config)
                     COMPREPLY=($(compgen -f "${cur}"))
                     return 0
                     ;;
@@ -2361,7 +2501,7 @@ _hidlins() {
             return 0
             ;;
         hidlins__subcmd__vault__subcmd__set__subcmd__lock)
-            opts="-h --id --timeout --clear --format --registry --help"
+            opts="-h --id --timeout --clear --cli --config --format --registry --help"
             if [[ ${cur} == -* || ${COMP_CWORD} -eq 3 ]] ; then
                 COMPREPLY=( $(compgen -W "${opts}" -- "${cur}") )
                 return 0
@@ -2372,6 +2512,10 @@ _hidlins() {
                     return 0
                     ;;
                 --timeout)
+                    COMPREPLY=($(compgen -f "${cur}"))
+                    return 0
+                    ;;
+                --config)
                     COMPREPLY=($(compgen -f "${cur}"))
                     return 0
                     ;;

@@ -471,7 +471,7 @@ impl App {
     /// [`TuiError::Core`] if the registry can't be loaded; [`TuiError::Security`]
     /// if the auto-lock controller rejects its config.
     pub(crate) fn new(args: &Args) -> Result<Self, TuiError> {
-        let paths = HidlinsPaths::from_env()?;
+        let paths = args.paths()?;
         // The registry consumes its `HidlinsPaths`; clone so the App keeps a
         // copy for `tui.toml` I/O.
         let registry = VaultRegistry::load(paths.clone())?;

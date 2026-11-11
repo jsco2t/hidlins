@@ -1,6 +1,6 @@
 # Print an optspec for argparse to handle cmd's options that are independent of any subcommand.
 function __fish_hidlins_global_optspecs
-	string join \n format= registry= h/help V/version
+	string join \n cli vault= theme= config= no-mouse read-only dump-keys= format= registry= h/help V/version
 end
 
 function __fish_hidlins_needs_command
@@ -24,9 +24,17 @@ function __fish_hidlins_using_subcommand
 	contains -- $cmd[1] $argv
 end
 
+complete -c hidlins -n "__fish_hidlins_needs_command" -l vault -d 'Open this vault\'s TUI unlock prompt directly' -r
+complete -c hidlins -n "__fish_hidlins_needs_command" -l theme -d 'Override the TUI theme (built-in name or user theme file stem)' -r
+complete -c hidlins -n "__fish_hidlins_needs_command" -l config -d 'Load TUI preferences or the `keys` keymap from this config.toml' -r -F
+complete -c hidlins -n "__fish_hidlins_needs_command" -l dump-keys -d 'Print the effective TUI keymap and exit before terminal setup' -r -f -a "text\t'Tab-separated human-readable commands'
+json\t'Stable JSON command objects'"
 complete -c hidlins -n "__fish_hidlins_needs_command" -l format -d 'Output format. `human` (default) is line-oriented for terminals; `json` is the stable machine-readable schema for scripts' -r -f -a "human\t'Line-oriented human-readable output (default)'
 json\t'Stable JSON schema — see `views/` for per-subcommand shapes'"
 complete -c hidlins -n "__fish_hidlins_needs_command" -l registry -d 'Path to the vault registry file. Defaults to `$HOME/.local/state/hidlins/vaults.toml` (per `hidlins_core::HidlinsPaths`)' -r -F
+complete -c hidlins -n "__fish_hidlins_needs_command" -l cli -d 'Force one-shot CLI mode (print help when no command is supplied)'
+complete -c hidlins -n "__fish_hidlins_needs_command" -l no-mouse -d 'Disable TUI mouse capture'
+complete -c hidlins -n "__fish_hidlins_needs_command" -l read-only -d 'Open the TUI session read-only (refuse vault mutations and sync)'
 complete -c hidlins -n "__fish_hidlins_needs_command" -s h -l help -d 'Print help (see more with \'--help\')'
 complete -c hidlins -n "__fish_hidlins_needs_command" -s V -l version -d 'Print version'
 complete -c hidlins -n "__fish_hidlins_needs_command" -f -a "vault" -d 'Vault lifecycle and registration commands'
@@ -37,9 +45,11 @@ complete -c hidlins -n "__fish_hidlins_needs_command" -f -a "ssh" -d 'SSH key en
 complete -c hidlins -n "__fish_hidlins_needs_command" -f -a "completions" -d 'Generate shell completion scripts'
 complete -c hidlins -n "__fish_hidlins_needs_command" -f -a "keys" -d 'Print the TUI\'s effective keymap (command name, keys, description, group)'
 complete -c hidlins -n "__fish_hidlins_needs_command" -f -a "help" -d 'Print this message or the help of the given subcommand(s)'
+complete -c hidlins -n "__fish_hidlins_using_subcommand vault; and not __fish_seen_subcommand_from create register open list set-lock help" -l config -d 'Load TUI preferences or the `keys` keymap from this config.toml' -r -F
 complete -c hidlins -n "__fish_hidlins_using_subcommand vault; and not __fish_seen_subcommand_from create register open list set-lock help" -l format -d 'Output format. `human` (default) is line-oriented for terminals; `json` is the stable machine-readable schema for scripts' -r -f -a "human\t'Line-oriented human-readable output (default)'
 json\t'Stable JSON schema — see `views/` for per-subcommand shapes'"
 complete -c hidlins -n "__fish_hidlins_using_subcommand vault; and not __fish_seen_subcommand_from create register open list set-lock help" -l registry -d 'Path to the vault registry file. Defaults to `$HOME/.local/state/hidlins/vaults.toml` (per `hidlins_core::HidlinsPaths`)' -r -F
+complete -c hidlins -n "__fish_hidlins_using_subcommand vault; and not __fish_seen_subcommand_from create register open list set-lock help" -l cli -d 'Force one-shot CLI mode (print help when no command is supplied)'
 complete -c hidlins -n "__fish_hidlins_using_subcommand vault; and not __fish_seen_subcommand_from create register open list set-lock help" -s h -l help -d 'Print help (see more with \'--help\')'
 complete -c hidlins -n "__fish_hidlins_using_subcommand vault; and not __fish_seen_subcommand_from create register open list set-lock help" -f -a "create" -d 'Create a new vault and register it'
 complete -c hidlins -n "__fish_hidlins_using_subcommand vault; and not __fish_seen_subcommand_from create register open list set-lock help" -f -a "register" -d 'Authenticate and register an existing KDBX vault'
@@ -50,33 +60,43 @@ complete -c hidlins -n "__fish_hidlins_using_subcommand vault; and not __fish_se
 complete -c hidlins -n "__fish_hidlins_using_subcommand vault; and __fish_seen_subcommand_from create" -l id -d 'Registry name for the new vault (unique)' -r
 complete -c hidlins -n "__fish_hidlins_using_subcommand vault; and __fish_seen_subcommand_from create" -l path -d 'Absolute or relative path where the `.kdbx` file will be created' -r -F
 complete -c hidlins -n "__fish_hidlins_using_subcommand vault; and __fish_seen_subcommand_from create" -l keyfile -d 'Optional keyfile required to unlock this vault' -r -F
+complete -c hidlins -n "__fish_hidlins_using_subcommand vault; and __fish_seen_subcommand_from create" -l config -d 'Load TUI preferences or the `keys` keymap from this config.toml' -r -F
 complete -c hidlins -n "__fish_hidlins_using_subcommand vault; and __fish_seen_subcommand_from create" -l format -d 'Output format. `human` (default) is line-oriented for terminals; `json` is the stable machine-readable schema for scripts' -r -f -a "human\t'Line-oriented human-readable output (default)'
 json\t'Stable JSON schema — see `views/` for per-subcommand shapes'"
 complete -c hidlins -n "__fish_hidlins_using_subcommand vault; and __fish_seen_subcommand_from create" -l registry -d 'Path to the vault registry file. Defaults to `$HOME/.local/state/hidlins/vaults.toml` (per `hidlins_core::HidlinsPaths`)' -r -F
 complete -c hidlins -n "__fish_hidlins_using_subcommand vault; and __fish_seen_subcommand_from create" -l no-recovery-warning -d 'Acknowledge the no-recovery warning. Required — there is no master-password recovery in Hidlins'
+complete -c hidlins -n "__fish_hidlins_using_subcommand vault; and __fish_seen_subcommand_from create" -l cli -d 'Force one-shot CLI mode (print help when no command is supplied)'
 complete -c hidlins -n "__fish_hidlins_using_subcommand vault; and __fish_seen_subcommand_from create" -s h -l help -d 'Print help (see more with \'--help\')'
 complete -c hidlins -n "__fish_hidlins_using_subcommand vault; and __fish_seen_subcommand_from register" -l id -d 'Registry name for the existing vault (unique)' -r
 complete -c hidlins -n "__fish_hidlins_using_subcommand vault; and __fish_seen_subcommand_from register" -l path -d 'Path to an existing KDBX vault' -r -F
 complete -c hidlins -n "__fish_hidlins_using_subcommand vault; and __fish_seen_subcommand_from register" -l keyfile -d 'Optional keyfile required to unlock this vault' -r -F
+complete -c hidlins -n "__fish_hidlins_using_subcommand vault; and __fish_seen_subcommand_from register" -l config -d 'Load TUI preferences or the `keys` keymap from this config.toml' -r -F
 complete -c hidlins -n "__fish_hidlins_using_subcommand vault; and __fish_seen_subcommand_from register" -l format -d 'Output format. `human` (default) is line-oriented for terminals; `json` is the stable machine-readable schema for scripts' -r -f -a "human\t'Line-oriented human-readable output (default)'
 json\t'Stable JSON schema — see `views/` for per-subcommand shapes'"
 complete -c hidlins -n "__fish_hidlins_using_subcommand vault; and __fish_seen_subcommand_from register" -l registry -d 'Path to the vault registry file. Defaults to `$HOME/.local/state/hidlins/vaults.toml` (per `hidlins_core::HidlinsPaths`)' -r -F
+complete -c hidlins -n "__fish_hidlins_using_subcommand vault; and __fish_seen_subcommand_from register" -l cli -d 'Force one-shot CLI mode (print help when no command is supplied)'
 complete -c hidlins -n "__fish_hidlins_using_subcommand vault; and __fish_seen_subcommand_from register" -s h -l help -d 'Print help (see more with \'--help\')'
 complete -c hidlins -n "__fish_hidlins_using_subcommand vault; and __fish_seen_subcommand_from open" -l id -d 'Registry name of the vault to probe' -r
+complete -c hidlins -n "__fish_hidlins_using_subcommand vault; and __fish_seen_subcommand_from open" -l config -d 'Load TUI preferences or the `keys` keymap from this config.toml' -r -F
 complete -c hidlins -n "__fish_hidlins_using_subcommand vault; and __fish_seen_subcommand_from open" -l format -d 'Output format. `human` (default) is line-oriented for terminals; `json` is the stable machine-readable schema for scripts' -r -f -a "human\t'Line-oriented human-readable output (default)'
 json\t'Stable JSON schema — see `views/` for per-subcommand shapes'"
 complete -c hidlins -n "__fish_hidlins_using_subcommand vault; and __fish_seen_subcommand_from open" -l registry -d 'Path to the vault registry file. Defaults to `$HOME/.local/state/hidlins/vaults.toml` (per `hidlins_core::HidlinsPaths`)' -r -F
+complete -c hidlins -n "__fish_hidlins_using_subcommand vault; and __fish_seen_subcommand_from open" -l cli -d 'Force one-shot CLI mode (print help when no command is supplied)'
 complete -c hidlins -n "__fish_hidlins_using_subcommand vault; and __fish_seen_subcommand_from open" -s h -l help -d 'Print help (see more with \'--help\')'
+complete -c hidlins -n "__fish_hidlins_using_subcommand vault; and __fish_seen_subcommand_from list" -l config -d 'Load TUI preferences or the `keys` keymap from this config.toml' -r -F
 complete -c hidlins -n "__fish_hidlins_using_subcommand vault; and __fish_seen_subcommand_from list" -l format -d 'Output format. `human` (default) is line-oriented for terminals; `json` is the stable machine-readable schema for scripts' -r -f -a "human\t'Line-oriented human-readable output (default)'
 json\t'Stable JSON schema — see `views/` for per-subcommand shapes'"
 complete -c hidlins -n "__fish_hidlins_using_subcommand vault; and __fish_seen_subcommand_from list" -l registry -d 'Path to the vault registry file. Defaults to `$HOME/.local/state/hidlins/vaults.toml` (per `hidlins_core::HidlinsPaths`)' -r -F
+complete -c hidlins -n "__fish_hidlins_using_subcommand vault; and __fish_seen_subcommand_from list" -l cli -d 'Force one-shot CLI mode (print help when no command is supplied)'
 complete -c hidlins -n "__fish_hidlins_using_subcommand vault; and __fish_seen_subcommand_from list" -s h -l help -d 'Print help (see more with \'--help\')'
 complete -c hidlins -n "__fish_hidlins_using_subcommand vault; and __fish_seen_subcommand_from set-lock" -l id -d 'Registry name of the vault to configure' -r
 complete -c hidlins -n "__fish_hidlins_using_subcommand vault; and __fish_seen_subcommand_from set-lock" -l timeout -d 'Idle-timeout in seconds before the vault auto-locks. Must be at least 1' -r
+complete -c hidlins -n "__fish_hidlins_using_subcommand vault; and __fish_seen_subcommand_from set-lock" -l config -d 'Load TUI preferences or the `keys` keymap from this config.toml' -r -F
 complete -c hidlins -n "__fish_hidlins_using_subcommand vault; and __fish_seen_subcommand_from set-lock" -l format -d 'Output format. `human` (default) is line-oriented for terminals; `json` is the stable machine-readable schema for scripts' -r -f -a "human\t'Line-oriented human-readable output (default)'
 json\t'Stable JSON schema — see `views/` for per-subcommand shapes'"
 complete -c hidlins -n "__fish_hidlins_using_subcommand vault; and __fish_seen_subcommand_from set-lock" -l registry -d 'Path to the vault registry file. Defaults to `$HOME/.local/state/hidlins/vaults.toml` (per `hidlins_core::HidlinsPaths`)' -r -F
 complete -c hidlins -n "__fish_hidlins_using_subcommand vault; and __fish_seen_subcommand_from set-lock" -l clear -d 'Remove the per-vault override and fall back to the default'
+complete -c hidlins -n "__fish_hidlins_using_subcommand vault; and __fish_seen_subcommand_from set-lock" -l cli -d 'Force one-shot CLI mode (print help when no command is supplied)'
 complete -c hidlins -n "__fish_hidlins_using_subcommand vault; and __fish_seen_subcommand_from set-lock" -s h -l help -d 'Print help (see more with \'--help\')'
 complete -c hidlins -n "__fish_hidlins_using_subcommand vault; and __fish_seen_subcommand_from help" -f -a "create" -d 'Create a new vault and register it'
 complete -c hidlins -n "__fish_hidlins_using_subcommand vault; and __fish_seen_subcommand_from help" -f -a "register" -d 'Authenticate and register an existing KDBX vault'
@@ -84,9 +104,11 @@ complete -c hidlins -n "__fish_hidlins_using_subcommand vault; and __fish_seen_s
 complete -c hidlins -n "__fish_hidlins_using_subcommand vault; and __fish_seen_subcommand_from help" -f -a "list" -d 'List registered vaults'
 complete -c hidlins -n "__fish_hidlins_using_subcommand vault; and __fish_seen_subcommand_from help" -f -a "set-lock" -d 'Configure the per-vault idle-lock timeout'
 complete -c hidlins -n "__fish_hidlins_using_subcommand vault; and __fish_seen_subcommand_from help" -f -a "help" -d 'Print this message or the help of the given subcommand(s)'
+complete -c hidlins -n "__fish_hidlins_using_subcommand entry; and not __fish_seen_subcommand_from add get edit rm list search help" -l config -d 'Load TUI preferences or the `keys` keymap from this config.toml' -r -F
 complete -c hidlins -n "__fish_hidlins_using_subcommand entry; and not __fish_seen_subcommand_from add get edit rm list search help" -l format -d 'Output format. `human` (default) is line-oriented for terminals; `json` is the stable machine-readable schema for scripts' -r -f -a "human\t'Line-oriented human-readable output (default)'
 json\t'Stable JSON schema — see `views/` for per-subcommand shapes'"
 complete -c hidlins -n "__fish_hidlins_using_subcommand entry; and not __fish_seen_subcommand_from add get edit rm list search help" -l registry -d 'Path to the vault registry file. Defaults to `$HOME/.local/state/hidlins/vaults.toml` (per `hidlins_core::HidlinsPaths`)' -r -F
+complete -c hidlins -n "__fish_hidlins_using_subcommand entry; and not __fish_seen_subcommand_from add get edit rm list search help" -l cli -d 'Force one-shot CLI mode (print help when no command is supplied)'
 complete -c hidlins -n "__fish_hidlins_using_subcommand entry; and not __fish_seen_subcommand_from add get edit rm list search help" -s h -l help -d 'Print help (see more with \'--help\')'
 complete -c hidlins -n "__fish_hidlins_using_subcommand entry; and not __fish_seen_subcommand_from add get edit rm list search help" -f -a "add" -d 'Add a new entry to a vault'
 complete -c hidlins -n "__fish_hidlins_using_subcommand entry; and not __fish_seen_subcommand_from add get edit rm list search help" -f -a "get" -d 'Get an entry by UUID or title'
@@ -102,6 +124,7 @@ complete -c hidlins -n "__fish_hidlins_using_subcommand entry; and __fish_seen_s
 complete -c hidlins -n "__fish_hidlins_using_subcommand entry; and __fish_seen_subcommand_from add" -l notes -d 'Optional notes' -r
 complete -c hidlins -n "__fish_hidlins_using_subcommand entry; and __fish_seen_subcommand_from add" -l length -d 'Generated-password length (only consulted with `--generate`). Default: 20' -r
 complete -c hidlins -n "__fish_hidlins_using_subcommand entry; and __fish_seen_subcommand_from add" -l tag -d 'Tag to attach to the new entry. Repeat for multiple tags' -r
+complete -c hidlins -n "__fish_hidlins_using_subcommand entry; and __fish_seen_subcommand_from add" -l config -d 'Load TUI preferences or the `keys` keymap from this config.toml' -r -F
 complete -c hidlins -n "__fish_hidlins_using_subcommand entry; and __fish_seen_subcommand_from add" -l format -d 'Output format. `human` (default) is line-oriented for terminals; `json` is the stable machine-readable schema for scripts' -r -f -a "human\t'Line-oriented human-readable output (default)'
 json\t'Stable JSON schema — see `views/` for per-subcommand shapes'"
 complete -c hidlins -n "__fish_hidlins_using_subcommand entry; and __fish_seen_subcommand_from add" -l registry -d 'Path to the vault registry file. Defaults to `$HOME/.local/state/hidlins/vaults.toml` (per `hidlins_core::HidlinsPaths`)' -r -F
@@ -113,16 +136,19 @@ complete -c hidlins -n "__fish_hidlins_using_subcommand entry; and __fish_seen_s
 complete -c hidlins -n "__fish_hidlins_using_subcommand entry; and __fish_seen_subcommand_from add" -l no-digits -d 'Disable digits in the generated password'
 complete -c hidlins -n "__fish_hidlins_using_subcommand entry; and __fish_seen_subcommand_from add" -l no-symbols -d 'Disable symbols in the generated password'
 complete -c hidlins -n "__fish_hidlins_using_subcommand entry; and __fish_seen_subcommand_from add" -l exclude-ambiguous -d 'Exclude visually ambiguous characters (`0/O/o/1/l/I/|/backtick`)'
+complete -c hidlins -n "__fish_hidlins_using_subcommand entry; and __fish_seen_subcommand_from add" -l cli -d 'Force one-shot CLI mode (print help when no command is supplied)'
 complete -c hidlins -n "__fish_hidlins_using_subcommand entry; and __fish_seen_subcommand_from add" -s h -l help -d 'Print help (see more with \'--help\')'
 complete -c hidlins -n "__fish_hidlins_using_subcommand entry; and __fish_seen_subcommand_from get" -l vault -d 'Registry name of the vault' -r
 complete -c hidlins -n "__fish_hidlins_using_subcommand entry; and __fish_seen_subcommand_from get" -l uuid -d 'UUID of the entry. Mutually exclusive with `--title`' -r
 complete -c hidlins -n "__fish_hidlins_using_subcommand entry; and __fish_seen_subcommand_from get" -l title -d 'Title of the entry; case-insensitive exact match. If multiple entries share the title the command exits 1 listing the candidate UUIDs' -r
+complete -c hidlins -n "__fish_hidlins_using_subcommand entry; and __fish_seen_subcommand_from get" -l config -d 'Load TUI preferences or the `keys` keymap from this config.toml' -r -F
 complete -c hidlins -n "__fish_hidlins_using_subcommand entry; and __fish_seen_subcommand_from get" -l format -d 'Output format. `human` (default) is line-oriented for terminals; `json` is the stable machine-readable schema for scripts' -r -f -a "human\t'Line-oriented human-readable output (default)'
 json\t'Stable JSON schema — see `views/` for per-subcommand shapes'"
 complete -c hidlins -n "__fish_hidlins_using_subcommand entry; and __fish_seen_subcommand_from get" -l registry -d 'Path to the vault registry file. Defaults to `$HOME/.local/state/hidlins/vaults.toml` (per `hidlins_core::HidlinsPaths`)' -r -F
 complete -c hidlins -n "__fish_hidlins_using_subcommand entry; and __fish_seen_subcommand_from get" -l show-password -d 'Include the password value in the output. Mutually exclusive with `--copy` (copying redundantly with showing is suspicious)'
 complete -c hidlins -n "__fish_hidlins_using_subcommand entry; and __fish_seen_subcommand_from get" -l show-totp -d 'Compute and include the current TOTP code (HMAC-SHA1; RFC 6238)'
 complete -c hidlins -n "__fish_hidlins_using_subcommand entry; and __fish_seen_subcommand_from get" -l copy -d 'Copy the password to the system clipboard with auto-clear. Mutually exclusive with `--show-password`'
+complete -c hidlins -n "__fish_hidlins_using_subcommand entry; and __fish_seen_subcommand_from get" -l cli -d 'Force one-shot CLI mode (print help when no command is supplied)'
 complete -c hidlins -n "__fish_hidlins_using_subcommand entry; and __fish_seen_subcommand_from get" -s h -l help -d 'Print help (see more with \'--help\')'
 complete -c hidlins -n "__fish_hidlins_using_subcommand entry; and __fish_seen_subcommand_from edit" -l vault -d 'Registry name of the vault' -r
 complete -c hidlins -n "__fish_hidlins_using_subcommand entry; and __fish_seen_subcommand_from edit" -l uuid -d 'UUID of the entry to edit (required)' -r
@@ -132,26 +158,32 @@ complete -c hidlins -n "__fish_hidlins_using_subcommand entry; and __fish_seen_s
 complete -c hidlins -n "__fish_hidlins_using_subcommand entry; and __fish_seen_subcommand_from edit" -l notes -d 'New notes' -r
 complete -c hidlins -n "__fish_hidlins_using_subcommand entry; and __fish_seen_subcommand_from edit" -l add-tag -d 'Tag to add. Repeat for multiple' -r
 complete -c hidlins -n "__fish_hidlins_using_subcommand entry; and __fish_seen_subcommand_from edit" -l rm-tag -d 'Tag to remove (silent no-op if not present). Repeat for multiple' -r
+complete -c hidlins -n "__fish_hidlins_using_subcommand entry; and __fish_seen_subcommand_from edit" -l config -d 'Load TUI preferences or the `keys` keymap from this config.toml' -r -F
 complete -c hidlins -n "__fish_hidlins_using_subcommand entry; and __fish_seen_subcommand_from edit" -l format -d 'Output format. `human` (default) is line-oriented for terminals; `json` is the stable machine-readable schema for scripts' -r -f -a "human\t'Line-oriented human-readable output (default)'
 json\t'Stable JSON schema — see `views/` for per-subcommand shapes'"
 complete -c hidlins -n "__fish_hidlins_using_subcommand entry; and __fish_seen_subcommand_from edit" -l registry -d 'Path to the vault registry file. Defaults to `$HOME/.local/state/hidlins/vaults.toml` (per `hidlins_core::HidlinsPaths`)' -r -F
 complete -c hidlins -n "__fish_hidlins_using_subcommand entry; and __fish_seen_subcommand_from edit" -l password-stdin -d 'Read a new password from stdin (no-echo when stdin is a TTY)'
+complete -c hidlins -n "__fish_hidlins_using_subcommand entry; and __fish_seen_subcommand_from edit" -l cli -d 'Force one-shot CLI mode (print help when no command is supplied)'
 complete -c hidlins -n "__fish_hidlins_using_subcommand entry; and __fish_seen_subcommand_from edit" -s h -l help -d 'Print help (see more with \'--help\')'
 complete -c hidlins -n "__fish_hidlins_using_subcommand entry; and __fish_seen_subcommand_from rm" -l vault -d 'Registry name of the vault' -r
 complete -c hidlins -n "__fish_hidlins_using_subcommand entry; and __fish_seen_subcommand_from rm" -l uuid -d 'UUID of the entry to remove (required)' -r
+complete -c hidlins -n "__fish_hidlins_using_subcommand entry; and __fish_seen_subcommand_from rm" -l config -d 'Load TUI preferences or the `keys` keymap from this config.toml' -r -F
 complete -c hidlins -n "__fish_hidlins_using_subcommand entry; and __fish_seen_subcommand_from rm" -l format -d 'Output format. `human` (default) is line-oriented for terminals; `json` is the stable machine-readable schema for scripts' -r -f -a "human\t'Line-oriented human-readable output (default)'
 json\t'Stable JSON schema — see `views/` for per-subcommand shapes'"
 complete -c hidlins -n "__fish_hidlins_using_subcommand entry; and __fish_seen_subcommand_from rm" -l registry -d 'Path to the vault registry file. Defaults to `$HOME/.local/state/hidlins/vaults.toml` (per `hidlins_core::HidlinsPaths`)' -r -F
 complete -c hidlins -n "__fish_hidlins_using_subcommand entry; and __fish_seen_subcommand_from rm" -l permanent -d 'Permanently delete the entry, bypassing the recycle bin'
+complete -c hidlins -n "__fish_hidlins_using_subcommand entry; and __fish_seen_subcommand_from rm" -l cli -d 'Force one-shot CLI mode (print help when no command is supplied)'
 complete -c hidlins -n "__fish_hidlins_using_subcommand entry; and __fish_seen_subcommand_from rm" -s h -l help -d 'Print help (see more with \'--help\')'
 complete -c hidlins -n "__fish_hidlins_using_subcommand entry; and __fish_seen_subcommand_from list" -l vault -d 'Registry name of the vault' -r
 complete -c hidlins -n "__fish_hidlins_using_subcommand entry; and __fish_seen_subcommand_from list" -l tag -d 'Filter to entries carrying every supplied tag (intersect). Repeat the flag for multiple tags' -r
 complete -c hidlins -n "__fish_hidlins_using_subcommand entry; and __fish_seen_subcommand_from list" -l limit -d 'Optional pagination — max rows to emit' -r
 complete -c hidlins -n "__fish_hidlins_using_subcommand entry; and __fish_seen_subcommand_from list" -l offset -d 'Optional pagination — rows to skip from the start' -r
+complete -c hidlins -n "__fish_hidlins_using_subcommand entry; and __fish_seen_subcommand_from list" -l config -d 'Load TUI preferences or the `keys` keymap from this config.toml' -r -F
 complete -c hidlins -n "__fish_hidlins_using_subcommand entry; and __fish_seen_subcommand_from list" -l format -d 'Output format. `human` (default) is line-oriented for terminals; `json` is the stable machine-readable schema for scripts' -r -f -a "human\t'Line-oriented human-readable output (default)'
 json\t'Stable JSON schema — see `views/` for per-subcommand shapes'"
 complete -c hidlins -n "__fish_hidlins_using_subcommand entry; and __fish_seen_subcommand_from list" -l registry -d 'Path to the vault registry file. Defaults to `$HOME/.local/state/hidlins/vaults.toml` (per `hidlins_core::HidlinsPaths`)' -r -F
 complete -c hidlins -n "__fish_hidlins_using_subcommand entry; and __fish_seen_subcommand_from list" -l include-expired -d 'Include expired entries. Default: omit'
+complete -c hidlins -n "__fish_hidlins_using_subcommand entry; and __fish_seen_subcommand_from list" -l cli -d 'Force one-shot CLI mode (print help when no command is supplied)'
 complete -c hidlins -n "__fish_hidlins_using_subcommand entry; and __fish_seen_subcommand_from list" -s h -l help -d 'Print help (see more with \'--help\')'
 complete -c hidlins -n "__fish_hidlins_using_subcommand entry; and __fish_seen_subcommand_from search" -l vault -d 'Registry name of the vault' -r
 complete -c hidlins -n "__fish_hidlins_using_subcommand entry; and __fish_seen_subcommand_from search" -l mode -d 'Matching mode: substring (default), wildcard, or fuzzy' -r -f -a "substring\t'Case-insensitive substring match (default)'
@@ -159,10 +191,12 @@ wildcard\t'Whole-field wildcard match (`*` any run, `?` one char)'
 fuzzy\t'fzf-style fuzzy match; JSON output gains `score` + `matched_indices`'"
 complete -c hidlins -n "__fish_hidlins_using_subcommand entry; and __fish_seen_subcommand_from search" -l scope -d 'Restrict the search: `group:<name>` (the group subtree) or `tag:<tag>`' -r
 complete -c hidlins -n "__fish_hidlins_using_subcommand entry; and __fish_seen_subcommand_from search" -l limit -d 'Optional cap on returned matches' -r
+complete -c hidlins -n "__fish_hidlins_using_subcommand entry; and __fish_seen_subcommand_from search" -l config -d 'Load TUI preferences or the `keys` keymap from this config.toml' -r -F
 complete -c hidlins -n "__fish_hidlins_using_subcommand entry; and __fish_seen_subcommand_from search" -l format -d 'Output format. `human` (default) is line-oriented for terminals; `json` is the stable machine-readable schema for scripts' -r -f -a "human\t'Line-oriented human-readable output (default)'
 json\t'Stable JSON schema — see `views/` for per-subcommand shapes'"
 complete -c hidlins -n "__fish_hidlins_using_subcommand entry; and __fish_seen_subcommand_from search" -l registry -d 'Path to the vault registry file. Defaults to `$HOME/.local/state/hidlins/vaults.toml` (per `hidlins_core::HidlinsPaths`)' -r -F
 complete -c hidlins -n "__fish_hidlins_using_subcommand entry; and __fish_seen_subcommand_from search" -l include-recycled -d 'Include entries in the recycle bin. Default: exclude'
+complete -c hidlins -n "__fish_hidlins_using_subcommand entry; and __fish_seen_subcommand_from search" -l cli -d 'Force one-shot CLI mode (print help when no command is supplied)'
 complete -c hidlins -n "__fish_hidlins_using_subcommand entry; and __fish_seen_subcommand_from search" -s h -l help -d 'Print help (see more with \'--help\')'
 complete -c hidlins -n "__fish_hidlins_using_subcommand entry; and __fish_seen_subcommand_from help" -f -a "add" -d 'Add a new entry to a vault'
 complete -c hidlins -n "__fish_hidlins_using_subcommand entry; and __fish_seen_subcommand_from help" -f -a "get" -d 'Get an entry by UUID or title'
@@ -171,14 +205,17 @@ complete -c hidlins -n "__fish_hidlins_using_subcommand entry; and __fish_seen_s
 complete -c hidlins -n "__fish_hidlins_using_subcommand entry; and __fish_seen_subcommand_from help" -f -a "list" -d 'List entries in a vault'
 complete -c hidlins -n "__fish_hidlins_using_subcommand entry; and __fish_seen_subcommand_from help" -f -a "search" -d 'Search entries'
 complete -c hidlins -n "__fish_hidlins_using_subcommand entry; and __fish_seen_subcommand_from help" -f -a "help" -d 'Print this message or the help of the given subcommand(s)'
+complete -c hidlins -n "__fish_hidlins_using_subcommand gen; and not __fish_seen_subcommand_from password passphrase help" -l config -d 'Load TUI preferences or the `keys` keymap from this config.toml' -r -F
 complete -c hidlins -n "__fish_hidlins_using_subcommand gen; and not __fish_seen_subcommand_from password passphrase help" -l format -d 'Output format. `human` (default) is line-oriented for terminals; `json` is the stable machine-readable schema for scripts' -r -f -a "human\t'Line-oriented human-readable output (default)'
 json\t'Stable JSON schema — see `views/` for per-subcommand shapes'"
 complete -c hidlins -n "__fish_hidlins_using_subcommand gen; and not __fish_seen_subcommand_from password passphrase help" -l registry -d 'Path to the vault registry file. Defaults to `$HOME/.local/state/hidlins/vaults.toml` (per `hidlins_core::HidlinsPaths`)' -r -F
+complete -c hidlins -n "__fish_hidlins_using_subcommand gen; and not __fish_seen_subcommand_from password passphrase help" -l cli -d 'Force one-shot CLI mode (print help when no command is supplied)'
 complete -c hidlins -n "__fish_hidlins_using_subcommand gen; and not __fish_seen_subcommand_from password passphrase help" -s h -l help -d 'Print help (see more with \'--help\')'
 complete -c hidlins -n "__fish_hidlins_using_subcommand gen; and not __fish_seen_subcommand_from password passphrase help" -f -a "password" -d 'Generate a random password with selectable character classes'
 complete -c hidlins -n "__fish_hidlins_using_subcommand gen; and not __fish_seen_subcommand_from password passphrase help" -f -a "passphrase" -d 'Generate an EFF-large-wordlist diceware passphrase'
 complete -c hidlins -n "__fish_hidlins_using_subcommand gen; and not __fish_seen_subcommand_from password passphrase help" -f -a "help" -d 'Print this message or the help of the given subcommand(s)'
 complete -c hidlins -n "__fish_hidlins_using_subcommand gen; and __fish_seen_subcommand_from password" -l length -d 'Password length (characters). Default: 20' -r
+complete -c hidlins -n "__fish_hidlins_using_subcommand gen; and __fish_seen_subcommand_from password" -l config -d 'Load TUI preferences or the `keys` keymap from this config.toml' -r -F
 complete -c hidlins -n "__fish_hidlins_using_subcommand gen; and __fish_seen_subcommand_from password" -l format -d 'Output format. `human` (default) is line-oriented for terminals; `json` is the stable machine-readable schema for scripts' -r -f -a "human\t'Line-oriented human-readable output (default)'
 json\t'Stable JSON schema — see `views/` for per-subcommand shapes'"
 complete -c hidlins -n "__fish_hidlins_using_subcommand gen; and __fish_seen_subcommand_from password" -l registry -d 'Path to the vault registry file. Defaults to `$HOME/.local/state/hidlins/vaults.toml` (per `hidlins_core::HidlinsPaths`)' -r -F
@@ -189,21 +226,26 @@ complete -c hidlins -n "__fish_hidlins_using_subcommand gen; and __fish_seen_sub
 complete -c hidlins -n "__fish_hidlins_using_subcommand gen; and __fish_seen_subcommand_from password" -l exclude-ambiguous -d 'Exclude visually ambiguous characters (`0/O/o/1/l/I/|/backtick`)'
 complete -c hidlins -n "__fish_hidlins_using_subcommand gen; and __fish_seen_subcommand_from password" -l copy -d 'Copy the value to the clipboard with auto-clear. Mutually exclusive with `--show` (copy implies do-not-print)'
 complete -c hidlins -n "__fish_hidlins_using_subcommand gen; and __fish_seen_subcommand_from password" -l show -d 'In JSON mode, include the generated value in the output. Default JSON output omits the value; human-mode output always prints the value to stdout regardless of this flag (mirror `pbcopy` style)'
+complete -c hidlins -n "__fish_hidlins_using_subcommand gen; and __fish_seen_subcommand_from password" -l cli -d 'Force one-shot CLI mode (print help when no command is supplied)'
 complete -c hidlins -n "__fish_hidlins_using_subcommand gen; and __fish_seen_subcommand_from password" -s h -l help -d 'Print help (see more with \'--help\')'
 complete -c hidlins -n "__fish_hidlins_using_subcommand gen; and __fish_seen_subcommand_from passphrase" -l word-count -d 'Number of words. Default: 6' -r
 complete -c hidlins -n "__fish_hidlins_using_subcommand gen; and __fish_seen_subcommand_from passphrase" -l separator -d 'Separator inserted between words. Default: `-`' -r
+complete -c hidlins -n "__fish_hidlins_using_subcommand gen; and __fish_seen_subcommand_from passphrase" -l config -d 'Load TUI preferences or the `keys` keymap from this config.toml' -r -F
 complete -c hidlins -n "__fish_hidlins_using_subcommand gen; and __fish_seen_subcommand_from passphrase" -l format -d 'Output format. `human` (default) is line-oriented for terminals; `json` is the stable machine-readable schema for scripts' -r -f -a "human\t'Line-oriented human-readable output (default)'
 json\t'Stable JSON schema — see `views/` for per-subcommand shapes'"
 complete -c hidlins -n "__fish_hidlins_using_subcommand gen; and __fish_seen_subcommand_from passphrase" -l registry -d 'Path to the vault registry file. Defaults to `$HOME/.local/state/hidlins/vaults.toml` (per `hidlins_core::HidlinsPaths`)' -r -F
 complete -c hidlins -n "__fish_hidlins_using_subcommand gen; and __fish_seen_subcommand_from passphrase" -l copy -d 'Copy the value to the clipboard with auto-clear. Mutually exclusive with `--show`'
 complete -c hidlins -n "__fish_hidlins_using_subcommand gen; and __fish_seen_subcommand_from passphrase" -l show -d 'In JSON mode, include the generated value in the output'
+complete -c hidlins -n "__fish_hidlins_using_subcommand gen; and __fish_seen_subcommand_from passphrase" -l cli -d 'Force one-shot CLI mode (print help when no command is supplied)'
 complete -c hidlins -n "__fish_hidlins_using_subcommand gen; and __fish_seen_subcommand_from passphrase" -s h -l help -d 'Print help (see more with \'--help\')'
 complete -c hidlins -n "__fish_hidlins_using_subcommand gen; and __fish_seen_subcommand_from help" -f -a "password" -d 'Generate a random password with selectable character classes'
 complete -c hidlins -n "__fish_hidlins_using_subcommand gen; and __fish_seen_subcommand_from help" -f -a "passphrase" -d 'Generate an EFF-large-wordlist diceware passphrase'
 complete -c hidlins -n "__fish_hidlins_using_subcommand gen; and __fish_seen_subcommand_from help" -f -a "help" -d 'Print this message or the help of the given subcommand(s)'
+complete -c hidlins -n "__fish_hidlins_using_subcommand sync; and not __fish_seen_subcommand_from now serve pair import status peers help" -l config -d 'Load TUI preferences or the `keys` keymap from this config.toml' -r -F
 complete -c hidlins -n "__fish_hidlins_using_subcommand sync; and not __fish_seen_subcommand_from now serve pair import status peers help" -l format -d 'Output format. `human` (default) is line-oriented for terminals; `json` is the stable machine-readable schema for scripts' -r -f -a "human\t'Line-oriented human-readable output (default)'
 json\t'Stable JSON schema — see `views/` for per-subcommand shapes'"
 complete -c hidlins -n "__fish_hidlins_using_subcommand sync; and not __fish_seen_subcommand_from now serve pair import status peers help" -l registry -d 'Path to the vault registry file. Defaults to `$HOME/.local/state/hidlins/vaults.toml` (per `hidlins_core::HidlinsPaths`)' -r -F
+complete -c hidlins -n "__fish_hidlins_using_subcommand sync; and not __fish_seen_subcommand_from now serve pair import status peers help" -l cli -d 'Force one-shot CLI mode (print help when no command is supplied)'
 complete -c hidlins -n "__fish_hidlins_using_subcommand sync; and not __fish_seen_subcommand_from now serve pair import status peers help" -s h -l help -d 'Print help (see more with \'--help\')'
 complete -c hidlins -n "__fish_hidlins_using_subcommand sync; and not __fish_seen_subcommand_from now serve pair import status peers help" -f -a "now" -d 'Synchronize a paired client vault now'
 complete -c hidlins -n "__fish_hidlins_using_subcommand sync; and not __fish_seen_subcommand_from now serve pair import status peers help" -f -a "serve" -d 'Run an authoritative sync server in the foreground until Ctrl+C'
@@ -215,25 +257,31 @@ complete -c hidlins -n "__fish_hidlins_using_subcommand sync; and not __fish_see
 complete -c hidlins -n "__fish_hidlins_using_subcommand sync; and __fish_seen_subcommand_from now" -l vault -d 'Vault registry name. Defaults to the sole registered vault' -r
 complete -c hidlins -n "__fish_hidlins_using_subcommand sync; and __fish_seen_subcommand_from now" -l address -d 'Restricted IP-literal diagnostic fallback when discovery is unavailable' -r
 complete -c hidlins -n "__fish_hidlins_using_subcommand sync; and __fish_seen_subcommand_from now" -l port -d 'Port paired with `--address`' -r
+complete -c hidlins -n "__fish_hidlins_using_subcommand sync; and __fish_seen_subcommand_from now" -l config -d 'Load TUI preferences or the `keys` keymap from this config.toml' -r -F
 complete -c hidlins -n "__fish_hidlins_using_subcommand sync; and __fish_seen_subcommand_from now" -l format -d 'Output format. `human` (default) is line-oriented for terminals; `json` is the stable machine-readable schema for scripts' -r -f -a "human\t'Line-oriented human-readable output (default)'
 json\t'Stable JSON schema — see `views/` for per-subcommand shapes'"
 complete -c hidlins -n "__fish_hidlins_using_subcommand sync; and __fish_seen_subcommand_from now" -l registry -d 'Path to the vault registry file. Defaults to `$HOME/.local/state/hidlins/vaults.toml` (per `hidlins_core::HidlinsPaths`)' -r -F
+complete -c hidlins -n "__fish_hidlins_using_subcommand sync; and __fish_seen_subcommand_from now" -l cli -d 'Force one-shot CLI mode (print help when no command is supplied)'
 complete -c hidlins -n "__fish_hidlins_using_subcommand sync; and __fish_seen_subcommand_from now" -s h -l help -d 'Print help (see more with \'--help\')'
 complete -c hidlins -n "__fish_hidlins_using_subcommand sync; and __fish_seen_subcommand_from serve" -l vault -d 'Vault registry name. Defaults to the sole registered vault' -r
 complete -c hidlins -n "__fish_hidlins_using_subcommand sync; and __fish_seen_subcommand_from serve" -l address -d 'Restricted IP literal to bind; otherwise an allowed active interface is selected' -r
 complete -c hidlins -n "__fish_hidlins_using_subcommand sync; and __fish_seen_subcommand_from serve" -l port -d 'Listener port' -r
+complete -c hidlins -n "__fish_hidlins_using_subcommand sync; and __fish_seen_subcommand_from serve" -l config -d 'Load TUI preferences or the `keys` keymap from this config.toml' -r -F
 complete -c hidlins -n "__fish_hidlins_using_subcommand sync; and __fish_seen_subcommand_from serve" -l format -d 'Output format. `human` (default) is line-oriented for terminals; `json` is the stable machine-readable schema for scripts' -r -f -a "human\t'Line-oriented human-readable output (default)'
 json\t'Stable JSON schema — see `views/` for per-subcommand shapes'"
 complete -c hidlins -n "__fish_hidlins_using_subcommand sync; and __fish_seen_subcommand_from serve" -l registry -d 'Path to the vault registry file. Defaults to `$HOME/.local/state/hidlins/vaults.toml` (per `hidlins_core::HidlinsPaths`)' -r -F
 complete -c hidlins -n "__fish_hidlins_using_subcommand sync; and __fish_seen_subcommand_from serve" -l pairing-window -d 'Open the bounded pairing window immediately after startup'
+complete -c hidlins -n "__fish_hidlins_using_subcommand sync; and __fish_seen_subcommand_from serve" -l cli -d 'Force one-shot CLI mode (print help when no command is supplied)'
 complete -c hidlins -n "__fish_hidlins_using_subcommand sync; and __fish_seen_subcommand_from serve" -s h -l help -d 'Print help (see more with \'--help\')'
 complete -c hidlins -n "__fish_hidlins_using_subcommand sync; and __fish_seen_subcommand_from pair" -l vault -d 'Vault registry name. Defaults to the sole registered vault' -r
 complete -c hidlins -n "__fish_hidlins_using_subcommand sync; and __fish_seen_subcommand_from pair" -l address -d 'Restricted IP-literal diagnostic fallback' -r
 complete -c hidlins -n "__fish_hidlins_using_subcommand sync; and __fish_seen_subcommand_from pair" -l port -d 'Port paired with `--address`' -r
 complete -c hidlins -n "__fish_hidlins_using_subcommand sync; and __fish_seen_subcommand_from pair" -l name -d 'Local display name for the authority' -r
+complete -c hidlins -n "__fish_hidlins_using_subcommand sync; and __fish_seen_subcommand_from pair" -l config -d 'Load TUI preferences or the `keys` keymap from this config.toml' -r -F
 complete -c hidlins -n "__fish_hidlins_using_subcommand sync; and __fish_seen_subcommand_from pair" -l format -d 'Output format. `human` (default) is line-oriented for terminals; `json` is the stable machine-readable schema for scripts' -r -f -a "human\t'Line-oriented human-readable output (default)'
 json\t'Stable JSON schema — see `views/` for per-subcommand shapes'"
 complete -c hidlins -n "__fish_hidlins_using_subcommand sync; and __fish_seen_subcommand_from pair" -l registry -d 'Path to the vault registry file. Defaults to `$HOME/.local/state/hidlins/vaults.toml` (per `hidlins_core::HidlinsPaths`)' -r -F
+complete -c hidlins -n "__fish_hidlins_using_subcommand sync; and __fish_seen_subcommand_from pair" -l cli -d 'Force one-shot CLI mode (print help when no command is supplied)'
 complete -c hidlins -n "__fish_hidlins_using_subcommand sync; and __fish_seen_subcommand_from pair" -s h -l help -d 'Print help (see more with \'--help\')'
 complete -c hidlins -n "__fish_hidlins_using_subcommand sync; and __fish_seen_subcommand_from import" -l id -d 'New local registry name' -r
 complete -c hidlins -n "__fish_hidlins_using_subcommand sync; and __fish_seen_subcommand_from import" -l path -d 'Destination KDBX path. Defaults to the Hidlins state directory' -r -F
@@ -241,18 +289,24 @@ complete -c hidlins -n "__fish_hidlins_using_subcommand sync; and __fish_seen_su
 complete -c hidlins -n "__fish_hidlins_using_subcommand sync; and __fish_seen_subcommand_from import" -l address -d 'Restricted IP-literal diagnostic fallback' -r
 complete -c hidlins -n "__fish_hidlins_using_subcommand sync; and __fish_seen_subcommand_from import" -l port -d 'Port paired with `--address`' -r
 complete -c hidlins -n "__fish_hidlins_using_subcommand sync; and __fish_seen_subcommand_from import" -l name -d 'Local display name for the authority' -r
+complete -c hidlins -n "__fish_hidlins_using_subcommand sync; and __fish_seen_subcommand_from import" -l config -d 'Load TUI preferences or the `keys` keymap from this config.toml' -r -F
 complete -c hidlins -n "__fish_hidlins_using_subcommand sync; and __fish_seen_subcommand_from import" -l format -d 'Output format. `human` (default) is line-oriented for terminals; `json` is the stable machine-readable schema for scripts' -r -f -a "human\t'Line-oriented human-readable output (default)'
 json\t'Stable JSON schema — see `views/` for per-subcommand shapes'"
 complete -c hidlins -n "__fish_hidlins_using_subcommand sync; and __fish_seen_subcommand_from import" -l registry -d 'Path to the vault registry file. Defaults to `$HOME/.local/state/hidlins/vaults.toml` (per `hidlins_core::HidlinsPaths`)' -r -F
+complete -c hidlins -n "__fish_hidlins_using_subcommand sync; and __fish_seen_subcommand_from import" -l cli -d 'Force one-shot CLI mode (print help when no command is supplied)'
 complete -c hidlins -n "__fish_hidlins_using_subcommand sync; and __fish_seen_subcommand_from import" -s h -l help -d 'Print help (see more with \'--help\')'
 complete -c hidlins -n "__fish_hidlins_using_subcommand sync; and __fish_seen_subcommand_from status" -l vault -d 'Vault registry name. Defaults to the sole registered vault' -r
+complete -c hidlins -n "__fish_hidlins_using_subcommand sync; and __fish_seen_subcommand_from status" -l config -d 'Load TUI preferences or the `keys` keymap from this config.toml' -r -F
 complete -c hidlins -n "__fish_hidlins_using_subcommand sync; and __fish_seen_subcommand_from status" -l format -d 'Output format. `human` (default) is line-oriented for terminals; `json` is the stable machine-readable schema for scripts' -r -f -a "human\t'Line-oriented human-readable output (default)'
 json\t'Stable JSON schema — see `views/` for per-subcommand shapes'"
 complete -c hidlins -n "__fish_hidlins_using_subcommand sync; and __fish_seen_subcommand_from status" -l registry -d 'Path to the vault registry file. Defaults to `$HOME/.local/state/hidlins/vaults.toml` (per `hidlins_core::HidlinsPaths`)' -r -F
+complete -c hidlins -n "__fish_hidlins_using_subcommand sync; and __fish_seen_subcommand_from status" -l cli -d 'Force one-shot CLI mode (print help when no command is supplied)'
 complete -c hidlins -n "__fish_hidlins_using_subcommand sync; and __fish_seen_subcommand_from status" -s h -l help -d 'Print help (see more with \'--help\')'
+complete -c hidlins -n "__fish_hidlins_using_subcommand sync; and __fish_seen_subcommand_from peers" -l config -d 'Load TUI preferences or the `keys` keymap from this config.toml' -r -F
 complete -c hidlins -n "__fish_hidlins_using_subcommand sync; and __fish_seen_subcommand_from peers" -l format -d 'Output format. `human` (default) is line-oriented for terminals; `json` is the stable machine-readable schema for scripts' -r -f -a "human\t'Line-oriented human-readable output (default)'
 json\t'Stable JSON schema — see `views/` for per-subcommand shapes'"
 complete -c hidlins -n "__fish_hidlins_using_subcommand sync; and __fish_seen_subcommand_from peers" -l registry -d 'Path to the vault registry file. Defaults to `$HOME/.local/state/hidlins/vaults.toml` (per `hidlins_core::HidlinsPaths`)' -r -F
+complete -c hidlins -n "__fish_hidlins_using_subcommand sync; and __fish_seen_subcommand_from peers" -l cli -d 'Force one-shot CLI mode (print help when no command is supplied)'
 complete -c hidlins -n "__fish_hidlins_using_subcommand sync; and __fish_seen_subcommand_from peers" -s h -l help -d 'Print help (see more with \'--help\')'
 complete -c hidlins -n "__fish_hidlins_using_subcommand sync; and __fish_seen_subcommand_from peers" -f -a "list" -d 'List configured peers'
 complete -c hidlins -n "__fish_hidlins_using_subcommand sync; and __fish_seen_subcommand_from peers" -f -a "rename" -d 'Rename a peer\'s local display label'
@@ -265,9 +319,11 @@ complete -c hidlins -n "__fish_hidlins_using_subcommand sync; and __fish_seen_su
 complete -c hidlins -n "__fish_hidlins_using_subcommand sync; and __fish_seen_subcommand_from help" -f -a "status" -d 'Show local-sync role, pairing, and server status'
 complete -c hidlins -n "__fish_hidlins_using_subcommand sync; and __fish_seen_subcommand_from help" -f -a "peers" -d 'List, rename, or revoke paired peers'
 complete -c hidlins -n "__fish_hidlins_using_subcommand sync; and __fish_seen_subcommand_from help" -f -a "help" -d 'Print this message or the help of the given subcommand(s)'
+complete -c hidlins -n "__fish_hidlins_using_subcommand ssh; and not __fish_seen_subcommand_from add load generate help" -l config -d 'Load TUI preferences or the `keys` keymap from this config.toml' -r -F
 complete -c hidlins -n "__fish_hidlins_using_subcommand ssh; and not __fish_seen_subcommand_from add load generate help" -l format -d 'Output format. `human` (default) is line-oriented for terminals; `json` is the stable machine-readable schema for scripts' -r -f -a "human\t'Line-oriented human-readable output (default)'
 json\t'Stable JSON schema — see `views/` for per-subcommand shapes'"
 complete -c hidlins -n "__fish_hidlins_using_subcommand ssh; and not __fish_seen_subcommand_from add load generate help" -l registry -d 'Path to the vault registry file. Defaults to `$HOME/.local/state/hidlins/vaults.toml` (per `hidlins_core::HidlinsPaths`)' -r -F
+complete -c hidlins -n "__fish_hidlins_using_subcommand ssh; and not __fish_seen_subcommand_from add load generate help" -l cli -d 'Force one-shot CLI mode (print help when no command is supplied)'
 complete -c hidlins -n "__fish_hidlins_using_subcommand ssh; and not __fish_seen_subcommand_from add load generate help" -s h -l help -d 'Print help (see more with \'--help\')'
 complete -c hidlins -n "__fish_hidlins_using_subcommand ssh; and not __fish_seen_subcommand_from add load generate help" -f -a "add" -d 'Add an SSH-key entry to a vault. (Slot — see `features/ssh-keys/`.)'
 complete -c hidlins -n "__fish_hidlins_using_subcommand ssh; and not __fish_seen_subcommand_from add load generate help" -f -a "load" -d 'Load an SSH key into ssh-agent with TTL. (Slot — see `features/ssh-keys/`.)'
@@ -276,35 +332,45 @@ complete -c hidlins -n "__fish_hidlins_using_subcommand ssh; and not __fish_seen
 complete -c hidlins -n "__fish_hidlins_using_subcommand ssh; and __fish_seen_subcommand_from add" -l vault -d 'Registry name of the destination vault' -r
 complete -c hidlins -n "__fish_hidlins_using_subcommand ssh; and __fish_seen_subcommand_from add" -l key-path -d 'Path to the existing private key to import' -r -F
 complete -c hidlins -n "__fish_hidlins_using_subcommand ssh; and __fish_seen_subcommand_from add" -l comment -d 'Optional comment to attach to the entry' -r
+complete -c hidlins -n "__fish_hidlins_using_subcommand ssh; and __fish_seen_subcommand_from add" -l config -d 'Load TUI preferences or the `keys` keymap from this config.toml' -r -F
 complete -c hidlins -n "__fish_hidlins_using_subcommand ssh; and __fish_seen_subcommand_from add" -l format -d 'Output format. `human` (default) is line-oriented for terminals; `json` is the stable machine-readable schema for scripts' -r -f -a "human\t'Line-oriented human-readable output (default)'
 json\t'Stable JSON schema — see `views/` for per-subcommand shapes'"
 complete -c hidlins -n "__fish_hidlins_using_subcommand ssh; and __fish_seen_subcommand_from add" -l registry -d 'Path to the vault registry file. Defaults to `$HOME/.local/state/hidlins/vaults.toml` (per `hidlins_core::HidlinsPaths`)' -r -F
+complete -c hidlins -n "__fish_hidlins_using_subcommand ssh; and __fish_seen_subcommand_from add" -l cli -d 'Force one-shot CLI mode (print help when no command is supplied)'
 complete -c hidlins -n "__fish_hidlins_using_subcommand ssh; and __fish_seen_subcommand_from add" -s h -l help -d 'Print help (see more with \'--help\')'
 complete -c hidlins -n "__fish_hidlins_using_subcommand ssh; and __fish_seen_subcommand_from load" -l vault -d 'Registry name of the source vault' -r
 complete -c hidlins -n "__fish_hidlins_using_subcommand ssh; and __fish_seen_subcommand_from load" -l uuid -d 'UUID of the SSH-key entry to load' -r
 complete -c hidlins -n "__fish_hidlins_using_subcommand ssh; and __fish_seen_subcommand_from load" -l ttl -d 'TTL in seconds before ssh-agent expires the key' -r
+complete -c hidlins -n "__fish_hidlins_using_subcommand ssh; and __fish_seen_subcommand_from load" -l config -d 'Load TUI preferences or the `keys` keymap from this config.toml' -r -F
 complete -c hidlins -n "__fish_hidlins_using_subcommand ssh; and __fish_seen_subcommand_from load" -l format -d 'Output format. `human` (default) is line-oriented for terminals; `json` is the stable machine-readable schema for scripts' -r -f -a "human\t'Line-oriented human-readable output (default)'
 json\t'Stable JSON schema — see `views/` for per-subcommand shapes'"
 complete -c hidlins -n "__fish_hidlins_using_subcommand ssh; and __fish_seen_subcommand_from load" -l registry -d 'Path to the vault registry file. Defaults to `$HOME/.local/state/hidlins/vaults.toml` (per `hidlins_core::HidlinsPaths`)' -r -F
+complete -c hidlins -n "__fish_hidlins_using_subcommand ssh; and __fish_seen_subcommand_from load" -l cli -d 'Force one-shot CLI mode (print help when no command is supplied)'
 complete -c hidlins -n "__fish_hidlins_using_subcommand ssh; and __fish_seen_subcommand_from load" -s h -l help -d 'Print help (see more with \'--help\')'
 complete -c hidlins -n "__fish_hidlins_using_subcommand ssh; and __fish_seen_subcommand_from generate" -l vault -d 'Registry name of the destination vault' -r
 complete -c hidlins -n "__fish_hidlins_using_subcommand ssh; and __fish_seen_subcommand_from generate" -l algorithm -d 'Algorithm (`ed25519` or `rsa`). Defaults to `ed25519` when implemented' -r
 complete -c hidlins -n "__fish_hidlins_using_subcommand ssh; and __fish_seen_subcommand_from generate" -l comment -d 'Optional comment to attach to the public key' -r
+complete -c hidlins -n "__fish_hidlins_using_subcommand ssh; and __fish_seen_subcommand_from generate" -l config -d 'Load TUI preferences or the `keys` keymap from this config.toml' -r -F
 complete -c hidlins -n "__fish_hidlins_using_subcommand ssh; and __fish_seen_subcommand_from generate" -l format -d 'Output format. `human` (default) is line-oriented for terminals; `json` is the stable machine-readable schema for scripts' -r -f -a "human\t'Line-oriented human-readable output (default)'
 json\t'Stable JSON schema — see `views/` for per-subcommand shapes'"
 complete -c hidlins -n "__fish_hidlins_using_subcommand ssh; and __fish_seen_subcommand_from generate" -l registry -d 'Path to the vault registry file. Defaults to `$HOME/.local/state/hidlins/vaults.toml` (per `hidlins_core::HidlinsPaths`)' -r -F
+complete -c hidlins -n "__fish_hidlins_using_subcommand ssh; and __fish_seen_subcommand_from generate" -l cli -d 'Force one-shot CLI mode (print help when no command is supplied)'
 complete -c hidlins -n "__fish_hidlins_using_subcommand ssh; and __fish_seen_subcommand_from generate" -s h -l help -d 'Print help (see more with \'--help\')'
 complete -c hidlins -n "__fish_hidlins_using_subcommand ssh; and __fish_seen_subcommand_from help" -f -a "add" -d 'Add an SSH-key entry to a vault. (Slot — see `features/ssh-keys/`.)'
 complete -c hidlins -n "__fish_hidlins_using_subcommand ssh; and __fish_seen_subcommand_from help" -f -a "load" -d 'Load an SSH key into ssh-agent with TTL. (Slot — see `features/ssh-keys/`.)'
 complete -c hidlins -n "__fish_hidlins_using_subcommand ssh; and __fish_seen_subcommand_from help" -f -a "generate" -d 'Generate a new SSH keypair and store the private key. (Slot — see `features/ssh-keys/`.)'
 complete -c hidlins -n "__fish_hidlins_using_subcommand ssh; and __fish_seen_subcommand_from help" -f -a "help" -d 'Print this message or the help of the given subcommand(s)'
+complete -c hidlins -n "__fish_hidlins_using_subcommand completions" -l config -d 'Load TUI preferences or the `keys` keymap from this config.toml' -r -F
 complete -c hidlins -n "__fish_hidlins_using_subcommand completions" -l format -d 'Output format. `human` (default) is line-oriented for terminals; `json` is the stable machine-readable schema for scripts' -r -f -a "human\t'Line-oriented human-readable output (default)'
 json\t'Stable JSON schema — see `views/` for per-subcommand shapes'"
 complete -c hidlins -n "__fish_hidlins_using_subcommand completions" -l registry -d 'Path to the vault registry file. Defaults to `$HOME/.local/state/hidlins/vaults.toml` (per `hidlins_core::HidlinsPaths`)' -r -F
+complete -c hidlins -n "__fish_hidlins_using_subcommand completions" -l cli -d 'Force one-shot CLI mode (print help when no command is supplied)'
 complete -c hidlins -n "__fish_hidlins_using_subcommand completions" -s h -l help -d 'Print help (see more with \'--help\')'
-complete -c hidlins -n "__fish_hidlins_using_subcommand keys" -l format -d 'Output format: `human` (default) or `json`' -r -f -a "human\t'Line-oriented human-readable output (default)'
+complete -c hidlins -n "__fish_hidlins_using_subcommand keys" -l config -d 'Load TUI preferences or the `keys` keymap from this config.toml' -r -F
+complete -c hidlins -n "__fish_hidlins_using_subcommand keys" -l format -d 'Output format. `human` (default) is line-oriented for terminals; `json` is the stable machine-readable schema for scripts' -r -f -a "human\t'Line-oriented human-readable output (default)'
 json\t'Stable JSON schema — see `views/` for per-subcommand shapes'"
 complete -c hidlins -n "__fish_hidlins_using_subcommand keys" -l registry -d 'Path to the vault registry file. Defaults to `$HOME/.local/state/hidlins/vaults.toml` (per `hidlins_core::HidlinsPaths`)' -r -F
+complete -c hidlins -n "__fish_hidlins_using_subcommand keys" -l cli -d 'Force one-shot CLI mode (print help when no command is supplied)'
 complete -c hidlins -n "__fish_hidlins_using_subcommand keys" -s h -l help -d 'Print help (see more with \'--help\')'
 complete -c hidlins -n "__fish_hidlins_using_subcommand help; and not __fish_seen_subcommand_from vault entry gen sync ssh completions keys help" -f -a "vault" -d 'Vault lifecycle and registration commands'
 complete -c hidlins -n "__fish_hidlins_using_subcommand help; and not __fish_seen_subcommand_from vault entry gen sync ssh completions keys help" -f -a "entry" -d 'Secret-entry CRUD, search, and TOTP commands'

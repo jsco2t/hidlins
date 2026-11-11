@@ -13,7 +13,7 @@ and the corresponding automated gates, see
 
 | Output | Host | Command | Location |
 | --- | --- | --- | --- |
-| CLI, TUI, agent | Linux or macOS | `make release` | `target/release/{hidlins,hidlins-tui,hidlins-agent}` |
+| Console (TUI + CLI), agent | Linux or macOS | `make release` | `target/release/{hidlins,hidlins-agent}` |
 | Linux desktop | Linux | `make app-build-linux` | `app/build/linux/<arch>/release/bundle/` |
 | macOS desktop | macOS | `make app-build-macos` | `app/build/macos/Build/Products/Release/Hidlins.app` |
 | iOS simulator + device/no-sign | macOS | `make app-build-ios` | `app/build/ios/{iphonesimulator,iphoneos}/Runner.app` |

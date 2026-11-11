@@ -27,6 +27,10 @@ pub const BANNER: &str = r"
 pub const MASTER_PASSWORD_ENV_VAR: &str = "HIDLINS_MASTER_PASSWORD";
 
 const AFTER_HELP: &str = concat!(
+    "Run without a command to start the TUI. Shared --registry and TUI options \
+keep TUI mode. A subcommand, explicit --format, or --cli selects CLI mode; \
+without a subcommand, CLI mode prints this help. TUI-only options cannot be \
+combined with CLI mode. --config also selects the keymap for `keys`.\n\n",
     "\
 Master password is collected via a secure stdin prompt (no echo). The \
 HIDLINS_MASTER_PASSWORD environment variable, if set, is ignored and \
@@ -48,7 +52,36 @@ removed from the process environment at startup. There is no \
 pub struct Cli {
     /// The subcommand to dispatch.
     #[command(subcommand)]
-    pub command: Command,
+    pub command: Option<Command>,
+
+    /// Force one-shot CLI mode (print help when no command is supplied).
+    #[arg(long = "cli", global = true)]
+    pub force_cli: bool,
+
+    /// Open this vault's TUI unlock prompt directly.
+    #[arg(long, help_heading = "TUI options")]
+    pub vault: Option<String>,
+
+    /// Override the TUI theme (built-in name or user theme file stem).
+    #[arg(long, help_heading = "TUI options")]
+    pub theme: Option<String>,
+
+    /// Load TUI preferences or the `keys` keymap from this config.toml.
+    #[arg(long, global = true)]
+    pub config: Option<PathBuf>,
+
+    /// Disable TUI mouse capture.
+    #[arg(long, help_heading = "TUI options")]
+    pub no_mouse: bool,
+
+    /// Open the TUI session read-only (refuse vault mutations and sync).
+    #[arg(long, help_heading = "TUI options")]
+    pub read_only: bool,
+
+    /// Print the effective TUI keymap and exit before terminal setup.
+    #[arg(long, value_enum, num_args = 0..=1, require_equals = true,
+          default_missing_value = "text", help_heading = "TUI options")]
+    pub dump_keys: Option<DumpKeysFormat>,
 
     /// Output format. `human` (default) is line-oriented for terminals;
     /// `json` is the stable machine-readable schema for scripts.
@@ -60,6 +93,15 @@ pub struct Cli {
     /// `hidlins_core::HidlinsPaths`).
     #[arg(long, global = true)]
     pub registry: Option<PathBuf>,
+}
+
+/// Output format for terminal-free TUI keymap introspection.
+#[derive(ValueEnum, Clone, Copy, Debug, PartialEq, Eq)]
+pub enum DumpKeysFormat {
+    /// Tab-separated human-readable commands.
+    Text,
+    /// Stable JSON command objects.
+    Json,
 }
 
 /// Top-level subcommand selector.
@@ -90,19 +132,14 @@ pub enum Command {
     Completions(CompletionsArgs),
     /// Print the TUI's effective keymap (command name, keys, description, group).
     ///
-    /// Relays `hidlins-tui --dump-keys` — locate the TUI binary on `$PATH` (or
-    /// via `$HIDLINS_TUI_BIN`). Spawns a subprocess but passes NO secret
-    /// material: keymap data only. Closes tui-skeleton sibling contract #6.
+    /// Runs in process without terminal or vault setup. --config selects the
+    /// keymap and --format selects human-readable text or JSON.
     Keys(KeysArgs),
 }
 
 /// Flags for `hidlins keys`.
 #[derive(Args, Debug)]
-pub struct KeysArgs {
-    /// Output format: `human` (default) or `json`.
-    #[arg(long, value_enum, default_value_t = OutputFormat::Human)]
-    pub format: OutputFormat,
-}
+pub struct KeysArgs {}
 
 /// `--format` selector. Default `human`.
 #[derive(ValueEnum, Clone, Copy, Debug, Default, PartialEq, Eq)]
@@ -772,7 +809,7 @@ mod tests {
         let cli = Cli::try_parse_from(["hidlins", "entry", "search", "--vault", "v", "q"]).unwrap();
         let Some(Command::Entry(EntryArgs {
             verb: Some(EntryVerb::Search(args)),
-        })) = Some(cli.command)
+        })) = cli.command
         else {
             panic!("expected entry search");
         };
@@ -789,9 +826,9 @@ mod tests {
                 "hidlins", "entry", "search", "--vault", "v", "--mode", flag, "q",
             ])
             .unwrap();
-            let Command::Entry(EntryArgs {
+            let Some(Command::Entry(EntryArgs {
                 verb: Some(EntryVerb::Search(args)),
-            }) = cli.command
+            })) = cli.command
             else {
                 panic!("expected entry search");
             };
@@ -812,9 +849,9 @@ mod tests {
             "q",
         ])
         .unwrap();
-        let Command::Entry(EntryArgs {
+        let Some(Command::Entry(EntryArgs {
             verb: Some(EntryVerb::Search(args)),
-        }) = cli.command
+        })) = cli.command
         else {
             panic!("expected entry search");
         };

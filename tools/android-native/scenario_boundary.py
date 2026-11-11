@@ -58,7 +58,7 @@ def main() -> None:
     for required in ("hidlins-cli", "mdns-sd", "if-addrs"):
         if required not in scenario:
             raise SystemExit(f"scenario authority graph is missing {required}")
-    require_absent(scenario, ("arboard",), "scenario authority graph")
+    require_absent(scenario, ("arboard", "hidlins-tui", "ratatui", "crossterm"), "scenario authority graph")
 
     shipping_inputs = (
         ROOT / "tools/android-native/build.sh",

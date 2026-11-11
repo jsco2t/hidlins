@@ -1,6 +1,6 @@
 [package]
 name = "hidlins-cli"
-description = "Hidlins one-shot CLI — scriptable surface over hidlins-core, hidlins-genpw."
+description = "Hidlins console application — interactive TUI and one-shot CLI."
 version.workspace = true
 edition.workspace = true
 license.workspace = true
@@ -29,6 +29,7 @@ default = ["desktop"]
 # support behind one default feature lets the Android scenario build exercise
 # the real CLI dispatcher without linking desktop-only clipboard code.
 desktop = [
+    "dep:hidlins-tui",
     "hidlins-security/desktop",
     "hidlins-security/logind",
     "hidlins-security/iokit",
@@ -50,6 +51,9 @@ android-scenario-authority = ["hidlins-sync/android-scenario-authority"]
 clipboard-tests = ["desktop"]
 
 [dependencies]
+# Existing first-party MIT UI library, linked only into desktop builds. Its
+# dependencies are already locked/vendored; no new third-party package.
+hidlins-tui = { path = "../hidlins-tui", version = "0.1", optional = true }
 # CLI parsing. `clap` is the project-standard parser (see CLAUDE.md
 # "Key libraries"). `derive` enables the struct/enum-based subcommand
 # tree; `wrap_help` is intentionally disabled to avoid the `terminal_size`

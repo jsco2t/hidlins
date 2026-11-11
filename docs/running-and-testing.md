@@ -50,7 +50,7 @@ The generated file can be registered and opened by the CLI and TUI, and imported
 by the mobile apps. Registration authenticates the existing vault before adding
 it to the selected registry; it does not rewrite the KDBX.
 
-## Release CLI, TUI, and agent binaries
+## Release console and agent binaries
 
 Build the optimized host binaries:
 
@@ -60,8 +60,7 @@ make release
 
 Artifacts are written to:
 
-- `target/release/hidlins` — one-shot CLI
-- `target/release/hidlins-tui` — reference terminal UI
+- `target/release/hidlins` — reference TUI by default; one-shot CLI with a subcommand or `--cli`
 - `target/release/hidlins-agent` — reserved agent executable; currently a stub
 
 ### CLI
@@ -107,13 +106,15 @@ target/release/hidlins sync --help
 
 ### Terminal UI
 
-The TUI does not have a registry override flag, but it resolves state from
-`HOME`. Give it a temporary home to keep the session separate from your normal
-registry and configuration:
+The TUI accepts the shared `--registry` override. Preferences and themes
+retain their normal XDG configuration directory. `--config` selects a different
+preferences file; custom themes still load from the XDG themes directory.
+Give this demo a temporary home and XDG directory to isolate both its registry
+and preferences:
 
 ```sh
 mkdir -p "$HIDLINS_DEMO_DIR/home"
-HOME="$HIDLINS_DEMO_DIR/home" target/release/hidlins-tui
+HOME="$HIDLINS_DEMO_DIR/home" XDG_CONFIG_HOME="$HIDLINS_DEMO_DIR/home/.config" target/release/hidlins
 ```
 
 On first run, enter the absolute path printed by this command:
@@ -137,7 +138,7 @@ Use `?` for the in-app key reference, or print the complete keymap without
 starting the terminal UI:
 
 ```sh
-target/release/hidlins-tui --dump-keys
+target/release/hidlins --dump-keys
 ```
 
 ### Agent executable
