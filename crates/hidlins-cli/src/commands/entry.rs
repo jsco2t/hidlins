@@ -1,0 +1,587 @@
+//! `hidlins entry {add, get, edit, rm, list, search}` dispatcher.
+//!
+//! Each verb prompts for the master password (via
+//! `crate::prompt::master_password`), opens the vault (read-write for
+//! mutating verbs; read-only for `get` / `list` / `search`), calls the
+//! entry-management surface, builds the per-verb view struct and writes
+//! it via `crate::format::OutputFormatter`.
+//!
+//! ## `--copy` clipboard hand-off
+//!
+//! `entry get --copy` hands the password to `hidlins-security`'s
+//! `hidlins_security::Clipboard::copy_with_autoclear`. The CLI blocks on
+//! `hidlins_security::AutoClearGuard::wait_for_clear` before exit so
+//! the auto-clear timer actually fires on Wayland (design §2.5 + §3.9).
+//!
+//! Entry and group queries use owned, secret-free core records so this
+//! presentation layer never traverses the underlying KDBX database model.
+
+use std::collections::HashMap;
+
+use chrono::Utc;
+use hidlins_core::{
+    EntryBuilder, EntryKind, MatchedField, SearchMode, SearchOptions, SearchScope, Vault,
+    VaultError, VaultReadOnly,
+};
+use hidlins_genpw::{CharSet, PasswordBuilder};
+use zeroize::Zeroizing;
+
+use crate::cli::{
+    Cli, EntryAddArgs, EntryArgs, EntryEditArgs, EntryGetArgs, EntryListArgs, EntryRmArgs,
+    EntrySearchArgs, EntryVerb, PasswordClassFlags, SearchModeArg,
+};
+use crate::commands::{arm_clipboard, open, write_success};
+use crate::exit::CliExit;
+use crate::prompt::read_password_no_echo;
+use crate::views::entry::{
+    EntryAddView, EntryEditView, EntryGetView, EntryListItem, EntryListView, EntryRmView,
+    EntrySearchItem, EntrySearchView, FieldIndices,
+};
+
+#[cfg(test)]
+#[path = "entry_secret_regressions.rs"]
+mod entry_secret_regressions;
+
+/// Owned row buffered during `list`/`search` so the resulting view
+/// items can borrow `&str` slices into the same memory. Defining it at
+/// module scope (rather than inside each function) keeps clippy's
+/// "items after statements" lint happy.
+struct EntryRow {
+    uuid: uuid::Uuid,
+    title: String,
+    group: String,
+    tags: Vec<String>,
+    expired: bool,
+}
+
+/// Owned search-result row: an [`EntryRow`] plus the fuzzy ranking `score` and
+/// matched character positions (`matched_indices`) the JSON view emits.
+struct SearchRowOwned {
+    row: EntryRow,
+    score: u32,
+    matched_indices: Vec<FieldIndices>,
+}
+
+/// Phase 3 entry point — dispatches to the verb handler.
+///
+/// # Errors
+///
+/// Any [`CliExit`] returned by the per-verb handlers.
+pub fn run(cli: &Cli, args: &EntryArgs) -> Result<(), CliExit> {
+    match &args.verb {
+        Some(EntryVerb::Add(a)) => run_add(cli, a),
+        Some(EntryVerb::Get(a)) => run_get(cli, a),
+        Some(EntryVerb::Edit(a)) => run_edit(cli, a),
+        Some(EntryVerb::Rm(a)) => run_rm(cli, a),
+        Some(EntryVerb::List(a)) => run_list(cli, a),
+        Some(EntryVerb::Search(a)) => run_search(cli, a),
+        None => Err(CliExit::UserError(
+            "missing subcommand verb (try `hidlins entry --help`)".to_string(),
+        )),
+    }
+}
+
+// ---------------------------------------------------------------------------
+// add
+// ---------------------------------------------------------------------------
+
+fn run_add(cli: &Cli, args: &EntryAddArgs) -> Result<(), CliExit> {
+    let opened = open::prepare(cli, &args.vault)?;
+    let (record, master, keyfile) = (opened.record, opened.master, opened.keyfile);
+
+    // Decide the entry password BEFORE opening the vault so a stdin
+    // failure doesn't leave the file locked with no committed change.
+    let password_value = resolve_add_password(args)?;
+
+    let mut vault = Vault::open(&record.path, &master, keyfile.as_ref()).map_err(CliExit::from)?;
+    let root = vault.root_group_uuid();
+
+    let mut builder = EntryBuilder::credential(&args.title);
+    if let Some(u) = args.username.as_deref() {
+        builder = builder.username(u);
+    }
+    if let Some(u) = args.url.as_deref() {
+        builder = builder.url(u);
+    }
+    if let Some(n) = args.notes.as_deref() {
+        builder = builder.notes(n);
+    }
+    for tag in &args.tags {
+        let parsed = hidlins_core::Tag::from(tag.clone()).map_err(CliExit::from)?;
+        builder = builder.tag(parsed);
+    }
+    if let Some(pw) = password_value.as_ref().map(|value| value.as_str()) {
+        builder = builder.password(pw);
+    }
+
+    let uuid = vault
+        .add_entry(root, builder.build())
+        .map_err(CliExit::from)?;
+    vault.save().map_err(CliExit::from)?;
+
+    let group_name = vault
+        .entry_summary(uuid)
+        .map_err(CliExit::from)?
+        .group_name()
+        .to_string();
+    let view = EntryAddView {
+        uuid,
+        title: &args.title,
+        group: &group_name,
+        // Only surface the password when the user explicitly opted in
+        // AND we actually have one in hand (`--generate` or
+        // `--password-stdin`). Disambiguation: a captured user
+        // password echoed back is just as sensitive as a generated one;
+        // `--show-password` is the user's explicit acknowledgment.
+        password: if args.show_password {
+            password_value.as_ref().map(|value| value.as_str())
+        } else {
+            None
+        },
+    };
+    write_success(cli, &view)
+}
+
+fn resolve_add_password(args: &EntryAddArgs) -> Result<Option<Zeroizing<String>>, CliExit> {
+    if args.generate {
+        let builder = build_password_builder(args.length, args.class_flags);
+        let value = builder.generate().map_err(CliExit::from)?;
+        return Ok(Some(value));
+    }
+    if args.password_stdin {
+        let stdin = std::io::stdin();
+        let mut stdin = stdin.lock();
+        let mut stderr = std::io::stderr().lock();
+        let raw = read_password_no_echo("Entry password: ", &mut stdin, &mut stderr)
+            .map_err(|e| CliExit::UserError(format!("failed to read password: {e}")))?;
+        return Ok(Some(Zeroizing::new(raw)));
+    }
+    Ok(None)
+}
+
+// ---------------------------------------------------------------------------
+// get
+// ---------------------------------------------------------------------------
+
+fn run_get(cli: &Cli, args: &EntryGetArgs) -> Result<(), CliExit> {
+    let opened = open::prepare(cli, &args.vault)?;
+    let (record, master, keyfile) = (opened.record, opened.master, opened.keyfile);
+    let vault =
+        VaultReadOnly::open(&record.path, &master, keyfile.as_ref()).map_err(CliExit::from)?;
+
+    let uuid = resolve_entry_uuid(&vault, args)?;
+    let summary = vault.entry_summary(uuid).map_err(CliExit::from)?;
+    let group_name = summary.group_name().to_string();
+    let view_data = vault.get_entry(uuid).map_err(CliExit::from)?;
+
+    let totp_code = if args.show_totp {
+        match vault.totp(uuid) {
+            Ok((code, _)) => Some(code),
+            Err(VaultError::EntryHasNoTotp { .. }) => None,
+            Err(other) => return Err(CliExit::from(other)),
+        }
+    } else {
+        None
+    };
+
+    let expired = view_data
+        .expires()
+        .is_some_and(|expiry| expiry <= Utc::now());
+    let tags = view_data.tags();
+    let tag_strs: Vec<&str> = tags.iter().map(hidlins_core::Tag::as_str).collect();
+    let attachments = view_data.attachments();
+
+    let password = if args.show_password {
+        Some(view_data.password())
+    } else {
+        None
+    };
+    let view = EntryGetView {
+        uuid,
+        title: view_data.title(),
+        username: optional_field(view_data.username()),
+        url: optional_field(view_data.url()),
+        notes: optional_field(view_data.notes()),
+        password,
+        tags: tag_strs,
+        group: &group_name,
+        expired,
+        has_attachments: !attachments.is_empty(),
+        // Reuse the core's single TOTP definition (`fields::OTP`
+        // presence) rather than re-typing the interop field name here.
+        has_totp: view_data.kind() == EntryKind::Totp,
+        totp_code,
+    };
+
+    if args.copy {
+        // Arm the clipboard BEFORE writing the success view so that an
+        // arming failure (e.g., no DISPLAY) produces a single JSON
+        // error envelope on stdout instead of "success view + error
+        // envelope" — preserving the `--format json` single-document
+        // contract. The `wait_for_clear` always runs, even if
+        // write_success errors (broken-pipe consumer), so the timer
+        // can fire and clear the clipboard.
+        let password = view_data.password().to_owned();
+        let mut guard = arm_clipboard(password)?;
+        let write_result = write_success(cli, &view);
+        let wait_result = guard.wait_for_clear().map_err(CliExit::from);
+        write_result?;
+        return wait_result;
+    }
+    write_success(cli, &view)
+}
+
+fn resolve_entry_uuid(vault: &VaultReadOnly, args: &EntryGetArgs) -> Result<uuid::Uuid, CliExit> {
+    if let Some(s) = args.uuid.as_deref() {
+        return parse_uuid(s);
+    }
+    let Some(title) = args.title.as_deref() else {
+        return Err(CliExit::UserError(
+            "entry get requires --uuid or --title".to_string(),
+        ));
+    };
+    let matches = vault.entry_uuids_by_title(title);
+    match matches.len() {
+        0 => Err(CliExit::UserError(format!("no entry with title {title:?}"))),
+        1 => Ok(matches[0]),
+        _ => {
+            let listing = matches
+                .iter()
+                .map(|u| format!("  {u}"))
+                .collect::<Vec<_>>()
+                .join("\n");
+            Err(CliExit::UserError(format!(
+                "{n} entries share title {title:?}; pass --uuid to disambiguate:\n{listing}",
+                n = matches.len()
+            )))
+        }
+    }
+}
+
+// ---------------------------------------------------------------------------
+// edit
+// ---------------------------------------------------------------------------
+
+fn run_edit(cli: &Cli, args: &EntryEditArgs) -> Result<(), CliExit> {
+    let uuid = parse_uuid(&args.uuid)?;
+    let opened = open::prepare(cli, &args.vault)?;
+    let (record, master, keyfile) = (opened.record, opened.master, opened.keyfile);
+
+    // Capture the new password (if requested) BEFORE opening the vault
+    // so a stdin failure doesn't hold the write lock open.
+    let new_password = if args.password_stdin {
+        let stdin = std::io::stdin();
+        let mut stdin = stdin.lock();
+        let mut stderr = std::io::stderr().lock();
+        Some(Zeroizing::new(
+            read_password_no_echo("New entry password: ", &mut stdin, &mut stderr)
+                .map_err(|e| CliExit::UserError(format!("failed to read password: {e}")))?,
+        ))
+    } else {
+        None
+    };
+
+    let parsed_add_tags = args
+        .add_tags
+        .iter()
+        .map(|t| hidlins_core::Tag::from(t.clone()).map_err(CliExit::from))
+        .collect::<Result<Vec<_>, _>>()?;
+    let parsed_rm_tags = args
+        .rm_tags
+        .iter()
+        .map(|t| hidlins_core::Tag::from(t.clone()).map_err(CliExit::from))
+        .collect::<Result<Vec<_>, _>>()?;
+
+    let mut vault = Vault::open(&record.path, &master, keyfile.as_ref()).map_err(CliExit::from)?;
+
+    let mut modified_fields: Vec<&'static str> = Vec::new();
+    vault
+        .update_entry(uuid, |entry| {
+            if let Some(t) = args.title.as_deref() {
+                entry.set_title(t);
+                modified_fields.push("title");
+            }
+            if let Some(u) = args.username.as_deref() {
+                entry.set_username(u);
+                modified_fields.push("username");
+            }
+            if let Some(u) = args.url.as_deref() {
+                entry.set_url(u);
+                modified_fields.push("url");
+            }
+            if let Some(n) = args.notes.as_deref() {
+                entry.set_notes(n);
+                modified_fields.push("notes");
+            }
+            if let Some(p) = new_password.as_ref().map(|value| value.as_str()) {
+                entry.set_password(p);
+                modified_fields.push("password");
+            }
+            let mut tags_touched = false;
+            for tag in &parsed_add_tags {
+                entry.add_tag(tag.clone());
+                tags_touched = true;
+            }
+            for tag in &parsed_rm_tags {
+                entry.remove_tag(tag);
+                tags_touched = true;
+            }
+            if tags_touched {
+                modified_fields.push("tags");
+            }
+            Ok(())
+        })
+        .map_err(CliExit::from)?;
+    vault.save().map_err(CliExit::from)?;
+
+    let view = EntryEditView {
+        uuid,
+        modified_fields,
+    };
+    write_success(cli, &view)
+}
+
+// ---------------------------------------------------------------------------
+// rm
+// ---------------------------------------------------------------------------
+
+fn run_rm(cli: &Cli, args: &EntryRmArgs) -> Result<(), CliExit> {
+    let uuid = parse_uuid(&args.uuid)?;
+    let opened = open::prepare(cli, &args.vault)?;
+    let (record, master, keyfile) = (opened.record, opened.master, opened.keyfile);
+    let mut vault = Vault::open(&record.path, &master, keyfile.as_ref()).map_err(CliExit::from)?;
+
+    if args.permanent {
+        vault.purge_entry(uuid).map_err(CliExit::from)?;
+    } else {
+        vault.delete_entry(uuid).map_err(CliExit::from)?;
+    }
+    vault.save().map_err(CliExit::from)?;
+
+    let view = EntryRmView {
+        uuid,
+        recycle_bin: !args.permanent,
+    };
+    write_success(cli, &view)
+}
+
+// ---------------------------------------------------------------------------
+// list
+// ---------------------------------------------------------------------------
+
+fn run_list(cli: &Cli, args: &EntryListArgs) -> Result<(), CliExit> {
+    let opened = open::prepare(cli, &args.vault)?;
+    let (record, master, keyfile) = (opened.record, opened.master, opened.keyfile);
+    let vault =
+        VaultReadOnly::open(&record.path, &master, keyfile.as_ref()).map_err(CliExit::from)?;
+    // Collect tag filter parsed once.
+    let filter_tags: Vec<hidlins_core::Tag> = args
+        .tags
+        .iter()
+        .map(|t| hidlins_core::Tag::from(t.clone()).map_err(CliExit::from))
+        .collect::<Result<Vec<_>, _>>()?;
+
+    let now = Utc::now();
+    // First pass: collect filtered rows from secret-free core summaries.
+    let mut rows: Vec<EntryRow> = Vec::new();
+    for summary in vault.entry_summaries() {
+        let expired = summary.expires().is_some_and(|t| t <= now);
+        if expired && !args.include_expired {
+            continue;
+        }
+        if !filter_tags.is_empty()
+            && !filter_tags
+                .iter()
+                .all(|filter| summary.tags().iter().any(|tag| tag == filter))
+        {
+            continue;
+        }
+        rows.push(EntryRow {
+            uuid: summary.uuid(),
+            title: summary.title().to_owned(),
+            group: summary.group_name().to_owned(),
+            tags: summary
+                .tags()
+                .iter()
+                .map(|tag| tag.as_str().to_owned())
+                .collect(),
+            expired,
+        });
+    }
+    // Apply pagination.
+    let offset = args.offset.unwrap_or(0);
+    let limit = args.limit.unwrap_or(usize::MAX);
+    let paged: Vec<&EntryRow> = rows.iter().skip(offset).take(limit).collect();
+
+    let items: Vec<EntryListItem<'_>> = paged
+        .iter()
+        .map(|r| EntryListItem {
+            uuid: r.uuid,
+            title: &r.title,
+            group: &r.group,
+            tags: r.tags.iter().map(String::as_str).collect(),
+            expired: r.expired,
+        })
+        .collect();
+    let view = EntryListView { entries: items };
+    write_success(cli, &view)
+}
+
+// ---------------------------------------------------------------------------
+// search
+// ---------------------------------------------------------------------------
+
+fn run_search(cli: &Cli, args: &EntrySearchArgs) -> Result<(), CliExit> {
+    let opened = open::prepare(cli, &args.vault)?;
+    let (record, master, keyfile) = (opened.record, opened.master, opened.keyfile);
+    let vault =
+        VaultReadOnly::open(&record.path, &master, keyfile.as_ref()).map_err(CliExit::from)?;
+    let mode = match args.mode {
+        SearchModeArg::Substring => SearchMode::Substring,
+        SearchModeArg::Wildcard => SearchMode::Wildcard,
+        SearchModeArg::Fuzzy => SearchMode::Fuzzy,
+    };
+    let mut opts = SearchOptions::new(args.query.as_str())
+        .with_mode(mode)
+        .include_recycled(args.include_recycled);
+    if let Some(scope_str) = &args.scope {
+        opts = opts.with_scope(parse_scope(&vault, scope_str)?);
+    }
+    let mut results = vault.search(opts).map_err(CliExit::from)?;
+    if let Some(cap) = args.limit {
+        results.truncate(cap);
+    }
+
+    // Resolve UUIDs back to display rows, carrying score + fuzzy indices.
+    let now = Utc::now();
+    let mut rows: Vec<SearchRowOwned> = Vec::new();
+    let summaries: HashMap<_, _> = vault
+        .entry_summaries()
+        .into_iter()
+        .map(|summary| (summary.uuid(), summary))
+        .collect();
+    for result in &results {
+        let Some(summary) = summaries.get(&result.uuid) else {
+            continue;
+        };
+        let matched_indices = result
+            .match_indices
+            .iter()
+            .map(|(field, positions)| FieldIndices {
+                field: matched_field_name(*field),
+                positions: positions.clone(),
+            })
+            .collect();
+        rows.push(SearchRowOwned {
+            row: EntryRow {
+                uuid: summary.uuid(),
+                title: summary.title().to_owned(),
+                group: summary.group_name().to_owned(),
+                tags: summary
+                    .tags()
+                    .iter()
+                    .map(|tag| tag.as_str().to_owned())
+                    .collect(),
+                expired: summary.expires().is_some_and(|t| t <= now),
+            },
+            score: result.score,
+            matched_indices,
+        });
+    }
+    let matches: Vec<EntrySearchItem<'_>> = rows
+        .iter()
+        .map(|r| EntrySearchItem {
+            uuid: r.row.uuid,
+            title: &r.row.title,
+            group: &r.row.group,
+            tags: r.row.tags.iter().map(String::as_str).collect(),
+            expired: r.row.expired,
+            score: r.score,
+            matched_indices: r.matched_indices.clone(),
+        })
+        .collect();
+    let view = EntrySearchView {
+        query: args.query.as_str(),
+        matches,
+    };
+    write_success(cli, &view)
+}
+
+/// The stable JSON field name for a matched field.
+fn matched_field_name(field: MatchedField) -> &'static str {
+    match field {
+        MatchedField::Title => "title",
+        MatchedField::Username => "username",
+        MatchedField::Url => "url",
+        MatchedField::Notes => "notes",
+        MatchedField::Tags => "tags",
+    }
+}
+
+/// Parse a `--scope` value into a [`SearchScope`]: `group:<name>` resolves the
+/// named group's subtree (error listing candidates on miss/ambiguity);
+/// `tag:<tag>` is an exact (case-insensitive) tag filter.
+fn parse_scope(vault: &VaultReadOnly, scope: &str) -> Result<SearchScope, CliExit> {
+    if let Some(name) = scope.strip_prefix("group:") {
+        let groups = vault.group_summaries();
+        let mut matches = groups
+            .iter()
+            .filter(|group| group.name().eq_ignore_ascii_case(name))
+            .map(hidlins_core::GroupSummary::uuid);
+        let first = matches.next();
+        match (first, matches.next()) {
+            (Some(uuid), None) => Ok(SearchScope::GroupSubtree(uuid)),
+            (Some(_), Some(_)) => Err(CliExit::UserError(format!(
+                "scope group {name:?} is ambiguous — multiple groups share that name"
+            ))),
+            (None, _) => {
+                let candidates: Vec<&str> = groups
+                    .iter()
+                    .map(hidlins_core::GroupSummary::name)
+                    .collect();
+                Err(CliExit::UserError(format!(
+                    "no group named {name:?}; known groups: {}",
+                    candidates.join(", ")
+                )))
+            }
+        }
+    } else if let Some(tag) = scope.strip_prefix("tag:") {
+        Ok(SearchScope::Tag(tag.to_string()))
+    } else {
+        Err(CliExit::UserError(
+            "scope must be group:<name> or tag:<tag>".to_string(),
+        ))
+    }
+}
+
+// ---------------------------------------------------------------------------
+// Helpers
+// ---------------------------------------------------------------------------
+
+/// Build a `hidlins-genpw` `PasswordBuilder` from the CLI's
+/// `--length` + class flags. Negative flags compose: each `--no-*`
+/// strips its class.
+fn build_password_builder(length: usize, flags: PasswordClassFlags) -> PasswordBuilder {
+    let classes = CharSet {
+        lowercase: !flags.no_lowercase,
+        uppercase: !flags.no_uppercase,
+        digits: !flags.no_digits,
+        symbols: !flags.no_symbols,
+    };
+    PasswordBuilder::new()
+        .length(length)
+        .classes(classes)
+        .exclude_ambiguous(flags.exclude_ambiguous)
+}
+
+fn parse_uuid(s: &str) -> Result<uuid::Uuid, CliExit> {
+    uuid::Uuid::parse_str(s).map_err(|e| CliExit::UserError(format!("invalid UUID {s:?}: {e}")))
+}
+
+fn optional_field(value: &str) -> Option<&str> {
+    if value.is_empty() {
+        None
+    } else {
+        Some(value)
+    }
+}

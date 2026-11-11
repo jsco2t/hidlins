@@ -1,0 +1,52 @@
+#!/usr/bin/env bash
+set -euo pipefail
+
+readonly ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/../.." && pwd)"
+source "$ROOT/tools/android-native/gradle-env.sh"
+if [[ -z "${ANDROID_HOME:-}" && -z "${ANDROID_SDK_ROOT:-}" ]]; then
+  case "$(uname -s)" in
+    Darwin) export ANDROID_HOME="${HOME:?}/Library/Android/sdk" ;;
+    Linux) export ANDROID_HOME="${HOME:?}/Android/Sdk" ;;
+    *) echo "error: unsupported Android build host" >&2; exit 1 ;;
+  esac
+fi
+export ANDROID_SDK_ROOT="${ANDROID_SDK_ROOT:-$ANDROID_HOME}"
+if [[ -z "${JAVA_HOME:-}" && -d "/Applications/Android Studio.app/Contents/jbr/Contents/Home" ]]; then
+  export JAVA_HOME="/Applications/Android Studio.app/Contents/jbr/Contents/Home"
+fi
+[[ -n "${JAVA_HOME:-}" && -x "$JAVA_HOME/bin/java" ]] || {
+  echo "error: JAVA_HOME must point at a Java 17+ runtime" >&2; exit 1;
+}
+
+# Resolve executable shims before deriving the SDK's wrapper artifact path.
+if ! flutter_executable="$(command -v flutter)"; then
+  echo "error: Flutter executable is not available in PATH" >&2
+  exit 1
+fi
+FLUTTER_ROOT="$(python3 - "$flutter_executable" <<'SDK_PATH'
+from pathlib import Path
+import sys
+print(Path(sys.argv[1]).resolve(strict=True).parent.parent)
+SDK_PATH
+)"
+readonly FLUTTER_ROOT
+readonly WRAPPER_SOURCE="$FLUTTER_ROOT/bin/cache/artifacts/gradle_wrapper/gradle/wrapper/gradle-wrapper.jar"
+readonly WRAPPER_TEMP="$(mktemp -d)"
+trap 'rm -rf "$WRAPPER_TEMP"' EXIT
+mkdir -p "$WRAPPER_TEMP/gradle/wrapper"
+cp "$WRAPPER_SOURCE" "$WRAPPER_TEMP/gradle/wrapper/gradle-wrapper.jar"
+cp "$ROOT/app/android/gradle/wrapper/gradle-wrapper.properties" \
+  "$WRAPPER_TEMP/gradle/wrapper/gradle-wrapper.properties"
+default_project=1
+for argument in "$@"; do
+  case "$argument" in
+    -p|--project-dir|--project-dir=*|-p?*) default_project=0; break ;;
+  esac
+done
+if [[ "$default_project" == 1 ]]; then
+  set -- -p "$ROOT/app/android" "$@"
+fi
+cd "$WRAPPER_TEMP"
+exec "$JAVA_HOME/bin/java" -classpath gradle/wrapper/gradle-wrapper.jar \
+  org.gradle.wrapper.GradleWrapperMain \
+  --no-daemon --stacktrace "$@"

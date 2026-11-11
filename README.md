@@ -1,0 +1,257 @@
+# Hidlins
+
+```
+    __  ___    _____
+   / / / (_)__/ / (_)___  ___
+  / /_/ / / _  / / / __ \/ __|
+ / __  / / /_/ / / / / / /__ \
+/_/ /_/_/\__,_/_/_/_/ /_/____/
+```
+
+Hidlins (Scots: _"in secret, in hiding"_, pronounced _HID-linz_) is an offline-first secrets
+manager built on a Rust core with thin cross-platform UIs. Vaults are stored in
+the [KDBX (KeePass) format](https://keepass.info/help/kb/kdbx_4.html) via the
+[`keepass-rs`](https://crates.io/crates/keepass) crate, so every Hidlins vault
+is directly interoperable with KeePassXC, KeeWeb, KeePass2, and other
+standards-compliant KDBX clients. Sync uses authenticated local-network
+connections only, with in-app three-way merge at the entry level.
+
+## !!WARNING!! PLEASE READ
+
+This repository is a hobby project of a single person (or at best a few people). The author(s) of
+this project wish to make the following **VERY** clear:
+
+- This software is provided "AS IS", without warranty of any kind. (See **License** for further
+  clarification)
+
+- This software is not designed as enterprise grade security software (note the _hobby project_
+  statement above). Users should not expect any sort of specific quality bar or reliability
+  with this software.
+
+- **Use at your own risk**. The authors of this software are in no way responsible for your use of
+  the software and/or the security of data you store with this software.
+
+- This software is opinionated in how it works. What that mostly means is that it was designed to
+  solve the needs of the original author. It may or may not fit your needs.
+
+## Workspace layout
+
+| Crate             | Purpose                                                            |
+| ----------------- | ------------------------------------------------------------------ |
+| `hidlins-core`    | Library: KDBX I/O, vault registry, atomic writes, file locks, search |
+| `hidlins-genpw`   | Library: random password and diceware passphrase generation        |
+| `hidlins-security`| Library: auto-lock, OS lock events, clipboard, core-dump suppression |
+| `hidlins-sync`    | Library: secure local sync, discovery, trust, and three-way merge  |
+| `hidlins-cli`     | Binary: unified console app (`hidlins`), TUI by default or one-shot CLI |
+| `hidlins-tui`     | Library: interactive terminal UI used by `hidlins`                  |
+| `hidlins-agent`   | Binary: (placeholder) optional long-running unlock agent           |
+
+## Supported platforms
+
+Phase 0 targets macOS and Linux on x86_64 and aarch64. Windows, FreeBSD, and
+network filesystems are not supported targets for the vault-core reliability
+claims.
+
+## Terminal UI
+
+The TUI is the reference UX. Launch it with `hidlins` or `make run-tui`.
+The console application selects its mode after parsing arguments:
+
+| Invocation | Behavior |
+| --- | --- |
+| `hidlins` | Start the TUI |
+| `hidlins --registry /path/vaults.toml` | Start the TUI with the shared registry override |
+| `hidlins --vault work --read-only` | Start the TUI with these settings |
+| `hidlins vault list --format json` | Run the one-shot CLI command |
+| `hidlins --cli` | Force CLI mode and print help |
+| `hidlins --cli vault list` | Force CLI mode and run the command |
+
+Explicit `--format` also selects CLI mode; without a command it prints help.
+`--help` and `--version` print and exit before terminal setup. TUI-only options
+cannot be combined with CLI commands or `--cli`; `--config` is also accepted
+by `keys` to select its effective keymap. There is one installed console
+executable, `hidlins`; replace old `hidlins-tui` invocations with `hidlins`.
+
+Startup stays inside the alternate-screen TUI. With no registered vaults it
+prompts for an existing KDBX path, authenticates the vault, and only then saves
+the registration. One registered vault opens its password form directly; two
+or more open a keyboard-navigable vault picker whose password form returns to
+the same selected row with `Esc`. Every startup form exposes its Open/Unlock,
+Back, and Exit keys as text. Set `HIDLINS_TUI_THEME=accessible` for the compact
+semantic startup layout without decorative ASCII art.
+
+### Keybinding presets and rebinding
+
+Two presets ship: **vim** (default) and **plain** (arrow-first, no chords). To
+rebind keys, edit `~/.config/hidlins/config.toml`:
+
+```toml
+[keymap]
+preset = "vim"
+
+[keymap.bindings]
+copy-password = "y"          # rebind a single key
+search = ["/", "ctrl+f"]     # multiple triggers
+pin-toggle = false            # unbind
+```
+
+Run `hidlins --dump-keys` to print the effective keymap, or
+`hidlins keys` from the CLI.
+
+### Themes
+
+Five built-in themes: `default-dark`, `default-light`, `accessible`, `slate`,
+`paper`. Each has an explicit ANSI-16 variant for 16-color terminals. User
+themes are TOML files dropped in `~/.config/hidlins/themes/`:
+
+```toml
+# ~/.config/hidlins/themes/mint.toml
+accent = "#5FFFAF"
+match_hl = "#FFD75F"
+```
+
+Select a theme in `config.toml` or cycle through them in the Settings tab:
+
+```toml
+[theme]
+dark = "default-dark"
+light = "paper"
+mode = "auto"     # "auto" | "dark" | "light"
+```
+
+### Search
+
+Open the search overlay with `/` (vim preset) or `Ctrl+F`. Features:
+
+| Key       | Action                                                      |
+| --------- | ----------------------------------------------------------- |
+| Type      | Fuzzy-filter entries (fzf-style scoring, match highlighting)|
+| `Ctrl+S`  | Cycle scope: All / Group / Tag                              |
+| `Alt+1..9`| Quick-select result by number                               |
+| `Enter`   | Copy password (arms auto-clear) and close                   |
+| `Tab`     | Jump to entry in tree (open detail)                         |
+| `Esc`     | Close and restore pre-search selection                      |
+
+Configure the default scope and Enter action in `config.toml`:
+
+```toml
+[search]
+default-scope = "all"      # "all" | "group" | "tag"
+enter-action = "copy"      # "copy" | "open"
+```
+
+### CLI search modes
+
+```sh
+hidlins entry search --vault work "github"                  # substring (default)
+hidlins entry search --vault work --mode fuzzy "gh"         # fuzzy matching
+hidlins entry search --vault work --scope group:Social "tw" # scoped to group
+hidlins entry search --vault work --mode fuzzy --format json "api"  # JSON with score
+```
+
+### Other flags
+
+```sh
+hidlins --vault work        # skip vault list, open directly
+hidlins --theme slate       # override theme
+hidlins --no-mouse          # keyboard-only session
+hidlins --read-only         # refuse vault mutations
+hidlins --config /path      # custom config location
+hidlins --dump-keys=json    # print keymap as JSON
+```
+
+### Mouse
+
+Mouse is an accelerator: click to select/focus, click tabs to switch, wheel to
+scroll. Every mouse action has a keyboard equivalent. Hold Shift while dragging
+to use your terminal's native text selection. Disable with `--no-mouse` or
+`mouse = false` in `config.toml`.
+
+## Local-network synchronization
+
+Synchronization is direct between Hidlins devices on the same private/local
+network. One trusted desktop-class application is the authoritative server;
+the other applications are clients. DNS-SD/mDNS discovers a route only. The
+Noise XX pairing ceremony requires both people to compare and accept the same
+six-character Crockford Base32 code (`XXX-XXX`), and later Noise IK connections
+authenticate the pinned
+per-vault device identities. A discovery result never grants trust.
+
+Every interactive application attempts one sync for each configured client
+vault when that vault first opens in a process. After that, sync happens only
+when the user selects **Sync now**. Saving, locking, reconnecting, and timers do
+not trigger another sync.
+
+- The CLI can deliberately keep a server in the foreground; `Ctrl+C` stops it.
+- The TUI and Flutter desktop application can deliberately start a server that
+  remains active only while enabled and while that application is running.
+- iOS and Android are client-only. They sync on foreground launch and manual
+  request, never listen, and do not support background or persistent sync.
+- There is no daemon or shipped `hidlins-agent` sync service.
+
+The non-bypassable address allowlist is IPv4 `10.0.0.0/8`,
+`172.16.0.0/12`, `192.168.0.0/16`, `169.254.0.0/16`, and `127.0.0.0/8`;
+and IPv6 `fc00::/7`, `fe80::/10` with a numeric interface scope, and `::1`.
+All other destinations are rejected, with no override. Manual endpoint entry
+is available where discovery is blocked and passes through the same policy.
+
+Common CLI operations are:
+
+```sh
+hidlins sync serve --vault work --pairing-window
+hidlins sync pair --vault work --name laptop
+hidlins sync now --vault work
+hidlins sync status --vault work
+hidlins sync peers list --vault work
+```
+
+Commands that unlock a vault collect its master password through the secure
+no-echo prompt. See [running and testing](docs/running-and-testing.md) for a
+two-device procedure and the [protocol contract](crates/hidlins-sync/docs/protocol-v1.md)
+for the security boundary.
+
+## Build from source
+
+`make` is the canonical build interface — every workflow has a target. Run
+`make` (or `make help`) to list them. The most common:
+
+```sh
+make build              # cargo build --workspace --offline --locked
+make test               # default-parallel tests
+make check              # Rust gate: fmt-check + lint + build + test (no Flutter needed)
+make app-check          # Flutter gates: version/telemetry/pub integrity/analyze/format/test/bridge smoke/codegen drift (needs Flutter SDK + Rust toolchain)
+make verify             # everything: check + app-check + ignored tests + docs + supply-chain + interop + boundary-check
+make interop            # vault-core KeePassXC interop tests; requires keepassxc-cli >= 2.7
+make interop-entry      # entry-management KeePassXC interop tests (TOTP cross-checks with oathtool if present)
+make bench-search-gate  # NFR-002 gate: fails if search exceeds the latency budget
+make test-local-sync-security    # protocol, trust, address, resource, and memory boundaries
+make test-local-sync-discovery   # discovery policy and desktop adapters
+make test-local-sync-integration # real local sockets and lifecycle
+make fuzz-local-sync-corpus      # deterministic committed parser corpus
+make fuzz-local-sync-ci          # bounded fixed-seed development fuzzing
+make ncsa-boundary-check         # keep fuzz-only NCSA code out of applications
+```
+
+All dependencies are vendored in `vendor/`; offline is the only supported
+build mode. From a clean clone, do not run `cargo update`; use the checked-in
+`Cargo.lock` and vendored sources. To intentionally add or upgrade a Rust
+dependency, follow the vendoring workflow in [CONTRIBUTING.md](CONTRIBUTING.md)
+and run `make vendor` as the only networked dependency step.
+
+## Security and supply chain
+
+See [`CLAUDE.md`](CLAUDE.md)/[`AGENTS.md`](AGENTS.md) for the non-negotiable
+security and supply-chain rules: zeroize on drop, no plaintext to disk, atomic
+writes, vendored + pinned dependencies, and no telemetry. Production
+dependencies use the general permissive-license allowlist. The sole NCSA
+exception is exact `libfuzzer-sys 0.4.13` inside the isolated fuzz workspace,
+for development/testing only. Fuzz executables are non-distributable, and no
+CLI, TUI, agent, desktop, iOS, Android, or other packaged Hidlins application
+may contain NCSA-licensed code; `make ncsa-boundary-check` enforces this.
+
+## AI Coding Policy
+
+This repository leverages AI Coding solutions as part of its development processes. The authors of
+this repository recognize that some individuals will find that objectionable. We recognize and
+appreciate that perspective and wish such individuals the very best in finding a codebase that
+fit's their needs.

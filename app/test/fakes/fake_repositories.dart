@@ -1,0 +1,818 @@
+import 'dart:async';
+import 'dart:ui' show VoidCallback;
+
+import 'package:app/src/data/failures.dart';
+import 'package:app/src/data/models.dart';
+import 'package:app/src/data/repositories.dart';
+import 'package:app/src/platform/keyfile_access.dart';
+import 'package:app/src/platform/platform_result.dart';
+
+class DelayedKeyfileAccess implements KeyfileAccessCapability {
+  final resolveGate = Completer<PlatformResult<String>>();
+  int releaseCalls = 0;
+  static const reference = KeyfileReference(
+    reference: 'delayed-key',
+    displayName: 'keyfile.key',
+  );
+
+  @override
+  Future<PlatformResult<KeyfileReference>> pickReference() async =>
+      const PlatformSuccess(reference);
+
+  @override
+  Future<PlatformResult<String>> resolve(KeyfileReference reference) =>
+      resolveGate.future;
+
+  @override
+  Future<PlatformResult<PlatformUnit>> release(
+    KeyfileReference reference,
+  ) async {
+    releaseCalls++;
+    return const PlatformSuccess(platformUnit);
+  }
+}
+
+class FakeSessionRepository implements SessionRepository {
+  final StreamController<LockEvent> lockController =
+      StreamController<LockEvent>.broadcast();
+  LockEvent currentLockState = LockEvent.locked;
+  BigInt droppedLockEventCount = BigInt.zero;
+  Object? droppedLockEventsError;
+  List<String> startupWarningMessages = [];
+  Object? startupWarningsError;
+
+  bool unlockCalled = false;
+  String? lastUnlockName;
+  String? lastUnlockPassword;
+  AppFailure? unlockError;
+  Completer<void>? unlockCompleter;
+  VaultTree? unlockResult;
+  bool lockNowCalled = false;
+  bool shutdownCalled = false;
+
+  List<VaultSummary> vaults = [];
+  bool createVaultCalled = false;
+  String? lastCreateName;
+  bool? lastConfirmedNoRecovery;
+  AppFailure? createVaultError;
+  Completer<void>? createVaultCompleter;
+  String? lastCreatePassword;
+  bool registerExistingVaultCalled = false;
+  String? lastRegisteredVaultPath;
+
+  bool deregisterCalled = false;
+  String? lastDeregisterName;
+  bool? lastDeregisterDeleteFile;
+
+  bool changePasswordCalled = false;
+  AppFailure? changePasswordError;
+  Completer<void>? changePasswordCompleter;
+  String? lastCurrentPassword;
+  String? lastNewPassword;
+  String? lastPasswordVaultName;
+
+  @override
+  Future<VaultTree> unlock(
+    String name,
+    String masterPassword, {
+    KeyfileRef? keyfile,
+  }) async {
+    unlockCalled = true;
+    lastUnlockName = name;
+    lastUnlockPassword = masterPassword;
+    await unlockCompleter?.future;
+    if (unlockError != null) throw unlockError!;
+    emitLockState(LockEvent.unlocked);
+    return unlockResult ?? _defaultTree;
+  }
+
+  @override
+  Future<void> lockNow() async {
+    lockNowCalled = true;
+    currentLockState = LockEvent.locked;
+    lockController.add(LockEvent.locked);
+  }
+
+  @override
+  Future<void> shutdown() async {
+    shutdownCalled = true;
+  }
+
+  @override
+  Stream<LockEvent> lockEvents() async* {
+    yield currentLockState;
+    yield* lockController.stream;
+  }
+
+  @override
+  BigInt droppedLockEvents() {
+    if (droppedLockEventsError case final error?) throw error;
+    return droppedLockEventCount;
+  }
+
+  @override
+  Future<List<String>> startupWarnings() async {
+    if (startupWarningsError case final error?) throw error;
+    return startupWarningMessages;
+  }
+
+  void emitLockState(LockEvent state) {
+    currentLockState = state;
+    lockController.add(state);
+  }
+
+  int activityCount = 0;
+  final List<LifecycleStateDto> lifecycleStates = [];
+
+  @override
+  void reportActivity() {
+    activityCount++;
+  }
+
+  @override
+  Future<LockEvent> reportLifecycleState(LifecycleStateDto state) async {
+    lifecycleStates.add(state);
+    return currentLockState;
+  }
+
+  @override
+  Future<List<VaultSummary>> listVaults() async => vaults;
+
+  @override
+  Future<VaultSummary> createVault({
+    required String name,
+    required String masterPassword,
+    String? fileName,
+    KeyfileRef? keyfile,
+    required bool confirmedNoRecovery,
+  }) async {
+    createVaultCalled = true;
+    lastCreateName = name;
+    lastCreatePassword = masterPassword;
+    lastConfirmedNoRecovery = confirmedNoRecovery;
+    await createVaultCompleter?.future;
+    if (createVaultError != null) throw createVaultError!;
+    final vault = VaultSummary(
+      name: name,
+      path: '/vaults/$name.kdbx',
+      hasKeyfile: keyfile != null,
+      hasSync: false,
+    );
+    vaults.add(vault);
+    return vault;
+  }
+
+  @override
+  Future<VaultSummary> registerExistingVault({
+    required String name,
+    required String kdbxPath,
+    KeyfileRef? keyfile,
+  }) async {
+    registerExistingVaultCalled = true;
+    lastRegisteredVaultPath = kdbxPath;
+    final vault = VaultSummary(
+      name: name,
+      path: kdbxPath,
+      hasKeyfile: keyfile != null,
+      hasSync: false,
+    );
+    vaults.add(vault);
+    return vault;
+  }
+
+  @override
+  Future<void> deregisterVault(String name, {required bool deleteFile}) async {
+    deregisterCalled = true;
+    lastDeregisterName = name;
+    lastDeregisterDeleteFile = deleteFile;
+    vaults.removeWhere((v) => v.name == name);
+  }
+
+  @override
+  Future<void> changeMasterPassword(String current, String newPassword) async {
+    changePasswordCalled = true;
+    lastCurrentPassword = current;
+    lastNewPassword = newPassword;
+    await changePasswordCompleter?.future;
+    if (changePasswordError != null) throw changePasswordError!;
+  }
+
+  @override
+  Future<void> changeVaultMasterPassword(
+    String vaultName,
+    String current,
+    String newPassword,
+  ) async {
+    lastPasswordVaultName = vaultName;
+    await changeMasterPassword(current, newPassword);
+  }
+
+  void dispose() {
+    unawaited(lockController.close());
+  }
+}
+
+class FakeEntryRepository implements EntryRepository {
+  Completer<EntryDetail>? detailCompleter;
+  VaultTree tree = _defaultTree;
+  final Map<String, EntryDetail> details = {};
+  final Map<String, List<HistorySummary>> histories = {};
+  final Map<String, List<AttachmentMeta>> attachmentMap = {};
+
+  bool createEntryCalled = false;
+  String? lastCreateGroup;
+  EntryDraftDto? lastDraft;
+  int? lastCreateExpiryTime;
+
+  bool updateEntryCalled = false;
+  String? lastUpdateUuid;
+  EntryEditDto? lastEdit;
+  EntryExpirationChange? lastExpirationChange;
+  Completer<void>? updateCompleter;
+  Object? updateError;
+
+  bool deleteEntryCalled = false;
+  String? lastDeleteUuid;
+
+  bool purgeEntryCalled = false;
+
+  bool moveEntryCalled = false;
+  String? lastMoveUuid;
+  String? lastMoveGroup;
+
+  bool createGroupCalled = false;
+  bool renameGroupCalled = false;
+  bool deleteGroupCalled = false;
+  GroupDeleteBehavior? lastDeleteGroupBehavior;
+
+  bool setExpirationCalled = false;
+  bool clearExpirationCalled = false;
+
+  bool addAttachmentCalled = false;
+  String? lastAttachmentPath;
+  bool removeAttachmentCalled = false;
+  String? lastRemovedAttachmentKey;
+  bool saveAttachmentCalled = false;
+  String? lastSaveAttachmentUuid;
+  String? lastSaveAttachmentKey;
+  String? lastSaveAttachmentDest;
+  AppFailure? saveAttachmentError;
+
+  AppFailure? attachmentError;
+
+  @override
+  VoidCallback? onMutation;
+
+  @override
+  Future<VaultTree> vaultTree() async => tree;
+
+  @override
+  Future<EntryDetail> entryDetail(String uuid) async {
+    if (detailCompleter case final pending?) return pending.future;
+    return details[uuid] ?? _defaultDetail(uuid);
+  }
+
+  @override
+  Future<String> createEntry(
+    String groupUuid,
+    EntryDraftDto draft, {
+    int? expiryTime,
+  }) async {
+    createEntryCalled = true;
+    lastCreateGroup = groupUuid;
+    lastDraft = draft;
+    lastCreateExpiryTime = expiryTime;
+    onMutation?.call();
+    return 'new-uuid';
+  }
+
+  @override
+  Future<void> updateEntry(
+    String uuid,
+    EntryEditDto edit, {
+    EntryExpirationChange? expiration,
+  }) async {
+    updateEntryCalled = true;
+    lastUpdateUuid = uuid;
+    lastEdit = edit;
+    lastExpirationChange = expiration;
+    await updateCompleter?.future;
+    if (updateError case final error?) throw error;
+    onMutation?.call();
+  }
+
+  @override
+  Future<void> deleteEntry(String uuid) async {
+    deleteEntryCalled = true;
+    lastDeleteUuid = uuid;
+    onMutation?.call();
+  }
+
+  @override
+  Future<void> purgeEntry(String uuid) async {
+    purgeEntryCalled = true;
+    onMutation?.call();
+  }
+
+  @override
+  Future<void> moveEntry(String uuid, String groupUuid) async {
+    moveEntryCalled = true;
+    lastMoveUuid = uuid;
+    lastMoveGroup = groupUuid;
+    onMutation?.call();
+  }
+
+  @override
+  Future<List<HistorySummary>> entryHistory(String uuid) async {
+    return histories[uuid] ?? [];
+  }
+
+  @override
+  Future<void> createGroup(String parentUuid, String name) async {
+    createGroupCalled = true;
+    onMutation?.call();
+  }
+
+  @override
+  Future<void> renameGroup(String uuid, String name) async {
+    renameGroupCalled = true;
+    onMutation?.call();
+  }
+
+  @override
+  Future<void> moveGroup(String uuid, String parentUuid) async {
+    onMutation?.call();
+  }
+
+  @override
+  Future<void> deleteGroup(String uuid, GroupDeleteBehavior behavior) async {
+    deleteGroupCalled = true;
+    lastDeleteGroupBehavior = behavior;
+    onMutation?.call();
+  }
+
+  @override
+  Future<List<String>> listTags() async => ['work', 'personal', 'finance'];
+
+  @override
+  Future<void> setExpiration(String uuid, int epochSecs) async {
+    setExpirationCalled = true;
+    onMutation?.call();
+  }
+
+  @override
+  Future<void> clearExpiration(String uuid) async {
+    clearExpirationCalled = true;
+    onMutation?.call();
+  }
+
+  @override
+  Future<List<AttachmentMeta>> listAttachments(String uuid) async {
+    return attachmentMap[uuid] ?? [];
+  }
+
+  @override
+  Future<void> addAttachment(String uuid, String sourcePath) async {
+    addAttachmentCalled = true;
+    lastAttachmentPath = sourcePath;
+    if (attachmentError != null) throw attachmentError!;
+    onMutation?.call();
+  }
+
+  @override
+  Future<void> removeAttachment(String uuid, String key) async {
+    removeAttachmentCalled = true;
+    lastRemovedAttachmentKey = key;
+    onMutation?.call();
+  }
+
+  @override
+  Future<void> saveAttachmentTo(
+    String uuid,
+    String key,
+    String destPath,
+  ) async {
+    saveAttachmentCalled = true;
+    lastSaveAttachmentUuid = uuid;
+    lastSaveAttachmentKey = key;
+    lastSaveAttachmentDest = destPath;
+    if (saveAttachmentError != null) throw saveAttachmentError!;
+  }
+}
+
+class FakeSecretsRepository implements SecretsRepository {
+  bool revealCalled = false;
+  String? lastRevealUuid;
+  RevealField? lastRevealField;
+  String revealResult = 'revealed-secret';
+  final Map<String, String> revealResultsByField = {};
+  Completer<String>? revealCompleter;
+  Object? revealError;
+  int revealCallCount = 0;
+
+  bool copyCalled = false;
+  String? lastCopyUuid;
+  CopyField? lastCopyField;
+  Object? copyError;
+  GeneratedSecret? lastGeneratedCopy;
+
+  @override
+  Future<void> copyGeneratedSecret(GeneratedSecret result) async {
+    copyCalled = true;
+    lastGeneratedCopy = result;
+    if (copyError case final error?) throw error;
+  }
+
+  @override
+  Future<String> revealField(String uuid, RevealField field) async {
+    revealCalled = true;
+    revealCallCount++;
+    lastRevealUuid = uuid;
+    lastRevealField = field;
+    if (revealError case final error?) throw error;
+    if (revealCompleter case final pending?) return pending.future;
+    return field is RevealFieldCustom
+        ? revealResultsByField[field.name] ?? revealResult
+        : revealResult;
+  }
+
+  @override
+  Future<void> copyEntryField(String uuid, CopyField field) async {
+    copyCalled = true;
+    lastCopyUuid = uuid;
+    lastCopyField = field;
+    if (copyError case final error?) throw error;
+  }
+}
+
+class FakeSearchRepository implements SearchRepository {
+  List<SearchHit> results = [];
+  bool searchCalled = false;
+  SearchOptionsDto? lastOptions;
+
+  @override
+  Future<List<SearchHit>> search(SearchOptionsDto options) async {
+    searchCalled = true;
+    lastOptions = options;
+    return results;
+  }
+}
+
+class FakeTotpRepository implements TotpRepository {
+  final Map<String, TotpCode> codes = {};
+
+  @override
+  TotpCode? totpNow(String uuid) => codes[uuid];
+}
+
+class FakeGeneratorRepository implements GeneratorRepository {
+  bool generatePasswordCalled = false;
+  PasswordOptionsDto? lastPasswordOptions;
+  GeneratedSecret passwordResult = const GeneratedSecret(
+    value: 'xK9#mP2!qL',
+    entropyBits: 65.0,
+  );
+
+  bool generatePassphraseCalled = false;
+  PassphraseOptionsDto? lastPassphraseOptions;
+  GeneratedSecret passphraseResult = const GeneratedSecret(
+    value: 'correct-horse-battery-staple',
+    entropyBits: 77.5,
+  );
+
+  @override
+  Future<GeneratedSecret> generatePassword(PasswordOptionsDto options) async {
+    generatePasswordCalled = true;
+    lastPasswordOptions = options;
+    return passwordResult;
+  }
+
+  @override
+  Future<GeneratedSecret> generatePassphrase(
+    PassphraseOptionsDto options,
+  ) async {
+    generatePassphraseCalled = true;
+    lastPassphraseOptions = options;
+    return passphraseResult;
+  }
+}
+
+class FakeSyncRepository implements SyncRepository {
+  Completer<SyncStatusDto>? statusCompleter;
+  Object? statusError;
+  SyncStatusDto status = const SyncStatusDto(
+    configured: false,
+    inFlight: false,
+  );
+  bool syncNowCalled = false;
+  bool startupSyncCalled = false;
+  bool discoverCalled = false;
+  final List<String> startupOrder = [];
+  bool configureCalled = false;
+  bool startServerCalled = false;
+  bool stopServerCalled = false;
+  bool openPairingWindowCalled = false;
+  bool stopDiscoveryCalled = false;
+  bool cancelSyncCalled = false;
+  bool openDiscoverySettingsCalled = false;
+  LocalSyncRole? configuredRole;
+  LocalEndpoint? manualEndpoint;
+  AppFailure? configureError;
+  AppFailure? discoverError;
+  AppFailure? syncNowError;
+  Completer<void>? syncNowCompleter;
+  LocalDiscoveryStatus discovery = const LocalDiscoveryStatus(
+    permission: LocalDiscoveryPermission.granted,
+    candidates: [LocalEndpoint(address: '192.168.1.10', port: 42873)],
+  );
+  PairingPrompt pairingPrompt = const PairingPrompt(
+    transactionHandle: 'pairing-handle',
+    sas: '123 456',
+  );
+  List<SyncPeer> peers = [];
+  bool beginPairImportCalled = false;
+  String? lastPairImportPassword;
+  AppFailure? beginPairImportError;
+  VaultSummary? pairImportResult;
+
+  final StreamController<SyncEvent> syncController =
+      StreamController<SyncEvent>.broadcast();
+
+  @override
+  Future<SyncStatusDto> syncStatus() async {
+    if (statusError case final error?) throw error;
+    return statusCompleter == null ? status : statusCompleter!.future;
+  }
+
+  @override
+  Future<void> configureLocalSync(LocalSyncRole role) async {
+    configureCalled = true;
+    configuredRole = role;
+    if (configureError != null) throw configureError!;
+    status = SyncStatusDto(configured: true, inFlight: false, role: role);
+  }
+
+  @override
+  Future<LocalDiscoveryStatus> discover(DiscoveryKind kind) async {
+    discoverCalled = true;
+    startupOrder.add('discover');
+    if (discoverError != null) throw discoverError!;
+    return discovery;
+  }
+
+  @override
+  Future<void> openDiscoverySettings() async {
+    openDiscoverySettingsCalled = true;
+  }
+
+  @override
+  Future<void> stopDiscovery() async {
+    stopDiscoveryCalled = true;
+  }
+
+  @override
+  Future<void> setManualEndpoint(LocalEndpoint endpoint) async {
+    manualEndpoint = endpoint;
+    discovery = LocalDiscoveryStatus(
+      permission: LocalDiscoveryPermission.granted,
+      candidates: [endpoint],
+    );
+  }
+
+  @override
+  Future<PairingPrompt> beginPairing() async => pairingPrompt;
+
+  @override
+  Future<PairingPrompt> beginPairImport({
+    required String name,
+    required String masterPassword,
+    KeyfileRef? keyfile,
+  }) async {
+    beginPairImportCalled = true;
+    lastPairImportPassword = masterPassword;
+    if (beginPairImportError != null) throw beginPairImportError!;
+    pairImportResult ??= VaultSummary(
+      name: name,
+      path: '/vaults/$name.kdbx',
+      hasKeyfile: keyfile != null,
+      hasSync: true,
+    );
+    return pairingPrompt;
+  }
+
+  @override
+  Future<VaultSummary?> confirmPairing({
+    required String transactionHandle,
+    required bool accepted,
+    required String peerDisplayName,
+  }) async {
+    if (!accepted) return null;
+    status = SyncStatusDto(
+      configured: true,
+      inFlight: false,
+      role: configuredRole ?? LocalSyncRole.client,
+      paired: true,
+      activePeerCount: 1,
+    );
+    return pairImportResult;
+  }
+
+  @override
+  Future<List<SyncPeer>> listPeers() async => List.of(peers);
+
+  @override
+  Future<void> renamePeer(String peerId, String displayName) async {
+    peers = [
+      for (final peer in peers)
+        if (peer.peerId == peerId)
+          SyncPeer(
+            peerId: peer.peerId,
+            displayName: displayName,
+            revoked: peer.revoked,
+          )
+        else
+          peer,
+    ];
+  }
+
+  @override
+  Future<void> revokePeer(String peerId) async {
+    peers = [
+      for (final peer in peers)
+        if (peer.peerId == peerId)
+          SyncPeer(
+            peerId: peer.peerId,
+            displayName: peer.displayName,
+            revoked: true,
+          )
+        else
+          peer,
+    ];
+  }
+
+  @override
+  Future<List<LocalEndpoint>> serverEndpoints() async => const [
+    LocalEndpoint(address: '192.168.1.10', port: 42873),
+  ];
+
+  @override
+  Future<LocalEndpoint> startServer(LocalEndpoint endpoint) async {
+    startServerCalled = true;
+    status = const SyncStatusDto(
+      configured: true,
+      inFlight: false,
+      role: LocalSyncRole.server,
+      serverEnabled: true,
+      serverRunning: true,
+    );
+    return const LocalEndpoint(address: '192.168.1.10', port: 42873);
+  }
+
+  @override
+  Future<void> stopServer() async {
+    stopServerCalled = true;
+    status = const SyncStatusDto(
+      configured: true,
+      inFlight: false,
+      role: LocalSyncRole.server,
+    );
+  }
+
+  @override
+  Future<void> openPairingWindow() async {
+    openPairingWindowCalled = true;
+  }
+
+  @override
+  Future<void> closePairingWindow() async {}
+
+  @override
+  Future<void> cancelSync() async {
+    cancelSyncCalled = true;
+  }
+
+  @override
+  Future<void> startStartupSync() async {
+    try {
+      await discover(DiscoveryKind.trusted);
+    } finally {
+      startupSyncCalled = true;
+      startupOrder.add('sync');
+    }
+  }
+
+  @override
+  Future<void> syncNow() async {
+    syncNowCalled = true;
+    if (syncNowError != null) throw syncNowError!;
+    await syncNowCompleter?.future;
+  }
+
+  @override
+  Future<void> clearSyncConfig(String name) async {}
+
+  @override
+  Stream<SyncEvent> syncEvents() => syncController.stream;
+
+  void dispose() {
+    unawaited(syncController.close());
+  }
+}
+
+class FakePrefsRepository implements PrefsRepository {
+  UiPrefs prefs = const UiPrefs();
+  bool setPrefsCalled = false;
+  UiPrefs? lastPrefs;
+
+  @override
+  Future<UiPrefs> getPrefs() async => prefs;
+
+  @override
+  Future<void> setPrefs(UiPrefs p) async {
+    setPrefsCalled = true;
+    lastPrefs = p;
+    prefs = p;
+  }
+}
+
+// ---------------------------------------------------------------------------
+// Fixtures
+// ---------------------------------------------------------------------------
+
+final _defaultTree = VaultTree(
+  root: GroupNode(
+    uuid: 'root-uuid',
+    name: 'Root',
+    children: [
+      GroupNode(
+        uuid: 'banking-uuid',
+        name: 'Banking',
+        children: const [],
+        entryCount: BigInt.from(1),
+      ),
+      GroupNode(
+        uuid: 'social-uuid',
+        name: 'Social',
+        children: const [],
+        entryCount: BigInt.from(1),
+      ),
+    ],
+    entryCount: BigInt.from(1),
+  ),
+  entries: [
+    EntrySummary(
+      uuid: 'entry-1',
+      title: 'GitHub',
+      username: 'octocat',
+      url: 'https://github.com',
+      kind: EntryKindDto.credential,
+      hasTotp: true,
+      hasAttachments: false,
+      isExpired: false,
+      groupUuid: 'root-uuid',
+      tags: const ['work'],
+    ),
+    EntrySummary(
+      uuid: 'entry-2',
+      title: 'Bank of Test',
+      username: 'banker',
+      url: 'https://bank.test',
+      kind: EntryKindDto.credential,
+      hasTotp: false,
+      hasAttachments: true,
+      isExpired: false,
+      groupUuid: 'banking-uuid',
+      tags: const ['finance'],
+    ),
+    EntrySummary(
+      uuid: 'entry-3',
+      title: 'Expired Account',
+      username: 'old-user',
+      url: '',
+      kind: EntryKindDto.credential,
+      hasTotp: false,
+      hasAttachments: false,
+      isExpired: true,
+      groupUuid: 'social-uuid',
+      tags: const [],
+    ),
+  ],
+);
+
+EntryDetail _defaultDetail(String uuid) => EntryDetail(
+  uuid: uuid,
+  title: 'GitHub',
+  username: 'octocat',
+  hasPassword: true,
+  url: 'https://github.com',
+  notes: 'Development account',
+  kind: EntryKindDto.credential,
+  tags: const ['work', 'dev'],
+  customFields: const [
+    CustomFieldDto(name: 'pin', isProtected: true),
+    CustomFieldDto(name: 'recovery-email', isProtected: false),
+  ],
+  attachments: const [AttachmentMeta(name: 'backup-codes.txt', sizeBytes: 256)],
+  creationTime: 1700000000,
+  lastModificationTime: 1700100000,
+);

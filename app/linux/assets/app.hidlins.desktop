@@ -1,0 +1,8 @@
+[Desktop Entry]
+Type=Application
+Name=Hidlins
+Comment=Offline-first secrets manager
+Exec=hidlins
+Icon=app.hidlins
+Terminal=false
+Categories=Utility;Security;

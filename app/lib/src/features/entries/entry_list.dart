@@ -1,0 +1,342 @@
+import 'package:material_ui/material_ui.dart';
+import 'package:flutter/services.dart';
+
+import '../../data/models.dart';
+import '../../l10n/app_localizations.dart';
+import '../../ui/tokens.dart';
+import '../../ui/widgets/entry_avatar.dart';
+
+class EntryList extends StatefulWidget {
+  const EntryList({
+    super.key,
+    required this.entries,
+    required this.selectedUuid,
+    required this.onEntrySelected,
+    required this.onCopyUsername,
+    required this.onCopyPassword,
+    this.onEditEntry,
+    this.onDeleteEntry,
+  });
+
+  final List<EntrySummary> entries;
+  final String? selectedUuid;
+  final ValueChanged<String> onEntrySelected;
+  final ValueChanged<String> onCopyUsername;
+  final ValueChanged<String> onCopyPassword;
+  final ValueChanged<String>? onEditEntry;
+  final ValueChanged<String>? onDeleteEntry;
+
+  @override
+  State<EntryList> createState() => _EntryListState();
+}
+
+class _EntryListState extends State<EntryList> {
+  final _focusNode = FocusNode();
+
+  @override
+  void dispose() {
+    _focusNode.dispose();
+    super.dispose();
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    final l10n = AppLocalizations.of(context)!;
+
+    if (widget.entries.isEmpty) {
+      return Center(
+        child: Text(
+          l10n.emptyStateNoEntries,
+          style: Theme.of(context).textTheme.bodyLarge
+              ?.copyWith(color: Theme.of(context).colorScheme.onSurfaceVariant),
+        ),
+      );
+    }
+
+    return Focus(
+      focusNode: _focusNode,
+      autofocus: true,
+      onKeyEvent: _handleKeyEvent,
+      child: ListView.builder(
+        itemCount: widget.entries.length,
+        itemBuilder: (context, index) {
+          final entry = widget.entries[index];
+          return _EntryRow(
+            entry: entry,
+            isSelected: entry.uuid == widget.selectedUuid,
+            onTap: () => widget.onEntrySelected(entry.uuid),
+            onCopyUsername: () => widget.onCopyUsername(entry.uuid),
+            onCopyPassword: () => widget.onCopyPassword(entry.uuid),
+            onEdit: widget.onEditEntry == null
+                ? null
+                : () => widget.onEditEntry!(entry.uuid),
+            onDelete: widget.onDeleteEntry == null
+                ? null
+                : () => widget.onDeleteEntry!(entry.uuid),
+          );
+        },
+      ),
+    );
+  }
+
+  KeyEventResult _handleKeyEvent(FocusNode node, KeyEvent event) {
+    if (event is! KeyDownEvent && event is! KeyRepeatEvent) {
+      return KeyEventResult.ignored;
+    }
+
+    final entries = widget.entries;
+    if (entries.isEmpty) return KeyEventResult.ignored;
+
+    if (event.logicalKey == LogicalKeyboardKey.arrowDown) {
+      final currentIndex = _selectedIndex;
+      final nextIndex = currentIndex == null
+          ? 0
+          : (currentIndex + 1).clamp(0, entries.length - 1);
+      widget.onEntrySelected(entries[nextIndex].uuid);
+      return KeyEventResult.handled;
+    }
+
+    if (event.logicalKey == LogicalKeyboardKey.arrowUp) {
+      final currentIndex = _selectedIndex;
+      final nextIndex = currentIndex == null
+          ? entries.length - 1
+          : (currentIndex - 1).clamp(0, entries.length - 1);
+      widget.onEntrySelected(entries[nextIndex].uuid);
+      return KeyEventResult.handled;
+    }
+
+    if (event.logicalKey == LogicalKeyboardKey.enter) {
+      if (widget.selectedUuid != null) {
+        widget.onEntrySelected(widget.selectedUuid!);
+        return KeyEventResult.handled;
+      }
+    }
+
+    return KeyEventResult.ignored;
+  }
+
+  int? get _selectedIndex {
+    if (widget.selectedUuid == null) return null;
+    final idx = widget.entries.indexWhere((e) => e.uuid == widget.selectedUuid);
+    return idx == -1 ? null : idx;
+  }
+}
+
+class _EntryRow extends StatefulWidget {
+  const _EntryRow({
+    required this.entry,
+    required this.isSelected,
+    required this.onTap,
+    required this.onCopyUsername,
+    required this.onCopyPassword,
+    this.onEdit,
+    this.onDelete,
+  });
+
+  final EntrySummary entry;
+  final bool isSelected;
+  final VoidCallback onTap;
+  final VoidCallback onCopyUsername;
+  final VoidCallback onCopyPassword;
+  final VoidCallback? onEdit;
+  final VoidCallback? onDelete;
+
+  @override
+  State<_EntryRow> createState() => _EntryRowState();
+}
+
+class _EntryRowState extends State<_EntryRow> {
+  bool _hovered = false;
+
+  @override
+  Widget build(BuildContext context) {
+    final colorScheme = Theme.of(context).colorScheme;
+    final l10n = AppLocalizations.of(context)!;
+    final showActions = _hovered || widget.isSelected;
+
+    return Semantics(
+      button: true,
+      selected: widget.isSelected,
+      label: widget.entry.title,
+      child: MenuAnchor(
+        menuChildren: [
+          MenuItemButton(
+            onPressed: widget.onCopyUsername,
+            leadingIcon: const Icon(Icons.person_outline),
+            child: Text(l10n.entryDetailUsername),
+          ),
+          MenuItemButton(
+            onPressed: widget.onCopyPassword,
+            leadingIcon: const Icon(Icons.copy),
+            child: Text(l10n.entryDetailPassword),
+          ),
+          if (widget.onEdit != null)
+            MenuItemButton(
+              onPressed: widget.onEdit,
+              leadingIcon: const Icon(Icons.edit_outlined),
+              child: Text(l10n.actionEdit),
+            ),
+          if (widget.onDelete != null)
+            MenuItemButton(
+              onPressed: widget.onDelete,
+              leadingIcon: const Icon(Icons.delete_outline),
+              child: Text(l10n.actionDelete),
+            ),
+        ],
+        builder: (context, controller, child) => GestureDetector(
+          // Selecting first replaces the compact list with detail and disposes
+          // this menu before a touch user can choose its action.
+          onLongPress: controller.open,
+          onSecondaryTapDown: (_) {
+            widget.onTap();
+            controller.open();
+          },
+          child: child,
+        ),
+        child: MouseRegion(
+          onEnter: (_) => setState(() => _hovered = true),
+          onExit: (_) => setState(() => _hovered = false),
+          child: Material(
+            color: widget.isSelected
+                ? colorScheme.secondaryContainer
+                : Colors.transparent,
+            child: InkWell(
+              onTap: widget.onTap,
+              child: LayoutBuilder(
+                builder: (context, constraints) => Padding(
+                  padding: const EdgeInsets.symmetric(
+                    horizontal: HidlinsSpacing.md,
+                    vertical: HidlinsSpacing.sm,
+                  ),
+                  child: Row(
+                    children: [
+                      EntryAvatar(title: widget.entry.title),
+                      const SizedBox(width: HidlinsSpacing.md),
+                      Expanded(
+                        child: Column(
+                          crossAxisAlignment: CrossAxisAlignment.start,
+                          mainAxisSize: MainAxisSize.min,
+                          children: [
+                            Row(
+                              children: [
+                                Expanded(
+                                  child: Text(
+                                    widget.entry.title,
+                                    style: Theme.of(context)
+                                        .textTheme
+                                        .bodyMedium
+                                        ?.copyWith(fontWeight: FontWeight.w500),
+                                    overflow: TextOverflow.ellipsis,
+                                  ),
+                                ),
+                                if (widget.entry.isExpired)
+                                  Padding(
+                                    padding: const EdgeInsets.only(
+                                      left: HidlinsSpacing.xs,
+                                    ),
+                                    child: Semantics(
+                                      label: l10n.entryDetailExpired,
+                                      child: constraints.maxWidth < 240
+                                          ? Tooltip(
+                                              message: l10n.entryDetailExpired,
+                                              excludeFromSemantics: true,
+                                              child: Icon(
+                                                Icons.event_busy,
+                                                size: 16,
+                                                color: colorScheme.error,
+                                              ),
+                                            )
+                                          : Badge(
+                                              backgroundColor:
+                                                  colorScheme.error,
+                                              label: Text(
+                                                l10n.entryDetailExpired,
+                                                style: TextStyle(
+                                                  color: colorScheme.onError,
+                                                  fontSize: 10,
+                                                ),
+                                              ),
+                                            ),
+                                    ),
+                                  ),
+                              ],
+                            ),
+                            if (widget.entry.username.isNotEmpty)
+                              Text(
+                                widget.entry.username,
+                                style: Theme.of(context).textTheme.bodySmall
+                                    ?.copyWith(
+                                      color: colorScheme.onSurfaceVariant,
+                                    ),
+                                overflow: TextOverflow.ellipsis,
+                              ),
+                          ],
+                        ),
+                      ),
+                      // Hover quick actions are a desktop affordance. Reserving
+                      // their width in a narrow iPad list pane leaves no room
+                      // for the entry title; compact/touch users reach the same
+                      // actions from the detail surface and context menu.
+                      if (constraints.maxWidth >= HidlinsBreakpoints.compact)
+                        IgnorePointer(
+                          ignoring: !showActions,
+                          child: ExcludeFocus(
+                            excluding: !showActions,
+                            child: ExcludeSemantics(
+                              excluding: !showActions,
+                              child: AnimatedOpacity(
+                                opacity: showActions ? 1.0 : 0.0,
+                                duration: HidlinsMotion.resolve(
+                                  context,
+                                  HidlinsMotion.fast,
+                                ),
+                                child: Row(
+                                  mainAxisSize: MainAxisSize.min,
+                                  children: [
+                                    if (widget.entry.username.isNotEmpty)
+                                      Semantics(
+                                        container: true,
+                                        label: l10n.entryDetailUsername,
+                                        button: true,
+                                        onTap: widget.onCopyUsername,
+                                        excludeSemantics: true,
+                                        child: IconButton(
+                                          tooltip: l10n.entryDetailUsername,
+                                          icon: const Icon(
+                                            Icons.person_outline,
+                                            size: 18,
+                                          ),
+                                          onPressed: widget.onCopyUsername,
+                                          visualDensity: VisualDensity.compact,
+                                        ),
+                                      ),
+                                    Semantics(
+                                      container: true,
+                                      label: l10n.entryDetailPassword,
+                                      button: true,
+                                      onTap: widget.onCopyPassword,
+                                      excludeSemantics: true,
+                                      child: IconButton(
+                                        tooltip: l10n.entryDetailPassword,
+                                        icon: const Icon(Icons.copy, size: 18),
+                                        onPressed: widget.onCopyPassword,
+                                        visualDensity: VisualDensity.compact,
+                                      ),
+                                    ),
+                                  ],
+                                ),
+                              ),
+                            ),
+                          ),
+                        ),
+                    ],
+                  ),
+                ),
+              ),
+            ),
+          ),
+        ),
+      ),
+    );
+  }
+}

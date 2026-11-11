@@ -1,0 +1,417 @@
+{
+  "archiveSha256" : "99818bc4dfd16b3ab876d58a7cd3c5edd7ae1274ab42cb9d1ce13f9ad79561d6",
+  "assets" : [
+    {
+      "alphaPolicy" : "canonical-vector-viewBox",
+      "height" : 1024,
+      "path" : "assets/branding/masters/hidlins-mono.svg",
+      "platformUse" : "canonical-master",
+      "sha256" : "3321d328337ede80add2b3e1b5604d144a1c9f2d954c588a0012db11da82a094",
+      "sourceTreatment" : "mono",
+      "transform" : "exact-supplied-svg",
+      "width" : 1024
+    },
+    {
+      "alphaPolicy" : "canonical-vector-viewBox",
+      "height" : 1024,
+      "path" : "assets/branding/masters/hidlins-navy.svg",
+      "platformUse" : "canonical-master",
+      "sha256" : "121a2af618b486fdd1d06400b30afd4d98308499b0c111b195b915a41a5a95f7",
+      "sourceTreatment" : "navy",
+      "transform" : "exact-supplied-svg",
+      "width" : 1024
+    },
+    {
+      "alphaPolicy" : "canonical-vector-viewBox",
+      "height" : 1024,
+      "path" : "assets/branding/masters/hidlins-vintage-dark.svg",
+      "platformUse" : "canonical-master",
+      "sha256" : "efefc2c042f486c82f89a4a49952a19de02493e06c2777af6bd6dbb18099396e",
+      "sourceTreatment" : "vintage-dark",
+      "transform" : "exact-supplied-svg",
+      "width" : 1024
+    },
+    {
+      "alphaPolicy" : "preserve-supplied-alpha",
+      "height" : 1024,
+      "path" : "assets/branding/source/hidlins-navy-1024.png",
+      "platformUse" : "launcher-generation-source",
+      "sha256" : "17f90b3e61c3509cfdf54505ad657a5493231151a52d2ba329871fcfce6d7ab1",
+      "sourceTreatment" : "navy",
+      "transform" : "exact-supplied-raster",
+      "width" : 1024
+    },
+    {
+      "alphaPolicy" : "preserve-supplied-alpha",
+      "height" : 1024,
+      "path" : "assets/branding/source/hidlins-mono-1024.png",
+      "platformUse" : "android-adaptive-generation-source",
+      "sha256" : "f2c5f7dca95d0ff630500e60a1022c1e113904f18643493e9014f6a584983098",
+      "sourceTreatment" : "mono",
+      "transform" : "exact-supplied-raster",
+      "width" : 1024
+    },
+    {
+      "alphaPolicy" : "preserve-supplied-alpha",
+      "height" : 256,
+      "path" : "assets/branding/runtime/hidlins-navy-256.png",
+      "platformUse" : "in-app-light",
+      "sha256" : "2c9cd780f535e47c96eccb7f1c0e952c81ee9a138bab765c116b207020d08256",
+      "sourceTreatment" : "navy",
+      "transform" : "exact-supplied-raster",
+      "width" : 256
+    },
+    {
+      "alphaPolicy" : "preserve-supplied-alpha",
+      "height" : 256,
+      "path" : "assets/branding/runtime/hidlins-vintage-dark-256.png",
+      "platformUse" : "in-app-dark",
+      "sha256" : "22c3a964760e931aedfdd9eca3ae680cff6f58607e0491258d7212eef6aab75a",
+      "sourceTreatment" : "vintage-dark",
+      "transform" : "exact-supplied-raster",
+      "width" : 256
+    },
+    {
+      "alphaPolicy" : "preserve-supplied-alpha",
+      "height" : 16,
+      "path" : "macos/Runner/Assets.xcassets/AppIcon.appiconset/app_icon_16.png",
+      "platformUse" : "macos-app-icon",
+      "sha256" : "af75b2cdcaac50c295dfb4292c2484d4b1f32e798a4bfaef3fb34b465cd9208c",
+      "sourceTreatment" : "navy",
+      "transform" : "exact-supplied-raster",
+      "width" : 16
+    },
+    {
+      "alphaPolicy" : "preserve-supplied-alpha",
+      "height" : 32,
+      "path" : "macos/Runner/Assets.xcassets/AppIcon.appiconset/app_icon_32.png",
+      "platformUse" : "macos-app-icon",
+      "sha256" : "8e7e0a097803af53a1b27b440c8492ab0a1ad1f3c5d5851ed31b7fb9a233c61a",
+      "sourceTreatment" : "navy",
+      "transform" : "exact-supplied-raster",
+      "width" : 32
+    },
+    {
+      "alphaPolicy" : "preserve-supplied-alpha",
+      "height" : 64,
+      "path" : "macos/Runner/Assets.xcassets/AppIcon.appiconset/app_icon_64.png",
+      "platformUse" : "macos-app-icon",
+      "sha256" : "4ee58026ca01d0b313f49ba436f7b47d4e756a335d207dfdeebd7c85a89425a9",
+      "sourceTreatment" : "navy",
+      "transform" : "exact-supplied-raster",
+      "width" : 64
+    },
+    {
+      "alphaPolicy" : "preserve-supplied-alpha",
+      "height" : 128,
+      "path" : "macos/Runner/Assets.xcassets/AppIcon.appiconset/app_icon_128.png",
+      "platformUse" : "macos-app-icon",
+      "sha256" : "a4d186c47ea1d397dcbc436f331431c78cfc40a810905fd26086c7ab5021ee11",
+      "sourceTreatment" : "navy",
+      "transform" : "exact-supplied-raster",
+      "width" : 128
+    },
+    {
+      "alphaPolicy" : "preserve-supplied-alpha",
+      "height" : 256,
+      "path" : "macos/Runner/Assets.xcassets/AppIcon.appiconset/app_icon_256.png",
+      "platformUse" : "macos-app-icon",
+      "sha256" : "2c9cd780f535e47c96eccb7f1c0e952c81ee9a138bab765c116b207020d08256",
+      "sourceTreatment" : "navy",
+      "transform" : "exact-supplied-raster",
+      "width" : 256
+    },
+    {
+      "alphaPolicy" : "preserve-supplied-alpha",
+      "height" : 512,
+      "path" : "macos/Runner/Assets.xcassets/AppIcon.appiconset/app_icon_512.png",
+      "platformUse" : "macos-app-icon",
+      "sha256" : "08453087ff394e281789ebb55ace9cc6b624d675261e6206a60171bd4149f2a6",
+      "sourceTreatment" : "navy",
+      "transform" : "exact-supplied-raster",
+      "width" : 512
+    },
+    {
+      "alphaPolicy" : "preserve-supplied-alpha",
+      "height" : 1024,
+      "path" : "macos/Runner/Assets.xcassets/AppIcon.appiconset/app_icon_1024.png",
+      "platformUse" : "macos-app-icon",
+      "sha256" : "17f90b3e61c3509cfdf54505ad657a5493231151a52d2ba329871fcfce6d7ab1",
+      "sourceTreatment" : "navy",
+      "transform" : "exact-supplied-raster",
+      "width" : 1024
+    },
+    {
+      "alphaPolicy" : "opaque-required",
+      "height" : 20,
+      "path" : "ios/Runner/Assets.xcassets/AppIcon.appiconset/Icon-App-20x20@1x.png",
+      "platformUse" : "ios-app-icon",
+      "sha256" : "0d98dd1db6ec7ff72632ec531958cf908ea2d86fb4a4a7be207650e3b5a9f8c3",
+      "sourceTreatment" : "navy",
+      "transform" : "CoreGraphics resize; flatten #172B3A beneath supplied navy 1024",
+      "width" : 20
+    },
+    {
+      "alphaPolicy" : "opaque-required",
+      "height" : 40,
+      "path" : "ios/Runner/Assets.xcassets/AppIcon.appiconset/Icon-App-20x20@2x.png",
+      "platformUse" : "ios-app-icon",
+      "sha256" : "a2922ad0e07b7fc5d32faf1307b31fd26e699e5b1a1e208e9fc1ab038200f031",
+      "sourceTreatment" : "navy",
+      "transform" : "CoreGraphics resize; flatten #172B3A beneath supplied navy 1024",
+      "width" : 40
+    },
+    {
+      "alphaPolicy" : "opaque-required",
+      "height" : 60,
+      "path" : "ios/Runner/Assets.xcassets/AppIcon.appiconset/Icon-App-20x20@3x.png",
+      "platformUse" : "ios-app-icon",
+      "sha256" : "a2e47aa18d019218f0174680e028fce7db25206dafd70d1dfb91ef883a30802f",
+      "sourceTreatment" : "navy",
+      "transform" : "CoreGraphics resize; flatten #172B3A beneath supplied navy 1024",
+      "width" : 60
+    },
+    {
+      "alphaPolicy" : "opaque-required",
+      "height" : 29,
+      "path" : "ios/Runner/Assets.xcassets/AppIcon.appiconset/Icon-App-29x29@1x.png",
+      "platformUse" : "ios-app-icon",
+      "sha256" : "46714be7d3728ecb652cd1cdb7a8f15b071fb0e769286865524929e0c174e0d0",
+      "sourceTreatment" : "navy",
+      "transform" : "CoreGraphics resize; flatten #172B3A beneath supplied navy 1024",
+      "width" : 29
+    },
+    {
+      "alphaPolicy" : "opaque-required",
+      "height" : 58,
+      "path" : "ios/Runner/Assets.xcassets/AppIcon.appiconset/Icon-App-29x29@2x.png",
+      "platformUse" : "ios-app-icon",
+      "sha256" : "6fcf77f994fd161417f8cdde049f19b7faf19af8bc8747fc3ae6c13444c01552",
+      "sourceTreatment" : "navy",
+      "transform" : "CoreGraphics resize; flatten #172B3A beneath supplied navy 1024",
+      "width" : 58
+    },
+    {
+      "alphaPolicy" : "opaque-required",
+      "height" : 87,
+      "path" : "ios/Runner/Assets.xcassets/AppIcon.appiconset/Icon-App-29x29@3x.png",
+      "platformUse" : "ios-app-icon",
+      "sha256" : "1c5ff98ee8d711fb99676e3feaeb56b4de0e0cc3993d57d94f3d5a6eb30ac941",
+      "sourceTreatment" : "navy",
+      "transform" : "CoreGraphics resize; flatten #172B3A beneath supplied navy 1024",
+      "width" : 87
+    },
+    {
+      "alphaPolicy" : "opaque-required",
+      "height" : 40,
+      "path" : "ios/Runner/Assets.xcassets/AppIcon.appiconset/Icon-App-40x40@1x.png",
+      "platformUse" : "ios-app-icon",
+      "sha256" : "a2922ad0e07b7fc5d32faf1307b31fd26e699e5b1a1e208e9fc1ab038200f031",
+      "sourceTreatment" : "navy",
+      "transform" : "CoreGraphics resize; flatten #172B3A beneath supplied navy 1024",
+      "width" : 40
+    },
+    {
+      "alphaPolicy" : "opaque-required",
+      "height" : 80,
+      "path" : "ios/Runner/Assets.xcassets/AppIcon.appiconset/Icon-App-40x40@2x.png",
+      "platformUse" : "ios-app-icon",
+      "sha256" : "f738d7dd37d89e852cd24253b073084c8039e9b08dce9bc4f9005457c60c1449",
+      "sourceTreatment" : "navy",
+      "transform" : "CoreGraphics resize; flatten #172B3A beneath supplied navy 1024",
+      "width" : 80
+    },
+    {
+      "alphaPolicy" : "opaque-required",
+      "height" : 120,
+      "path" : "ios/Runner/Assets.xcassets/AppIcon.appiconset/Icon-App-40x40@3x.png",
+      "platformUse" : "ios-app-icon",
+      "sha256" : "2c210908383bb71294666989232f3b2508106944448aee4ae45199d857405e55",
+      "sourceTreatment" : "navy",
+      "transform" : "CoreGraphics resize; flatten #172B3A beneath supplied navy 1024",
+      "width" : 120
+    },
+    {
+      "alphaPolicy" : "opaque-required",
+      "height" : 120,
+      "path" : "ios/Runner/Assets.xcassets/AppIcon.appiconset/Icon-App-60x60@2x.png",
+      "platformUse" : "ios-app-icon",
+      "sha256" : "2c210908383bb71294666989232f3b2508106944448aee4ae45199d857405e55",
+      "sourceTreatment" : "navy",
+      "transform" : "CoreGraphics resize; flatten #172B3A beneath supplied navy 1024",
+      "width" : 120
+    },
+    {
+      "alphaPolicy" : "opaque-required",
+      "height" : 180,
+      "path" : "ios/Runner/Assets.xcassets/AppIcon.appiconset/Icon-App-60x60@3x.png",
+      "platformUse" : "ios-app-icon",
+      "sha256" : "2555944b3f18d2071e27c1fb47b992caf9940b129d421ff81dccac24503d15dc",
+      "sourceTreatment" : "navy",
+      "transform" : "CoreGraphics resize; flatten #172B3A beneath supplied navy 1024",
+      "width" : 180
+    },
+    {
+      "alphaPolicy" : "opaque-required",
+      "height" : 76,
+      "path" : "ios/Runner/Assets.xcassets/AppIcon.appiconset/Icon-App-76x76@1x.png",
+      "platformUse" : "ios-app-icon",
+      "sha256" : "ecb09dc99647f71d20e1617a4db3b0c409ac8340463e35b95119295cb817dd8c",
+      "sourceTreatment" : "navy",
+      "transform" : "CoreGraphics resize; flatten #172B3A beneath supplied navy 1024",
+      "width" : 76
+    },
+    {
+      "alphaPolicy" : "opaque-required",
+      "height" : 152,
+      "path" : "ios/Runner/Assets.xcassets/AppIcon.appiconset/Icon-App-76x76@2x.png",
+      "platformUse" : "ios-app-icon",
+      "sha256" : "cd1d619d55bfc4dfa2c7705f280aaf3118a49e3e1790fe771bfb0d800d9d44b9",
+      "sourceTreatment" : "navy",
+      "transform" : "CoreGraphics resize; flatten #172B3A beneath supplied navy 1024",
+      "width" : 152
+    },
+    {
+      "alphaPolicy" : "opaque-required",
+      "height" : 167,
+      "path" : "ios/Runner/Assets.xcassets/AppIcon.appiconset/Icon-App-83.5x83.5@2x.png",
+      "platformUse" : "ios-app-icon",
+      "sha256" : "bae6068bfd7df880de6deb151faf3bb8baaf181f8ef92ec9f68f3fbf7a2917aa",
+      "sourceTreatment" : "navy",
+      "transform" : "CoreGraphics resize; flatten #172B3A beneath supplied navy 1024",
+      "width" : 167
+    },
+    {
+      "alphaPolicy" : "opaque-required",
+      "height" : 1024,
+      "path" : "ios/Runner/Assets.xcassets/AppIcon.appiconset/Icon-App-1024x1024@1x.png",
+      "platformUse" : "ios-app-icon",
+      "sha256" : "c956a49bef74696b7c3989fafe53fb3bf28d3048b70ec8fe3e7e0f5058105bfd",
+      "sourceTreatment" : "navy",
+      "transform" : "CoreGraphics resize; flatten #172B3A beneath supplied navy 1024",
+      "width" : 1024
+    },
+    {
+      "alphaPolicy" : "preserve-supplied-alpha",
+      "height" : 168,
+      "path" : "ios/Runner/Assets.xcassets/LaunchImage.imageset/LaunchImage.png",
+      "platformUse" : "ios-launch-screen",
+      "sha256" : "c8f8ec8ab2a008b988acdb2ede2a8a1224c3a24e33a652ecee58cb9d104c910b",
+      "sourceTreatment" : "navy",
+      "transform" : "CoreGraphics resize from supplied navy 1024",
+      "width" : 168
+    },
+    {
+      "alphaPolicy" : "preserve-supplied-alpha",
+      "height" : 336,
+      "path" : "ios/Runner/Assets.xcassets/LaunchImage.imageset/LaunchImage@2x.png",
+      "platformUse" : "ios-launch-screen",
+      "sha256" : "be4a9f53844bf4fd061f01eb3ba27e0de0d89a1a07c0e04a91cab3a397a55adb",
+      "sourceTreatment" : "navy",
+      "transform" : "CoreGraphics resize from supplied navy 1024",
+      "width" : 336
+    },
+    {
+      "alphaPolicy" : "preserve-supplied-alpha",
+      "height" : 504,
+      "path" : "ios/Runner/Assets.xcassets/LaunchImage.imageset/LaunchImage@3x.png",
+      "platformUse" : "ios-launch-screen",
+      "sha256" : "c9574af86520b80973e6505902a935ef85e033a7745c58ef5824bd3cff00b82d",
+      "sourceTreatment" : "navy",
+      "transform" : "CoreGraphics resize from supplied navy 1024",
+      "width" : 504
+    },
+    {
+      "alphaPolicy" : "preserve-supplied-alpha",
+      "height" : 48,
+      "path" : "android/app/src/main/res/mipmap-mdpi/ic_launcher.png",
+      "platformUse" : "android-legacy-launcher",
+      "sha256" : "33b44e1aaf4649044ab2cad4506506226a8bc5a70ea4940d6871a2efd093c4e6",
+      "sourceTreatment" : "navy",
+      "transform" : "CoreGraphics resize from supplied navy 1024",
+      "width" : 48
+    },
+    {
+      "alphaPolicy" : "preserve-supplied-alpha",
+      "height" : 72,
+      "path" : "android/app/src/main/res/mipmap-hdpi/ic_launcher.png",
+      "platformUse" : "android-legacy-launcher",
+      "sha256" : "df377a3f434bf683cd586b16351e253855e3931461aa035dcbba0a9f97c6f9a1",
+      "sourceTreatment" : "navy",
+      "transform" : "CoreGraphics resize from supplied navy 1024",
+      "width" : 72
+    },
+    {
+      "alphaPolicy" : "preserve-supplied-alpha",
+      "height" : 96,
+      "path" : "android/app/src/main/res/mipmap-xhdpi/ic_launcher.png",
+      "platformUse" : "android-legacy-launcher",
+      "sha256" : "bd2d24926c5bb90e0af18881a17bcc1ab4ea422217b4b2d7f50418e950026a7b",
+      "sourceTreatment" : "navy",
+      "transform" : "CoreGraphics resize from supplied navy 1024",
+      "width" : 96
+    },
+    {
+      "alphaPolicy" : "preserve-supplied-alpha",
+      "height" : 144,
+      "path" : "android/app/src/main/res/mipmap-xxhdpi/ic_launcher.png",
+      "platformUse" : "android-legacy-launcher",
+      "sha256" : "7de776ce826ab2a30460685b84c80ffdb42f0d3fa1da27c3d7bdf25ecbfc04a8",
+      "sourceTreatment" : "navy",
+      "transform" : "CoreGraphics resize from supplied navy 1024",
+      "width" : 144
+    },
+    {
+      "alphaPolicy" : "preserve-supplied-alpha",
+      "height" : 192,
+      "path" : "android/app/src/main/res/mipmap-xxxhdpi/ic_launcher.png",
+      "platformUse" : "android-legacy-launcher",
+      "sha256" : "1b20471e5f7a15edaf754e5918e349c6d847d03779965bd54236d6fe8ce89e85",
+      "sourceTreatment" : "navy",
+      "transform" : "CoreGraphics resize from supplied navy 1024",
+      "width" : 192
+    },
+    {
+      "alphaPolicy" : "transparent-safe-zone",
+      "height" : 1024,
+      "path" : "android/app/src/main/res/drawable-nodpi/ic_launcher_foreground.png",
+      "platformUse" : "android-adaptive-foreground",
+      "sha256" : "197624f182502a7f20b1cb4021c40423bb66d03199ca49f68e8fff8bffc058a1",
+      "sourceTreatment" : "mono",
+      "transform" : "CoreGraphics scale supplied mono 1024 to 66%; center on transparent canvas",
+      "width" : 1024
+    },
+    {
+      "alphaPolicy" : "preserve-supplied-alpha",
+      "height" : 16,
+      "path" : "linux/assets/icons/app.hidlins-16.png",
+      "platformUse" : "linux-window-and-hicolor-icon",
+      "sha256" : "af75b2cdcaac50c295dfb4292c2484d4b1f32e798a4bfaef3fb34b465cd9208c",
+      "sourceTreatment" : "navy",
+      "transform" : "exact-supplied-raster",
+      "width" : 16
+    },
+    {
+      "alphaPolicy" : "preserve-supplied-alpha",
+      "height" : 32,
+      "path" : "linux/assets/icons/app.hidlins-32.png",
+      "platformUse" : "linux-window-and-hicolor-icon",
+      "sha256" : "8e7e0a097803af53a1b27b440c8492ab0a1ad1f3c5d5851ed31b7fb9a233c61a",
+      "sourceTreatment" : "navy",
+      "transform" : "exact-supplied-raster",
+      "width" : 32
+    },
+    {
+      "alphaPolicy" : "preserve-supplied-alpha",
+      "height" : 256,
+      "path" : "linux/assets/icons/app.hidlins-256.png",
+      "platformUse" : "linux-window-and-hicolor-icon",
+      "sha256" : "2c9cd780f535e47c96eccb7f1c0e952c81ee9a138bab765c116b207020d08256",
+      "sourceTreatment" : "navy",
+      "transform" : "exact-supplied-raster",
+      "width" : 256
+    }
+  ],
+  "generator" : "tools/dev/generate-brand-assets.swift",
+  "schemaVersion" : 1
+}

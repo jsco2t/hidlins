@@ -1,0 +1,181 @@
+# Hidlins
+
+Hidlins (Scots: "in secret, in hiding", pronounced HID-linz) is an offline-first secrets manager built on a Rust core with thin cross-platform UIs. Vaults are stored in the KDBX (KeePass) format via the `keepass-rs` crate, so every Hidlins vault is directly interoperable with KeePassXC, KeeWeb, KeePass2, and mobile KDBX clients. Sync runs only over private/local network addresses with authenticated device pairing and in-app three-way merge at the entry level.
+
+**License:** MIT. **Status:** Phase-0 MVP code-complete; optional non-gating accessibility observations remain.
+
+## Planning docs (authoritative)
+
+Engineering plans live outside this repo in the project documentation workspace. Read these when scoping work — do not duplicate them here.
+
+- **PRD:** `$HOME/Developer/sources/personal/projects/hidlins/prd.md` — the product spec; section IDs (FR-xxx, NFR-xxx) are referenced throughout the plans.
+- **Project index:** `$HOME/Developer/sources/personal/projects/hidlins/index.md`
+- **Verifications (user scenarios):** `…/hidlins/verifications/` — every Must-Have FR maps to a US-xxx scenario.
+- **Knowledge base:** `…/hidlins/kb/` — KDBX format, three-way merge algorithm, memory hygiene, supply-chain policy, library notes.
+- **Features:** `…/hidlins/features/<slug>/` — per-feature implementation plan, design, task plan, follow-ups. First feature: `features/vault-core/`.
+
+When implementing a feature, the corresponding `plans/implementation-plan.md` and `plans/design.md` are the source of truth for that feature's scope and architecture.
+
+## Architecture posture
+
+- **Rust core, thin UIs.** All business logic and crypto live in the Rust core library. CLI and TUI are presentation layers over the same core. Future Flutter UIs (Phase 1+) bind to the same core via FFI. No UI-layer logic leaks into the core.
+- **TUI is the reference UX.** Every feature lands in the TUI with full keyboard parity before any GUI work begins. CLI provides one-shot scriptable access to every core operation.
+- **Offline-first.** Every feature works without network. Sync is opt-in and operates on top of the offline core — never a precondition.
+- **Sync trait abstraction.** Local-network client/server code implements the shared `SyncTransport` contract. CRUD and merge logic stay transport-agnostic; address admission, discovery, Noise authentication, identity pinning, and authority behavior live in the Rust sync crate.
+
+## Engineering principles
+
+1. **KDBX interop is a product promise, not an implementation detail.** A Hidlins vault must round-trip through KeePassXC (≥2.7) with zero observable data loss. Any custom data written into a vault must be readable by a standards-compliant KDBX client. Round-trip CI tests gate every change to the vault layer.
+2. **Test-forward means test-before-fix.** For every behavior defect, first add or strengthen the smallest regression test that demonstrates the failure, record the red result, implement the minimum repair, and record the green result before refactoring. Architecture-only refactors require characterization or invariant tests before responsibilities move. A code task is not complete merely because tests exist or the aggregate suite passes; its evidence must identify the fail-before/pass-after sequence. If a change is genuinely non-code or cannot meaningfully produce a failing test, document why and name the static or manual validation used instead. Every Must-Have FR also has at least one automated test AND one user-scenario verification in `$HOME/Developer/sources/personal/projects/hidlins/verifications/`. Property-based / fuzz tests for the merge engine and fault-injection tests for atomic writes are first-class deliverables, not nice-to-haves.
+3. **Simplicity over cleverness.** Prefer obvious code, narrow abstractions, and well-trodden patterns. Don't introduce generality for hypothetical future requirements. Three similar lines beats a premature abstraction.
+4. **No data loss, ever.** During sync conflicts, the loser is preserved as a KDBX history entry under the same UUID. Atomic writes (write-then-rename) ensure a crash never leaves a corrupted vault. Pre-merge state is kept as `.kdbx.bak`.
+5. **Honest about limits.** Document platform limitations (encrypted swap, `mlock` quotas, OS lock-event reliability) rather than papering over them. Cosmic-ray paranoia (Rowhammer, cold-boot DMA) is explicitly out of scope.
+6. **Limited External Dependencies** Only add external dependencies when it is very clear they solve a major gap in functionality. For minor features it's worth evaluating writing the code directly in the repo (vs adding N more dependencies).
+
+## Security rules (non-negotiable)
+
+- **Zeroize on drop** for every type holding sensitive bytes (master keys, derived keys, entry passwords, master-password input buffers). Use `zeroize::ZeroizeOnDrop`.
+- **`mlock` the master key** where the platform supports it (best-effort; quotas are small, so don't lock everything).
+- **No plaintext to disk, ever.** The unlocked KDBX is never serialized in plaintext. Never log entry contents. Never include secret material in error messages.
+- **Master password collection: secure stdin prompt only.** Never accept on the command line, never accept as an env var (leaks via shell history / `ps`).
+- **No master-password recovery.** Warn at vault creation; there is no escrow, backdoor, or recovery service.
+- **Atomic writes.** Always write to a sibling temp file and `rename(2)`. Never truncate the live vault.
+- **Advisory file locking** coordinates concurrent CLI/TUI/agent processes. Concurrent reads OK; writes serialized.
+- **Disable core dumps** for the agent and TUI (`setrlimit(RLIMIT_CORE, 0)`).
+- **No telemetry, no analytics, no crash reporting, no update checks.** The only network calls are user-configured sync.
+- **No hand-rolled crypto.** Cryptography comes from `keepass-rs` and the RustCrypto family (Argon2, AES, HMAC, SHA). KDBX4 KDF is Argon2id, tuned to ~1s on target hardware.
+- **CSPRNG only.** Password generation uses `OsRng` from `rand`.
+
+## Supply chain rules (non-negotiable)
+
+- **Minimize external dependencies — actively and audibly.** Before adding, upgrading, or retaining a direct dependency for new work, record its purpose, exact license, meaningful transitive cost, maintenance signal, narrower alternatives, and whether a small in-repository implementation can safely replace it. Before removing or reimplementing a dependency, pin its required behavior with tests. Prefer deletion, feature reduction, or a small well-specified in-repository implementation when that is simpler to test and maintain than the dependency plus its transitives. Do not hand-roll cryptography, TLS, KDBX parsing/writing, authentication primitives, or other security-sensitive machinery; use the narrowest established crate that closes the actual gap.
+- **Permissive production licenses; one development-only NCSA exception:** MIT, Apache-2.0, BSD-2/3-Clause, ISC, Zlib, Unlicense, CC0-1.0, Unicode-3.0, and Unicode-DFS-2016 are allowed generally. NCSA is allowed only for the exact pinned `libfuzzer-sys 0.4.13` dependency in the isolated `fuzz/` workspace, and only for development/testing. No CLI, TUI, agent, Flutter desktop, iOS, Android, or other packaged/distributed application may contain NCSA-licensed code. Root `deny.toml` continues to reject NCSA; `fuzz/deny.toml` owns the single crate/version exception; `make ncsa-boundary-check` enforces workspace, lockfile, production-graph, packaging-hook, and artifact boundaries with negative controls. Verify the exact license before executing newly obtained dependency code or writing code against it. Any other forbidden, ambiguous, missing, unverified, or linking-exception license blocks the change. Never weaken either policy or its boundary gate to rationalize a dependency.
+- **Exact EFF asset exception (approved 2026-11-03):** The EFF Large Wordlist at `crates/hidlins-genpw/src/assets/eff_large_wordlist.txt`, SHA-256 `addd35536511597a02fa0a9ff1e5284677b8883b83e986e43f15a3db996b903e`, is permitted under CC-BY-4.0 solely as an embedded non-code asset. Preserve attribution to Joseph Bonneau and the Electronic Frontier Foundation, source and license links, and the unmodified-copy notice in `crates/hidlins-genpw/LICENSES/EFF-wordlist-NOTICE.txt`. Ship it through CLI/TUI help and the Flutter license page. `make asset-license-check` guards the exact bytes, policy and packaged notices. This permits no other asset, dependency or code license; neither Cargo license allow-list is broadened.
+- **Forbidden:** GPL-2.0, GPL-3.0, LGPL-2.1/3.0, AGPL-3.0, **EPL-1.0, EPL-2.0 (Eclipse Public License, including JUnit)**, SSPL, Commons Clause, anything copyleft. **GPL-with-linking-exception is also forbidden** (e.g., libgit2 — the ambiguity isn't worth it; `git2` / `libgit2-sys` are explicitly banned in `deny.toml`).
+- **No JUnit or Eclipse Public License exception for development/testing or metadata.** Do not add, retain, vendor, pin, or approve JUnit/EPL dependencies, runners, adapters, BOMs, or POM/Gradle metadata, including transitive build-tool dependencies. A checksum or metadata-only use is not an exception. Remove the dependency path and preserve its required behavior with permitted tools or first-party tests instead. `make android-dependency-check` enforces JUnit removal; `make ci-toolchain-check` guards the explicit EPL ban and both Rust license policies.
+- **Pinned exact versions.** `Cargo.lock` is the source of truth and is committed.
+- **Vendored dependency tree.** All crates vendored at `vendor/` via `cargo vendor`. Builds run `--offline` / `CARGO_NET_OFFLINE=true`.
+- **No Git submodules or embedded repositories — no exceptions.** Checked-in dependencies must be ordinary reviewed files in this repository; never add a gitlink (mode `160000`), a `.gitmodules` file, or a nested checkout as a dependency. Downloaded SDKs, toolchains, and source checkouts belong outside the repository or in an explicitly ignored scratch directory such as `.codex-tmp/`. Before committing, treat Git's “adding embedded git repository” warning as a hard failure and remove the path from the index rather than converting it to a submodule.
+- **Off-target vendored sources are unavoidable; budget for them.** `Cargo.lock` is target-agnostic, so platform-conditional sources may be vendored even when they are not compiled for shipped targets. Audit only the supported target matrix and keep every direct dependency narrowly justified, exact-pinned, feature-reduced, and vendored.
+- **No build-script networking.** Dependencies' `build.rs` must not fetch anything or shell out to undocumented executables.
+- **Dependency-add/upgrade/removal checklist** (documented in task evidence or the PR description): purpose, exact license, upstream maintenance signal, popularity baseline, transitive footprint, feature reduction, diff review of vendored sources, behavior-preserving tests for removal, and an honest assessment of whether a small non-security capability should live in-repository instead.
+- **Enforcement:** `cargo deny` for license + advisory + banned crates; `cargo audit` for RustSec advisories. Both are CI gates.
+
+## Technical constraints
+
+- **Language:** Rust. No `unsafe` outside well-justified, locally-audited blocks. No FFI in the core (FFI lives at UI boundaries only).
+- **Target platforms (Phase 0):** macOS (aarch64 + x86_64) and Linux (x86_64 + aarch64). Windows is not a Phase 0 target.
+- **Storage format:** KDBX4 (write); KDBX3 (read, for migration). No proprietary format.
+- **State / vault default directory:** `$HOME/.local/state/hidlins/` on both macOS and Linux (deliberately consistent — not following macOS `Application Support/`). Per-vault override allowed.
+- **Vault registration:** TOML at `$HOME/.local/state/hidlins/vaults.toml`.
+- **Key libraries (locked in):**
+  - `keepass-rs` (MIT) — KDBX read/write.
+  - `zeroize` (MIT/Apache-2.0) — memory hygiene.
+  - `rand` / `OsRng` (MIT/Apache-2.0) — CSPRNG.
+  - `clap` (MIT/Apache-2.0) — CLI parsing.
+  - `ratatui` (MIT) — TUI framework.
+  - RustCrypto family — crypto primitives.
+- **Local sync transport:** Noise-authenticated connections over private/local IP ranges only, with secure discovery and pinned per-vault identities. Addresses outside the fixed private/local allowlist are rejected; no override is available.
+
+## Build system
+
+**`make` is the build system of record.** Every developer-facing workflow — build, test, lint, format, vendor, supply-chain audit, docs — has a target in the top-level [`Makefile`](Makefile). Developer workstations and CI run identical commands by going through `make`; raw `cargo` invocations are reserved for ad-hoc exploration. Run `make` (or `make help`) to list every target.
+
+The canonical targets:
+
+| Target              | What it does                                                                                            |
+| ------------------- | ------------------------------------------------------------------------------------------------------- |
+| `make toolchain`    | One-time dev bootstrap: Rust (via `rustup`), `keepassxc-cli`, `cargo-deny`/`audit` (x-plat, idempotent) |
+| `make build`        | `cargo build --workspace --offline --locked`                                                            |
+| `make test`         | Default-parallel tests (`--offline --locked`)                                                           |
+| `make test-ignored` | `#[ignore]`d tests, serial (`--test-threads=1`) — env-mutating tests, etc.                              |
+| `make test-all`     | Both of the above                                                                                       |
+| `make fmt`          | Auto-format the workspace                                                                               |
+| `make fmt-check`    | Format check (CI gate)                                                                                  |
+| `make lint`         | `cargo clippy ... -- -D warnings` (CI gate)                                                             |
+| `make lint-fix`     | Apply safe clippy suggestions                                                                           |
+| `make check`        | `fmt-check` + `lint` + `build` + `test` (the full local CI gate)                                        |
+| `make deny`         | `cargo deny check` (license + advisory + bans)                                                          |
+| `make audit`        | `cargo audit` (RustSec advisories)                                                                      |
+| `make doc`          | Generate API docs (`cargo doc --no-deps --offline`)                                                     |
+| `make vendor`       | Re-vendor deps (the only target that needs network)                                                     |
+| `make clean`        | Remove build artifacts                                                                                  |
+
+### Keeping the Makefile up to date — a project rule
+
+**When new functionality introduces a new developer or CI command, add a corresponding `make` target in the same change.** This includes:
+
+- A new lint, formatter, or static-analysis pass.
+- A new test runner or test category (benchmarks, fuzzers, property-based, integration harnesses).
+- A new code-generation step.
+- A new shell-script harness (e.g., Phase-6 `tools/interop-tests/`).
+- A new release / packaging / signing step.
+
+Two reasons this rule is non-negotiable:
+
+1. **Discoverability.** Every workflow lives in `make help`; no command exists only inside someone's shell history, a CI YAML, or a commit message.
+2. **CI / dev parity.** CI invokes `make`, so anything CI does is reproducible locally with the same target name. The day a CI step diverges from a `make` target is the day "works on my machine" becomes possible.
+
+Concretely: if a PR adds a `run: cargo ...` (or any shell command) to a CI workflow, the equivalent `make` target must land in the same PR. The Phase-6 tasks T6.2 (interop-tests harness), T6.3 (CI matrix completion), and T6.4 (KDF benchmark) will each add Makefile targets.
+
+If a target's command becomes long or grows multiple cases, prefer adding flag variables (`CLIPPY_FLAGS`, etc.) over inlining; keeps the recipe readable and the variation surface visible.
+
+## CLI conventions
+
+- One-shot subcommands for every core operation.
+- `--format json` for machine-readable output; secrets emitted only with explicit flags (e.g., `entry get --show-password`).
+- Stable, documented exit codes: `0` success, `1` user error, `2` vault locked / auth failure, `3` sync conflict requiring user, `10+` internal errors.
+- Shell completions for bash, zsh, fish produced by the build.
+
+## Performance targets
+
+- Vault open (Argon2id decrypt + parse, ≤500 entries) <500ms on M1 Mac / mid-tier x86_64 Linux.
+- Search across an unlocked vault <50ms for ≤5,000 entries.
+
+## Repo state
+
+**Phase 0 progress (as of 2026-08-31): MVP complete.** All six MVP-critical
+features and their deterministic verification are implemented. Optional
+real-terminal and platform screen-reader acceptance cases remain documented as
+non-gating confidence checks and have not been executed.
+
+- **`vault-core`: complete.** KDBX read/write wrapper, vault registration, master-password unlock, atomic writes, advisory locking (20/20 tasks).
+- **`entry-management`: complete.** CRUD across credential / secure-note / TOTP / attachment types; groups; tags; search; history (16/16 tasks).
+- **`password-generation`: complete.** Random + EFF diceware via `getrandom` (11/11 tasks).
+- **`security-behaviors`: complete.** Idle auto-lock, OS lock events (`LogindSource`/`IoKitSource`), clipboard auto-clear (12/12 tasks, all 5 phases).
+- **`cli-skeleton`: complete.** `clap`-based one-shot subcommands, secure-stdin prompt, JSON output, stable exit codes, shell completions (all 4 phases).
+- **`local-network-sync`: active.** Secure discovery, pairing, authenticated client/server synchronization, and all application surfaces are implemented.
+- **`tui-skeleton`: complete.** `ratatui` tabbed-workspace shell — unlock,
+  navigable tree, scrollable multi-type detail, action overlays
+  (search/edit/generate/history), pinned tabs, MRU recents, Settings + live
+  `hidlins-sync` local pairing, sync, peer-management, and server controls (32/32 tasks; all
+  7 phases). Deterministic journeys and accessibility semantics run in-process
+  through Ratatui's test backend; optional Linux Orca/AT-SPI and macOS VoiceOver
+  cases remain external, non-gating, and unexecuted.
+
+**Open by design (not gating MVP code-completion):** the `pre-mvp-fixes` bucket (5/5 — all fixed as of 2026-06-11; see `features/index.md`) and the post-MVP `ssh-keys` + `agent` features (not yet planned).
+
+See `…/features/index.md` for the per-feature rollup and each feature's `tasks/index.md` for live task-tracking tables.
+
+## No deferred work
+
+**Never defer, skip, or stub out work without explicitly asking the user first.** If a task's acceptance criteria cannot be fully met — because a dependency is missing, an API doesn't exist yet, a crate needs adding — stop and ask. Do not silently mark items as "wiring-pending", "deferred to follow-up", "lands later", or "simplified version". If implementing the full requirement requires adding a dependency, writing more code, or solving a harder problem, do that work rather than shipping a stub. If it is genuinely impossible, say so up front as the first thing communicated, not buried in a report footnote.
+
+## Git commit messages
+
+Never include `Claude-Session:` lines, session URLs, or any Claude/AI attribution metadata in commit messages. Commit messages describe the change — they are not a place for tool provenance.
+
+## Shell command style
+
+Prefer running commands as seperate Bash tool calls rather than chaining them with `&&`, `||`, `;`,
+or pipes. Each command should be its own invocation so the permission matcher can authorize them
+individual.
+
+Exceptions where chaining is fine:
+
+- Pipes that are part of a single logical operation (`grep ... | wc -l`, `cat foo | jq .bar`) - these
+  only make sense as one command.
+
+- `cd <dir> && <cmd>` when the directory change must scope to that one command and not persist.
+
+When in doubt, run them separately.

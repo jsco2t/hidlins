@@ -1,0 +1,130 @@
+[package]
+name = "hidlins-sync"
+description = "Secure local-network synchronization and no-data-loss KDBX merge for Hidlins."
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+authors.workspace = true
+repository.workspace = true
+rust-version.workspace = true
+
+[lints]
+workspace = true
+
+[features]
+# `test-helpers` exposes test-only types ([`transport::memory::MemoryTransport`])
+# under `pub` so other workspace crates' integration tests can consume them
+# without each duplicating an in-memory `SyncTransport` impl. Without the
+# feature, these types are visible only inside this crate's own `#[cfg(test)]`
+# blocks. Production builds NEVER enable the feature; CI's integration job
+# does (T6.3).
+test-helpers = []
+
+# Safe-Rust, thread-backed DNS-SD/mDNS for desktop only. Default features are
+# disabled: Hidlins uses the synchronous receiver API and does not enable the
+# optional `flume/async`, `log`, or `serde` surfaces. Android/iOS never resolve
+# or link this dependency even if a caller accidentally enables the feature.
+desktop-discovery = ["dep:if-addrs", "dep:mdns-sd"]
+
+# Test-only Android authority used by the two-emulator LAN acceptance harness.
+# Target-specific aliases let the normal CLI dispatcher type-check on Android;
+# the server runtime deliberately constructs no Rust advertiser on this target,
+# leaving the instrumentation registrar as the scenario's sole publisher.
+android-scenario-authority = ["dep:android-if-addrs", "dep:android-mdns-sd"]
+
+[dependencies]
+# First-party. The dependency arrow points only into core (ADR-001); this
+# crate never depends on the UI crates, and core never depends on it.
+hidlins-core = { path = "../hidlins-core", version = "0.1" }
+
+# Config / error skeleton.
+serde = { version = "1.0", features = ["derive"] }
+toml = "0.8"
+thiserror = "2.0"
+zeroize = { version = "1.8", features = ["derive"] }
+chrono = { version = "0.4", default-features = false, features = ["clock", "std"] }
+
+# Sealed local identity material at rest. RustCrypto family (pure Rust).
+argon2 = "0.5"
+chacha20poly1305 = "0.10"
+base64 = "0.22"
+
+# `getrandom` 0.3.x: OS entropy source for fresh identity salt + nonce
+# per encrypt. CLAUDE.md mandates a CSPRNG; `getrandom` is the canonical
+# OS source (it's what `rand::OsRng` wraps). Direct dep keeps the call
+# site obvious; the crate is already a transitive via `chacha20poly1305`
+# so no new vendored sources.
+getrandom = "0.3"
+# Sibling mode-0600 upload staging. Already a workspace dev dependency with
+# no new transitive footprint; promoted for the crash-safe server commit path.
+tempfile = "3.10"
+
+# Canonical local protocol versions and transcript digests.
+sha2 = "0.11"
+
+# Noise Protocol Framework implementation for local-network pairing (XX) and
+# pinned reconnect (IK). Exact version and minimal primitive features are
+# security invariants; tools/dev/vendor.py applies and verifies the Hidlins
+# zeroization patch before this dependency is accepted for release.
+# License: MIT OR Apache-2.0. No build script. The enabled RustCrypto/getrandom
+# backends avoid ring and every unused Noise primitive.
+snow = { version = "=0.10.0", default-features = false, features = ["std", "use-curve25519", "use-chacha20poly1305", "use-sha2", "use-getrandom"] }
+
+[target.'cfg(any(target_os = "macos", target_os = "linux"))'.dependencies]
+# Exact pin reviewed in Task 005. License: Apache-2.0 OR MIT; upstream
+# keepsimple1/mdns-sd; no build script; crate root forbids unsafe code.
+mdns-sd = { version = "=0.20.3", optional = true, default-features = false }
+# Direct promotion of mdns-sd's already-vendored interface enumerator. The
+# server uses it to select a policy-approved bind address without DNS, shelling
+# out, or platform FFI. License: MIT OR Apache-2.0; no additional transitives.
+if-addrs = { version = "=0.15.0", optional = true }
+
+[target.'cfg(target_os = "android")'.dependencies]
+# These aliases are reachable only through `android-scenario-authority` and
+# compile solely into the non-shipping emulator CLI authority.
+android-mdns-sd = { package = "mdns-sd", version = "=0.20.3", optional = true, default-features = false }
+android-if-addrs = { package = "if-addrs", version = "=0.15.0", optional = true }
+
+# Test-only merge driver for the KeePassXC interop harness
+# (tools/interop-tests/sync_us-044.sh, run by `make test-sync-interop`). Gated
+# behind `test-helpers` via `required-features` so it is NOT built by a plain
+# `cargo build` / `make build` — only when tests are in play. It emits a
+# merged vault (US-044 collision: winner current + loser in history) for
+# `keepassxc-cli` to round-trip.
+[[bin]]
+name = "merge-interop-driver"
+path = "tests/bin/merge_interop_driver.rs"
+required-features = ["test-helpers"]
+
+[dev-dependencies]
+# Self-dependency with `test-helpers` enabled so this crate's *integration*
+# tests (tests/us_04*.rs and tests/fault_injection.rs) can use the test-only `MemoryTransport` and
+# the `From<MemoryTransportError> for SyncError` bridge — both gated behind
+# `cfg(any(test, feature = "test-helpers"))`. An integration test is a
+# separate crate, so the lib's `cfg(test)` is NOT active for it; the feature
+# is the only way to expose those items. Production `cargo build` never
+# pulls dev-deps, so `test-helpers` stays out of shipped binaries. This is
+# the standard Cargo idiom for "enable a feature only under test", and it
+# lets `cargo test -p hidlins-sync` (no `--features`) build the US tests.
+hidlins-sync = { path = ".", version = "0.1", features = ["test-helpers"] }
+# vaults.toml round-trip tests use the normal `tempfile` dependency above.
+# SyncTestEnv computes the same SHA-256 over on-disk vault bytes that the
+# orchestrator uses for its local version pointer, so integration tests can
+# model "synced then edited" precisely. `sha2` is already
+# a normal dependency; an integration test is a separate crate and only sees
+# dev-dependencies, hence the duplicate declaration here. Lowercase encoding is
+# implemented by a tiny independent test oracle under `tests/common/`.
+sha2 = "0.11"
+# Merge-engine property tests (tests/merge_property_tests.rs): `proptest` +
+# `proptest-derive` drive the four merge properties (no-data-loss, winner,
+# disjoint-commutativity, idempotence) with shrinking; `arbitrary` drives the
+# byte-seeded `fuzz_scenarios_never_lose_data` smoke test (and is the
+# `Arbitrary` impl a future cargo-fuzz target would reuse).
+proptest = "1"
+proptest-derive = "0.5"
+arbitrary = { version = "1", features = ["derive"] }
+
+[target.'cfg(any(target_os = "macos", target_os = "linux"))'.dev-dependencies]
+# Non-consuming readiness for owned listener regression fixtures. MIT;
+# already compiled with these features through desktop mdns-sd, no new sources.
+mio = { version = "=1.2.1", default-features = false, features = ["net", "os-poll"] }

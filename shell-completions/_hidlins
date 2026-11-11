@@ -1,0 +1,1705 @@
+#compdef hidlins
+
+autoload -U is-at-least
+
+_hidlins() {
+    typeset -A opt_args
+    typeset -a _arguments_options
+    local ret=1
+
+    if is-at-least 5.2; then
+        _arguments_options=(-s -S -C)
+    else
+        _arguments_options=(-s -C)
+    fi
+
+    local context curcontext="$curcontext" state line
+    _arguments "${_arguments_options[@]}" : \
+'--vault=[Open this vault'\''s TUI unlock prompt directly]:VAULT:_default' \
+'--theme=[Override the TUI theme (built-in name or user theme file stem)]:THEME:_default' \
+'--config=[Load TUI preferences or the \`keys\` keymap from this config.toml]:CONFIG:_files' \
+'--dump-keys=[Print the effective TUI keymap and exit before terminal setup]::DUMP_KEYS:((text\:"Tab-separated human-readable commands"
+json\:"Stable JSON command objects"))' \
+'--format=[Output format. \`human\` (default) is line-oriented for terminals; \`json\` is the stable machine-readable schema for scripts]:FORMAT:((human\:"Line-oriented human-readable output (default)"
+json\:"Stable JSON schema — see \`views/\` for per-subcommand shapes"))' \
+'--registry=[Path to the vault registry file. Defaults to \`\$HOME/.local/state/hidlins/vaults.toml\` (per \`hidlins_core\:\:HidlinsPaths\`)]:REGISTRY:_files' \
+'--cli[Force one-shot CLI mode (print help when no command is supplied)]' \
+'--no-mouse[Disable TUI mouse capture]' \
+'--read-only[Open the TUI session read-only (refuse vault mutations and sync)]' \
+'-h[Print help (see more with '\''--help'\'')]' \
+'--help[Print help (see more with '\''--help'\'')]' \
+'-V[Print version]' \
+'--version[Print version]' \
+":: :_hidlins_commands" \
+"*::: :->hidlins" \
+&& ret=0
+    case $state in
+    (hidlins)
+        words=($line[1] "${words[@]}")
+        (( CURRENT += 1 ))
+        curcontext="${curcontext%:*:*}:hidlins-command-$line[1]:"
+        case $line[1] in
+            (vault)
+_arguments "${_arguments_options[@]}" : \
+'--config=[Load TUI preferences or the \`keys\` keymap from this config.toml]:CONFIG:_files' \
+'--format=[Output format. \`human\` (default) is line-oriented for terminals; \`json\` is the stable machine-readable schema for scripts]:FORMAT:((human\:"Line-oriented human-readable output (default)"
+json\:"Stable JSON schema — see \`views/\` for per-subcommand shapes"))' \
+'--registry=[Path to the vault registry file. Defaults to \`\$HOME/.local/state/hidlins/vaults.toml\` (per \`hidlins_core\:\:HidlinsPaths\`)]:REGISTRY:_files' \
+'--cli[Force one-shot CLI mode (print help when no command is supplied)]' \
+'-h[Print help (see more with '\''--help'\'')]' \
+'--help[Print help (see more with '\''--help'\'')]' \
+":: :_hidlins__subcmd__vault_commands" \
+"*::: :->vault" \
+&& ret=0
+
+    case $state in
+    (vault)
+        words=($line[1] "${words[@]}")
+        (( CURRENT += 1 ))
+        curcontext="${curcontext%:*:*}:hidlins-vault-command-$line[1]:"
+        case $line[1] in
+            (create)
+_arguments "${_arguments_options[@]}" : \
+'--id=[Registry name for the new vault (unique)]:ID:_default' \
+'--path=[Absolute or relative path where the \`.kdbx\` file will be created]:PATH:_files' \
+'--keyfile=[Optional keyfile required to unlock this vault]:KEYFILE:_files' \
+'--config=[Load TUI preferences or the \`keys\` keymap from this config.toml]:CONFIG:_files' \
+'--format=[Output format. \`human\` (default) is line-oriented for terminals; \`json\` is the stable machine-readable schema for scripts]:FORMAT:((human\:"Line-oriented human-readable output (default)"
+json\:"Stable JSON schema — see \`views/\` for per-subcommand shapes"))' \
+'--registry=[Path to the vault registry file. Defaults to \`\$HOME/.local/state/hidlins/vaults.toml\` (per \`hidlins_core\:\:HidlinsPaths\`)]:REGISTRY:_files' \
+'--no-recovery-warning[Acknowledge the no-recovery warning. Required — there is no master-password recovery in Hidlins]' \
+'--cli[Force one-shot CLI mode (print help when no command is supplied)]' \
+'-h[Print help (see more with '\''--help'\'')]' \
+'--help[Print help (see more with '\''--help'\'')]' \
+&& ret=0
+;;
+(register)
+_arguments "${_arguments_options[@]}" : \
+'--id=[Registry name for the existing vault (unique)]:ID:_default' \
+'--path=[Path to an existing KDBX vault]:PATH:_files' \
+'--keyfile=[Optional keyfile required to unlock this vault]:KEYFILE:_files' \
+'--config=[Load TUI preferences or the \`keys\` keymap from this config.toml]:CONFIG:_files' \
+'--format=[Output format. \`human\` (default) is line-oriented for terminals; \`json\` is the stable machine-readable schema for scripts]:FORMAT:((human\:"Line-oriented human-readable output (default)"
+json\:"Stable JSON schema — see \`views/\` for per-subcommand shapes"))' \
+'--registry=[Path to the vault registry file. Defaults to \`\$HOME/.local/state/hidlins/vaults.toml\` (per \`hidlins_core\:\:HidlinsPaths\`)]:REGISTRY:_files' \
+'--cli[Force one-shot CLI mode (print help when no command is supplied)]' \
+'-h[Print help (see more with '\''--help'\'')]' \
+'--help[Print help (see more with '\''--help'\'')]' \
+&& ret=0
+;;
+(open)
+_arguments "${_arguments_options[@]}" : \
+'--id=[Registry name of the vault to probe]:ID:_default' \
+'--config=[Load TUI preferences or the \`keys\` keymap from this config.toml]:CONFIG:_files' \
+'--format=[Output format. \`human\` (default) is line-oriented for terminals; \`json\` is the stable machine-readable schema for scripts]:FORMAT:((human\:"Line-oriented human-readable output (default)"
+json\:"Stable JSON schema — see \`views/\` for per-subcommand shapes"))' \
+'--registry=[Path to the vault registry file. Defaults to \`\$HOME/.local/state/hidlins/vaults.toml\` (per \`hidlins_core\:\:HidlinsPaths\`)]:REGISTRY:_files' \
+'--cli[Force one-shot CLI mode (print help when no command is supplied)]' \
+'-h[Print help (see more with '\''--help'\'')]' \
+'--help[Print help (see more with '\''--help'\'')]' \
+&& ret=0
+;;
+(list)
+_arguments "${_arguments_options[@]}" : \
+'--config=[Load TUI preferences or the \`keys\` keymap from this config.toml]:CONFIG:_files' \
+'--format=[Output format. \`human\` (default) is line-oriented for terminals; \`json\` is the stable machine-readable schema for scripts]:FORMAT:((human\:"Line-oriented human-readable output (default)"
+json\:"Stable JSON schema — see \`views/\` for per-subcommand shapes"))' \
+'--registry=[Path to the vault registry file. Defaults to \`\$HOME/.local/state/hidlins/vaults.toml\` (per \`hidlins_core\:\:HidlinsPaths\`)]:REGISTRY:_files' \
+'--cli[Force one-shot CLI mode (print help when no command is supplied)]' \
+'-h[Print help (see more with '\''--help'\'')]' \
+'--help[Print help (see more with '\''--help'\'')]' \
+&& ret=0
+;;
+(set-lock)
+_arguments "${_arguments_options[@]}" : \
+'--id=[Registry name of the vault to configure]:ID:_default' \
+'(--clear)--timeout=[Idle-timeout in seconds before the vault auto-locks. Must be at least 1]:TIMEOUT:_default' \
+'--config=[Load TUI preferences or the \`keys\` keymap from this config.toml]:CONFIG:_files' \
+'--format=[Output format. \`human\` (default) is line-oriented for terminals; \`json\` is the stable machine-readable schema for scripts]:FORMAT:((human\:"Line-oriented human-readable output (default)"
+json\:"Stable JSON schema — see \`views/\` for per-subcommand shapes"))' \
+'--registry=[Path to the vault registry file. Defaults to \`\$HOME/.local/state/hidlins/vaults.toml\` (per \`hidlins_core\:\:HidlinsPaths\`)]:REGISTRY:_files' \
+'(--timeout)--clear[Remove the per-vault override and fall back to the default]' \
+'--cli[Force one-shot CLI mode (print help when no command is supplied)]' \
+'-h[Print help (see more with '\''--help'\'')]' \
+'--help[Print help (see more with '\''--help'\'')]' \
+&& ret=0
+;;
+(help)
+_arguments "${_arguments_options[@]}" : \
+":: :_hidlins__subcmd__vault__subcmd__help_commands" \
+"*::: :->help" \
+&& ret=0
+
+    case $state in
+    (help)
+        words=($line[1] "${words[@]}")
+        (( CURRENT += 1 ))
+        curcontext="${curcontext%:*:*}:hidlins-vault-help-command-$line[1]:"
+        case $line[1] in
+            (create)
+_arguments "${_arguments_options[@]}" : \
+&& ret=0
+;;
+(register)
+_arguments "${_arguments_options[@]}" : \
+&& ret=0
+;;
+(open)
+_arguments "${_arguments_options[@]}" : \
+&& ret=0
+;;
+(list)
+_arguments "${_arguments_options[@]}" : \
+&& ret=0
+;;
+(set-lock)
+_arguments "${_arguments_options[@]}" : \
+&& ret=0
+;;
+(help)
+_arguments "${_arguments_options[@]}" : \
+&& ret=0
+;;
+        esac
+    ;;
+esac
+;;
+        esac
+    ;;
+esac
+;;
+(entry)
+_arguments "${_arguments_options[@]}" : \
+'--config=[Load TUI preferences or the \`keys\` keymap from this config.toml]:CONFIG:_files' \
+'--format=[Output format. \`human\` (default) is line-oriented for terminals; \`json\` is the stable machine-readable schema for scripts]:FORMAT:((human\:"Line-oriented human-readable output (default)"
+json\:"Stable JSON schema — see \`views/\` for per-subcommand shapes"))' \
+'--registry=[Path to the vault registry file. Defaults to \`\$HOME/.local/state/hidlins/vaults.toml\` (per \`hidlins_core\:\:HidlinsPaths\`)]:REGISTRY:_files' \
+'--cli[Force one-shot CLI mode (print help when no command is supplied)]' \
+'-h[Print help (see more with '\''--help'\'')]' \
+'--help[Print help (see more with '\''--help'\'')]' \
+":: :_hidlins__subcmd__entry_commands" \
+"*::: :->entry" \
+&& ret=0
+
+    case $state in
+    (entry)
+        words=($line[1] "${words[@]}")
+        (( CURRENT += 1 ))
+        curcontext="${curcontext%:*:*}:hidlins-entry-command-$line[1]:"
+        case $line[1] in
+            (add)
+_arguments "${_arguments_options[@]}" : \
+'--vault=[Registry name of the vault to add into]:VAULT:_default' \
+'--title=[Title of the new entry (required)]:TITLE:_default' \
+'--username=[Optional username]:USERNAME:_default' \
+'--url=[Optional URL]:URL:_default' \
+'--notes=[Optional notes]:NOTES:_default' \
+'--length=[Generated-password length (only consulted with \`--generate\`). Default\: 20]:LENGTH:_default' \
+'*--tag=[Tag to attach to the new entry. Repeat for multiple tags]:TAGS:_default' \
+'--config=[Load TUI preferences or the \`keys\` keymap from this config.toml]:CONFIG:_files' \
+'--format=[Output format. \`human\` (default) is line-oriented for terminals; \`json\` is the stable machine-readable schema for scripts]:FORMAT:((human\:"Line-oriented human-readable output (default)"
+json\:"Stable JSON schema — see \`views/\` for per-subcommand shapes"))' \
+'--registry=[Path to the vault registry file. Defaults to \`\$HOME/.local/state/hidlins/vaults.toml\` (per \`hidlins_core\:\:HidlinsPaths\`)]:REGISTRY:_files' \
+'(--generate)--password-stdin[Read the entry'\''s password from stdin (no-echo when stdin is a TTY). Mutually exclusive with \`--generate\`]' \
+'(--password-stdin)--generate[Generate a fresh password via \`hidlins-genpw\`. Mutually exclusive with \`--password-stdin\`. Honours the \`PasswordClassFlags\` + \`--length\` flags]' \
+'--show-password[Include the generated/captured password in the output view (JSON + human). Default\: omit]' \
+'--no-lowercase[Disable lowercase letters in the generated password]' \
+'--no-uppercase[Disable uppercase letters in the generated password]' \
+'--no-digits[Disable digits in the generated password]' \
+'--no-symbols[Disable symbols in the generated password]' \
+'--exclude-ambiguous[Exclude visually ambiguous characters (\`0/O/o/1/l/I/|/backtick\`)]' \
+'--cli[Force one-shot CLI mode (print help when no command is supplied)]' \
+'-h[Print help (see more with '\''--help'\'')]' \
+'--help[Print help (see more with '\''--help'\'')]' \
+&& ret=0
+;;
+(get)
+_arguments "${_arguments_options[@]}" : \
+'--vault=[Registry name of the vault]:VAULT:_default' \
+'(--title)--uuid=[UUID of the entry. Mutually exclusive with \`--title\`]:UUID:_default' \
+'(--uuid)--title=[Title of the entry; case-insensitive exact match. If multiple entries share the title the command exits 1 listing the candidate UUIDs]:TITLE:_default' \
+'--config=[Load TUI preferences or the \`keys\` keymap from this config.toml]:CONFIG:_files' \
+'--format=[Output format. \`human\` (default) is line-oriented for terminals; \`json\` is the stable machine-readable schema for scripts]:FORMAT:((human\:"Line-oriented human-readable output (default)"
+json\:"Stable JSON schema — see \`views/\` for per-subcommand shapes"))' \
+'--registry=[Path to the vault registry file. Defaults to \`\$HOME/.local/state/hidlins/vaults.toml\` (per \`hidlins_core\:\:HidlinsPaths\`)]:REGISTRY:_files' \
+'(--copy)--show-password[Include the password value in the output. Mutually exclusive with \`--copy\` (copying redundantly with showing is suspicious)]' \
+'--show-totp[Compute and include the current TOTP code (HMAC-SHA1; RFC 6238)]' \
+'(--show-password)--copy[Copy the password to the system clipboard with auto-clear. Mutually exclusive with \`--show-password\`]' \
+'--cli[Force one-shot CLI mode (print help when no command is supplied)]' \
+'-h[Print help (see more with '\''--help'\'')]' \
+'--help[Print help (see more with '\''--help'\'')]' \
+&& ret=0
+;;
+(edit)
+_arguments "${_arguments_options[@]}" : \
+'--vault=[Registry name of the vault]:VAULT:_default' \
+'--uuid=[UUID of the entry to edit (required)]:UUID:_default' \
+'--title=[New title]:TITLE:_default' \
+'--username=[New username]:USERNAME:_default' \
+'--url=[New URL]:URL:_default' \
+'--notes=[New notes]:NOTES:_default' \
+'*--add-tag=[Tag to add. Repeat for multiple]:ADD_TAGS:_default' \
+'*--rm-tag=[Tag to remove (silent no-op if not present). Repeat for multiple]:RM_TAGS:_default' \
+'--config=[Load TUI preferences or the \`keys\` keymap from this config.toml]:CONFIG:_files' \
+'--format=[Output format. \`human\` (default) is line-oriented for terminals; \`json\` is the stable machine-readable schema for scripts]:FORMAT:((human\:"Line-oriented human-readable output (default)"
+json\:"Stable JSON schema — see \`views/\` for per-subcommand shapes"))' \
+'--registry=[Path to the vault registry file. Defaults to \`\$HOME/.local/state/hidlins/vaults.toml\` (per \`hidlins_core\:\:HidlinsPaths\`)]:REGISTRY:_files' \
+'--password-stdin[Read a new password from stdin (no-echo when stdin is a TTY)]' \
+'--cli[Force one-shot CLI mode (print help when no command is supplied)]' \
+'-h[Print help (see more with '\''--help'\'')]' \
+'--help[Print help (see more with '\''--help'\'')]' \
+&& ret=0
+;;
+(rm)
+_arguments "${_arguments_options[@]}" : \
+'--vault=[Registry name of the vault]:VAULT:_default' \
+'--uuid=[UUID of the entry to remove (required)]:UUID:_default' \
+'--config=[Load TUI preferences or the \`keys\` keymap from this config.toml]:CONFIG:_files' \
+'--format=[Output format. \`human\` (default) is line-oriented for terminals; \`json\` is the stable machine-readable schema for scripts]:FORMAT:((human\:"Line-oriented human-readable output (default)"
+json\:"Stable JSON schema — see \`views/\` for per-subcommand shapes"))' \
+'--registry=[Path to the vault registry file. Defaults to \`\$HOME/.local/state/hidlins/vaults.toml\` (per \`hidlins_core\:\:HidlinsPaths\`)]:REGISTRY:_files' \
+'--permanent[Permanently delete the entry, bypassing the recycle bin]' \
+'--cli[Force one-shot CLI mode (print help when no command is supplied)]' \
+'-h[Print help (see more with '\''--help'\'')]' \
+'--help[Print help (see more with '\''--help'\'')]' \
+&& ret=0
+;;
+(list)
+_arguments "${_arguments_options[@]}" : \
+'--vault=[Registry name of the vault]:VAULT:_default' \
+'*--tag=[Filter to entries carrying every supplied tag (intersect). Repeat the flag for multiple tags]:TAGS:_default' \
+'--limit=[Optional pagination — max rows to emit]:LIMIT:_default' \
+'--offset=[Optional pagination — rows to skip from the start]:OFFSET:_default' \
+'--config=[Load TUI preferences or the \`keys\` keymap from this config.toml]:CONFIG:_files' \
+'--format=[Output format. \`human\` (default) is line-oriented for terminals; \`json\` is the stable machine-readable schema for scripts]:FORMAT:((human\:"Line-oriented human-readable output (default)"
+json\:"Stable JSON schema — see \`views/\` for per-subcommand shapes"))' \
+'--registry=[Path to the vault registry file. Defaults to \`\$HOME/.local/state/hidlins/vaults.toml\` (per \`hidlins_core\:\:HidlinsPaths\`)]:REGISTRY:_files' \
+'--include-expired[Include expired entries. Default\: omit]' \
+'--cli[Force one-shot CLI mode (print help when no command is supplied)]' \
+'-h[Print help (see more with '\''--help'\'')]' \
+'--help[Print help (see more with '\''--help'\'')]' \
+&& ret=0
+;;
+(search)
+_arguments "${_arguments_options[@]}" : \
+'--vault=[Registry name of the vault]:VAULT:_default' \
+'--mode=[Matching mode\: substring (default), wildcard, or fuzzy]:MODE:((substring\:"Case-insensitive substring match (default)"
+wildcard\:"Whole-field wildcard match (\`*\` any run, \`?\` one char)"
+fuzzy\:"fzf-style fuzzy match; JSON output gains \`score\` + \`matched_indices\`"))' \
+'--scope=[Restrict the search\: \`group\:<name>\` (the group subtree) or \`tag\:<tag>\`]:SCOPE:_default' \
+'--limit=[Optional cap on returned matches]:LIMIT:_default' \
+'--config=[Load TUI preferences or the \`keys\` keymap from this config.toml]:CONFIG:_files' \
+'--format=[Output format. \`human\` (default) is line-oriented for terminals; \`json\` is the stable machine-readable schema for scripts]:FORMAT:((human\:"Line-oriented human-readable output (default)"
+json\:"Stable JSON schema — see \`views/\` for per-subcommand shapes"))' \
+'--registry=[Path to the vault registry file. Defaults to \`\$HOME/.local/state/hidlins/vaults.toml\` (per \`hidlins_core\:\:HidlinsPaths\`)]:REGISTRY:_files' \
+'--include-recycled[Include entries in the recycle bin. Default\: exclude]' \
+'--cli[Force one-shot CLI mode (print help when no command is supplied)]' \
+'-h[Print help (see more with '\''--help'\'')]' \
+'--help[Print help (see more with '\''--help'\'')]' \
+':query -- Search query (positional):_default' \
+&& ret=0
+;;
+(help)
+_arguments "${_arguments_options[@]}" : \
+":: :_hidlins__subcmd__entry__subcmd__help_commands" \
+"*::: :->help" \
+&& ret=0
+
+    case $state in
+    (help)
+        words=($line[1] "${words[@]}")
+        (( CURRENT += 1 ))
+        curcontext="${curcontext%:*:*}:hidlins-entry-help-command-$line[1]:"
+        case $line[1] in
+            (add)
+_arguments "${_arguments_options[@]}" : \
+&& ret=0
+;;
+(get)
+_arguments "${_arguments_options[@]}" : \
+&& ret=0
+;;
+(edit)
+_arguments "${_arguments_options[@]}" : \
+&& ret=0
+;;
+(rm)
+_arguments "${_arguments_options[@]}" : \
+&& ret=0
+;;
+(list)
+_arguments "${_arguments_options[@]}" : \
+&& ret=0
+;;
+(search)
+_arguments "${_arguments_options[@]}" : \
+&& ret=0
+;;
+(help)
+_arguments "${_arguments_options[@]}" : \
+&& ret=0
+;;
+        esac
+    ;;
+esac
+;;
+        esac
+    ;;
+esac
+;;
+(gen)
+_arguments "${_arguments_options[@]}" : \
+'--config=[Load TUI preferences or the \`keys\` keymap from this config.toml]:CONFIG:_files' \
+'--format=[Output format. \`human\` (default) is line-oriented for terminals; \`json\` is the stable machine-readable schema for scripts]:FORMAT:((human\:"Line-oriented human-readable output (default)"
+json\:"Stable JSON schema — see \`views/\` for per-subcommand shapes"))' \
+'--registry=[Path to the vault registry file. Defaults to \`\$HOME/.local/state/hidlins/vaults.toml\` (per \`hidlins_core\:\:HidlinsPaths\`)]:REGISTRY:_files' \
+'--cli[Force one-shot CLI mode (print help when no command is supplied)]' \
+'-h[Print help (see more with '\''--help'\'')]' \
+'--help[Print help (see more with '\''--help'\'')]' \
+":: :_hidlins__subcmd__gen_commands" \
+"*::: :->gen" \
+&& ret=0
+
+    case $state in
+    (gen)
+        words=($line[1] "${words[@]}")
+        (( CURRENT += 1 ))
+        curcontext="${curcontext%:*:*}:hidlins-gen-command-$line[1]:"
+        case $line[1] in
+            (password)
+_arguments "${_arguments_options[@]}" : \
+'--length=[Password length (characters). Default\: 20]:LENGTH:_default' \
+'--config=[Load TUI preferences or the \`keys\` keymap from this config.toml]:CONFIG:_files' \
+'--format=[Output format. \`human\` (default) is line-oriented for terminals; \`json\` is the stable machine-readable schema for scripts]:FORMAT:((human\:"Line-oriented human-readable output (default)"
+json\:"Stable JSON schema — see \`views/\` for per-subcommand shapes"))' \
+'--registry=[Path to the vault registry file. Defaults to \`\$HOME/.local/state/hidlins/vaults.toml\` (per \`hidlins_core\:\:HidlinsPaths\`)]:REGISTRY:_files' \
+'--no-lowercase[Disable lowercase letters in the generated password]' \
+'--no-uppercase[Disable uppercase letters in the generated password]' \
+'--no-digits[Disable digits in the generated password]' \
+'--no-symbols[Disable symbols in the generated password]' \
+'--exclude-ambiguous[Exclude visually ambiguous characters (\`0/O/o/1/l/I/|/backtick\`)]' \
+'(--show)--copy[Copy the value to the clipboard with auto-clear. Mutually exclusive with \`--show\` (copy implies do-not-print)]' \
+'(--copy)--show[In JSON mode, include the generated value in the output. Default JSON output omits the value; human-mode output always prints the value to stdout regardless of this flag (mirror \`pbcopy\` style)]' \
+'--cli[Force one-shot CLI mode (print help when no command is supplied)]' \
+'-h[Print help (see more with '\''--help'\'')]' \
+'--help[Print help (see more with '\''--help'\'')]' \
+&& ret=0
+;;
+(passphrase)
+_arguments "${_arguments_options[@]}" : \
+'--word-count=[Number of words. Default\: 6]:WORD_COUNT:_default' \
+'--separator=[Separator inserted between words. Default\: \`-\`]:SEPARATOR:_default' \
+'--config=[Load TUI preferences or the \`keys\` keymap from this config.toml]:CONFIG:_files' \
+'--format=[Output format. \`human\` (default) is line-oriented for terminals; \`json\` is the stable machine-readable schema for scripts]:FORMAT:((human\:"Line-oriented human-readable output (default)"
+json\:"Stable JSON schema — see \`views/\` for per-subcommand shapes"))' \
+'--registry=[Path to the vault registry file. Defaults to \`\$HOME/.local/state/hidlins/vaults.toml\` (per \`hidlins_core\:\:HidlinsPaths\`)]:REGISTRY:_files' \
+'(--show)--copy[Copy the value to the clipboard with auto-clear. Mutually exclusive with \`--show\`]' \
+'(--copy)--show[In JSON mode, include the generated value in the output]' \
+'--cli[Force one-shot CLI mode (print help when no command is supplied)]' \
+'-h[Print help (see more with '\''--help'\'')]' \
+'--help[Print help (see more with '\''--help'\'')]' \
+&& ret=0
+;;
+(help)
+_arguments "${_arguments_options[@]}" : \
+":: :_hidlins__subcmd__gen__subcmd__help_commands" \
+"*::: :->help" \
+&& ret=0
+
+    case $state in
+    (help)
+        words=($line[1] "${words[@]}")
+        (( CURRENT += 1 ))
+        curcontext="${curcontext%:*:*}:hidlins-gen-help-command-$line[1]:"
+        case $line[1] in
+            (password)
+_arguments "${_arguments_options[@]}" : \
+&& ret=0
+;;
+(passphrase)
+_arguments "${_arguments_options[@]}" : \
+&& ret=0
+;;
+(help)
+_arguments "${_arguments_options[@]}" : \
+&& ret=0
+;;
+        esac
+    ;;
+esac
+;;
+        esac
+    ;;
+esac
+;;
+(sync)
+_arguments "${_arguments_options[@]}" : \
+'--config=[Load TUI preferences or the \`keys\` keymap from this config.toml]:CONFIG:_files' \
+'--format=[Output format. \`human\` (default) is line-oriented for terminals; \`json\` is the stable machine-readable schema for scripts]:FORMAT:((human\:"Line-oriented human-readable output (default)"
+json\:"Stable JSON schema — see \`views/\` for per-subcommand shapes"))' \
+'--registry=[Path to the vault registry file. Defaults to \`\$HOME/.local/state/hidlins/vaults.toml\` (per \`hidlins_core\:\:HidlinsPaths\`)]:REGISTRY:_files' \
+'--cli[Force one-shot CLI mode (print help when no command is supplied)]' \
+'-h[Print help (see more with '\''--help'\'')]' \
+'--help[Print help (see more with '\''--help'\'')]' \
+":: :_hidlins__subcmd__sync_commands" \
+"*::: :->sync" \
+&& ret=0
+
+    case $state in
+    (sync)
+        words=($line[1] "${words[@]}")
+        (( CURRENT += 1 ))
+        curcontext="${curcontext%:*:*}:hidlins-sync-command-$line[1]:"
+        case $line[1] in
+            (now)
+_arguments "${_arguments_options[@]}" : \
+'--vault=[Vault registry name. Defaults to the sole registered vault]:VAULT:_default' \
+'--address=[Restricted IP-literal diagnostic fallback when discovery is unavailable]:ADDRESS:_default' \
+'--port=[Port paired with \`--address\`]:PORT:_default' \
+'--config=[Load TUI preferences or the \`keys\` keymap from this config.toml]:CONFIG:_files' \
+'--format=[Output format. \`human\` (default) is line-oriented for terminals; \`json\` is the stable machine-readable schema for scripts]:FORMAT:((human\:"Line-oriented human-readable output (default)"
+json\:"Stable JSON schema — see \`views/\` for per-subcommand shapes"))' \
+'--registry=[Path to the vault registry file. Defaults to \`\$HOME/.local/state/hidlins/vaults.toml\` (per \`hidlins_core\:\:HidlinsPaths\`)]:REGISTRY:_files' \
+'--cli[Force one-shot CLI mode (print help when no command is supplied)]' \
+'-h[Print help (see more with '\''--help'\'')]' \
+'--help[Print help (see more with '\''--help'\'')]' \
+&& ret=0
+;;
+(serve)
+_arguments "${_arguments_options[@]}" : \
+'--vault=[Vault registry name. Defaults to the sole registered vault]:VAULT:_default' \
+'--address=[Restricted IP literal to bind; otherwise an allowed active interface is selected]:ADDRESS:_default' \
+'--port=[Listener port]:PORT:_default' \
+'--config=[Load TUI preferences or the \`keys\` keymap from this config.toml]:CONFIG:_files' \
+'--format=[Output format. \`human\` (default) is line-oriented for terminals; \`json\` is the stable machine-readable schema for scripts]:FORMAT:((human\:"Line-oriented human-readable output (default)"
+json\:"Stable JSON schema — see \`views/\` for per-subcommand shapes"))' \
+'--registry=[Path to the vault registry file. Defaults to \`\$HOME/.local/state/hidlins/vaults.toml\` (per \`hidlins_core\:\:HidlinsPaths\`)]:REGISTRY:_files' \
+'--pairing-window[Open the bounded pairing window immediately after startup]' \
+'--cli[Force one-shot CLI mode (print help when no command is supplied)]' \
+'-h[Print help (see more with '\''--help'\'')]' \
+'--help[Print help (see more with '\''--help'\'')]' \
+&& ret=0
+;;
+(pair)
+_arguments "${_arguments_options[@]}" : \
+'--vault=[Vault registry name. Defaults to the sole registered vault]:VAULT:_default' \
+'--address=[Restricted IP-literal diagnostic fallback]:ADDRESS:_default' \
+'--port=[Port paired with \`--address\`]:PORT:_default' \
+'--name=[Local display name for the authority]:NAME:_default' \
+'--config=[Load TUI preferences or the \`keys\` keymap from this config.toml]:CONFIG:_files' \
+'--format=[Output format. \`human\` (default) is line-oriented for terminals; \`json\` is the stable machine-readable schema for scripts]:FORMAT:((human\:"Line-oriented human-readable output (default)"
+json\:"Stable JSON schema — see \`views/\` for per-subcommand shapes"))' \
+'--registry=[Path to the vault registry file. Defaults to \`\$HOME/.local/state/hidlins/vaults.toml\` (per \`hidlins_core\:\:HidlinsPaths\`)]:REGISTRY:_files' \
+'--cli[Force one-shot CLI mode (print help when no command is supplied)]' \
+'-h[Print help (see more with '\''--help'\'')]' \
+'--help[Print help (see more with '\''--help'\'')]' \
+&& ret=0
+;;
+(import)
+_arguments "${_arguments_options[@]}" : \
+'--id=[New local registry name]:ID:_default' \
+'--path=[Destination KDBX path. Defaults to the Hidlins state directory]:PATH:_files' \
+'--keyfile=[Optional keyfile required by the remote vault]:KEYFILE:_files' \
+'--address=[Restricted IP-literal diagnostic fallback]:ADDRESS:_default' \
+'--port=[Port paired with \`--address\`]:PORT:_default' \
+'--name=[Local display name for the authority]:NAME:_default' \
+'--config=[Load TUI preferences or the \`keys\` keymap from this config.toml]:CONFIG:_files' \
+'--format=[Output format. \`human\` (default) is line-oriented for terminals; \`json\` is the stable machine-readable schema for scripts]:FORMAT:((human\:"Line-oriented human-readable output (default)"
+json\:"Stable JSON schema — see \`views/\` for per-subcommand shapes"))' \
+'--registry=[Path to the vault registry file. Defaults to \`\$HOME/.local/state/hidlins/vaults.toml\` (per \`hidlins_core\:\:HidlinsPaths\`)]:REGISTRY:_files' \
+'--cli[Force one-shot CLI mode (print help when no command is supplied)]' \
+'-h[Print help (see more with '\''--help'\'')]' \
+'--help[Print help (see more with '\''--help'\'')]' \
+&& ret=0
+;;
+(status)
+_arguments "${_arguments_options[@]}" : \
+'--vault=[Vault registry name. Defaults to the sole registered vault]:VAULT:_default' \
+'--config=[Load TUI preferences or the \`keys\` keymap from this config.toml]:CONFIG:_files' \
+'--format=[Output format. \`human\` (default) is line-oriented for terminals; \`json\` is the stable machine-readable schema for scripts]:FORMAT:((human\:"Line-oriented human-readable output (default)"
+json\:"Stable JSON schema — see \`views/\` for per-subcommand shapes"))' \
+'--registry=[Path to the vault registry file. Defaults to \`\$HOME/.local/state/hidlins/vaults.toml\` (per \`hidlins_core\:\:HidlinsPaths\`)]:REGISTRY:_files' \
+'--cli[Force one-shot CLI mode (print help when no command is supplied)]' \
+'-h[Print help (see more with '\''--help'\'')]' \
+'--help[Print help (see more with '\''--help'\'')]' \
+&& ret=0
+;;
+(peers)
+_arguments "${_arguments_options[@]}" : \
+'--config=[Load TUI preferences or the \`keys\` keymap from this config.toml]:CONFIG:_files' \
+'--format=[Output format. \`human\` (default) is line-oriented for terminals; \`json\` is the stable machine-readable schema for scripts]:FORMAT:((human\:"Line-oriented human-readable output (default)"
+json\:"Stable JSON schema — see \`views/\` for per-subcommand shapes"))' \
+'--registry=[Path to the vault registry file. Defaults to \`\$HOME/.local/state/hidlins/vaults.toml\` (per \`hidlins_core\:\:HidlinsPaths\`)]:REGISTRY:_files' \
+'--cli[Force one-shot CLI mode (print help when no command is supplied)]' \
+'-h[Print help (see more with '\''--help'\'')]' \
+'--help[Print help (see more with '\''--help'\'')]' \
+":: :_hidlins__subcmd__sync__subcmd__peers_commands" \
+"*::: :->peers" \
+&& ret=0
+
+    case $state in
+    (peers)
+        words=($line[1] "${words[@]}")
+        (( CURRENT += 1 ))
+        curcontext="${curcontext%:*:*}:hidlins-sync-peers-command-$line[1]:"
+        case $line[1] in
+            (list)
+_arguments "${_arguments_options[@]}" : \
+'--vault=[Vault registry name. Defaults to the sole registered vault]:VAULT:_default' \
+'--config=[Load TUI preferences or the \`keys\` keymap from this config.toml]:CONFIG:_files' \
+'--format=[Output format. \`human\` (default) is line-oriented for terminals; \`json\` is the stable machine-readable schema for scripts]:FORMAT:((human\:"Line-oriented human-readable output (default)"
+json\:"Stable JSON schema — see \`views/\` for per-subcommand shapes"))' \
+'--registry=[Path to the vault registry file. Defaults to \`\$HOME/.local/state/hidlins/vaults.toml\` (per \`hidlins_core\:\:HidlinsPaths\`)]:REGISTRY:_files' \
+'--cli[Force one-shot CLI mode (print help when no command is supplied)]' \
+'-h[Print help (see more with '\''--help'\'')]' \
+'--help[Print help (see more with '\''--help'\'')]' \
+&& ret=0
+;;
+(rename)
+_arguments "${_arguments_options[@]}" : \
+'--vault=[Vault registry name. Defaults to the sole registered vault]:VAULT:_default' \
+'--peer=[Opaque \`peer-N\` handle from \`sync peers list\`]:PEER:_default' \
+'--name=[New local display name]:NAME:_default' \
+'--config=[Load TUI preferences or the \`keys\` keymap from this config.toml]:CONFIG:_files' \
+'--format=[Output format. \`human\` (default) is line-oriented for terminals; \`json\` is the stable machine-readable schema for scripts]:FORMAT:((human\:"Line-oriented human-readable output (default)"
+json\:"Stable JSON schema — see \`views/\` for per-subcommand shapes"))' \
+'--registry=[Path to the vault registry file. Defaults to \`\$HOME/.local/state/hidlins/vaults.toml\` (per \`hidlins_core\:\:HidlinsPaths\`)]:REGISTRY:_files' \
+'--cli[Force one-shot CLI mode (print help when no command is supplied)]' \
+'-h[Print help (see more with '\''--help'\'')]' \
+'--help[Print help (see more with '\''--help'\'')]' \
+&& ret=0
+;;
+(revoke)
+_arguments "${_arguments_options[@]}" : \
+'--vault=[Vault registry name. Defaults to the sole registered vault]:VAULT:_default' \
+'--peer=[Opaque \`peer-N\` handle from \`sync peers list\`]:PEER:_default' \
+'--config=[Load TUI preferences or the \`keys\` keymap from this config.toml]:CONFIG:_files' \
+'--format=[Output format. \`human\` (default) is line-oriented for terminals; \`json\` is the stable machine-readable schema for scripts]:FORMAT:((human\:"Line-oriented human-readable output (default)"
+json\:"Stable JSON schema — see \`views/\` for per-subcommand shapes"))' \
+'--registry=[Path to the vault registry file. Defaults to \`\$HOME/.local/state/hidlins/vaults.toml\` (per \`hidlins_core\:\:HidlinsPaths\`)]:REGISTRY:_files' \
+'--cli[Force one-shot CLI mode (print help when no command is supplied)]' \
+'-h[Print help (see more with '\''--help'\'')]' \
+'--help[Print help (see more with '\''--help'\'')]' \
+&& ret=0
+;;
+(help)
+_arguments "${_arguments_options[@]}" : \
+":: :_hidlins__subcmd__sync__subcmd__peers__subcmd__help_commands" \
+"*::: :->help" \
+&& ret=0
+
+    case $state in
+    (help)
+        words=($line[1] "${words[@]}")
+        (( CURRENT += 1 ))
+        curcontext="${curcontext%:*:*}:hidlins-sync-peers-help-command-$line[1]:"
+        case $line[1] in
+            (list)
+_arguments "${_arguments_options[@]}" : \
+&& ret=0
+;;
+(rename)
+_arguments "${_arguments_options[@]}" : \
+&& ret=0
+;;
+(revoke)
+_arguments "${_arguments_options[@]}" : \
+&& ret=0
+;;
+(help)
+_arguments "${_arguments_options[@]}" : \
+&& ret=0
+;;
+        esac
+    ;;
+esac
+;;
+        esac
+    ;;
+esac
+;;
+(help)
+_arguments "${_arguments_options[@]}" : \
+":: :_hidlins__subcmd__sync__subcmd__help_commands" \
+"*::: :->help" \
+&& ret=0
+
+    case $state in
+    (help)
+        words=($line[1] "${words[@]}")
+        (( CURRENT += 1 ))
+        curcontext="${curcontext%:*:*}:hidlins-sync-help-command-$line[1]:"
+        case $line[1] in
+            (now)
+_arguments "${_arguments_options[@]}" : \
+&& ret=0
+;;
+(serve)
+_arguments "${_arguments_options[@]}" : \
+&& ret=0
+;;
+(pair)
+_arguments "${_arguments_options[@]}" : \
+&& ret=0
+;;
+(import)
+_arguments "${_arguments_options[@]}" : \
+&& ret=0
+;;
+(status)
+_arguments "${_arguments_options[@]}" : \
+&& ret=0
+;;
+(peers)
+_arguments "${_arguments_options[@]}" : \
+":: :_hidlins__subcmd__sync__subcmd__help__subcmd__peers_commands" \
+"*::: :->peers" \
+&& ret=0
+
+    case $state in
+    (peers)
+        words=($line[1] "${words[@]}")
+        (( CURRENT += 1 ))
+        curcontext="${curcontext%:*:*}:hidlins-sync-help-peers-command-$line[1]:"
+        case $line[1] in
+            (list)
+_arguments "${_arguments_options[@]}" : \
+&& ret=0
+;;
+(rename)
+_arguments "${_arguments_options[@]}" : \
+&& ret=0
+;;
+(revoke)
+_arguments "${_arguments_options[@]}" : \
+&& ret=0
+;;
+        esac
+    ;;
+esac
+;;
+(help)
+_arguments "${_arguments_options[@]}" : \
+&& ret=0
+;;
+        esac
+    ;;
+esac
+;;
+        esac
+    ;;
+esac
+;;
+(ssh)
+_arguments "${_arguments_options[@]}" : \
+'--config=[Load TUI preferences or the \`keys\` keymap from this config.toml]:CONFIG:_files' \
+'--format=[Output format. \`human\` (default) is line-oriented for terminals; \`json\` is the stable machine-readable schema for scripts]:FORMAT:((human\:"Line-oriented human-readable output (default)"
+json\:"Stable JSON schema — see \`views/\` for per-subcommand shapes"))' \
+'--registry=[Path to the vault registry file. Defaults to \`\$HOME/.local/state/hidlins/vaults.toml\` (per \`hidlins_core\:\:HidlinsPaths\`)]:REGISTRY:_files' \
+'--cli[Force one-shot CLI mode (print help when no command is supplied)]' \
+'-h[Print help (see more with '\''--help'\'')]' \
+'--help[Print help (see more with '\''--help'\'')]' \
+":: :_hidlins__subcmd__ssh_commands" \
+"*::: :->ssh" \
+&& ret=0
+
+    case $state in
+    (ssh)
+        words=($line[1] "${words[@]}")
+        (( CURRENT += 1 ))
+        curcontext="${curcontext%:*:*}:hidlins-ssh-command-$line[1]:"
+        case $line[1] in
+            (add)
+_arguments "${_arguments_options[@]}" : \
+'--vault=[Registry name of the destination vault]:VAULT:_default' \
+'--key-path=[Path to the existing private key to import]:KEY_PATH:_files' \
+'--comment=[Optional comment to attach to the entry]:COMMENT:_default' \
+'--config=[Load TUI preferences or the \`keys\` keymap from this config.toml]:CONFIG:_files' \
+'--format=[Output format. \`human\` (default) is line-oriented for terminals; \`json\` is the stable machine-readable schema for scripts]:FORMAT:((human\:"Line-oriented human-readable output (default)"
+json\:"Stable JSON schema — see \`views/\` for per-subcommand shapes"))' \
+'--registry=[Path to the vault registry file. Defaults to \`\$HOME/.local/state/hidlins/vaults.toml\` (per \`hidlins_core\:\:HidlinsPaths\`)]:REGISTRY:_files' \
+'--cli[Force one-shot CLI mode (print help when no command is supplied)]' \
+'-h[Print help (see more with '\''--help'\'')]' \
+'--help[Print help (see more with '\''--help'\'')]' \
+&& ret=0
+;;
+(load)
+_arguments "${_arguments_options[@]}" : \
+'--vault=[Registry name of the source vault]:VAULT:_default' \
+'--uuid=[UUID of the SSH-key entry to load]:UUID:_default' \
+'--ttl=[TTL in seconds before ssh-agent expires the key]:TTL:_default' \
+'--config=[Load TUI preferences or the \`keys\` keymap from this config.toml]:CONFIG:_files' \
+'--format=[Output format. \`human\` (default) is line-oriented for terminals; \`json\` is the stable machine-readable schema for scripts]:FORMAT:((human\:"Line-oriented human-readable output (default)"
+json\:"Stable JSON schema — see \`views/\` for per-subcommand shapes"))' \
+'--registry=[Path to the vault registry file. Defaults to \`\$HOME/.local/state/hidlins/vaults.toml\` (per \`hidlins_core\:\:HidlinsPaths\`)]:REGISTRY:_files' \
+'--cli[Force one-shot CLI mode (print help when no command is supplied)]' \
+'-h[Print help (see more with '\''--help'\'')]' \
+'--help[Print help (see more with '\''--help'\'')]' \
+&& ret=0
+;;
+(generate)
+_arguments "${_arguments_options[@]}" : \
+'--vault=[Registry name of the destination vault]:VAULT:_default' \
+'--algorithm=[Algorithm (\`ed25519\` or \`rsa\`). Defaults to \`ed25519\` when implemented]:ALGORITHM:_default' \
+'--comment=[Optional comment to attach to the public key]:COMMENT:_default' \
+'--config=[Load TUI preferences or the \`keys\` keymap from this config.toml]:CONFIG:_files' \
+'--format=[Output format. \`human\` (default) is line-oriented for terminals; \`json\` is the stable machine-readable schema for scripts]:FORMAT:((human\:"Line-oriented human-readable output (default)"
+json\:"Stable JSON schema — see \`views/\` for per-subcommand shapes"))' \
+'--registry=[Path to the vault registry file. Defaults to \`\$HOME/.local/state/hidlins/vaults.toml\` (per \`hidlins_core\:\:HidlinsPaths\`)]:REGISTRY:_files' \
+'--cli[Force one-shot CLI mode (print help when no command is supplied)]' \
+'-h[Print help (see more with '\''--help'\'')]' \
+'--help[Print help (see more with '\''--help'\'')]' \
+&& ret=0
+;;
+(help)
+_arguments "${_arguments_options[@]}" : \
+":: :_hidlins__subcmd__ssh__subcmd__help_commands" \
+"*::: :->help" \
+&& ret=0
+
+    case $state in
+    (help)
+        words=($line[1] "${words[@]}")
+        (( CURRENT += 1 ))
+        curcontext="${curcontext%:*:*}:hidlins-ssh-help-command-$line[1]:"
+        case $line[1] in
+            (add)
+_arguments "${_arguments_options[@]}" : \
+&& ret=0
+;;
+(load)
+_arguments "${_arguments_options[@]}" : \
+&& ret=0
+;;
+(generate)
+_arguments "${_arguments_options[@]}" : \
+&& ret=0
+;;
+(help)
+_arguments "${_arguments_options[@]}" : \
+&& ret=0
+;;
+        esac
+    ;;
+esac
+;;
+        esac
+    ;;
+esac
+;;
+(completions)
+_arguments "${_arguments_options[@]}" : \
+'--config=[Load TUI preferences or the \`keys\` keymap from this config.toml]:CONFIG:_files' \
+'--format=[Output format. \`human\` (default) is line-oriented for terminals; \`json\` is the stable machine-readable schema for scripts]:FORMAT:((human\:"Line-oriented human-readable output (default)"
+json\:"Stable JSON schema — see \`views/\` for per-subcommand shapes"))' \
+'--registry=[Path to the vault registry file. Defaults to \`\$HOME/.local/state/hidlins/vaults.toml\` (per \`hidlins_core\:\:HidlinsPaths\`)]:REGISTRY:_files' \
+'--cli[Force one-shot CLI mode (print help when no command is supplied)]' \
+'-h[Print help (see more with '\''--help'\'')]' \
+'--help[Print help (see more with '\''--help'\'')]' \
+'::shell -- Target shell to generate a completion script for:(bash elvish fish powershell zsh)' \
+&& ret=0
+;;
+(keys)
+_arguments "${_arguments_options[@]}" : \
+'--config=[Load TUI preferences or the \`keys\` keymap from this config.toml]:CONFIG:_files' \
+'--format=[Output format. \`human\` (default) is line-oriented for terminals; \`json\` is the stable machine-readable schema for scripts]:FORMAT:((human\:"Line-oriented human-readable output (default)"
+json\:"Stable JSON schema — see \`views/\` for per-subcommand shapes"))' \
+'--registry=[Path to the vault registry file. Defaults to \`\$HOME/.local/state/hidlins/vaults.toml\` (per \`hidlins_core\:\:HidlinsPaths\`)]:REGISTRY:_files' \
+'--cli[Force one-shot CLI mode (print help when no command is supplied)]' \
+'-h[Print help (see more with '\''--help'\'')]' \
+'--help[Print help (see more with '\''--help'\'')]' \
+&& ret=0
+;;
+(help)
+_arguments "${_arguments_options[@]}" : \
+":: :_hidlins__subcmd__help_commands" \
+"*::: :->help" \
+&& ret=0
+
+    case $state in
+    (help)
+        words=($line[1] "${words[@]}")
+        (( CURRENT += 1 ))
+        curcontext="${curcontext%:*:*}:hidlins-help-command-$line[1]:"
+        case $line[1] in
+            (vault)
+_arguments "${_arguments_options[@]}" : \
+":: :_hidlins__subcmd__help__subcmd__vault_commands" \
+"*::: :->vault" \
+&& ret=0
+
+    case $state in
+    (vault)
+        words=($line[1] "${words[@]}")
+        (( CURRENT += 1 ))
+        curcontext="${curcontext%:*:*}:hidlins-help-vault-command-$line[1]:"
+        case $line[1] in
+            (create)
+_arguments "${_arguments_options[@]}" : \
+&& ret=0
+;;
+(register)
+_arguments "${_arguments_options[@]}" : \
+&& ret=0
+;;
+(open)
+_arguments "${_arguments_options[@]}" : \
+&& ret=0
+;;
+(list)
+_arguments "${_arguments_options[@]}" : \
+&& ret=0
+;;
+(set-lock)
+_arguments "${_arguments_options[@]}" : \
+&& ret=0
+;;
+        esac
+    ;;
+esac
+;;
+(entry)
+_arguments "${_arguments_options[@]}" : \
+":: :_hidlins__subcmd__help__subcmd__entry_commands" \
+"*::: :->entry" \
+&& ret=0
+
+    case $state in
+    (entry)
+        words=($line[1] "${words[@]}")
+        (( CURRENT += 1 ))
+        curcontext="${curcontext%:*:*}:hidlins-help-entry-command-$line[1]:"
+        case $line[1] in
+            (add)
+_arguments "${_arguments_options[@]}" : \
+&& ret=0
+;;
+(get)
+_arguments "${_arguments_options[@]}" : \
+&& ret=0
+;;
+(edit)
+_arguments "${_arguments_options[@]}" : \
+&& ret=0
+;;
+(rm)
+_arguments "${_arguments_options[@]}" : \
+&& ret=0
+;;
+(list)
+_arguments "${_arguments_options[@]}" : \
+&& ret=0
+;;
+(search)
+_arguments "${_arguments_options[@]}" : \
+&& ret=0
+;;
+        esac
+    ;;
+esac
+;;
+(gen)
+_arguments "${_arguments_options[@]}" : \
+":: :_hidlins__subcmd__help__subcmd__gen_commands" \
+"*::: :->gen" \
+&& ret=0
+
+    case $state in
+    (gen)
+        words=($line[1] "${words[@]}")
+        (( CURRENT += 1 ))
+        curcontext="${curcontext%:*:*}:hidlins-help-gen-command-$line[1]:"
+        case $line[1] in
+            (password)
+_arguments "${_arguments_options[@]}" : \
+&& ret=0
+;;
+(passphrase)
+_arguments "${_arguments_options[@]}" : \
+&& ret=0
+;;
+        esac
+    ;;
+esac
+;;
+(sync)
+_arguments "${_arguments_options[@]}" : \
+":: :_hidlins__subcmd__help__subcmd__sync_commands" \
+"*::: :->sync" \
+&& ret=0
+
+    case $state in
+    (sync)
+        words=($line[1] "${words[@]}")
+        (( CURRENT += 1 ))
+        curcontext="${curcontext%:*:*}:hidlins-help-sync-command-$line[1]:"
+        case $line[1] in
+            (now)
+_arguments "${_arguments_options[@]}" : \
+&& ret=0
+;;
+(serve)
+_arguments "${_arguments_options[@]}" : \
+&& ret=0
+;;
+(pair)
+_arguments "${_arguments_options[@]}" : \
+&& ret=0
+;;
+(import)
+_arguments "${_arguments_options[@]}" : \
+&& ret=0
+;;
+(status)
+_arguments "${_arguments_options[@]}" : \
+&& ret=0
+;;
+(peers)
+_arguments "${_arguments_options[@]}" : \
+":: :_hidlins__subcmd__help__subcmd__sync__subcmd__peers_commands" \
+"*::: :->peers" \
+&& ret=0
+
+    case $state in
+    (peers)
+        words=($line[1] "${words[@]}")
+        (( CURRENT += 1 ))
+        curcontext="${curcontext%:*:*}:hidlins-help-sync-peers-command-$line[1]:"
+        case $line[1] in
+            (list)
+_arguments "${_arguments_options[@]}" : \
+&& ret=0
+;;
+(rename)
+_arguments "${_arguments_options[@]}" : \
+&& ret=0
+;;
+(revoke)
+_arguments "${_arguments_options[@]}" : \
+&& ret=0
+;;
+        esac
+    ;;
+esac
+;;
+        esac
+    ;;
+esac
+;;
+(ssh)
+_arguments "${_arguments_options[@]}" : \
+":: :_hidlins__subcmd__help__subcmd__ssh_commands" \
+"*::: :->ssh" \
+&& ret=0
+
+    case $state in
+    (ssh)
+        words=($line[1] "${words[@]}")
+        (( CURRENT += 1 ))
+        curcontext="${curcontext%:*:*}:hidlins-help-ssh-command-$line[1]:"
+        case $line[1] in
+            (add)
+_arguments "${_arguments_options[@]}" : \
+&& ret=0
+;;
+(load)
+_arguments "${_arguments_options[@]}" : \
+&& ret=0
+;;
+(generate)
+_arguments "${_arguments_options[@]}" : \
+&& ret=0
+;;
+        esac
+    ;;
+esac
+;;
+(completions)
+_arguments "${_arguments_options[@]}" : \
+&& ret=0
+;;
+(keys)
+_arguments "${_arguments_options[@]}" : \
+&& ret=0
+;;
+(help)
+_arguments "${_arguments_options[@]}" : \
+&& ret=0
+;;
+        esac
+    ;;
+esac
+;;
+        esac
+    ;;
+esac
+}
+
+(( $+functions[_hidlins_commands] )) ||
+_hidlins_commands() {
+    local commands; commands=(
+'vault:Vault lifecycle and registration commands' \
+'entry:Secret-entry CRUD, search, and TOTP commands' \
+'gen:Password and passphrase generation' \
+'sync:Pair and synchronize vaults over the local network' \
+'ssh:SSH key entry management' \
+'completions:Generate shell completion scripts' \
+'keys:Print the TUI'\''s effective keymap (command name, keys, description, group)' \
+'help:Print this message or the help of the given subcommand(s)' \
+    )
+    _describe -t commands 'hidlins commands' commands "$@"
+}
+(( $+functions[_hidlins__subcmd__completions_commands] )) ||
+_hidlins__subcmd__completions_commands() {
+    local commands; commands=()
+    _describe -t commands 'hidlins completions commands' commands "$@"
+}
+(( $+functions[_hidlins__subcmd__entry_commands] )) ||
+_hidlins__subcmd__entry_commands() {
+    local commands; commands=(
+'add:Add a new entry to a vault' \
+'get:Get an entry by UUID or title' \
+'edit:Edit an existing entry' \
+'rm:Remove an entry (move to Recycle Bin by default)' \
+'list:List entries in a vault' \
+'search:Search entries' \
+'help:Print this message or the help of the given subcommand(s)' \
+    )
+    _describe -t commands 'hidlins entry commands' commands "$@"
+}
+(( $+functions[_hidlins__subcmd__entry__subcmd__add_commands] )) ||
+_hidlins__subcmd__entry__subcmd__add_commands() {
+    local commands; commands=()
+    _describe -t commands 'hidlins entry add commands' commands "$@"
+}
+(( $+functions[_hidlins__subcmd__entry__subcmd__edit_commands] )) ||
+_hidlins__subcmd__entry__subcmd__edit_commands() {
+    local commands; commands=()
+    _describe -t commands 'hidlins entry edit commands' commands "$@"
+}
+(( $+functions[_hidlins__subcmd__entry__subcmd__get_commands] )) ||
+_hidlins__subcmd__entry__subcmd__get_commands() {
+    local commands; commands=()
+    _describe -t commands 'hidlins entry get commands' commands "$@"
+}
+(( $+functions[_hidlins__subcmd__entry__subcmd__help_commands] )) ||
+_hidlins__subcmd__entry__subcmd__help_commands() {
+    local commands; commands=(
+'add:Add a new entry to a vault' \
+'get:Get an entry by UUID or title' \
+'edit:Edit an existing entry' \
+'rm:Remove an entry (move to Recycle Bin by default)' \
+'list:List entries in a vault' \
+'search:Search entries' \
+'help:Print this message or the help of the given subcommand(s)' \
+    )
+    _describe -t commands 'hidlins entry help commands' commands "$@"
+}
+(( $+functions[_hidlins__subcmd__entry__subcmd__help__subcmd__add_commands] )) ||
+_hidlins__subcmd__entry__subcmd__help__subcmd__add_commands() {
+    local commands; commands=()
+    _describe -t commands 'hidlins entry help add commands' commands "$@"
+}
+(( $+functions[_hidlins__subcmd__entry__subcmd__help__subcmd__edit_commands] )) ||
+_hidlins__subcmd__entry__subcmd__help__subcmd__edit_commands() {
+    local commands; commands=()
+    _describe -t commands 'hidlins entry help edit commands' commands "$@"
+}
+(( $+functions[_hidlins__subcmd__entry__subcmd__help__subcmd__get_commands] )) ||
+_hidlins__subcmd__entry__subcmd__help__subcmd__get_commands() {
+    local commands; commands=()
+    _describe -t commands 'hidlins entry help get commands' commands "$@"
+}
+(( $+functions[_hidlins__subcmd__entry__subcmd__help__subcmd__help_commands] )) ||
+_hidlins__subcmd__entry__subcmd__help__subcmd__help_commands() {
+    local commands; commands=()
+    _describe -t commands 'hidlins entry help help commands' commands "$@"
+}
+(( $+functions[_hidlins__subcmd__entry__subcmd__help__subcmd__list_commands] )) ||
+_hidlins__subcmd__entry__subcmd__help__subcmd__list_commands() {
+    local commands; commands=()
+    _describe -t commands 'hidlins entry help list commands' commands "$@"
+}
+(( $+functions[_hidlins__subcmd__entry__subcmd__help__subcmd__rm_commands] )) ||
+_hidlins__subcmd__entry__subcmd__help__subcmd__rm_commands() {
+    local commands; commands=()
+    _describe -t commands 'hidlins entry help rm commands' commands "$@"
+}
+(( $+functions[_hidlins__subcmd__entry__subcmd__help__subcmd__search_commands] )) ||
+_hidlins__subcmd__entry__subcmd__help__subcmd__search_commands() {
+    local commands; commands=()
+    _describe -t commands 'hidlins entry help search commands' commands "$@"
+}
+(( $+functions[_hidlins__subcmd__entry__subcmd__list_commands] )) ||
+_hidlins__subcmd__entry__subcmd__list_commands() {
+    local commands; commands=()
+    _describe -t commands 'hidlins entry list commands' commands "$@"
+}
+(( $+functions[_hidlins__subcmd__entry__subcmd__rm_commands] )) ||
+_hidlins__subcmd__entry__subcmd__rm_commands() {
+    local commands; commands=()
+    _describe -t commands 'hidlins entry rm commands' commands "$@"
+}
+(( $+functions[_hidlins__subcmd__entry__subcmd__search_commands] )) ||
+_hidlins__subcmd__entry__subcmd__search_commands() {
+    local commands; commands=()
+    _describe -t commands 'hidlins entry search commands' commands "$@"
+}
+(( $+functions[_hidlins__subcmd__gen_commands] )) ||
+_hidlins__subcmd__gen_commands() {
+    local commands; commands=(
+'password:Generate a random password with selectable character classes' \
+'passphrase:Generate an EFF-large-wordlist diceware passphrase' \
+'help:Print this message or the help of the given subcommand(s)' \
+    )
+    _describe -t commands 'hidlins gen commands' commands "$@"
+}
+(( $+functions[_hidlins__subcmd__gen__subcmd__help_commands] )) ||
+_hidlins__subcmd__gen__subcmd__help_commands() {
+    local commands; commands=(
+'password:Generate a random password with selectable character classes' \
+'passphrase:Generate an EFF-large-wordlist diceware passphrase' \
+'help:Print this message or the help of the given subcommand(s)' \
+    )
+    _describe -t commands 'hidlins gen help commands' commands "$@"
+}
+(( $+functions[_hidlins__subcmd__gen__subcmd__help__subcmd__help_commands] )) ||
+_hidlins__subcmd__gen__subcmd__help__subcmd__help_commands() {
+    local commands; commands=()
+    _describe -t commands 'hidlins gen help help commands' commands "$@"
+}
+(( $+functions[_hidlins__subcmd__gen__subcmd__help__subcmd__passphrase_commands] )) ||
+_hidlins__subcmd__gen__subcmd__help__subcmd__passphrase_commands() {
+    local commands; commands=()
+    _describe -t commands 'hidlins gen help passphrase commands' commands "$@"
+}
+(( $+functions[_hidlins__subcmd__gen__subcmd__help__subcmd__password_commands] )) ||
+_hidlins__subcmd__gen__subcmd__help__subcmd__password_commands() {
+    local commands; commands=()
+    _describe -t commands 'hidlins gen help password commands' commands "$@"
+}
+(( $+functions[_hidlins__subcmd__gen__subcmd__passphrase_commands] )) ||
+_hidlins__subcmd__gen__subcmd__passphrase_commands() {
+    local commands; commands=()
+    _describe -t commands 'hidlins gen passphrase commands' commands "$@"
+}
+(( $+functions[_hidlins__subcmd__gen__subcmd__password_commands] )) ||
+_hidlins__subcmd__gen__subcmd__password_commands() {
+    local commands; commands=()
+    _describe -t commands 'hidlins gen password commands' commands "$@"
+}
+(( $+functions[_hidlins__subcmd__help_commands] )) ||
+_hidlins__subcmd__help_commands() {
+    local commands; commands=(
+'vault:Vault lifecycle and registration commands' \
+'entry:Secret-entry CRUD, search, and TOTP commands' \
+'gen:Password and passphrase generation' \
+'sync:Pair and synchronize vaults over the local network' \
+'ssh:SSH key entry management' \
+'completions:Generate shell completion scripts' \
+'keys:Print the TUI'\''s effective keymap (command name, keys, description, group)' \
+'help:Print this message or the help of the given subcommand(s)' \
+    )
+    _describe -t commands 'hidlins help commands' commands "$@"
+}
+(( $+functions[_hidlins__subcmd__help__subcmd__completions_commands] )) ||
+_hidlins__subcmd__help__subcmd__completions_commands() {
+    local commands; commands=()
+    _describe -t commands 'hidlins help completions commands' commands "$@"
+}
+(( $+functions[_hidlins__subcmd__help__subcmd__entry_commands] )) ||
+_hidlins__subcmd__help__subcmd__entry_commands() {
+    local commands; commands=(
+'add:Add a new entry to a vault' \
+'get:Get an entry by UUID or title' \
+'edit:Edit an existing entry' \
+'rm:Remove an entry (move to Recycle Bin by default)' \
+'list:List entries in a vault' \
+'search:Search entries' \
+    )
+    _describe -t commands 'hidlins help entry commands' commands "$@"
+}
+(( $+functions[_hidlins__subcmd__help__subcmd__entry__subcmd__add_commands] )) ||
+_hidlins__subcmd__help__subcmd__entry__subcmd__add_commands() {
+    local commands; commands=()
+    _describe -t commands 'hidlins help entry add commands' commands "$@"
+}
+(( $+functions[_hidlins__subcmd__help__subcmd__entry__subcmd__edit_commands] )) ||
+_hidlins__subcmd__help__subcmd__entry__subcmd__edit_commands() {
+    local commands; commands=()
+    _describe -t commands 'hidlins help entry edit commands' commands "$@"
+}
+(( $+functions[_hidlins__subcmd__help__subcmd__entry__subcmd__get_commands] )) ||
+_hidlins__subcmd__help__subcmd__entry__subcmd__get_commands() {
+    local commands; commands=()
+    _describe -t commands 'hidlins help entry get commands' commands "$@"
+}
+(( $+functions[_hidlins__subcmd__help__subcmd__entry__subcmd__list_commands] )) ||
+_hidlins__subcmd__help__subcmd__entry__subcmd__list_commands() {
+    local commands; commands=()
+    _describe -t commands 'hidlins help entry list commands' commands "$@"
+}
+(( $+functions[_hidlins__subcmd__help__subcmd__entry__subcmd__rm_commands] )) ||
+_hidlins__subcmd__help__subcmd__entry__subcmd__rm_commands() {
+    local commands; commands=()
+    _describe -t commands 'hidlins help entry rm commands' commands "$@"
+}
+(( $+functions[_hidlins__subcmd__help__subcmd__entry__subcmd__search_commands] )) ||
+_hidlins__subcmd__help__subcmd__entry__subcmd__search_commands() {
+    local commands; commands=()
+    _describe -t commands 'hidlins help entry search commands' commands "$@"
+}
+(( $+functions[_hidlins__subcmd__help__subcmd__gen_commands] )) ||
+_hidlins__subcmd__help__subcmd__gen_commands() {
+    local commands; commands=(
+'password:Generate a random password with selectable character classes' \
+'passphrase:Generate an EFF-large-wordlist diceware passphrase' \
+    )
+    _describe -t commands 'hidlins help gen commands' commands "$@"
+}
+(( $+functions[_hidlins__subcmd__help__subcmd__gen__subcmd__passphrase_commands] )) ||
+_hidlins__subcmd__help__subcmd__gen__subcmd__passphrase_commands() {
+    local commands; commands=()
+    _describe -t commands 'hidlins help gen passphrase commands' commands "$@"
+}
+(( $+functions[_hidlins__subcmd__help__subcmd__gen__subcmd__password_commands] )) ||
+_hidlins__subcmd__help__subcmd__gen__subcmd__password_commands() {
+    local commands; commands=()
+    _describe -t commands 'hidlins help gen password commands' commands "$@"
+}
+(( $+functions[_hidlins__subcmd__help__subcmd__help_commands] )) ||
+_hidlins__subcmd__help__subcmd__help_commands() {
+    local commands; commands=()
+    _describe -t commands 'hidlins help help commands' commands "$@"
+}
+(( $+functions[_hidlins__subcmd__help__subcmd__keys_commands] )) ||
+_hidlins__subcmd__help__subcmd__keys_commands() {
+    local commands; commands=()
+    _describe -t commands 'hidlins help keys commands' commands "$@"
+}
+(( $+functions[_hidlins__subcmd__help__subcmd__ssh_commands] )) ||
+_hidlins__subcmd__help__subcmd__ssh_commands() {
+    local commands; commands=(
+'add:Add an SSH-key entry to a vault. (Slot — see \`features/ssh-keys/\`.)' \
+'load:Load an SSH key into ssh-agent with TTL. (Slot — see \`features/ssh-keys/\`.)' \
+'generate:Generate a new SSH keypair and store the private key. (Slot — see \`features/ssh-keys/\`.)' \
+    )
+    _describe -t commands 'hidlins help ssh commands' commands "$@"
+}
+(( $+functions[_hidlins__subcmd__help__subcmd__ssh__subcmd__add_commands] )) ||
+_hidlins__subcmd__help__subcmd__ssh__subcmd__add_commands() {
+    local commands; commands=()
+    _describe -t commands 'hidlins help ssh add commands' commands "$@"
+}
+(( $+functions[_hidlins__subcmd__help__subcmd__ssh__subcmd__generate_commands] )) ||
+_hidlins__subcmd__help__subcmd__ssh__subcmd__generate_commands() {
+    local commands; commands=()
+    _describe -t commands 'hidlins help ssh generate commands' commands "$@"
+}
+(( $+functions[_hidlins__subcmd__help__subcmd__ssh__subcmd__load_commands] )) ||
+_hidlins__subcmd__help__subcmd__ssh__subcmd__load_commands() {
+    local commands; commands=()
+    _describe -t commands 'hidlins help ssh load commands' commands "$@"
+}
+(( $+functions[_hidlins__subcmd__help__subcmd__sync_commands] )) ||
+_hidlins__subcmd__help__subcmd__sync_commands() {
+    local commands; commands=(
+'now:Synchronize a paired client vault now' \
+'serve:Run an authoritative sync server in the foreground until Ctrl+C' \
+'pair:Pair an existing vault with an authoritative server' \
+'import:Pair and import a complete encrypted vault' \
+'status:Show local-sync role, pairing, and server status' \
+'peers:List, rename, or revoke paired peers' \
+    )
+    _describe -t commands 'hidlins help sync commands' commands "$@"
+}
+(( $+functions[_hidlins__subcmd__help__subcmd__sync__subcmd__import_commands] )) ||
+_hidlins__subcmd__help__subcmd__sync__subcmd__import_commands() {
+    local commands; commands=()
+    _describe -t commands 'hidlins help sync import commands' commands "$@"
+}
+(( $+functions[_hidlins__subcmd__help__subcmd__sync__subcmd__now_commands] )) ||
+_hidlins__subcmd__help__subcmd__sync__subcmd__now_commands() {
+    local commands; commands=()
+    _describe -t commands 'hidlins help sync now commands' commands "$@"
+}
+(( $+functions[_hidlins__subcmd__help__subcmd__sync__subcmd__pair_commands] )) ||
+_hidlins__subcmd__help__subcmd__sync__subcmd__pair_commands() {
+    local commands; commands=()
+    _describe -t commands 'hidlins help sync pair commands' commands "$@"
+}
+(( $+functions[_hidlins__subcmd__help__subcmd__sync__subcmd__peers_commands] )) ||
+_hidlins__subcmd__help__subcmd__sync__subcmd__peers_commands() {
+    local commands; commands=(
+'list:List configured peers' \
+'rename:Rename a peer'\''s local display label' \
+'revoke:Revoke a peer immediately' \
+    )
+    _describe -t commands 'hidlins help sync peers commands' commands "$@"
+}
+(( $+functions[_hidlins__subcmd__help__subcmd__sync__subcmd__peers__subcmd__list_commands] )) ||
+_hidlins__subcmd__help__subcmd__sync__subcmd__peers__subcmd__list_commands() {
+    local commands; commands=()
+    _describe -t commands 'hidlins help sync peers list commands' commands "$@"
+}
+(( $+functions[_hidlins__subcmd__help__subcmd__sync__subcmd__peers__subcmd__rename_commands] )) ||
+_hidlins__subcmd__help__subcmd__sync__subcmd__peers__subcmd__rename_commands() {
+    local commands; commands=()
+    _describe -t commands 'hidlins help sync peers rename commands' commands "$@"
+}
+(( $+functions[_hidlins__subcmd__help__subcmd__sync__subcmd__peers__subcmd__revoke_commands] )) ||
+_hidlins__subcmd__help__subcmd__sync__subcmd__peers__subcmd__revoke_commands() {
+    local commands; commands=()
+    _describe -t commands 'hidlins help sync peers revoke commands' commands "$@"
+}
+(( $+functions[_hidlins__subcmd__help__subcmd__sync__subcmd__serve_commands] )) ||
+_hidlins__subcmd__help__subcmd__sync__subcmd__serve_commands() {
+    local commands; commands=()
+    _describe -t commands 'hidlins help sync serve commands' commands "$@"
+}
+(( $+functions[_hidlins__subcmd__help__subcmd__sync__subcmd__status_commands] )) ||
+_hidlins__subcmd__help__subcmd__sync__subcmd__status_commands() {
+    local commands; commands=()
+    _describe -t commands 'hidlins help sync status commands' commands "$@"
+}
+(( $+functions[_hidlins__subcmd__help__subcmd__vault_commands] )) ||
+_hidlins__subcmd__help__subcmd__vault_commands() {
+    local commands; commands=(
+'create:Create a new vault and register it' \
+'register:Authenticate and register an existing KDBX vault' \
+'open:Probe vault unlock with the given master password' \
+'list:List registered vaults' \
+'set-lock:Configure the per-vault idle-lock timeout' \
+    )
+    _describe -t commands 'hidlins help vault commands' commands "$@"
+}
+(( $+functions[_hidlins__subcmd__help__subcmd__vault__subcmd__create_commands] )) ||
+_hidlins__subcmd__help__subcmd__vault__subcmd__create_commands() {
+    local commands; commands=()
+    _describe -t commands 'hidlins help vault create commands' commands "$@"
+}
+(( $+functions[_hidlins__subcmd__help__subcmd__vault__subcmd__list_commands] )) ||
+_hidlins__subcmd__help__subcmd__vault__subcmd__list_commands() {
+    local commands; commands=()
+    _describe -t commands 'hidlins help vault list commands' commands "$@"
+}
+(( $+functions[_hidlins__subcmd__help__subcmd__vault__subcmd__open_commands] )) ||
+_hidlins__subcmd__help__subcmd__vault__subcmd__open_commands() {
+    local commands; commands=()
+    _describe -t commands 'hidlins help vault open commands' commands "$@"
+}
+(( $+functions[_hidlins__subcmd__help__subcmd__vault__subcmd__register_commands] )) ||
+_hidlins__subcmd__help__subcmd__vault__subcmd__register_commands() {
+    local commands; commands=()
+    _describe -t commands 'hidlins help vault register commands' commands "$@"
+}
+(( $+functions[_hidlins__subcmd__help__subcmd__vault__subcmd__set-lock_commands] )) ||
+_hidlins__subcmd__help__subcmd__vault__subcmd__set-lock_commands() {
+    local commands; commands=()
+    _describe -t commands 'hidlins help vault set-lock commands' commands "$@"
+}
+(( $+functions[_hidlins__subcmd__keys_commands] )) ||
+_hidlins__subcmd__keys_commands() {
+    local commands; commands=()
+    _describe -t commands 'hidlins keys commands' commands "$@"
+}
+(( $+functions[_hidlins__subcmd__ssh_commands] )) ||
+_hidlins__subcmd__ssh_commands() {
+    local commands; commands=(
+'add:Add an SSH-key entry to a vault. (Slot — see \`features/ssh-keys/\`.)' \
+'load:Load an SSH key into ssh-agent with TTL. (Slot — see \`features/ssh-keys/\`.)' \
+'generate:Generate a new SSH keypair and store the private key. (Slot — see \`features/ssh-keys/\`.)' \
+'help:Print this message or the help of the given subcommand(s)' \
+    )
+    _describe -t commands 'hidlins ssh commands' commands "$@"
+}
+(( $+functions[_hidlins__subcmd__ssh__subcmd__add_commands] )) ||
+_hidlins__subcmd__ssh__subcmd__add_commands() {
+    local commands; commands=()
+    _describe -t commands 'hidlins ssh add commands' commands "$@"
+}
+(( $+functions[_hidlins__subcmd__ssh__subcmd__generate_commands] )) ||
+_hidlins__subcmd__ssh__subcmd__generate_commands() {
+    local commands; commands=()
+    _describe -t commands 'hidlins ssh generate commands' commands "$@"
+}
+(( $+functions[_hidlins__subcmd__ssh__subcmd__help_commands] )) ||
+_hidlins__subcmd__ssh__subcmd__help_commands() {
+    local commands; commands=(
+'add:Add an SSH-key entry to a vault. (Slot — see \`features/ssh-keys/\`.)' \
+'load:Load an SSH key into ssh-agent with TTL. (Slot — see \`features/ssh-keys/\`.)' \
+'generate:Generate a new SSH keypair and store the private key. (Slot — see \`features/ssh-keys/\`.)' \
+'help:Print this message or the help of the given subcommand(s)' \
+    )
+    _describe -t commands 'hidlins ssh help commands' commands "$@"
+}
+(( $+functions[_hidlins__subcmd__ssh__subcmd__help__subcmd__add_commands] )) ||
+_hidlins__subcmd__ssh__subcmd__help__subcmd__add_commands() {
+    local commands; commands=()
+    _describe -t commands 'hidlins ssh help add commands' commands "$@"
+}
+(( $+functions[_hidlins__subcmd__ssh__subcmd__help__subcmd__generate_commands] )) ||
+_hidlins__subcmd__ssh__subcmd__help__subcmd__generate_commands() {
+    local commands; commands=()
+    _describe -t commands 'hidlins ssh help generate commands' commands "$@"
+}
+(( $+functions[_hidlins__subcmd__ssh__subcmd__help__subcmd__help_commands] )) ||
+_hidlins__subcmd__ssh__subcmd__help__subcmd__help_commands() {
+    local commands; commands=()
+    _describe -t commands 'hidlins ssh help help commands' commands "$@"
+}
+(( $+functions[_hidlins__subcmd__ssh__subcmd__help__subcmd__load_commands] )) ||
+_hidlins__subcmd__ssh__subcmd__help__subcmd__load_commands() {
+    local commands; commands=()
+    _describe -t commands 'hidlins ssh help load commands' commands "$@"
+}
+(( $+functions[_hidlins__subcmd__ssh__subcmd__load_commands] )) ||
+_hidlins__subcmd__ssh__subcmd__load_commands() {
+    local commands; commands=()
+    _describe -t commands 'hidlins ssh load commands' commands "$@"
+}
+(( $+functions[_hidlins__subcmd__sync_commands] )) ||
+_hidlins__subcmd__sync_commands() {
+    local commands; commands=(
+'now:Synchronize a paired client vault now' \
+'serve:Run an authoritative sync server in the foreground until Ctrl+C' \
+'pair:Pair an existing vault with an authoritative server' \
+'import:Pair and import a complete encrypted vault' \
+'status:Show local-sync role, pairing, and server status' \
+'peers:List, rename, or revoke paired peers' \
+'help:Print this message or the help of the given subcommand(s)' \
+    )
+    _describe -t commands 'hidlins sync commands' commands "$@"
+}
+(( $+functions[_hidlins__subcmd__sync__subcmd__help_commands] )) ||
+_hidlins__subcmd__sync__subcmd__help_commands() {
+    local commands; commands=(
+'now:Synchronize a paired client vault now' \
+'serve:Run an authoritative sync server in the foreground until Ctrl+C' \
+'pair:Pair an existing vault with an authoritative server' \
+'import:Pair and import a complete encrypted vault' \
+'status:Show local-sync role, pairing, and server status' \
+'peers:List, rename, or revoke paired peers' \
+'help:Print this message or the help of the given subcommand(s)' \
+    )
+    _describe -t commands 'hidlins sync help commands' commands "$@"
+}
+(( $+functions[_hidlins__subcmd__sync__subcmd__help__subcmd__help_commands] )) ||
+_hidlins__subcmd__sync__subcmd__help__subcmd__help_commands() {
+    local commands; commands=()
+    _describe -t commands 'hidlins sync help help commands' commands "$@"
+}
+(( $+functions[_hidlins__subcmd__sync__subcmd__help__subcmd__import_commands] )) ||
+_hidlins__subcmd__sync__subcmd__help__subcmd__import_commands() {
+    local commands; commands=()
+    _describe -t commands 'hidlins sync help import commands' commands "$@"
+}
+(( $+functions[_hidlins__subcmd__sync__subcmd__help__subcmd__now_commands] )) ||
+_hidlins__subcmd__sync__subcmd__help__subcmd__now_commands() {
+    local commands; commands=()
+    _describe -t commands 'hidlins sync help now commands' commands "$@"
+}
+(( $+functions[_hidlins__subcmd__sync__subcmd__help__subcmd__pair_commands] )) ||
+_hidlins__subcmd__sync__subcmd__help__subcmd__pair_commands() {
+    local commands; commands=()
+    _describe -t commands 'hidlins sync help pair commands' commands "$@"
+}
+(( $+functions[_hidlins__subcmd__sync__subcmd__help__subcmd__peers_commands] )) ||
+_hidlins__subcmd__sync__subcmd__help__subcmd__peers_commands() {
+    local commands; commands=(
+'list:List configured peers' \
+'rename:Rename a peer'\''s local display label' \
+'revoke:Revoke a peer immediately' \
+    )
+    _describe -t commands 'hidlins sync help peers commands' commands "$@"
+}
+(( $+functions[_hidlins__subcmd__sync__subcmd__help__subcmd__peers__subcmd__list_commands] )) ||
+_hidlins__subcmd__sync__subcmd__help__subcmd__peers__subcmd__list_commands() {
+    local commands; commands=()
+    _describe -t commands 'hidlins sync help peers list commands' commands "$@"
+}
+(( $+functions[_hidlins__subcmd__sync__subcmd__help__subcmd__peers__subcmd__rename_commands] )) ||
+_hidlins__subcmd__sync__subcmd__help__subcmd__peers__subcmd__rename_commands() {
+    local commands; commands=()
+    _describe -t commands 'hidlins sync help peers rename commands' commands "$@"
+}
+(( $+functions[_hidlins__subcmd__sync__subcmd__help__subcmd__peers__subcmd__revoke_commands] )) ||
+_hidlins__subcmd__sync__subcmd__help__subcmd__peers__subcmd__revoke_commands() {
+    local commands; commands=()
+    _describe -t commands 'hidlins sync help peers revoke commands' commands "$@"
+}
+(( $+functions[_hidlins__subcmd__sync__subcmd__help__subcmd__serve_commands] )) ||
+_hidlins__subcmd__sync__subcmd__help__subcmd__serve_commands() {
+    local commands; commands=()
+    _describe -t commands 'hidlins sync help serve commands' commands "$@"
+}
+(( $+functions[_hidlins__subcmd__sync__subcmd__help__subcmd__status_commands] )) ||
+_hidlins__subcmd__sync__subcmd__help__subcmd__status_commands() {
+    local commands; commands=()
+    _describe -t commands 'hidlins sync help status commands' commands "$@"
+}
+(( $+functions[_hidlins__subcmd__sync__subcmd__import_commands] )) ||
+_hidlins__subcmd__sync__subcmd__import_commands() {
+    local commands; commands=()
+    _describe -t commands 'hidlins sync import commands' commands "$@"
+}
+(( $+functions[_hidlins__subcmd__sync__subcmd__now_commands] )) ||
+_hidlins__subcmd__sync__subcmd__now_commands() {
+    local commands; commands=()
+    _describe -t commands 'hidlins sync now commands' commands "$@"
+}
+(( $+functions[_hidlins__subcmd__sync__subcmd__pair_commands] )) ||
+_hidlins__subcmd__sync__subcmd__pair_commands() {
+    local commands; commands=()
+    _describe -t commands 'hidlins sync pair commands' commands "$@"
+}
+(( $+functions[_hidlins__subcmd__sync__subcmd__peers_commands] )) ||
+_hidlins__subcmd__sync__subcmd__peers_commands() {
+    local commands; commands=(
+'list:List configured peers' \
+'rename:Rename a peer'\''s local display label' \
+'revoke:Revoke a peer immediately' \
+'help:Print this message or the help of the given subcommand(s)' \
+    )
+    _describe -t commands 'hidlins sync peers commands' commands "$@"
+}
+(( $+functions[_hidlins__subcmd__sync__subcmd__peers__subcmd__help_commands] )) ||
+_hidlins__subcmd__sync__subcmd__peers__subcmd__help_commands() {
+    local commands; commands=(
+'list:List configured peers' \
+'rename:Rename a peer'\''s local display label' \
+'revoke:Revoke a peer immediately' \
+'help:Print this message or the help of the given subcommand(s)' \
+    )
+    _describe -t commands 'hidlins sync peers help commands' commands "$@"
+}
+(( $+functions[_hidlins__subcmd__sync__subcmd__peers__subcmd__help__subcmd__help_commands] )) ||
+_hidlins__subcmd__sync__subcmd__peers__subcmd__help__subcmd__help_commands() {
+    local commands; commands=()
+    _describe -t commands 'hidlins sync peers help help commands' commands "$@"
+}
+(( $+functions[_hidlins__subcmd__sync__subcmd__peers__subcmd__help__subcmd__list_commands] )) ||
+_hidlins__subcmd__sync__subcmd__peers__subcmd__help__subcmd__list_commands() {
+    local commands; commands=()
+    _describe -t commands 'hidlins sync peers help list commands' commands "$@"
+}
+(( $+functions[_hidlins__subcmd__sync__subcmd__peers__subcmd__help__subcmd__rename_commands] )) ||
+_hidlins__subcmd__sync__subcmd__peers__subcmd__help__subcmd__rename_commands() {
+    local commands; commands=()
+    _describe -t commands 'hidlins sync peers help rename commands' commands "$@"
+}
+(( $+functions[_hidlins__subcmd__sync__subcmd__peers__subcmd__help__subcmd__revoke_commands] )) ||
+_hidlins__subcmd__sync__subcmd__peers__subcmd__help__subcmd__revoke_commands() {
+    local commands; commands=()
+    _describe -t commands 'hidlins sync peers help revoke commands' commands "$@"
+}
+(( $+functions[_hidlins__subcmd__sync__subcmd__peers__subcmd__list_commands] )) ||
+_hidlins__subcmd__sync__subcmd__peers__subcmd__list_commands() {
+    local commands; commands=()
+    _describe -t commands 'hidlins sync peers list commands' commands "$@"
+}
+(( $+functions[_hidlins__subcmd__sync__subcmd__peers__subcmd__rename_commands] )) ||
+_hidlins__subcmd__sync__subcmd__peers__subcmd__rename_commands() {
+    local commands; commands=()
+    _describe -t commands 'hidlins sync peers rename commands' commands "$@"
+}
+(( $+functions[_hidlins__subcmd__sync__subcmd__peers__subcmd__revoke_commands] )) ||
+_hidlins__subcmd__sync__subcmd__peers__subcmd__revoke_commands() {
+    local commands; commands=()
+    _describe -t commands 'hidlins sync peers revoke commands' commands "$@"
+}
+(( $+functions[_hidlins__subcmd__sync__subcmd__serve_commands] )) ||
+_hidlins__subcmd__sync__subcmd__serve_commands() {
+    local commands; commands=()
+    _describe -t commands 'hidlins sync serve commands' commands "$@"
+}
+(( $+functions[_hidlins__subcmd__sync__subcmd__status_commands] )) ||
+_hidlins__subcmd__sync__subcmd__status_commands() {
+    local commands; commands=()
+    _describe -t commands 'hidlins sync status commands' commands "$@"
+}
+(( $+functions[_hidlins__subcmd__vault_commands] )) ||
+_hidlins__subcmd__vault_commands() {
+    local commands; commands=(
+'create:Create a new vault and register it' \
+'register:Authenticate and register an existing KDBX vault' \
+'open:Probe vault unlock with the given master password' \
+'list:List registered vaults' \
+'set-lock:Configure the per-vault idle-lock timeout' \
+'help:Print this message or the help of the given subcommand(s)' \
+    )
+    _describe -t commands 'hidlins vault commands' commands "$@"
+}
+(( $+functions[_hidlins__subcmd__vault__subcmd__create_commands] )) ||
+_hidlins__subcmd__vault__subcmd__create_commands() {
+    local commands; commands=()
+    _describe -t commands 'hidlins vault create commands' commands "$@"
+}
+(( $+functions[_hidlins__subcmd__vault__subcmd__help_commands] )) ||
+_hidlins__subcmd__vault__subcmd__help_commands() {
+    local commands; commands=(
+'create:Create a new vault and register it' \
+'register:Authenticate and register an existing KDBX vault' \
+'open:Probe vault unlock with the given master password' \
+'list:List registered vaults' \
+'set-lock:Configure the per-vault idle-lock timeout' \
+'help:Print this message or the help of the given subcommand(s)' \
+    )
+    _describe -t commands 'hidlins vault help commands' commands "$@"
+}
+(( $+functions[_hidlins__subcmd__vault__subcmd__help__subcmd__create_commands] )) ||
+_hidlins__subcmd__vault__subcmd__help__subcmd__create_commands() {
+    local commands; commands=()
+    _describe -t commands 'hidlins vault help create commands' commands "$@"
+}
+(( $+functions[_hidlins__subcmd__vault__subcmd__help__subcmd__help_commands] )) ||
+_hidlins__subcmd__vault__subcmd__help__subcmd__help_commands() {
+    local commands; commands=()
+    _describe -t commands 'hidlins vault help help commands' commands "$@"
+}
+(( $+functions[_hidlins__subcmd__vault__subcmd__help__subcmd__list_commands] )) ||
+_hidlins__subcmd__vault__subcmd__help__subcmd__list_commands() {
+    local commands; commands=()
+    _describe -t commands 'hidlins vault help list commands' commands "$@"
+}
+(( $+functions[_hidlins__subcmd__vault__subcmd__help__subcmd__open_commands] )) ||
+_hidlins__subcmd__vault__subcmd__help__subcmd__open_commands() {
+    local commands; commands=()
+    _describe -t commands 'hidlins vault help open commands' commands "$@"
+}
+(( $+functions[_hidlins__subcmd__vault__subcmd__help__subcmd__register_commands] )) ||
+_hidlins__subcmd__vault__subcmd__help__subcmd__register_commands() {
+    local commands; commands=()
+    _describe -t commands 'hidlins vault help register commands' commands "$@"
+}
+(( $+functions[_hidlins__subcmd__vault__subcmd__help__subcmd__set-lock_commands] )) ||
+_hidlins__subcmd__vault__subcmd__help__subcmd__set-lock_commands() {
+    local commands; commands=()
+    _describe -t commands 'hidlins vault help set-lock commands' commands "$@"
+}
+(( $+functions[_hidlins__subcmd__vault__subcmd__list_commands] )) ||
+_hidlins__subcmd__vault__subcmd__list_commands() {
+    local commands; commands=()
+    _describe -t commands 'hidlins vault list commands' commands "$@"
+}
+(( $+functions[_hidlins__subcmd__vault__subcmd__open_commands] )) ||
+_hidlins__subcmd__vault__subcmd__open_commands() {
+    local commands; commands=()
+    _describe -t commands 'hidlins vault open commands' commands "$@"
+}
+(( $+functions[_hidlins__subcmd__vault__subcmd__register_commands] )) ||
+_hidlins__subcmd__vault__subcmd__register_commands() {
+    local commands; commands=()
+    _describe -t commands 'hidlins vault register commands' commands "$@"
+}
+(( $+functions[_hidlins__subcmd__vault__subcmd__set-lock_commands] )) ||
+_hidlins__subcmd__vault__subcmd__set-lock_commands() {
+    local commands; commands=()
+    _describe -t commands 'hidlins vault set-lock commands' commands "$@"
+}
+
+if [ "$funcstack[1]" = "_hidlins" ]; then
+    _hidlins "$@"
+else
+    compdef _hidlins hidlins
+fi

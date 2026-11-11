@@ -1,0 +1,76 @@
+import 'package:flutter_test/flutter_test.dart';
+
+import 'package:app/src/bridge/error.dart';
+import 'package:app/src/data/failures.dart';
+
+void main() {
+  group('mapApiError', () {
+    final table = <HidlinsApiError, Type>{
+      const HidlinsApiError.authenticationFailed(): BadCredentials,
+      const HidlinsApiError.vaultLocked(): VaultIsLocked,
+      const HidlinsApiError.vaultBusySyncing(): VaultIsBusy,
+      const HidlinsApiError.vaultContended(holderPid: 42): VaultContended,
+      const HidlinsApiError.keyfileRequired(): KeyfileNeeded,
+      const HidlinsApiError.unsupportedPlatform(capability: 'clipboard'):
+          UnsupportedPlatformFailure,
+      const HidlinsApiError.pathExists(path: '/v.kdbx'): PathAlreadyExists,
+      const HidlinsApiError.fileNotFound(path: '/v.kdbx'): NotFound,
+      const HidlinsApiError.invalidInput(field: 'name', reason: 'empty'):
+          InvalidInputFailure,
+      const HidlinsApiError.registryChanged(): InternalFailure,
+      const HidlinsApiError.invalidFormat(): InvalidInputFailure,
+      const HidlinsApiError.registryMalformed(): InternalFailure,
+      const HidlinsApiError.syncNotConfigured(): SyncNotReady,
+      const HidlinsApiError.syncRemoteUnreachable(
+        endpoint: '192.168.1.8:42873',
+      ): SyncUnreachable,
+      const HidlinsApiError.syncAuthFailed(): SyncAuthFailure,
+      const HidlinsApiError.syncConflictUnresolvable(backupPath: '/bak'):
+          SyncConflict,
+      const HidlinsApiError.io(context: 'disk full'): IoFailure,
+      const HidlinsApiError.internal(context: 'panic'): InternalFailure,
+    };
+
+    for (final entry in table.entries) {
+      test('${entry.key.runtimeType} maps to ${entry.value}', () {
+        final result = mapApiError(entry.key);
+        expect(result, isA<AppFailure>());
+        expect(result.runtimeType, entry.value);
+      });
+    }
+
+    test('VaultContended preserves holderPid', () {
+      final result = mapApiError(
+        const HidlinsApiError.vaultContended(holderPid: 99),
+      );
+      expect(result, isA<VaultContended>());
+      expect((result as VaultContended).holderPid, 99);
+    });
+
+    test('UnsupportedPlatform preserves capability', () {
+      final result = mapApiError(
+        const HidlinsApiError.unsupportedPlatform(capability: 'clipboard'),
+      );
+      expect(result, isA<UnsupportedPlatformFailure>());
+      expect((result as UnsupportedPlatformFailure).capability, 'clipboard');
+    });
+
+    test('SyncConflict preserves backupPath', () {
+      final result = mapApiError(
+        const HidlinsApiError.syncConflictUnresolvable(backupPath: '/b.kdbx'),
+      );
+      expect(result, isA<SyncConflict>());
+      expect((result as SyncConflict).backupPath, '/b.kdbx');
+    });
+
+    test('SyncUnreachable preserves endpoint', () {
+      final result = mapApiError(
+        const HidlinsApiError.syncRemoteUnreachable(
+          endpoint: '192.168.1.8:42873',
+        ),
+      );
+      expect(result, isA<SyncUnreachable>());
+      expect((result as SyncUnreachable).endpoint, '192.168.1.8:42873');
+    });
+  });
+}

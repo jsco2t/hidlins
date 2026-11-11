@@ -1,0 +1,65 @@
+import 'package:material_ui/material_ui.dart';
+import 'package:flutter_test/flutter_test.dart';
+
+import 'package:app/src/ui/theme.dart';
+import 'package:app/src/l10n/app_localizations.dart';
+import 'package:app/src/l10n/hidlins_localizations.dart';
+
+const goldenSizeCompact = Size(400, 800);
+const goldenSizeMedium = Size(720, 800);
+const goldenSizeExpanded = Size(1200, 800);
+
+Future<void> expectGolden(
+  WidgetTester tester,
+  Widget child, {
+  required String name,
+  Size size = goldenSizeExpanded,
+  Brightness brightness = Brightness.light,
+  bool settle = true,
+}) async {
+  final theme = brightness == Brightness.dark
+      ? hidlinsDarkTheme()
+      : hidlinsLightTheme();
+
+  // setSurfaceSize changes render constraints but leaves MediaQuery tied to
+  // FlutterView's original 800x600 size. Configure both so adaptive breakpoints,
+  // scroll layout and the captured PNG all describe the same viewport.
+  tester.view.devicePixelRatio = 3;
+  tester.view.physicalSize = size * 3;
+  await tester.binding.setSurfaceSize(size);
+  addTearDown(() async {
+    await tester.binding.setSurfaceSize(null);
+    tester.view.resetPhysicalSize();
+    tester.view.resetDevicePixelRatio();
+  });
+
+  await tester.pumpWidget(
+    MaterialApp(
+      theme: theme,
+      debugShowCheckedModeBanner: false,
+      localizationsDelegates: hidlinsLocalizationsDelegates,
+      supportedLocales: AppLocalizations.supportedLocales,
+      home: child,
+    ),
+  );
+  // A settled frame does not guarantee asynchronous asset decoding has
+  // completed. Wait for the providers of images actually present in the scene.
+  await tester.pump();
+  for (final element in find.byType(Image).evaluate()) {
+    final image = element.widget as Image;
+    await tester.runAsync(() => precacheImage(image.image, element));
+  }
+  if (settle) {
+    await tester.pumpAndSettle();
+  } else {
+    // Indeterminate progress indicators never settle. Advance by a fixed
+    // interval so their captured phase remains reproducible.
+    await tester.pump();
+    await tester.pump(const Duration(milliseconds: 300));
+  }
+
+  await expectLater(
+    find.byType(MaterialApp),
+    matchesGoldenFile('goldens/$name.png'),
+  );
+}
