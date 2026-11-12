@@ -13,7 +13,7 @@ struct Slot {
 }
 
 #[derive(Default)]
-#[flutter_rust_bridge::frb(ignore)]
+
 pub(crate) struct TotpCache {
     slots: HashMap<Uuid, Slot>,
 }

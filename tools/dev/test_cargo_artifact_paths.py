@@ -38,35 +38,19 @@ if name=='cargo':
    sys.exit(23 if failure=='nonzero' else 0)
   os.execv(env['FIXTURE_REAL_CARGO'],[env['FIXTURE_REAL_CARGO'],*args])
  record('cargo',args=args)
- if env.get('FIXTURE_ANDROID'):
-  if args[0]=='build':
-   require('--target-dir' in args,'Android staging root flag missing')
-   require(args[args.index('--target-dir')+1]==str(root/'target'),'Android staging root changed')
-  sys.exit(0)
  for profile in ['debug','release']:
   directory=out/profile;directory.mkdir(parents=True,exist_ok=True)
   (directory/env['FIXTURE_LIBRARY_NAME']).write_text('FRESH_LIBRARY')
+  (directory/'libhidlins_api.a').write_text('FRESH_ARCHIVE')
   for binary in ['hidlins','hidlins-agent','hidlins-test-driver','merge-interop-driver','api-test-driver','deps/hidlins_api','deps/cli_local_sync_process-fresh']:
    artifact=directory/binary;artifact.parent.mkdir(exist_ok=True)
    artifact.write_text('#!'+sys.executable+'\n'+(root/'spy.py').read_text());artifact.chmod(0o755)
  if args[0]=='test':
   require(env.get('HIDLINS_CLI_BIN')==str(out/'debug/hidlins'),'TUI CLI coexistence path')
   record('tui-process')
-elif name=='flutter':
- expected=env['FIXTURE_EXPECTED_API']
- if env.get('FIXTURE_PERFORMANCE'): expected=str(out/'release'/env['FIXTURE_LIBRARY_NAME'])
- require(env.get('HIDLINS_API_LIB')==expected,'bridge library path')
- require(p(expected).is_file(),'bridge library missing')
- if 'HIDLINS_CLI_BIN' in env:
-  require(env['HIDLINS_CLI_BIN']==str(out/'debug/hidlins'),'Flutter CLI coexistence path')
-  record('flutter-process')
- record('flutter',library=expected)
- if env.get('FIXTURE_PERFORMANCE'): sys.exit(73) # Stop after the consumer, before unchanged budget parsing.
 elif name=='inspect.py':
- require(args==['artifacts',*[str(out/'release'/x) for x in ['hidlins','hidlins-agent']]],'release inspection paths')
+ require(args==['artifacts',*[str(out/'release'/x) for x in ['hidlins','hidlins-agent',env['FIXTURE_LIBRARY_NAME'],'libhidlins_api.a']]],'release inspection paths')
  record('release-inspection')
-elif name=='artifacts.py':
- require(args==['stage'],'Android staging invocation');record('android-stage')
 elif name=='ip': pass
 elif name=='uname': print('x86_64' if args==['-m'] else 'Linux')
 elif name=='sudo':
@@ -99,16 +83,15 @@ class ArtifactPathTests(unittest.TestCase):
         )
         (self.root / "lib.rs").write_text("pub fn fixture() {}\n")
         self.environment = dict(os.environ, RUSTUP_TOOLCHAIN="1.95.0", CARGO_NET_OFFLINE="true")
-        for key in ("MAKEFLAGS", "MFLAGS", "MAKELEVEL", "MAKEFILES", "CARGO_TARGET_DIR", "HIDLINS_API_LIB", "HIDLINS_API_RELEASE_LIB"):
+        for key in ("MAKEFLAGS", "MFLAGS", "MAKELEVEL", "MAKEFILES", "CARGO_TARGET_DIR"):
             self.environment.pop(key, None)
         subprocess.run([CARGO, "generate-lockfile", "--offline"], cwd=self.root,
                        env=self.environment, check=True, capture_output=True)
         shutil.copyfile(ROOT / "Makefile", self.root / "Makefile")
-        (self.root / "app").mkdir()
         (self.root / "spy.py").write_text(SPY)
         binaries = self.root / "bin"
         binaries.mkdir()
-        for name in ("cargo", "flutter", "ip", "sudo", "uname"):
+        for name in ("cargo", "ip", "sudo", "uname"):
             self.spy(binaries / name)
         self.environment.update(
             PATH=str(binaries) + os.pathsep + self.environment["PATH"],
@@ -137,7 +120,7 @@ class ArtifactPathTests(unittest.TestCase):
         path.write_text("#!" + sys.executable + "\n" + source)
         path.chmod(0o755)
 
-    def configure(self, mode="absolute", override=None):
+    def configure(self, mode="absolute"):
         if mode in ("config", "precedence"):
             config = self.root / ".cargo/config.toml"
             config.parent.mkdir()
@@ -151,17 +134,7 @@ class ArtifactPathTests(unittest.TestCase):
             cwd=self.root, env=self.environment, text=True,
         )
         self.output = Path(json.loads(metadata)["target_directory"])
-        self.environment.update(FIXTURE_OUTPUT=str(self.output),
-                                FIXTURE_EXPECTED_API=str(self.output / "debug" / HOST_LIBRARY))
-        if override:
-            explicit = self.root / "explicit" / "different-name.so"
-            explicit.parent.mkdir()
-            explicit.write_text("EXPLICIT_LIBRARY")
-            self.environment["FIXTURE_EXPECTED_API"] = str(explicit)
-            if override == "environment":
-                self.environment["HIDLINS_API_LIB"] = str(explicit)
-            else:
-                self.override = "HIDLINS_API_LIB=" + str(explicit)
+        self.environment.update(FIXTURE_OUTPUT=str(self.output))
         poison = self.root / "target"
         for name in ("debug/" + HOST_LIBRARY, "debug/hidlins", "debug/hidlins-test-driver",
                      "debug/merge-interop-driver", "debug/api-test-driver", "debug/deps/hidlins_api",
@@ -173,8 +146,8 @@ class ArtifactPathTests(unittest.TestCase):
 
     def run_make(self, *targets, **environment):
         return subprocess.run(
-            ["make", "--no-print-directory", "-o", "app-deps", "-o", "ncsa-boundary-precheck",
-             "-o", "asset-license-check", *targets, *([self.override] if hasattr(self, "override") else [])],
+            ["make", "--no-print-directory", "-o", "ncsa-boundary-precheck",
+             "-o", "asset-license-check", "-o", "license-check", *targets, *([self.override] if hasattr(self, "override") else [])],
             cwd=self.root, env=dict(self.environment, **environment), text=True,
             stdout=subprocess.PIPE, stderr=subprocess.STDOUT, timeout=30,
         )
@@ -183,48 +156,11 @@ class ArtifactPathTests(unittest.TestCase):
         path = self.root / "receipts.jsonl"
         return [json.loads(line) for line in path.read_text().splitlines()] if path.exists() else []
 
-    def test_bridge_uses_cargo_environment_and_config_roots(self):
-        for mode in ("default", "absolute", "relative", "config", "precedence"):
-            with self.subTest(mode=mode):
-                # Each configuration is a separate fixture to avoid cached Make/Cargo state.
-                case = ArtifactPathTests()
-                case.setUp()
-                try:
-                    case.configure(mode)
-                    result = case.run_make("app-test-bridge")
-                    self.assertEqual(result.returncode, 0, result.stdout)
-                    self.assertTrue(any(r["role"] == "flutter" for r in case.receipts()))
-                finally:
-                    case.doCleanups()
-
-    def test_full_library_override_environment(self):
-        self.configure(override="environment")
-        result = self.run_make("app-test-attachment-source")
-        self.assertEqual(result.returncode, 0, result.stdout)
-
-    def test_full_library_override_command_line(self):
-        self.configure(override="command")
-        result = self.run_make("app-test-bridge")
-        self.assertEqual(result.returncode, 0, result.stdout)
-
     def test_release_inspects_the_built_output(self):
         self.configure()
         result = self.run_make("release")
         self.assertEqual(result.returncode, 0, result.stdout)
         self.assertTrue(any(r["role"] == "release-inspection" for r in self.receipts()))
-
-    def test_cli_coexistence_uses_the_built_output(self):
-        self.configure()
-        result = self.run_make("app-test-integration")
-        self.assertEqual(result.returncode, 0, result.stdout)
-        self.assertTrue(any(r["role"] == "tui-process" for r in self.receipts()))
-
-    def test_performance_fixture_and_release_bridge_use_built_output(self):
-        self.configure()
-        result = self.run_make("app-test-integration-performance", FIXTURE_PERFORMANCE="1")
-        roles = [r["role"] for r in self.receipts()]
-        self.assertIn("driver", roles, result.stdout)
-        self.assertIn("flutter", roles, result.stdout)
 
     def test_native_harness_uses_config_root(self):
         self.configure("config")
@@ -241,36 +177,9 @@ class ArtifactPathTests(unittest.TestCase):
         self.configure("default")
         for failure in ("nonzero", "malformed"):
             with self.subTest(failure=failure):
-                result = self.run_make("app-test-bridge", FIXTURE_METADATA_FAILURE=failure)
+                result = self.run_make("test-api-lock-cache-native-ticket", FIXTURE_METADATA_FAILURE=failure)
                 self.assertNotEqual(result.returncode, 0, result.stdout)
-                self.assertFalse(any(r["role"] == "flutter" for r in self.receipts()))
-
-    def test_android_staging_builds_keep_the_canonical_root(self):
-        self.configure()
-        tools = self.root / "tools/android-native"
-        tools.mkdir(parents=True)
-        for name in ("build.sh", "artifact-contract.json"):
-            shutil.copyfile(ROOT / "tools/android-native" / name, tools / name)
-        self.spy(tools / "artifacts.py")
-        contract = json.loads((tools / "artifact-contract.json").read_text())
-        ndk = self.root / "sdk/ndk" / contract["ndk_version"]
-        binaries = ndk / "toolchains/llvm/prebuilt/linux-x86_64/bin"
-        binaries.mkdir(parents=True)
-        for name in ("llvm-ar", f'aarch64-linux-android{contract["android_api_level"]}-clang',
-                     f'x86_64-linux-android{contract["android_api_level"]}-clang'):
-            path = binaries / name
-            path.write_text("#!/bin/bash\nexit 0\n")
-            path.chmod(0o755)
-        (ndk / "source.properties").write_text("Pkg.Revision = " + contract["ndk_version"] + "\n")
-        for mode in ("build", "scenario-build"):
-            with self.subTest(mode=mode):
-                result = subprocess.run(
-                    ["bash", str(tools / "build.sh"), mode], cwd=self.root,
-                    env=dict(self.environment, ANDROID_SDK_ROOT=str(self.root / "sdk"),
-                             ANDROID_NDK_HOME=str(ndk), FIXTURE_ANDROID="1"),
-                    text=True, stdout=subprocess.PIPE, stderr=subprocess.STDOUT, timeout=30,
-                )
-                self.assertEqual(result.returncode, 0, result.stdout)
+                self.assertFalse(any(r["role"] == "driver" for r in self.receipts()))
 
     def test_help_does_not_require_cargo(self):
         result = self.run_make("help", "CARGO=nonexistent-cargo-command")

@@ -68,7 +68,7 @@ jobs:
         run: make fuzz-toolchain
 
       - name: Format check
-        run: make ci-toolchain-check fmt-check
+        run: make test-dev-tools fmt-check
 
       - name: Lint
         run: make lint
@@ -131,6 +131,18 @@ jobs:
       - name: API docs
         run: make doc
 
+      - name: Repository license compliance
+        run: make license-check
+
+      - name: Rust API native contracts
+        run: make test-api-native
+
+      - name: Rust API boundaries
+        run: make boundary-check
+
+      - name: Console process interoperability
+        run: make test-console-process-interop
+
       - name: Supply-chain policy check
         run: make deny
 
@@ -162,193 +174,3 @@ jobs:
       - name: Informational benchmark
         continue-on-error: true
         run: make bench
-
-  android-rust:
-    name: android-app (${{ matrix.os }})
-    runs-on: ${{ matrix.os }}
-    strategy:
-      fail-fast: false
-      matrix:
-        os: [ubuntu-latest, macos-latest]
-
-    steps:
-      - uses: actions/checkout@v4
-
-      - name: Install pinned toolchain
-        run: rustup show
-
-      - name: Read pinned Flutter version
-        id: flutter-version
-        run: make ci-flutter-version
-
-      - name: Install Flutter SDK
-        uses: subosito/flutter-action@1a449444c387b1966244ae4d4f8c696479add0b2 # v2.23.0
-        with:
-          flutter-version: ${{ steps.flutter-version.outputs.version }}
-          channel: stable
-
-      - name: Bootstrap Flutter SDK tools
-        run: make flutter-sdk-prepare
-
-      - name: Install exact Flutter NDK
-        run: make android-ndk-toolchain
-
-      - name: Disable telemetry (NFR-013)
-        run: tools/dev/telemetry-check.sh --write
-
-      - name: Cross-build, package, and inspect Android APKs
-        run: make app-build-android HIDLINS_ANDROID_STRICT=1
-
-  # Flutter app — analyze, format, native integration, interop, build,
-  # codegen + supply-chain gates on both supported desktop hosts.
-  #
-  # Every assertion runs through a `make` target so CI and `make app-check`
-  # cannot drift (CLAUDE.md build-system rule). Only runner provisioning is
-  # raw, matching the precedent set by the vault-core job.
-  flutter-app:
-    name: flutter-app (${{ matrix.os }})
-    runs-on: ${{ matrix.os }}
-    strategy:
-      fail-fast: false
-      matrix:
-        # Keep desktop bootstrap on a fixed host during the ubuntu-latest migration.
-        os: [ubuntu-24.04, macos-latest]
-
-    steps:
-      - uses: actions/checkout@v4
-
-      - name: Install pinned toolchain
-        run: rustup show
-
-      - name: Read pinned Flutter version
-        id: flutter-version
-        run: make ci-flutter-version
-
-      - name: Install Flutter SDK
-        # Pinned to a full commit SHA: this is a THIRD-PARTY action running in
-        # a job with the repository checked out, and a mutable tag would let
-        # its owner change what executes here (repo "pinned exact versions"
-        # rule). To upgrade: review the diff between the pinned SHA and the
-        # new release on github.com/subosito/flutter-action, then update SHA
-        # and version comment together. (GitHub-official actions like
-        # actions/checkout stay tag-pinned by existing convention.)
-        uses: subosito/flutter-action@1a449444c387b1966244ae4d4f8c696479add0b2 # v2.23.0
-        with:
-          flutter-version: ${{ steps.flutter-version.outputs.version }}
-          channel: stable
-
-      - name: Bootstrap Flutter SDK tools
-        run: make flutter-sdk-prepare
-
-      - name: Install build dependencies
-        if: runner.os == 'Linux'
-        run: make app-linux-toolchain
-
-      - name: Install KeePassXC CLI (macOS)
-        if: runner.os == 'macOS'
-        run: |
-          brew install --cask keepassxc
-          if ! command -v keepassxc-cli >/dev/null 2>&1; then
-            sudo ln -s /Applications/KeePassXC.app/Contents/MacOS/keepassxc-cli /usr/local/bin/keepassxc-cli
-          fi
-
-      - name: Install codegen tooling (pinned)
-        working-directory: /tmp
-        env:
-          CARGO_NET_OFFLINE: "false"
-          RUSTUP_TOOLCHAIN: "1.95.0"
-        run: |
-          cargo install --locked cargo-expand --version 1.0.124
-          cargo install --locked flutter_rust_bridge_codegen --version 2.12.0
-
-      - name: Disable telemetry (NFR-013)
-        run: tools/dev/telemetry-check.sh --write
-
-      # Flutter version assert, telemetry gate, pub resolve + byte-level
-      # cache integrity, analyze, format, widget tests, Dart↔Rust bridge
-      # smoke tests (needs the Rust toolchain installed above), codegen
-      # drift, pub vendor drift.
-      - name: Flutter gates
-        run: make app-check
-
-      - name: Real native-bridge desktop integration
-        run: make app-test-integration
-
-      - name: Real native-bridge 5,000-entry budget
-        run: make app-test-integration-performance
-
-      - name: App KeePassXC interoperability
-        run: make interop-app
-
-      - name: Build Linux app
-        if: runner.os == 'Linux'
-        run: make app-build-linux
-
-      - name: Build macOS app
-        if: runner.os == 'macOS'
-        run: make app-build-macos
-
-      - name: iOS native simulator security and privacy
-        if: runner.os == 'macOS'
-        run: make app-test-ios-simulator
-
-      - name: iPhone and iPad UI/real-bridge/CLI-authority scenarios
-        if: runner.os == 'macOS'
-        run: make test-local-sync-mobile-scenarios-ios
-
-      - name: Build and inspect iOS artifacts
-        if: runner.os == 'macOS'
-        run: make app-build-ios
-
-      - name: Boundary check
-        run: make boundary-check
-
-      - name: Acceptance evidence contract
-        run: make acceptance-evidence-check
-
-  # Hosted macOS has no nested virtualization (HV_UNSUPPORTED). Runtime CI
-  # covers API 29/36 native+UI and API 30/36 shared-LAN sync on Linux/KVM.
-  # The API 29 image cannot use the shared-LAN backend. Both ABIs are still
-  # built and inspected above; ARM64 runtime checks remain local targets.
-  android-emulator:
-    name: android-emulator (${{ matrix.os }})
-    runs-on: ${{ matrix.os }}
-    strategy:
-      fail-fast: false
-      matrix:
-        os: [ubuntu-24.04]
-
-    steps:
-      - uses: actions/checkout@v4
-
-      - name: Install pinned toolchain
-        run: rustup show
-
-      - name: Read pinned Flutter version
-        id: flutter-version
-        run: make ci-flutter-version
-
-      - name: Install Flutter SDK
-        uses: subosito/flutter-action@1a449444c387b1966244ae4d4f8c696479add0b2 # v2.23.0
-        with:
-          flutter-version: ${{ steps.flutter-version.outputs.version }}
-          channel: stable
-
-      - name: Bootstrap Flutter SDK tools
-        run: make flutter-sdk-prepare
-
-      - name: Enable Linux emulator acceleration
-        if: runner.os == 'Linux'
-        run: sudo chmod 0666 /dev/kvm
-
-      - name: Install exact Flutter NDK
-        run: make android-ndk-toolchain
-
-      - name: Disable telemetry (NFR-013)
-        run: tools/dev/telemetry-check.sh --write
-
-      - name: Provision host-native Android matrix
-        run: make android-emulator-provision
-
-      - name: API 29/36 native and UI; API 30/36 shared-LAN CLI authority
-        run: make test-local-sync-mobile-scenarios-android HIDLINS_ANDROID_STRICT=1

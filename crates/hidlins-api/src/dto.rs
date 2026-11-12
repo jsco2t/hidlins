@@ -6,7 +6,7 @@ use crate::error::HidlinsApiError;
 
 /// Non-secret, single-use handle for native clipboard transfer.
 ///
-/// Dart may forward this ticket to the fixed platform adapter, but it never
+/// Applications may forward this ticket to their platform adapter, but it never
 /// receives the protected value held in Rust.
 #[derive(Clone, Debug, Eq, PartialEq)]
 pub struct ClipboardTransferTicket {
@@ -498,61 +498,16 @@ pub struct AppInitConfig {
     pub config_dir: Option<String>,
 }
 
-// Deliberately NOT `Clone`: a clone of the `Bytes` variant would be a second
-// copy of keyfile material with no owner responsible for scrubbing it.
-//
-// The injected Dart `toString` is load-bearing: freezed skips generating its
-// field-interpolating `toString` on the variant classes whenever the
-// annotated class declares its own (`ClassConfig.asString` ←
-// `!hasCustomToString`), so this override is what keeps keyfile paths and
-// bytes out of Dart logs, `$kr` interpolation, and error messages. The Dart
-// side of this guarantee is pinned by `app/test/dto_redaction_test.dart` and
-// backstopped by `tools/dev/boundary-check.sh` check 6.
-#[flutter_rust_bridge::frb(dart_code = "
-  @override
-  String toString() => 'KeyfileRef(***)';
-")]
+// Deliberately not Clone: callers must not duplicate keyfile material.
+// Debug output redacts both variants. Consuming operations immediately move
+// the bytes into the core's zeroizing Keyfile owner before any validation.
 pub enum KeyfileRef {
     Path(String),
     Bytes(Vec<u8>),
 }
 
-// Inbound DTO. `unlock()` *moves* the `Bytes` payload into a `hidlins_core::Keyfile`,
-// which has a hand-rolled `impl Drop` that zeroizes the `Bytes` arm (see
-// hidlins-core `secret.rs`, guarded there by the `assert_explicit_drop_impl::<Keyfile>()`
-// compile-time assertion). Note `Keyfile` implements `Drop`, not `ZeroizeOnDrop`.
-//
-// `Drop`/`ZeroizeOnDrop` cannot be implemented on this enum: frb's generated
-// `SseEncode`/`SseDecode` destructure it by value, and Rust forbids moving out
-// of a type that implements `Drop` (E0509). `Zeroize` has no such conflict
-// (it takes `&mut self`), so it is retained — callers that hold a `KeyfileRef`
-// without consuming it can still scrub it explicitly.
-//
-// Design §2.7 mandates `Zeroizing` at function entry for this parameter. Here
-// the equivalent guarantee comes from the immediate move into `Keyfile` with no
-// intervening early return; §2.7's "accepted exposure" note covers the Dart-side
-// transit only, not the Rust-side handling.
-//
-// Pre-dispatch exposure (reviewed, accepted — the residue of §2.7's transit
-// exposure on the Rust side of the boundary): frb's generated dispatcher
-// (`wire__..._unlock_impl`) decodes the master password into a plain `String`
-// and this enum's `Bytes` payload into a plain `Vec<u8>` *before*
-// `AppSession::unlock` runs. If that generated prologue unwinds — a
-// truncated/malformed frame panicking mid-decode or at `deserializer.end()` —
-// the already-decoded values are freed without scrubbing. This window cannot
-// be closed from crate code: the dispatcher is generated (`api-gen-check`
-// reverts hand edits) and giving wire DTOs `Drop` is E0509 as above. It is
-// also strictly dominated by the accepted transit exposure itself — the full
-// serialized frame containing the same bytes lives in an frb-owned buffer
-// that is dropped unscrubbed on EVERY call, happy path included, as are the
-// Dart-side copies. The malformed-frame paths are reachable only from inside
-// the process (the generated Dart client always emits well-formed frames and
-// throws on disposed handles before sending), i.e. by an attacker who can
-// already read process memory directly. Every failure path in code this
-// crate controls zeroizes: `unlock` moves both secrets into
-// `MasterPassword`/`Keyfile` before its first branch, and the phase-3 discard
-// paths drop those wrappers (see `us_091_session_lifecycle.rs` drop-path
-// tests).
+// An inbound DTO is destructured by value into the core's Keyfile owner.
+// Callers retaining an unconsumed DTO can explicitly scrub its byte payload.
 impl Zeroize for KeyfileRef {
     fn zeroize(&mut self) {
         if let Self::Bytes(bytes) = self {
@@ -825,9 +780,9 @@ fn field_value(view: &hidlins_core::EntryView<'_>, field: hidlins_core::MatchedF
 /// Convert core char-index-based match positions to UTF-16 code unit ranges.
 ///
 /// Core's fuzzy matcher yields character indices into `haystack.chars()`.
-/// Dart's `TextSpan` works in UTF-16 code units. This function converts char
+/// Some application text systems use UTF-16 code units. This function converts char
 /// indices to UTF-16 offsets, returning `(start, end)` pairs suitable for
-/// slicing Dart `String`s. Each matched char produces one range spanning
+/// slicing UTF-16 strings. Each matched char produces one range spanning
 /// that char's UTF-16 code units.
 #[allow(clippy::cast_possible_truncation)]
 #[allow(dead_code)]

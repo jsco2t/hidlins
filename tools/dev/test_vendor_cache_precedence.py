@@ -34,9 +34,9 @@ class PrecedenceTests(unittest.TestCase):
                     self.assertEqual(case.run_ok([str(binary)]).stdout.strip(), 'B|B|B',
                                      'EXPLICIT_TARGET_MUST_BE_INVALIDATED')
 
-    def test_cargokit_descriptor_matches_real_explicit_cargo_root(self):
+    def test_explicit_descriptor_matches_real_explicit_cargo_root(self):
         case = self.fixture()
-        target = case.root / 'explicit cargokit outputs'
+        target = case.root / 'explicit descriptor outputs'
         with case.config.open('a') as stream:
             stream.write('[build]\ntarget-dir="configured outputs"\nbuild-dir="{workspace-root}/configured intermediates"\n')
         # Query Cargo using the effective explicit root as the environment:

@@ -1138,7 +1138,7 @@ fn os_lock_event_while_unlocked_drops_vault_and_credentials() {
 
 #[test]
 fn phase_2_panic_clears_the_unlock_claim() {
-    // The ClearUnlockingOnDrop armed path: frb catches panics on its pool
+    // The ClearUnlockingOnDrop armed path: callers may catch panics on worker
     // threads, so an unwind out of phase 2 must not leave the `unlocking`
     // claim set — that would brick every later unlock with "already in
     // progress".

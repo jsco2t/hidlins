@@ -13,7 +13,7 @@ impl AppSession {
     ///
     /// Returns `Err(Internal)` on cache miss — callers must open the
     /// entry detail before requesting TOTP codes.
-    #[flutter_rust_bridge::frb(sync)]
+    #[allow(clippy::needless_pass_by_value)] // Preserve the owned public DTO signature.
     pub fn totp_now(&self, uuid: String) -> Result<TotpCode, HidlinsApiError> {
         let id = uuid
             .parse::<Uuid>()

@@ -4,7 +4,6 @@
 import argparse
 import hashlib
 import json
-import re
 from pathlib import Path
 import tomllib
 
@@ -12,7 +11,7 @@ ROOT = Path(__file__).resolve().parents[2]
 WORDLIST = "crates/hidlins-genpw/src/assets/eff_large_wordlist.txt"
 DIGEST = "addd35536511597a02fa0a9ff1e5284677b8883b83e986e43f15a3db996b903e"
 NOTICE = "crates/hidlins-genpw/LICENSES/EFF-wordlist-NOTICE.txt"
-APP_NOTICE = "app/lib/src/licenses.dart"
+NOTICE_SOURCE = "crates/hidlins-cli/src/cli.rs"
 SPEC_FILES = (
     "kb/supply-chain-policy.md",
     "features/password-generation/plans/implementation-plan.md",
@@ -51,12 +50,11 @@ def check(root: Path, specs: Path | None = None) -> list[str]:
     for required in ATTRIBUTION:
         if required not in notice:
             errors.append(f"notice lacks attribution field: {required}")
-    dart = read(APP_NOTICE)
-    embedded = re.search(r"const _effWordlistNotice = r'''(.*?)''';", dart, re.DOTALL)
-    if embedded is None or embedded.group(1) != notice:
-        errors.append("Flutter notice differs from the authoritative asset notice")
-    if "LicenseRegistry.addLicense" not in dart:
-        errors.append("Flutter does not register the compiled asset notice")
+    source = read(NOTICE_SOURCE)
+    if 'include_str!("../../hidlins-genpw/LICENSES/EFF-wordlist-NOTICE.txt")' not in source:
+        errors.append("console does not compile the authoritative asset notice")
+    if "after_help = AFTER_HELP" not in source:
+        errors.append("console does not register the compiled asset notice in help")
     for relative in ("deny.toml", "fuzz/deny.toml"):
         try:
             licenses = tomllib.loads(read(relative)).get("licenses", {})

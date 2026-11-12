@@ -6,7 +6,7 @@ use jni::JNIEnv;
 
 /// Consume a Rust-owned, single-use clipboard ticket and deliver one mutable
 /// byte array to the Android mechanism callback. The secret is never returned
-/// through Dart or as a JNI `String`; Android wipes the array before return.
+/// as a managed immutable string; Android wipes the array before return.
 #[allow(unsafe_code)]
 #[unsafe(no_mangle)]
 pub extern "system" fn Java_app_hidlins_HidlinsNative_consumeClipboard<'local>(

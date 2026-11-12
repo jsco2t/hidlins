@@ -142,37 +142,24 @@ class CallerTests(unittest.TestCase):
         self.assertEqual(process.returncode, 0, output + errors)
         self.assertFalse((target / 'debug/cache-fixture').exists())
 
-    def test_snapshot_benchmark_and_frozen_startup_public_callers(self):
+    def test_snapshot_and_benchmark_public_callers(self):
         for target in ('snapshots-check', 'test-update-snapshots', 'bench-search-gate',
-                       'bench-search-gate-ci', 'app-test-startup-discovery'):
+                       'bench-search-gate-ci'):
             for mode in ('environment', 'configuration'):
                 with self.subTest(target=target, root=mode):
                     case = self.fixture()
                     if mode == 'environment':
-                        case.env['CARGO_TARGET_DIR'] = str(case.root / ('environment-outputs' if target == 'app-test-startup-discovery' else 'environment outputs'))
+                        case.env['CARGO_TARGET_DIR'] = str(case.root / 'environment outputs')
                         case.env['CARGO_BUILD_BUILD_DIR'] = str(case.root / 'environment intermediates')
                     else:
                         with case.config.open('a') as stream:
-                            stream.write('[build]\ntarget-dir="' + ('configured-outputs' if target == 'app-test-startup-discovery' else 'configured outputs') + '"\nbuild-dir="configured intermediates"\n')
-                    for name in ('tools/dev/update-snapshots.sh', 'tools/bench/bench_search_gate.sh',
-                                 'tools/android-native/startup-discovery-tests.mk'):
+                            stream.write('[build]\ntarget-dir="configured outputs"\nbuild-dir="configured intermediates"\n')
+                    for name in ('tools/dev/update-snapshots.sh', 'tools/bench/bench_search_gate.sh'):
                         path = case.root / name; path.parent.mkdir(parents=True, exist_ok=True)
                         shutil.copyfile(fixtures.ROOT / name, path); shutil.copymode(fixtures.ROOT / name, path)
                     (case.root / 'crates/hidlins-tui/tests/snapshots').mkdir(parents=True)
-                    (case.root / 'app').mkdir()
-                    for name in ('test_startup_discovery.py', 'startup_discovery.py'):
-                        (case.root / 'tools/android-native' / name).write_text('print("CALLER_STUB_ONLY")\n')
-                    # Isolate Pub/native effects; the actual copied Make target
-                    # and frozen host recipe still dispatch compilation normally.
-                    with (case.root / 'Makefile').open('a') as stream:
-                        stream.write('\napp-deps:\n\t@true\nandroid-gradle-prepare:\n\t@true\n')
                     binary = case.root / 'bin'; binary.mkdir()
                     cargo = binary / 'cargo'; cargo.write_text('#!' + sys.executable + '\n' + SPY); cargo.chmod(0o755)
-                    flutter = binary / 'flutter'; flutter.write_text('#!/bin/sh\nexit 0\n'); flutter.chmod(0o755)
-                    # F6's separately approved library-path fixture correction
-                    # is applied during earlier revalidation; isolate cache
-                    # adoption here without depending on that pending path edit.
-                    case.env['HIDLINS_API_LIB'] = str(case.root / 'libfixture.so')
                     case.env.update(PATH=str(binary) + os.pathsep + case.env['PATH'],
                                     CALLER_CARGO=fixtures.CARGO, CALLER_ROOT=str(case.root))
                     case.run_ok(['make', '--no-print-directory', target])

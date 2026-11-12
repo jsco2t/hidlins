@@ -13,12 +13,9 @@ use crate::{
     protocol::{MAX_DISCOVERY_ENDPOINTS, PAIRING_WINDOW},
 };
 
-#[cfg(any(
-    all(
-        feature = "desktop-discovery",
-        any(target_os = "macos", target_os = "linux")
-    ),
-    all(feature = "android-scenario-authority", target_os = "android")
+#[cfg(all(
+    feature = "desktop-discovery",
+    any(target_os = "macos", target_os = "linux")
 ))]
 pub mod desktop;
 

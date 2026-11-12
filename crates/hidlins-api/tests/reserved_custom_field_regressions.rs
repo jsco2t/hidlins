@@ -146,7 +146,7 @@ fn api_update_rejects_reserved_names_without_changing_fields_history_or_disk() {
 }
 
 #[test]
-fn api_preserves_flutter_totp_custom_field_and_case_distinct_custom_names() {
+fn api_preserves_application_totp_custom_field_and_case_distinct_custom_names() {
     let (env, session, root, _) = fixture();
     let mut input = draft(vec![
         custom("password", "case-distinct", false),

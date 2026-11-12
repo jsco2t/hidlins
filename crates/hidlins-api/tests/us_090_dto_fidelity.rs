@@ -26,10 +26,8 @@ fn every_secret_bearing_boundary_type_zeroizes_on_drop() {
     assert_zeroize::<TotpCode>();
     assert_zeroize::<GeneratedSecret>();
 
-    // KeyfileRef cannot implement Drop: frb's generated SseEncode/SseDecode
-    // destructure it by value, and Rust forbids moving out of a Drop type
-    // (E0509). It DOES implement Zeroize (which takes &mut self and has no
-    // such conflict) — this bound fails to compile if that is ever removed.
+    // KeyfileRef is consumed by value into the core keyfile owner. It also
+    // implements Zeroize for unconsumed input; retain that explicit scrub API.
     // Drop-path safety for the Bytes arm comes from the immediate move into
     // `hidlins_core::Keyfile` (whose hand-rolled Drop zeroizes) before any
     // branch in `unlock` — exercised by `unlock_with_keyfile_bytes_succeeds`

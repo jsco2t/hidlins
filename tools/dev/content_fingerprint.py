@@ -54,30 +54,10 @@ def tree_digest(paths: list[Path]) -> bytes:
     return value.digest()
 
 
-def resolution_digest(lockfile: Path, caches: list[Path]) -> bytes:
-    value = hashlib.sha256()
-    field(value, file_digest(lockfile))
-    for cache in sorted(caches, key=os.fsencode):
-        field(value, os.fsencode(cache))
-        for domain in entries(cache):
-            mode = domain.lstat().st_mode
-            if stat.S_ISLNK(mode):
-                raise ValueError(f"expected an ordinary cache directory: {domain}")
-            if not stat.S_ISDIR(mode):
-                continue
-            for package in entries(domain):
-                mode = package.lstat().st_mode
-                if stat.S_ISLNK(mode):
-                    raise ValueError(f"expected an ordinary package directory: {package}")
-                if stat.S_ISDIR(mode):
-                    field(value, os.fsencode(package.relative_to(cache)))
-    return value.digest()
-
-
 def main() -> int:
     parser = argparse.ArgumentParser(description=__doc__)
     commands = parser.add_subparsers(dest="command", required=True)
-    for command in ("file", "tree", "pub-resolution"):
+    for command in ("file", "tree"):
         child = commands.add_parser(command)
         child.add_argument("paths", type=Path, nargs="+" if command != "file" else 1)
     arguments = parser.parse_args()
@@ -86,10 +66,6 @@ def main() -> int:
             digest = file_digest(arguments.paths[0])
         elif arguments.command == "tree":
             digest = tree_digest(arguments.paths)
-        else:
-            if len(arguments.paths) < 2:
-                parser.error("pub-resolution needs a lockfile and cache directories")
-            digest = resolution_digest(arguments.paths[0], arguments.paths[1:])
         print(digest.hex())
         return 0
     except (OSError, ValueError) as error:

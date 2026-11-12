@@ -1,4 +1,4 @@
-//! The emulator authority deliberately builds without the desktop UI.
+//! The CLI can be built independently of the desktop terminal UI.
 #![cfg(not(feature = "desktop"))]
 
 mod common;

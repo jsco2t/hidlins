@@ -15,29 +15,7 @@ use hidlins_sync::{
 // LNS-DISCOVERY-001
 // LNS-REVIEW-002
 #[test]
-fn native_service_type_constants_match_the_rust_contract() {
-    let root = std::path::Path::new(env!("CARGO_MANIFEST_DIR"))
-        .parent()
-        .unwrap()
-        .parent()
-        .unwrap();
-    let swift =
-        std::fs::read_to_string(root.join("app/ios/Runner/HidlinsPlatformServices.swift")).unwrap();
-    let plist = std::fs::read_to_string(root.join("app/ios/Runner/Info.plist")).unwrap();
-    let java = std::fs::read_to_string(
-        root.join("app/android/app/src/main/java/app/hidlins/LocalDiscoveryController.java"),
-    )
-    .unwrap();
-    for service in ["_hidlins-sync._tcp", "_hidlins-pair._tcp"] {
-        assert!(swift.contains(service));
-        assert!(plist.contains(service));
-        assert!(java.contains(service));
-    }
-    for obsolete in ["_hidlins-v1._tcp", "_hidlins-pair-v1._tcp"] {
-        assert!(!swift.contains(obsolete));
-        assert!(!plist.contains(obsolete));
-        assert!(!java.contains(obsolete));
-    }
+fn service_type_constants_match_the_protocol_contract() {
     assert_eq!(TRUSTED_SERVICE_TYPE, "_hidlins-sync._tcp.local.");
     assert_eq!(PAIRING_SERVICE_TYPE, "_hidlins-pair._tcp.local.");
 }

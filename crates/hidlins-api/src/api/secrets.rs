@@ -40,7 +40,6 @@ struct ActiveClipboardTransfer {
 
 /// Native locals retain this guard through their synchronous publication.
 /// It is deliberately non-cloneable and never exported through the bridge.
-#[flutter_rust_bridge::frb(ignore)]
 pub(crate) struct ConsumedClipboardTransfer {
     value: Zeroizing<String>,
     id: String,
@@ -89,7 +88,6 @@ impl Drop for ConsumedClipboardTransfer {
 /// Protected copy input belongs to the exact origin that resolved it. The
 /// owner changes on revocation, so relocking and reopening the same vault
 /// cannot authorize an old value again.
-#[flutter_rust_bridge::frb(ignore)]
 struct ResolvedCopy {
     owner: u64,
     value: Zeroizing<String>,
@@ -138,10 +136,9 @@ fn insert_clipboard_transfer(
 }
 
 /// Native platform adapters consume a ticket through a target-specific export.
-/// This function is deliberately crate-private so FRB cannot generate a Dart
-/// plaintext-returning door. The returned local must span the synchronous
+/// This function is crate-private so clients cannot call a plaintext-returning
+/// operation directly. The returned local must span the synchronous
 /// native callback; revocation waits for its drop, including on errors/unwind.
-#[flutter_rust_bridge::frb(ignore)]
 #[allow(dead_code)]
 pub(crate) fn consume_clipboard_transfer(
     id: &str,
@@ -213,8 +210,6 @@ pub(crate) fn purge_clipboard_transfers(owner: u64) {
             .lock()
             .unwrap_or_else(std::sync::PoisonError::into_inner);
         while !*done {
-            #[cfg(hidlins_ios_publication_fixture)]
-            super::ios_publication_fixture::note_wait(owner);
             done = completion
                 .finished
                 .wait(done)
@@ -259,7 +254,7 @@ impl AppSession {
     }
 
     /// Prepare the displayed generated result for the existing native-only,
-    /// single-use clipboard handoff. Dart receives only the transfer ticket.
+    /// single-use clipboard handoff. The client receives only the transfer ticket.
     pub fn prepare_generated_clipboard_transfer(
         &self,
         result: GeneratedSecret,
@@ -281,7 +276,7 @@ impl AppSession {
     /// Prepare a non-secret, single-use native clipboard handoff.
     ///
     /// Desktop uses the Rust clipboard directly and therefore returns a typed
-    /// unsupported result. Mobile Dart receives only this ticket; the
+    /// unsupported result. The client receives only this ticket; the
     /// protected value remains zeroizing Rust state until a native adapter
     /// consumes it or the session locks.
     #[allow(clippy::needless_pass_by_value)]
@@ -524,6 +519,7 @@ mod tests {
         guard
     }
 
+    #[cfg(feature = "desktop")]
     #[test]
     fn stable_clipboard_transfer_is_typed_unsupported_on_desktop() {
         let temp = tempfile::tempdir().expect("tempdir");

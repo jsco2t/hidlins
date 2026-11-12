@@ -492,7 +492,7 @@ fn sas_type_is_not_used_as_a_boundary_handle() {
     // Compile-time/API guard: pairing UI receives PairingPromptDto, while the
     // cryptographic SAS remains a core-only value.
     let _core_only = SasCode::derive(&[7_u8; 32]);
-    let manifest = include_str!("../../../tools/dev/frb-api-manifest.txt");
+    let manifest = include_str!("public_api_contract.rs");
     assert!(!manifest.contains("SasCode"));
 }
 

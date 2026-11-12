@@ -14,7 +14,7 @@ fn parse_uuid(s: &str) -> Result<Uuid, HidlinsApiError> {
         })
 }
 
-#[allow(clippy::needless_pass_by_value)] // frb FFI passes owned DTOs
+#[allow(clippy::needless_pass_by_value)] // Public API accepts owned DTOs
 impl AppSession {
     pub fn search(&self, opts: SearchOptionsDto) -> Result<Vec<SearchHit>, HidlinsApiError> {
         let state = self.lock_state();

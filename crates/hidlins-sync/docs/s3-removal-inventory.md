@@ -11,8 +11,6 @@ Run from the repository root:
 ```sh
 rg -l -i 's3|sigv4|minio|aws' \
   --glob '!vendor/**' \
-  --glob '!app/vendor-pub/**' \
-  --glob '!app/rust_builder/cargokit/build_tool/vendor-pub/**' \
   --glob '!.git/**' \
   --glob '!.ai/workflow-archive/**' .
 
@@ -92,26 +90,6 @@ The merge property tests, merge semantics, fault injection, KDBX round-trip,
 and KeePassXC sync interoperability behavior are retained and renamed only when
 needed for transport-neutral terminology.
 
-## Flutter and native surfaces
-
-Replace or delete:
-
-- S3 models/repository methods in `app/lib/src/data/models.dart`,
-  `repositories.dart`, and `bridge_repositories.dart`.
-- `app/lib/src/features/sync/sync_controller.dart` and `sync_page.dart` S3
-  forms/status behavior.
-- `app/lib/src/features/vaults/connect_sync_dialog.dart` S3 bootstrap.
-- S3 strings in `app/l10n/app_en.arb` and generated localization files.
-- Generated Dart/Rust bridge S3 DTOs and calls.
-- Flutter sync, vault-management, fake-repository, failure, real-bridge MinIO,
-  Android S3, and iOS S3 tests/fixtures.
-- `tools/ios-native/secure_s3_config.py`, `s3_integration.sh`, and S3-specific
-  native harness assertions.
-- Android native/emulator S3 configuration and MinIO assertions.
-
-Platform files are then updated for Bonjour/NSD discovery permissions and thin
-endpoint/permission adapters; they do not retain cloud credential APIs.
-
 ## Build, CI, harness, and generated artifacts
 
 Remove or replace:
@@ -119,8 +97,7 @@ Remove or replace:
 - `tools/sync-tests/` MinIO fixtures and documentation.
 - `tools/dev/fetch-sigv4-corpus.sh`.
 - S3/MinIO Make targets: SigV4, MinIO lifecycle/bucket, S3 integration,
-  managed-MinIO, S3 interop, desktop real-bridge MinIO, Android emulator S3 or
-  MinIO, and iOS simulator S3 or MinIO variants.
+  managed-MinIO and S3 interop.
 - S3/MinIO CI jobs, services, secrets, artifact names, and commands under
   `.github/workflows/`.
 - Generated shell completions containing `set-sync` or old `sync` arguments.
@@ -132,8 +109,7 @@ New local-sync test commands must be Make targets before CI invokes them.
 ## Documentation and active requirements
 
 Update active `README.md`, `CONTRIBUTING.md`, `CLAUDE.md`,
-`docs/running-and-testing.md`, Flutter/iOS/Android release and verification
-documents, PRD requirements/decisions, project index, and user-scenario
+`docs/running-and-testing.md`, Rust API release and verification documents, PRD requirements/decisions, project index, and user-scenario
 verifications. Historical archive/provenance documents are immutable and may
 retain S3 mentions.
 

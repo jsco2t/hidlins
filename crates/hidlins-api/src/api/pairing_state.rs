@@ -6,17 +6,16 @@ use std::sync::{mpsc, Arc, Mutex, Weak};
 use super::{pairing_handle, HidlinsApiError, PendingClientPairing, ServerPairingDecision};
 use hidlins_sync::client::LanCancellation;
 
-#[flutter_rust_bridge::frb(ignore)]
 pub(crate) struct PairingApiState {
     clients: Mutex<ClientPairings>,
     pub(super) server_decisions: Mutex<HashMap<String, mpsc::SyncSender<ServerPairingDecision>>>,
 }
-#[flutter_rust_bridge::frb(ignore)]
+
 struct ClientPairings {
     pending: HashMap<String, PendingClientPairing>,
     active: HashMap<String, Arc<ActivePairing>>,
 }
-#[flutter_rust_bridge::frb(ignore)]
+
 struct ActivePairing {
     cancellation: LanCancellation,
     import_target: Option<(String, PathBuf)>,
@@ -24,7 +23,6 @@ struct ActivePairing {
 
 /// Weak ownership avoids a pending-map -> registration -> owner Arc cycle.
 /// Membership plus the retained Arc identity supplies the operation generation.
-#[flutter_rust_bridge::frb(ignore)]
 pub(super) struct PairingRegistration {
     owner: Weak<PairingApiState>,
     handle: String,

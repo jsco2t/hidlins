@@ -1,8 +1,8 @@
 #![deny(unsafe_code)]
-// NOTE: the `frb_expand` cfg emitted by `#[flutter_rust_bridge::frb(...)]` is
-// declared via `check-cfg` in the workspace `[lints.rust]` table, NOT suppressed
-// here. A crate-wide `allow(unexpected_cfgs)` would disable typo detection for
-// every hand-written `#[cfg]` in the boundary crate.
+//! Reusable application API over the vault, security, generation and sync crates.
+//!
+//! Applications own presentation and platform mechanisms. This crate owns
+//! sessions, DTO conversion, secret lifetimes and operation orchestration.
 
 #[cfg(target_os = "android")]
 pub mod android;
@@ -17,9 +17,3 @@ pub mod fixtures;
 #[allow(unsafe_code)]
 pub mod ios;
 pub mod sync_port;
-// frb-generated FFI glue necessarily contains unsafe (extern "C" fns,
-// raw pointer casts, #[no_mangle]) and code patterns that trigger
-// clippy lints. This is the documented exception for the boundary
-// crate — the generated code is never hand-edited.
-#[allow(unsafe_code, clippy::all, clippy::pedantic)]
-mod frb_generated;

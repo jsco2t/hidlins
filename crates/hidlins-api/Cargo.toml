@@ -1,6 +1,6 @@
 [package]
 name = "hidlins-api"
-description = "FFI boundary crate for the Hidlins Flutter app"
+description = "Reusable application API for Hidlins"
 version.workspace = true
 edition.workspace = true
 license.workspace = true
@@ -18,9 +18,7 @@ hidlins-genpw = { path = "../hidlins-genpw", version = "0.1" }
 hidlins-sync = { path = "../hidlins-sync", version = "0.1" }
 hidlins-security = { path = "../hidlins-security", version = "0.1", default-features = false }
 chrono = { version = "0.4", default-features = false, features = ["clock", "std"] }
-flutter_rust_bridge = "=2.12.0"
 thiserror = "2.0"
-secrecy = "0.10"
 tempfile = { version = "3", optional = true }
 toml = "0.8"
 zeroize = { version = "1", features = ["derive"] }
@@ -47,7 +45,6 @@ required-features = ["test-fixtures"]
 # self-dev-dep idiom in hidlins-sync (test-helpers).
 hidlins-api = { path = ".", version = "0.1", features = ["test-fixtures"] }
 tempfile = "3"
-toml = "0.8"
 
 [lints]
 workspace = true

@@ -46,7 +46,7 @@ fn group_entry_uuids(vault: &Vault, root: Uuid) -> Result<Vec<Uuid>, HidlinsApiE
     Ok(entries)
 }
 
-#[allow(clippy::needless_pass_by_value)] // frb FFI passes owned DTOs
+#[allow(clippy::needless_pass_by_value)] // Public API accepts owned DTOs
 impl AppSession {
     pub fn vault_tree(&self) -> Result<VaultTree, HidlinsApiError> {
         let state = self.lock_state();

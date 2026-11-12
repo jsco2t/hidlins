@@ -25,9 +25,8 @@ path = "src/lib.rs"
 [features]
 default = ["desktop"]
 
-# Normal distributed CLI behavior. Keeping desktop discovery and clipboard
-# support behind one default feature lets the Android scenario build exercise
-# the real CLI dispatcher without linking desktop-only clipboard code.
+# Desktop console behavior. The optional terminal UI can be disabled for
+# applications that need only the one-shot CLI dispatcher.
 desktop = [
     "dep:hidlins-tui",
     "hidlins-security/desktop",
@@ -35,12 +34,6 @@ desktop = [
     "hidlins-security/iokit",
     "hidlins-sync/desktop-discovery",
 ]
-
-# Test-only: cross-build the actual CLI authority for an Android emulator.
-# This is never enabled by release or Flutter builds and deliberately omits
-# clipboard support. The sync feature lets the complete CLI dispatcher
-# type-check; the authority runtime does not start a Rust advertiser.
-android-scenario-authority = ["hidlins-sync/android-scenario-authority"]
 
 # Test-only gate for the `entry get --copy` clipboard hand-off
 # integration test. It spawns the binary, which opens the real system
@@ -115,11 +108,6 @@ libc = "0.2"
 # normalize-line-endings, difflib, wait-timeout, anstyle, anstream, ...).
 # `std::process::Command` is sufficient for the assertions Phase 1 needs.
 tempfile = "3.10"
-# `secrecy` is already vendored (a `hidlins-sync` dep) — no new vendored
-# crates. Used only by `cli_set_sync.rs` to expose the decrypted secret
-# for the RST-CRED-1 round-trip assertion (proves the CORRECT secret was
-# sealed, not just that some ciphertext landed on disk).
-secrecy = "0.10"
 
 [target.'cfg(target_os = "linux")'.dev-dependencies]
 # Reuse the existing isolated logind fixture for real CLI lock/sleep contracts.

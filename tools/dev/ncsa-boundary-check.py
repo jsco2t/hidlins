@@ -22,14 +22,7 @@ ROOT = Path(__file__).resolve().parents[2]
 FUZZ_CRATE = "libfuzzer-sys"
 FUZZ_VERSION = "0.4.13"
 NCSA = "NCSA"
-PACKAGE_TARGETS = (
-    "release",
-    "app-build-linux",
-    "app-build-macos",
-    "build-android",
-    "app-build-android",
-    "app-build-ios",
-)
+PACKAGE_TARGETS = ("release",)
 MARKERS = (
     b"libfuzzer-sys",
     b"LLVMFuzzerTestOneInput",
@@ -108,7 +101,7 @@ def check_lockfiles(root: Path) -> None:
 
 def check_production_graph(root: Path) -> None:
     completed = subprocess.run(
-        ["cargo", "metadata", "--offline", "--locked", "--format-version", "1"],
+        ["cargo", "metadata", "--all-features", "--offline", "--locked", "--format-version", "1"],
         cwd=root,
         check=False,
         capture_output=True,
@@ -147,6 +140,10 @@ def check_packaging_hooks(root: Path) -> None:
             raise BoundaryError(f"{target} is missing the NCSA pre-build boundary hook")
         if "ncsa-boundary-check.py artifacts" not in block:
             raise BoundaryError(f"{target} is missing post-build artifact inspection")
+        for artifact in ("/release/hidlins\"", "/release/hidlins-agent\"",
+                         "/release/$(API_SHARED_LIBRARY)\"", "/release/libhidlins_api.a\""):
+            if artifact not in block:
+                raise BoundaryError(f"{target} is missing required Rust artifact inspection: {artifact}")
 
 
 def inspect_bytes(label: str, data: bytes) -> None:
@@ -252,26 +249,30 @@ def self_test() -> None:
         makefile.write_text("release:\n\ttrue\n")
         expect_failure(lambda: check_packaging_hooks(root), "missing the NCSA pre-build")
 
+        makefile.write_text('release: ncsa-boundary-precheck\n\tpython3 tools/dev/ncsa-boundary-check.py artifacts output\n')
+        expect_failure(lambda: check_packaging_hooks(root), "missing required Rust artifact")
+
         for relative in (
             "target/release/hidlins",
             "target/release/hidlins-agent",
-            "app/build/linux/Hidlins",
-            "app/build/macos/Hidlins.app/Contents/MacOS/Hidlins",
-            "app/build/ios/Hidlins.app/Hidlins",
+            "target/release/libhidlins_api.a",
+            "target/release/libhidlins_api.so",
+            "target/release/libhidlins_api.dylib",
+            "bundle/bin/hidlins",
         ):
             contaminated = root / relative
             contaminated.parent.mkdir(parents=True, exist_ok=True)
             contaminated.write_bytes(b"prefix LLVMFuzzerTestOneInput suffix")
             expect_failure(lambda path=contaminated: inspect_artifact(path), "marker")
 
-        copied_fuzzer = root / "bundle" / "local_protocol"
-        copied_fuzzer.parent.mkdir()
+        copied_fuzzer = root / "copied" / "local_protocol"
+        copied_fuzzer.parent.mkdir(exist_ok=True)
         copied_fuzzer.write_bytes(b"otherwise marker-free")
         expect_failure(lambda: inspect_artifact(copied_fuzzer.parent), "fuzz executable")
 
         for name, member in (
-            ("app.apk", "lib/arm64-v8a/libapp.so"),
-            ("app.ipa", "Payload/Hidlins.app/Hidlins"),
+            ("release.zip", "bin/hidlins"),
+            ("nested.zip", "release/bin/hidlins-agent"),
         ):
             archive = root / name
             with zipfile.ZipFile(archive, "w") as output:

@@ -11,15 +11,13 @@ recovery.
 
 ## Prerequisites
 
-Install the repository toolchain once, then confirm that the installed Flutter
-SDK matches the pinned version:
+Install the repository toolchain once:
 
 ```sh
 make toolchain
-make flutter-version-check
 ```
 
-Flutter, Rust, and dependency versions are pinned by the repository. Product
+Rust and dependency versions are pinned by the repository. Product
 builds and tests go through `make`; they run against vendored dependencies and
 treat first-party compiler and analyzer warnings as errors.
 
@@ -46,8 +44,7 @@ printf '%s\n' "$HIDLINS_DEMO_DIR"
 rm -R -- "$HIDLINS_DEMO_DIR"
 ```
 
-The generated file can be registered and opened by the CLI and TUI, and imported
-by the mobile apps. Registration authenticates the existing vault before adding
+The generated file can be registered and opened by the CLI and TUI. Registration authenticates the existing vault before adding
 it to the selected registry; it does not rewrite the KDBX.
 
 ## Release console and agent binaries
@@ -203,211 +200,29 @@ and manual routes are restricted to IPv4 `10/8`, `172.16/12`, `192.168/16`,
 `169.254/16`, `127/8`, or IPv6 `fc00::/7`, scoped `fe80::/10`, and `::1`.
 There is no public-address or DNS override.
 
-The TUI and Flutter desktop app expose the same explicit Start server, Stop
-server, Pair, Sync now, and peer-management operations while the application is
-running. They do not silently start a persistent server. Each configured client
-vault gets one best-effort startup sync per application process and then manual
-sync only; save, lock, network reconnection, and timers do not sync. iOS and
-Android are client-only and stop foreground network work when backgrounded.
+The TUI exposes Start server, Stop server, Pair, Sync now and peer management
+while it runs. Serving starts only on explicit request. Each configured client
+vault gets one best-effort startup sync per process and then manual sync only;
+save, lock, reconnection and timers do not trigger synchronization.
 
-The automated simulator/CLI acceptance procedure and optional human/physical
-confidence observations are in
-[local-network-sync-manual-verification.md](local-network-sync-manual-verification.md).
-Android acceptance uses a separate emulator for the real CLI authority and an
-instrumentation-only `NsdManager` registrar on that authority. The shipping app
-discovers the private route through its normal platform adapter; no sync
-endpoint is passed to it. Desktop `mdns-sd` publisher/browser interoperability
-is tested separately. A physical desktop-to-Android run remains an optional
-router-firmware confidence check, not a completion gate.
-
-## Flutter desktop app
-
-The desktop app and terminal applications use the same Rust core, KDBX format,
-and registry. If you completed the TUI setup above, start the desktop app with
-the same temporary `HOME` to expose the registered kitchen-sink vault without
-touching your normal Hidlins state.
-
-### macOS
-
-```sh
-make app-build-macos
-HOME="$HIDLINS_DEMO_DIR/home" \
-  app/build/macos/Build/Products/Release/Hidlins.app/Contents/MacOS/Hidlins
-```
-
-### Linux
-
-```sh
-make app-build-linux
-find app/build/linux -path '*/release/bundle/hidlins' -type f
-```
-
-Run the path printed by `find`, preserving the temporary home. For example:
-
-```sh
-HOME="$HIDLINS_DEMO_DIR/home" \
-  app/build/linux/x64/release/bundle/hidlins
-```
-
-The architecture directory may be `x64`, `arm64`, or another value selected by
-the installed toolchain; use the path that actually exists.
-
-If you did not register the fixture through the TUI, create a disposable vault
-through the app's first-run flow. Desktop does not currently provide the native
-existing-vault file picker implemented by the mobile runners.
-
-Exercise unlock failure and success, Entries, Search, Generator, Sync settings,
-Settings, CRUD/history, secret reveal/copy, and lock/unlock. For a quick debug
-launch on Flutter's selected device instead of running a release artifact, use:
-
-```sh
-HOME="$HIDLINS_DEMO_DIR/home" make app-run
-```
-
-## iOS simulator and optional physical device observations
-
-iOS builds require macOS and Xcode. The real simulator/CLI scenario is the
-authoritative client-sync acceptance gate. A physical device is useful only for
-the optional OS-owned permission wording and assistive-technology observations.
-
-Build the simulator and unsigned device artifacts, then install and launch the
-inspected simulator build:
-
-```sh
-make app-build-ios
-make app-prepare-ios-observation
-```
-
-The preparation target selects and boots a supported simulator, installs the
-app, launches it, and prints the selected device details. Create a disposable
-vault in the app. To use the kitchen-sink fixture instead, first make the file
-available in the simulator's Files app (for example, drag it onto the running
-simulator), then select it through Hidlins' existing-vault flow.
-
-In addition to the common GUI journey, check background/resume locking,
-rotation, larger text sizes, and both compact phone and expanded tablet
-layouts.
-
-The deterministic simulator gates are:
-
-```sh
-make app-test-ios-simulator
-make app-test-ios-integration
-make test-local-sync-mobile-scenarios-ios
-```
-
-See [`app/ios/VERIFICATION.md`](../app/ios/VERIFICATION.md) for coverage and
-requirements.
-
-## Android emulator and optional physical device observations
-
-Set `ANDROID_SDK_ROOT` to the absolute path of your installed Android SDK;
-the manual emulator and `adb` commands below use that same SDK. For example,
-replace the placeholder before running:
-
-```sh
-export ANDROID_SDK_ROOT="/absolute/path/to/your/Android/sdk"
-```
-
-Provision the repository's API 29/36 native/UI and API 30/36 shared-LAN client,
-authority, and replacement-authority AVDs:
-
-```sh
-make android-emulator-provision
-```
-
-For application-only diagnosis on Apple Silicon, start the phone manually with:
-
-```sh
-"$ANDROID_SDK_ROOT/emulator/emulator" -avd hidlins-api29
-```
-
-Use `hidlins-api36-tablet` for the tablet. On an x86_64 host, the corresponding
-names are `hidlins-api29-x86_64` and `hidlins-api36-x86_64-tablet`.
-
-Build, install, and launch the debug APK:
-
-```sh
-make app-build-android
-"$ANDROID_SDK_ROOT/platform-tools/adb" install -r \
-  app/build/app/outputs/apk/debug/app-debug.apk
-"$ANDROID_SDK_ROOT/platform-tools/adb" shell am start \
-  -n app.hidlins/.MainActivity
-```
-
-To import the generated fixture, copy it into the emulator, then choose it in
-Hidlins' existing-vault flow:
-
-```sh
-"$ANDROID_SDK_ROOT/platform-tools/adb" push \
-  "$HIDLINS_DEMO_DIR/kitchen-sink.kdbx" \
-  /sdcard/Download/hidlins-demo.kdbx
-```
-
-Use `Password123` to unlock it. In addition to the common GUI journey, check
-system Back, keyboard/IME resizing, rotation, background/resume locking, cold
-process restart, and both phone and tablet layouts.
-
-The deterministic emulator gates are:
-
-```sh
-make app-test-android-integration
-make app-test-android-emulator
-make test-local-sync-mobile-scenarios-android HIDLINS_ANDROID_STRICT=1
-```
-
-`app-test-android-integration` uses an already selected emulator. The full
-emulator targets manage the declared host-native matrix. The local-sync target
-runs a release CLI inside the authority emulator, advertises only its bound port
-through a test-APK-only Android NSD registrar, and drives the shipping client
-over the private emulator Wi-Fi data path. Its `10.0.2.2` traffic is an
-authenticated orchestration-only channel and never supplies or proxies a sync
-route. See
-[`app/android/VERIFICATION.md`](../app/android/VERIFICATION.md) for details.
-Physical Android hardware is optional and adds confidence about OS/vendor-owned
-permission wording and TalkBack speech. A physical desktop Rust publisher to
-Android `NsdManager` client run across a representative access point is also
-optional because simulator networking cannot prove arbitrary router multicast
-behavior. Neither observation is a release gate.
+The [verification procedure](local-network-sync-manual-verification.md) covers
+disposable two-device checks and optional physical observations. The desktop
+Rust mDNS publisher/browser exchange is tested separately from network-router
+behavior.
 
 ## Automated verification summary
 
-Use the narrowest target while iterating and the complete gate before calling a
-change done:
+Run `make check` for formatting, lint, offline builds, tests and supported Rust
+feature checks. `make test-api` exercises application DTOs and session
+operations; `make test-api-native` runs the unit harness without desktop
+feature unification, including native ticket publication and revocation.
 
-```sh
-make check
-make app-check
-make app-test-integration
-make app-test-integration-performance
-make interop-app
-make test-local-sync-mobile-scenarios HIDLINS_ANDROID_STRICT=1
-make verify
-```
+`make license-check` checks the repository license inventory, strict Cargo
+license policies, the exact EFF asset notice and the isolated fuzz boundary.
+`make deny` and `make audit` additionally check current advisory data.
 
-- `make check` runs the Rust formatting, lint, build, and default test gates.
-- `make app-check` runs Flutter/Dart integrity, analysis, formatting, unit and
-  widget tests, bridge smoke tests, branding, and generated-boundary checks.
-- `make app-test-integration` exercises desktop lifecycle and CRUD through the
-  real native bridge, including CLI/TUI process coexistence.
-- `make app-test-integration-performance` checks the 5,000-entry path through
-  the compiled bridge.
-- `make interop-app` checks application KDBX interoperability.
-- `make test-local-sync-mobile-scenarios` is the isolated, expensive macOS gate
-  that drives an iPhone, iPad, Android API 30 phone, and Android API 36 tablet
-  against a separate release CLI authority. Android uses platform NSD and a
-  direct emulator-Wi-Fi Noise/data path, including discovery after a distinct
-  replacement-authority DHCP address. Per-device JSON and redacted logs are
-  stored under `build/verification/mobile-local-sync/`. API 29 remains covered
-  by native/UI/bridge gates. Its legacy image cannot provide shared-LAN peer
-  connectivity, so the emulator gate does not claim API 29 cross-device sync.
-  API 30 and API 36 use the explicitly selected shared Wi-Fi backend with
-  platform-default cellular state; no routes or DHCP leases are supplied.
-
-- `make verify` is the broad repository gate.
-
-Human SAS perception, physical OS permission presentation, representative
-consumer-router firmware, and assistive-technology speech observations in the
-local-network sync guide are optional, non-blocking confidence checks. The
-automated real simulator/emulator scenarios are the acceptance authority. Never
-record an unexecuted optional observation as passing.
+`make verify` combines the Rust gates, developer-tool regressions, ignored
+noninteractive tests, docs, KeePassXC interoperability, local-sync protocol
+and process tests, and committed fuzz corpus replay. `make test-clipboard`
+requires a working display or pasteboard; real OS lock/sleep observations use
+`make test-os-events` on their native host.

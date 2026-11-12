@@ -19,14 +19,14 @@ pub use crate::dto::{
     AppInitConfig, KeyfileRef, LifecycleStateDto, LockEvent, SyncEvent, VaultTree,
 };
 pub use crate::error::HidlinsApiError;
+use crate::event::CountedEventSink;
 pub use crate::event::EventSink;
-use crate::event::StreamSinkAdapter;
 
 const LIFECYCLE_GRACE_SECS: u64 = 15;
 
 /// D-12: the lifecycle grace timer is a *mobile* behavior. Desktop locks on
 /// the idle timer and OS lock events only, so a window minimize must never
-/// start the grace countdown. Enforced here in Rust rather than by Dart
+/// start the grace countdown. Enforced here in Rust rather than by client
 /// discipline — `report_lifecycle_state` is inert on desktop targets.
 const LIFECYCLE_ENABLED: bool = cfg!(any(target_os = "ios", target_os = "android"));
 
@@ -147,16 +147,10 @@ impl SessionState {
     }
 
     fn install_lock_sink(&mut self, sink: Box<dyn EventSink<LockEvent>>) {
-        // Replacing an existing sink drops the old `StreamSink`, whose
-        // `StreamSinkCloser::drop` posts a close to the old Dart port — so a
-        // re-subscribing listener terminates cleanly rather than going deaf.
+        // Replacing a sink releases its owned channel. Push the authoritative
+        // snapshot under the same mutex as registration so racing transitions
+        // cannot leave a subscriber rendering stale state.
         self.lock_sink = Some(sink);
-        // Authoritative snapshot at registration (fail-closed): the generated
-        // Dart `lockEvents` returns its stream to the subscriber *before* the
-        // registration call reaches Rust, so a transition inside that window
-        // would otherwise be lost while the UI keeps rendering cached state.
-        // Pushing the current state under the same mutex that installed the
-        // sink makes registration + first event atomic.
         let snapshot = if self.is_logically_unlocked() {
             LockEvent::Unlocked
         } else {
@@ -164,9 +158,8 @@ impl SessionState {
         };
         self.push_lock_event(snapshot);
         if self.dead {
-            // Terminal session: deliver the `Locked` snapshot, then close so
-            // the Dart stream ends instead of waiting for events that can
-            // never come.
+            // Deliver the final snapshot, then release the channel so the
+            // subscriber observes that this session cannot emit more events.
             self.lock_sink = None;
         }
     }
@@ -251,7 +244,7 @@ impl SessionState {
         if publish_locked {
             self.push_lock_event(LockEvent::Locked);
         }
-        // A dead session emits nothing further — drop the sink so Dart
+        // A dead session emits nothing further — drop the sink so the subscriber
         // observes end-of-stream rather than indefinite silence.
         self.lock_sink = None;
     }
@@ -272,26 +265,9 @@ impl SessionState {
 // AppSession — the opaque FFI boundary type
 // ---------------------------------------------------------------------------
 
-/// Opaque per design D-1.
-///
-/// **Normative invariant: every bridged method on this type takes `&self`,
-/// never `&mut self`.**
-///
-/// frb wraps opaque *method receivers* in `RustAutoOpaqueImplicit` regardless
-/// of this attribute — that is structural to how it models borrows across FFI,
-/// not something an attribute toggles. So every bridged call acquires a guard
-/// on frb's per-object `tokio::sync::RwLock`, and `#[frb(sync)]` calls acquire
-/// it on the Dart UI thread. With only `&self` methods those are all *read*
-/// guards, which never contend, so D-1's requirement ("UI-thread
-/// `report_activity` must never wait on a lock") holds.
-///
-/// A single `&mut self` method would generate a `blocking_write()` and break
-/// that: tokio's `RwLock` is write-preferring, so a queued writer stalls every
-/// subsequent reader — including `report_activity` on the UI thread. All state
-/// lives behind `Arc<Mutex<SessionState>>`, so `&mut self` is never necessary.
-/// `tools/dev/boundary-check.sh` fails the build if a write guard ever appears
-/// in the generated bindings.
-#[flutter_rust_bridge::frb(opaque)]
+/// Per-application session. Every operation uses a shared reference; state
+/// ownership and synchronization stay inside Rust. Activity reporting uses
+/// an atomic counter so it does not wait for vault or worker state locks.
 pub struct AppSession {
     pub(crate) inner: Arc<Mutex<SessionState>>,
     activity_counter: Arc<AtomicU64>,
@@ -313,7 +289,7 @@ pub struct AppSession {
 }
 
 #[derive(Default)]
-#[flutter_rust_bridge::frb(ignore)]
+
 struct TickerProgress {
     grace_start: Option<Instant>,
     last_seen_activity: u64,
@@ -421,7 +397,7 @@ fn attach_platform_lock_sources(
     (controller, Vec::new())
 }
 
-#[allow(clippy::needless_pass_by_value)] // frb FFI passes owned DTOs
+#[allow(clippy::needless_pass_by_value)] // Public API accepts owned DTOs
 pub fn init_app(cfg: AppInitConfig) -> Result<AppSession, HidlinsApiError> {
     HARDENED.get_or_init(|| {
         hidlins_security::harden_process();
@@ -543,24 +519,22 @@ impl AppSession {
     /// means cached lock state is stale — treat the vault as locked and
     /// resubscribe for a fresh snapshot (which resets nothing; compare
     /// against the newly read counter value from then on).
-    pub fn lock_events(&self, sink: crate::frb_generated::StreamSink<LockEvent>) {
-        let adapter = StreamSinkAdapter::new(sink, Arc::clone(&self.dropped_lock_events));
+    pub fn lock_events(&self, sink: Box<dyn EventSink<LockEvent>>) {
+        let adapter = CountedEventSink::new(sink, Arc::clone(&self.dropped_lock_events));
         self.lock_state().install_lock_sink(Box::new(adapter));
     }
 
-    /// Number of lock events frb refused to deliver to Dart, monotonic for
+    /// Number of events refused by the registered sinks, monotonic for
     /// the session's lifetime (it never resets, including on resubscribe).
     ///
     /// An increase since the caller last read it means the UI may be
-    /// rendering stale lock state; see [`crate::event::StreamSinkAdapter`].
+    /// rendering stale lock state; resubscribe to receive a fresh snapshot.
     /// Exposed because the project has no logging facility and a dropped
     /// `Locked` is otherwise unobservable.
-    #[flutter_rust_bridge::frb(sync)]
     pub fn dropped_lock_events(&self) -> u64 {
         self.dropped_lock_events.load(Ordering::Relaxed)
     }
 
-    #[flutter_rust_bridge::frb(sync)]
     pub fn report_activity(&self) {
         self.activity_counter.fetch_add(1, Ordering::Relaxed);
     }
@@ -624,9 +598,9 @@ impl AppSession {
     ///   phase 3 (short guard)  re-validate, then commit — or discard
     ///
     /// Holding the mutex across the KDF would queue `lock_now` and
-    /// `shutdown` (which the Dart finalizer runs on the UI isolate's thread)
+    /// `shutdown`
     /// behind a ~1s wait, and would reorder a lock issued mid-unlock to
-    /// *after* the commit — Flutter could then receive a successful unlock
+    /// *after* the commit — a client could then receive a successful unlock
     /// response after having observed `Locked`. Instead, a lock that arrives
     /// during phase 2 sets `lock_pending` (a shutdown sets `dead`), and
     /// phase 3 honors it: the freshly opened vault and credentials are
@@ -698,7 +672,7 @@ impl AppSession {
             path
         };
 
-        // If phase 2 unwinds (frb catches panics on its pool threads), the
+        // If phase 2 unwinds, the
         // claim must not stay set or the session would refuse every later
         // unlock. Phase 3 disarms this guard under its own mutex guard — see
         // the type's doc for why an armed drop after phase 3 would be a race.
@@ -786,8 +760,8 @@ impl AppSession {
         Ok(tree)
     }
 
-    pub fn sync_events(&self, sink: crate::frb_generated::StreamSink<SyncEvent>) {
-        let adapter = StreamSinkAdapter::new(sink, Arc::clone(&self.dropped_lock_events));
+    pub fn sync_events(&self, sink: Box<dyn EventSink<SyncEvent>>) {
+        let adapter = CountedEventSink::new(sink, Arc::clone(&self.dropped_lock_events));
         self.lock_state().sync_sink = Some(Box::new(adapter));
     }
 
@@ -869,9 +843,8 @@ impl AppSession {
             if let Some(handle) = guard.take() {
                 // Wake the ticker so the join returns promptly instead of
                 // waiting out the remainder of its 1 s park. `Drop` calls
-                // `shutdown`, and Dart's `dispose`/`NativeFinalizer` run the
-                // release inline on the calling isolate thread — a blocking
-                // join here would stall the UI thread.
+                // `shutdown` inline on the caller's thread, so a sleeping ticker
+                // would delay application shutdown.
                 handle.thread().unpark();
                 let _ = handle.join();
             }
@@ -1145,7 +1118,7 @@ impl AppSession {
     /// Installs a test sink through the same path production uses, so tests
     /// exercise the registration snapshot and dead-session close behavior.
     pub fn lock_events_for_test(&self, sink: Box<dyn EventSink<LockEvent>>) {
-        self.lock_state().install_lock_sink(sink);
+        self.lock_events(sink);
     }
 
     /// Runs the production unlock protocol with a hook between the KDF
@@ -1184,7 +1157,7 @@ impl AppSession {
     }
 
     pub fn sync_events_for_test(&self, sink: Box<dyn EventSink<SyncEvent>>) {
-        self.lock_state().sync_sink = Some(sink);
+        self.sync_events(sink);
     }
 
     pub fn has_vault(&self) -> bool {
@@ -1262,7 +1235,7 @@ fn spawn_ticker(
                 // `park_timeout` rather than `sleep` so `shutdown()` can
                 // `unpark` us and the join returns immediately. A plain sleep
                 // made every drop cost up to a full second on the caller's
-                // thread — which, via Dart's finalizer, is the UI thread.
+                // thread.
                 thread::park_timeout(Duration::from_secs(1));
 
                 if shutdown.load(Ordering::Relaxed) {

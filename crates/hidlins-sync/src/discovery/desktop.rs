@@ -6,10 +6,6 @@
 
 use std::{collections::BTreeSet, time::Instant};
 
-#[cfg(target_os = "android")]
-use android_if_addrs as if_addrs;
-#[cfg(target_os = "android")]
-use android_mdns_sd as mdns_sd;
 use mdns_sd::{IfKind, IfPredicate, Receiver, ScopedIp, ServiceDaemon, ServiceEvent, ServiceInfo};
 
 use super::{

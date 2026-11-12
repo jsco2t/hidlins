@@ -23,7 +23,7 @@ pub(crate) fn validate_vault_name(name: &str) -> Result<(), HidlinsApiError> {
     Ok(())
 }
 
-#[allow(clippy::needless_pass_by_value)] // frb FFI passes owned DTOs
+#[allow(clippy::needless_pass_by_value)] // Public API accepts owned DTOs
 impl AppSession {
     pub fn list_vaults(&self) -> Result<Vec<VaultSummary>, HidlinsApiError> {
         let state = self.lock_state();

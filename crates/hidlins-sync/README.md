@@ -39,7 +39,7 @@ All dependency and vendoring rules are enforced by the repository-wide
 `make check`, `make deny`, and `make audit` gates.
 
 The exact wire contract, security model, executable coverage, dependency
-review, automated simulator procedure, and optional observation residue are
+review, two-device verification procedure, and optional observation residue are
 documented in:
 
 - [`docs/protocol-v1.md`](docs/protocol-v1.md)

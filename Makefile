@@ -13,12 +13,7 @@
 # the explicit `--offline --locked` flags below are belt-and-suspenders
 # so the intent is visible at the call site.
 
-# Recipes require bash, not POSIX sh: `app-deps` captures a pipeline status
-# via PIPESTATUS. GNU Make defaults SHELL to /bin/sh, which is dash on
-# Debian/Ubuntu (where CI runs) and raises "Bad substitution" on bashisms.
-# Both target platforms (Linux, macOS) ship bash; a bare name makes make(1)
-# resolve it from PATH. (Helper scripts under tools/dev/ carry their own
-# bash shebangs and do not depend on this.)
+# Linux and macOS workflows use Bash.
 SHELL          := bash
 
 CARGO          := cargo
@@ -29,7 +24,6 @@ CARGO_FLAGS    := --workspace --offline --locked
 # Synthetic Cargo fixtures can clear this because they have no security crate.
 CARGO_TEST_FLAGS ?= --features hidlins-security/test-binaries
 CLIPPY_FLAGS   := --workspace --all-targets --offline --locked -- -D warnings
-APP_TEST_FLAGS ?=
 SPEC_POLICY_ROOT ?=
 
 # Rustfmt does not traverse include! modules inside App's private test scope.
@@ -48,20 +42,35 @@ export RUSTFLAGS RUSTDOCFLAGS
 # even resolve (`logind`→`zbus` is Linux-target-only; `iokit`→`objc2`
 # is macOS-target-only), so `test-os-events` must not invoke both.
 UNAME_S        := $(shell uname -s)
+API_SHARED_LIBRARY := $(if $(filter Darwin,$(UNAME_S)),libhidlins_api.dylib,libhidlins_api.so)
 
 # `make` with no args shows the help screen — friendlier for first-run.
 # Devs who know what they want type `make build`, `make test`, `make check`.
 .DEFAULT_GOAL := help
 
-.PHONY: help asset-license-check toolchain fuzz-toolchain build release demo-vault build-policy-check _build-policy-check acceptance-evidence-check check-android build-android android-artifacts-check android-harness-check android-emulator-provision android-scenario-boundary-check app-android-config-check app-build-android app-test-android-integration app-test-android-emulator check-ios ios-harness-check app-test-ios-simulator app-test-ios-integration app-test-ios-device app-build-ios app-prepare-ios-observation test test-ignored test-all test-tui-contracts test-update-snapshots test-clipboard test-os-events \
-        test-local-sync-security test-local-sync-discovery test-local-sync-integration test-local-sync-mobile-harness test-local-sync-android-lan-discovery test-local-sync-mobile-scenarios-ios test-local-sync-mobile-scenarios-android test-local-sync-mobile-scenarios fuzz-local-sync-corpus fuzz-local-sync-ci ncsa-boundary-precheck ncsa-boundary-check interop-sync s3-removal-check \
-        fmt fmt-check lint lint-fix check-feature-gates \
-        check verify interop interop-app interop-entry bench bench-search bench-search-gate bench-search-gate-ci \
-        vendor vendor-patches deny audit doc clean completions completions-check run-tui \
-        snapshots-check \
-        api-gen api-gen-check app-build-linux app-build-macos app-brand-generate app-brand-check app-analyze app-fmt app-fmt-check \
-        app-test app-test-performance app-test-integration app-test-integration-performance app-goldens-update app-test-bridge app-deps app-run boundary-check pub-vendor pub-vendor-check pub-vendor-hash-test pub-production-check \
-        flutter-version-check telemetry-check app-check check-macos test-merge-properties
+.PHONY: help toolchain fuzz-toolchain build release demo-vault \
+        build-policy-check _build-policy-check run-tui drift-fixture-host-check drift-hash-check vendor-cache-check \
+        vendor-cache-callers-check vendor-cache-precedence-check cargo-artifact-path-check check-macos test-api-lock-features test-api-lock-cache \
+        build-api-native-test-harness test-api-lock-cache-native-ticket test-api-worker-panic-ticket test-api-inbound-secret-erasure test-api-server-lifecycle test-api-server-unlock \
+        test-reserved-custom-fields test-api-create-registry-commit test-api-server-config-commit test-server-shutdown test-api-peer-revocation test-tui-peer-revocation \
+        test-api-incoming-commit test-api-native-publication test-api-copy-origin test-api-copy-origin-native test-api-generated-copy test-api-generated-copy-native \
+        test-api-pairing-lifetime test-api-pairing-lifetime-native test-api-discovery-kind test-api-discovery-cancel test-api-discovery-stop-controls test-api-expiration-save \
+        check-feature-gates test test-cli-foreground-lock test-cli-fixture-paths test-sync-fixture-paths test-sync-listener-readiness \
+        lock-offline test-ignored test-ignored-render-routing test-macos-manual-routing test-headless-stdin test-all \
+        test-tui-contracts test-update-snapshots snapshots-check test-clipboard test-sync-preserved-contracts test-noise-erasure \
+        test-local-sync-security test-local-sync-discovery test-local-sync-integration fuzz-local-sync-corpus fuzz-local-sync-ci test-merge-properties \
+        test-native-helper-features test-logind-fixture test-dbus-maintenance test-os-events test-tui-formatting-host test-tui-formatting \
+        test-tui-terminal test-tui-terminal-backend test-tui-os-events test-tui-readonly test-tui-password-memory test-tui-note-memory \
+        test-tui-edit-validation test-tui-configuration test-tui-state test-tui-peers test-tui-render-memory test-tui-framework-memory \
+        test-ratatui-memory-patches bench-tui-render test-tui-output bench-tui-output test-tui-detail-scroll test-tui-history-scroll \
+        test-tui-edit-viewport test-tui-paragraph-position test-ratatui-geometry-patch bench-tui-edit test-tui-reserved-bindings fmt \
+        fmt-check lint lint-fix check verify asset-license-check \
+        interop interop-sync interop-entry bench bench-search bench-search-gate \
+        bench-search-gate-ci deny audit doc completions test-nested-completions \
+        completions-check vendor vendor-patches ncsa-boundary-precheck ncsa-boundary-check s3-removal-check \
+        clean test-console test-api test-api-native test-console-features test-console-process-interop \
+        test-dev-tools ci-toolchain-check boundary-check
+
 
 help:  ## Show this help.
 	@awk 'BEGIN {FS = ":.*##"; print "Usage: make <target>\n\nTargets:"} /^[a-zA-Z_-]+:.*##/ {printf "  %-15s %s\n", $$1, $$2}' $(MAKEFILE_LIST)
@@ -78,31 +87,6 @@ toolchain:  ## Install all dev tooling (Rust toolchain, keepassxc-cli, cargo-den
 	# the script uses `set -o pipefail`, which POSIX `sh`/dash lacks.
 	tools/dev/install-toolchain.sh
 
-app-linux-toolchain:  ## Install native Flutter build prerequisites on Debian/Ubuntu (explicit setup; needs network).
-	bash tools/dev/install-linux-app-toolchain.sh --install
-
-app-linux-prereqs:  ## Check Linux native build prerequisites without installing anything.
-	bash tools/dev/install-linux-app-toolchain.sh --check
-
-app-l10n: app-deps  ## Regenerate Dart localizations from the app's ARB source.
-	cd app && flutter gen-l10n
-
-.PHONY: app-linux-toolchain app-linux-prereqs app-l10n
-
-.PHONY: ci-flutter-version flutter-sdk-prepare android-ndk-toolchain ci-toolchain-check
-
-ci-flutter-version:  ## Export the exact repository Flutter pin to GitHub step outputs.
-	python3 tools/dev/ci-toolchain.py flutter-version
-
-flutter-sdk-prepare:  ## Bootstrap Flutter SDK tools outside the reviewed app cache (requires network).
-	python3 tools/dev/ci-toolchain.py flutter-bootstrap
-
-android-ndk-toolchain:  ## Install the exact Android NDK from the artifact contract (requires network).
-	python3 tools/dev/ci-toolchain.py android-ndk
-
-ci-toolchain-check: vendor-cache-check android-gradle-sdk-check android-release-clipboard-host-check android-release-build-cleanup-check drift-hash-check cargo-artifact-path-check test-ignored-render-routing  ## Test CI SDK selection and NDK version checks with disposable fixtures.
-	python3 -B tools/dev/test_ci_toolchains.py
-
 fuzz-toolchain:  ## Install exact cargo-fuzz and pinned nightly (development/testing only).
 	tools/dev/install-fuzz-toolchain.sh
 
@@ -113,9 +97,9 @@ fuzz-toolchain:  ## Install exact cargo-fuzz and pinned nightly (development/tes
 build:  ## Build the workspace (offline, vendored).
 	$(CARGO_COMPILE) build $(CARGO_FLAGS)
 
-release: ncsa-boundary-precheck asset-license-check  ## Build optimized console and agent artifacts in target/release/ (host platform).
+release: ncsa-boundary-precheck license-check  ## Build optimized console and agent artifacts in target/release/ (host platform).
 	$(CARGO_COMPILE) build $(CARGO_FLAGS) --release
-	python3 tools/dev/ncsa-boundary-check.py artifacts "$(CARGO_ARTIFACT_DIR)/release/hidlins" "$(CARGO_ARTIFACT_DIR)/release/hidlins-agent"
+	python3 tools/dev/ncsa-boundary-check.py artifacts "$(CARGO_ARTIFACT_DIR)/release/hidlins" "$(CARGO_ARTIFACT_DIR)/release/hidlins-agent" "$(CARGO_ARTIFACT_DIR)/release/$(API_SHARED_LIBRARY)" "$(CARGO_ARTIFACT_DIR)/release/libhidlins_api.a"
 
 demo-vault:  ## Create a disposable kitchen-sink KDBX vault at DEMO_VAULT (absolute path; refuses overwrite).
 	@output="$(DEMO_VAULT)"; \
@@ -133,10 +117,6 @@ demo-vault:  ## Create a disposable kitchen-sink KDBX vault at DEMO_VAULT (absol
 	$(CARGO_COMPILE) run -p hidlins-core --example seed_demo_vault --offline --locked -- "$(DEMO_VAULT)"
 	@echo "Demo vault password: Password123"
 
-acceptance-evidence-check:  ## Audit release/CI/PRD evidence, skipped residuals, and all 45 July tasks.
-	python3 tools/acceptance/check.py self-test
-	python3 tools/acceptance/check.py check
-
 build-policy-check:  ## Prove first-party warnings are fatal and platform build policies stay scoped.
 	$(MAKE) --no-print-directory _build-policy-check RUSTFLAGS="$(RUSTFLAGS) -C debuginfo=0"
 
@@ -147,46 +127,12 @@ run-tui:  ## Launch the interactive terminal UI (hidlins).
 	$(CARGO_COMPILE) build -p hidlins-cli --offline --locked
 	"$(CARGO_ARTIFACT_DIR)/debug/hidlins"
 
-# ---------------------------------------------------------------------------
-# Flutter app (app/) — bridge codegen, builds, analysis, formatting.
-# Requires Flutter SDK (see .flutter-version); Rust side builds offline
-# against vendor/ via Cargokit.
-# ---------------------------------------------------------------------------
-
-# Every app-* / api-gen target routes pub through the vendored cache. Setting
-# it here rather than per-recipe means an implicit `pub get` fired by
-# `flutter build` / `flutter test` / build_runner is ALSO offline-bound and
-# fails loudly instead of silently reaching pub.dev (T2.4's stated guarantee).
-export PUB_CACHE := $(CURDIR)/app/vendor-pub
-export GRADLE_USER_HOME := $(CURDIR)/.gradle/android
-# SDK command-line tools and emulator releases can choose different defaults.
-# Share one explicit AVD home across provisioning and every scenario process.
-export ANDROID_AVD_HOME ?= $(or $(ANDROID_EMULATOR_HOME),$(ANDROID_USER_HOME),$(HOME)/.android)/avd
-
-FRB_RUST_OUT   := crates/hidlins-api/src/frb_generated.rs
-FRB_DART_OUT   := app/lib/src/bridge/
-
-api-gen:  ## Re-generate flutter_rust_bridge bindings (codegen tool required).
-	@command -v flutter_rust_bridge_codegen >/dev/null 2>&1 || { \
-		echo "error: flutter_rust_bridge_codegen not installed. Run \`make toolchain\`." >&2; exit 1; }
-	@command -v cargo-expand >/dev/null 2>&1 || { \
-		echo "error: cargo-expand not installed (frb codegen needs it). Run \`make toolchain\`." >&2; exit 1; }
-	python3 tools/dev/vendor_cache.py run -- flutter_rust_bridge_codegen generate --config-file flutter_rust_bridge.yaml
-	# Canonicalize generated Dart with the same formatter enforced by
-	# app-fmt-check. FRB's formatter and the pinned Dart SDK can otherwise
-	# disagree on line wrapping, making api-gen-check and app-fmt-check
-	# mutually exclusive.
-	dart format $(FRB_DART_OUT)
-	python3 tools/dev/normalize-generated-dart.py $(FRB_DART_OUT)
-
-.PHONY: drift-hash-check drift-fixture-host-check
 drift-fixture-host-check:  ## Verify isolated drift fixtures reach real integrity comparisons through native Make.
 	$(MAKE) --no-print-directory -f tools/dev/drift-fixture-host-tests.mk test
 
 drift-hash-check: drift-fixture-host-check  ## Verify portable drift hashing rejects changed or unreadable output.
 	$(MAKE) -f tools/dev/drift-hash-tests.mk test
 
-.PHONY: vendor-cache-check
 vendor-cache-check: vendor-cache-callers-check vendor-cache-precedence-check  ## Verify vendored-byte invalidation, warm retries and failure safety (Rust only).
 	python3 -B tools/dev/test_vendor_cache.py \
 	  CacheTests.test_make_real_library_macro_and_host_build_dependency \
@@ -197,447 +143,14 @@ vendor-cache-check: vendor-cache-callers-check vendor-cache-precedence-check  ##
 	  CacheTests.test_stamp_publication_and_partial_cleanup_fail_closed \
 	  CacheTests.test_fuzz_runner_forwards_guarded_explicit_target_to_real_cargo
 
-.PHONY: vendor-cache-callers-check
-vendor-cache-callers-check:  ## Verify snapshot/benchmark/startup cache adoption and clean recovery.
+vendor-cache-callers-check:  ## Verify snapshot/benchmark cache adoption and clean recovery.
 	$(MAKE) -f tools/dev/vendor-cache-caller-tests.mk test
 
-.PHONY: vendor-cache-precedence-check
 vendor-cache-precedence-check:  ## Verify explicit Cargo output flags override inherited cache settings.
 	$(MAKE) -f tools/dev/vendor-cache-precedence-tests.mk test
 
-.PHONY: cargokit-cache-check
-cargokit-cache-check: cargokit-cache-config-check  ## Verify byte-derived Cargokit kernels and shared Cargo cache safety (Dart SDK).
-	$(MAKE) -f tools/dev/vendor-cache-tests.mk test
-
-.PHONY: cargokit-cache-config-check
-cargokit-cache-config-check:  ## Verify Cargo config and existing home-toolchain lookup in cache metadata.
-	$(MAKE) -f tools/dev/cargokit-cache-config-tests.mk test
-
-.PHONY: cargo-artifact-path-check
 cargo-artifact-path-check:  ## Verify configured Cargo roots reach build artifact consumers.
 	$(MAKE) -f tools/dev/artifact-path-tests.mk test
-
-api-gen-check:  ## Re-generate frb bindings and fail if output drifted (CI gate). NOTE: rewrites the generated files.
-	@# Content-hash the generated tree, regenerate, compare. Deliberately NOT
-	@# `git status --porcelain`: that conflates "drifted" with "not yet
-	@# committed" (untracked files report as `??`), so it fails on a branch
-	@# where the bindings are new — and, worse, would pass silently if the
-	@# generated paths were ever gitignored. Hashing measures the thing the
-	@# gate is actually about: does codegen still produce the committed bytes?
-	@before="$$(python3 tools/dev/content_fingerprint.py tree $(FRB_RUST_OUT) $(FRB_DART_OUT))" || exit 1; \
-	$(MAKE) --no-print-directory api-gen || { \
-		echo "error: api-gen failed — the hash comparison below would be vacuous" >&2; exit 1; }; \
-	test -s $(FRB_RUST_OUT) || { echo "error: codegen produced no $(FRB_RUST_OUT)" >&2; exit 1; }; \
-	after="$$(python3 tools/dev/content_fingerprint.py tree $(FRB_RUST_OUT) $(FRB_DART_OUT))" || exit 1; \
-	if [ "$$before" != "$$after" ]; then \
-		echo "error: frb bindings drifted. Run \`make api-gen\` and commit the result." >&2; \
-		git --no-pager diff -- $(FRB_RUST_OUT) $(FRB_DART_OUT) >&2 || true; \
-		exit 1; \
-	fi; \
-	echo "  OK: frb bindings match the committed codegen output"
-
-# `--no-pub` on every flutter build/test/run: PUB_CACHE redirection alone
-# does NOT disable networking — an implicit `pub get` fired by the flutter
-# tool would happily fetch a missing package from pub.dev straight into the
-# vendored cache. `--no-pub` suppresses the implicit resolve entirely; the
-# only resolve path is `app-deps`, which is `--offline --enforce-lockfile`.
-.PHONY: app-linux-lock-feature-check
-app-linux-lock-feature-check:  ## Verify Linux OS-lock features and mobile feature boundaries.
-	$(MAKE) -f tools/dev/cargokit-feature-tests.mk test
-
-.PHONY: cargokit-policy-check
-cargokit-policy-check: app-linux-lock-feature-check cargokit-cache-check  ## Verify exact compiler selection and offline Cargokit prerequisites.
-	$(MAKE) -f tools/dev/cargokit-toolchain-tests.mk test
-
-app-build-linux: ncsa-boundary-precheck app-deps app-analyze cargokit-policy-check  ## Build the Flutter desktop app for Linux.
-	cd app && flutter build linux --no-pub
-	python3 tools/dev/ncsa-boundary-check.py artifacts app/build/linux
-
-app-build-macos: ncsa-boundary-precheck app-deps app-analyze  ## Build the Flutter desktop app for macOS (requires macOS host).
-	cd app && flutter build macos --no-pub
-	python3 tools/dev/ncsa-boundary-check.py artifacts app/build/macos
-
-.PHONY: app-macos-lock-feature-check
-app-macos-lock-feature-check:  ## Verify Cargokit selects iokit for both macOS architectures in every shipping profile.
-	$(MAKE) --no-print-directory -f tools/dev/cargokit-apple-feature-tests.mk test
-
-.PHONY: cargokit-host-fixture-check
-cargokit-host-fixture-check:  ## Verify real Cargokit cache fixtures select the current Mac or Linux Rust host.
-	$(MAKE) --no-print-directory -f tools/dev/cargokit-host-fixture-tests.mk test
-
-check-ios: app-deps app-analyze app-brand-check  ## Cross-check iOS Rust targets and run native simulator security/storage tests.
-	tools/ios-native/run.sh check
-
-app-test-ios-simulator: app-deps  ## Run bounded native iOS tests on the configured simulator.
-	tools/ios-native/run.sh simulator
-
-.PHONY: app-test-ios-native-publication ios-publication-boundary-check ios-publication-lint
-app-test-ios-native-publication: app-deps  ## Prove real iOS C consumption keeps revocation fenced through native pasteboard publication.
-	tools/ios-native/run.sh publication
-
-ios-publication-boundary-check:  ## Reject test controls in unsupported builds and verify ordinary iOS artifacts exclude them.
-	python3 tools/ios-native/publication_boundary.py check
-
-ios-publication-lint:  ## Lint the isolated debug-simulator publication fixture with fatal warnings.
-	python3 tools/ios-native/publication_boundary.py lint
-
-.PHONY: ios-simulator-toolchain-check
-ios-simulator-toolchain-check:  ## Verify bootstrap provisions both simulator architectures selected by Cargokit.
-	$(MAKE) --no-print-directory -f tools/dev/ios-simulator-targets.mk test
-
-ios-harness-check:  ## Test simulator selection, direct VM attachment, and cleanup.
-	python3 tools/ios-native/harness_test.py
-
-.PHONY: ios-semantics-startup-check
-ios-semantics-startup-check:  ## Verify delayed iOS semantics initialization precedes integration leak baselines.
-	$(MAKE) --no-print-directory -f tools/dev/ios-semantics-tests.mk test
-
-.PHONY: ios-vendor-cache-check
-ios-vendor-cache-check:  ## Verify native iOS checks invalidate changed vendor bytes and reuse warm configured caches.
-	$(MAKE) --no-print-directory -f tools/dev/ios-vendor-cache-tests.mk test
-
-app-test-ios-integration: app-deps app-analyze ios-harness-check  ## Run UI and real-bridge journeys on an available iPhone and iPad simulator.
-	tools/ios-native/integration.sh
-
-app-test-ios-device: app-deps  ## Run native iOS tests on a connected, trusted physical iPhone (requires IOS_DEVELOPMENT_TEAM).
-	tools/ios-native/run.sh device
-
-app-build-ios: ncsa-boundary-precheck app-deps app-analyze  ## Build simulator debug and no-codesign device release iOS artifacts.
-	tools/ios-native/run.sh build
-	python3 tools/dev/ncsa-boundary-check.py artifacts app/build/ios
-
-app-prepare-ios-observation: app-build-ios ios-harness-check  ## Install and launch the inspected build for optional non-gating iOS observations.
-	tools/ios-native/prepare_observation.sh
-
-check-android:  ## Cross-check hidlins-api for both supported Android ABIs with the pinned Flutter NDK.
-	python3 tools/android-native/artifacts.py self-test
-	tools/android-native/build.sh check
-
-build-android: ncsa-boundary-precheck  ## Build/stage release Rust libraries for arm64-v8a + x86_64 and verify the artifact contract.
-	python3 tools/android-native/artifacts.py self-test
-	tools/android-native/build.sh build
-	python3 tools/dev/ncsa-boundary-check.py artifacts app/android/native-artifacts/jniLibs
-
-android-artifacts-check:  ## Reject stale, wrong-profile, wrong-ABI, misaligned, or modified staged Android libraries.
-	python3 tools/android-native/artifacts.py check
-
-.PHONY: android-gradle-prepare android-dependency-check
-
-android-gradle-prepare:  ## Install the JUnit-free policy before Android Gradle/plugin resolution.
-	bash tools/android-native/gradle-env.sh
-
-.PHONY: android-gradle-sdk-check
-android-gradle-sdk-check:  ## Verify Gradle resolves Flutter SDK shims and preserves project and argument forwarding.
-	$(MAKE) -f tools/android-native/gradle-sdk-tests.mk test
-
-.PHONY: app-test-android-release-clipboard android-release-clipboard-host-check
-app-test-android-release-clipboard:  ## Verify shipping release Rust clipboard handoff and erasure on Android 29/36.
-	$(MAKE) -f tools/android-native/release-jni-tests.mk test
-
-android-release-clipboard-host-check:  ## Check JNI inspection and runtime-receipt controls without a device.
-	$(MAKE) -f tools/android-native/release-jni-tests.mk self-test
-
-.PHONY: android-release-build-cleanup-check
-android-release-build-cleanup-check:  ## Verify timeout and cancellation retire all owned Android build processes.
-	$(MAKE) -f tools/android-native/build-ownership-tests.mk test
-
-android-dependency-check: android-gradle-prepare android-storage-directory-check  ## Verify JUnit exclusion with real offline Gradle fixtures and device-test contracts.
-	python3 tools/android-native/test_dependency_policy.py
-
-app-android-config-check: app-deps android-dependency-check  ## Verify Flutter 3.47.2 built-in Kotlin/old-DSL pins and reject legacy KGP application.
-	python3 tools/android-native/config_check.py self-test
-	python3 tools/android-native/config_check.py check
-	python3 tools/android-native/plugin_registrant.py self-test
-	python3 tools/android-native/plugin_registrant.py check
-
-app-build-android: ncsa-boundary-precheck build-android app-deps app-analyze app-brand-check app-android-config-check cargokit-policy-check  ## Build and inspect Android debug and unsigned release APKs.
-	tools/android-native/build_app.sh
-	python3 tools/dev/ncsa-boundary-check.py artifacts app/build/app/outputs/flutter-apk
-
-app-test-android-integration: app-build-android  ## Build Android device tests and run them on the selected emulator.
-	tools/android-native/run_app_tests.sh
-
-android-harness-check: ios-harness-check  ## Validate Android API/ABI/form-factor selection and secret-safe result tooling.
-	python3 tools/android-native/emulator_matrix.py check
-	python3 tools/android-native/harness_test.py
-
-android-emulator-provision: android-harness-check  ## Provision API 29/36 native/UI and API 30/36 shared-LAN AVDs.
-	tools/android-native/provision_emulators.sh
-
-.PHONY: android-emulator-matrix
-android-emulator-matrix:  ## Show native/UI and shared-LAN client/authority selections.
-	@echo "Native and UI clients (API 29/36):"
-	python3 tools/android-native/emulator_matrix.py select
-	@echo "Shared-LAN clients (API 30/36):"
-	python3 tools/android-native/emulator_matrix.py lan
-	@echo "Shared-LAN authorities:"
-	python3 tools/android-native/emulator_matrix.py authority
-	@echo "Shared-LAN replacement authorities:"
-	python3 tools/android-native/emulator_matrix.py replacement
-
-android-scenario-boundary-check: app-build-android  ## Prove emulator-only authority/NSD registration is confined to test artifacts.
-	tools/android-native/gradle.sh -Ptarget-platform=android-arm64,android-x64 :app:assembleDebugAndroidTest
-	python3 tools/android-native/scenario_boundary.py
-
-app-test-android-emulator: app-build-android android-harness-check  ## Run native, UI, bridge, lifecycle, and recreation checks on the host Android matrix.
-	tools/android-native/run_emulator_suite.sh core
-
-app-brand-generate:  ## Regenerate committed iOS/Android brand rasters (requires macOS CoreGraphics).
-	@if [ "$(UNAME_S)" != "Darwin" ]; then \
-		echo "error: app-brand-generate requires macOS CoreGraphics" >&2; exit 1; fi
-	tools/dev/generate-brand-assets.swift
-
-app-brand-check: app-deps  ## Verify brand hashes, dimensions, platform resources, safe zone, and widget behavior.
-	cd app && dart tool/brand_check.dart
-	cd app && flutter test --no-pub test/ui/widgets/brand_mark_test.dart
-
-app-analyze:  ## Run Dart static analysis (CI gate).
-	cd app && dart analyze --fatal-warnings --fatal-infos
-
-app-fmt:  ## Format Dart code.
-	cd app && dart format lib/ test/ test_bridge/ test_driver/ integration_test/ tool/
-
-app-fmt-check:  ## Verify Dart formatting (CI gate).
-	cd app && dart format --output=none --set-exit-if-changed lib/ test/ test_bridge/ test_driver/ integration_test/ tool/
-
-app-test: app-deps  ## Run Flutter widget/unit tests.
-	@if [ -z "$$(find app/test -name '*_test.dart' 2>/dev/null)" ]; then \
-		echo "error: no Flutter tests found (app/test/*_test.dart). Add at least a probe test." >&2; \
-		exit 1; \
-	fi
-	cd app && flutter test --no-pub $(APP_TEST_FLAGS)
-
-app-test-performance: app-deps  ## Run deterministic 5,000-entry Flutter list/search sanity checks.
-	cd app && flutter test --no-pub test/performance/desktop_performance_test.dart
-
-app-goldens-update: app-deps  ## Regenerate Flutter golden files (requires HIDLINS_UPDATE_GOLDENS=1).
-	@if [ "$(UNAME_S)" != "Linux" ]; then echo "error: regenerate committed goldens on Linux." >&2; exit 1; fi
-	@if [ "$${HIDLINS_UPDATE_GOLDENS}" != "1" ]; then \
-		echo "error: set HIDLINS_UPDATE_GOLDENS=1 to confirm golden regeneration." >&2; \
-		echo "       Review the diff before committing." >&2; exit 1; fi
-	cd app && flutter test --update-goldens --no-pub $(APP_TEST_FLAGS)
-
-# The cdylib the smoke test loads. `flutter test` runs on the host VM, so
-# this is always the host target dir; only the extension is platform-bound.
-ifeq ($(UNAME_S),Darwin)
-HIDLINS_API_LIB ?= $(CARGO_ARTIFACT_DIR)/debug/libhidlins_api.dylib
-HIDLINS_API_RELEASE_LIB ?= $(CARGO_ARTIFACT_DIR)/release/libhidlins_api.dylib
-else
-HIDLINS_API_LIB ?= $(CARGO_ARTIFACT_DIR)/debug/libhidlins_api.so
-HIDLINS_API_RELEASE_LIB ?= $(CARGO_ARTIFACT_DIR)/release/libhidlins_api.so
-endif
-
-# The bridge smoke tests live in app/test_bridge/ (not app/test/) so plain
-# `make app-test` stays runnable without a Rust build. Headless: the test
-# opens the cdylib directly instead of resolving it from an app bundle, so
-# it exercises library loading, SSE codecs, opaque receivers, typed errors,
-# and the lock-event stream without a display or device.
-app-test-bridge: app-deps  ## Build the hidlins-api cdylib and run the headless Dart↔Rust bridge smoke tests.
-	$(CARGO_COMPILE) build -p hidlins-api --offline --locked
-	cd app && HIDLINS_API_LIB="$(HIDLINS_API_LIB)" flutter test --no-pub test_bridge/bridge_smoke_test.dart
-
-.PHONY: app-test-lifecycle-async
-app-test-lifecycle-async: app-deps  ## Verify lifecycle reconciliation uses the actual asynchronous native bridge.
-	$(CARGO_COMPILE) build -p hidlins-api --offline --locked
-	cd app && HIDLINS_API_LIB="$(HIDLINS_API_LIB)" flutter test --no-pub test_bridge/lifecycle_async_regression_test.dart
-
-.PHONY: app-test-attachment-refresh
-app-test-attachment-refresh: app-deps  ## Verify local attachment mutations refresh cached details through the real bridge.
-	$(CARGO_COMPILE) build -p hidlins-api --offline --locked
-	cd app && HIDLINS_API_LIB="$(HIDLINS_API_LIB)" flutter test --no-pub test_bridge/attachment_refresh_regression_test.dart
-
-.PHONY: app-test-generated-copy
-app-test-generated-copy: app-deps  ## Verify generated-result copy codecs and origin revocation through the actual bridge.
-	$(CARGO_COMPILE) build -p hidlins-api --offline --locked
-	cd app && HIDLINS_API_LIB="$(HIDLINS_API_LIB)" flutter test --no-pub test_bridge/generated_copy_regression_test.dart
-
-.PHONY: app-test-sync-cancel
-app-test-sync-cancel: app-deps  ## Verify foreground discovery cancellation through the actual async bridge repository.
-	$(CARGO_COMPILE) build -p hidlins-api --offline --locked
-	cd app && HIDLINS_API_LIB="$(HIDLINS_API_LIB)" flutter test --no-pub test_bridge/sync_cancel_regression_test.dart
-
-.PHONY: app-test-import-lifetime
-app-test-import-lifetime: app-deps  ## Verify disposed locked import dialogs against the actual async bridge repository.
-	$(CARGO_COMPILE) build -p hidlins-api --offline --locked
-	cd app && HIDLINS_API_LIB="$(HIDLINS_API_LIB)" flutter test --no-pub test_bridge/connect_import_lifetime_regression_test.dart
-
-.PHONY: app-test-manual-route
-app-test-manual-route: app-deps  ## Verify explicit sync routes survive discovery through the actual bridge and Rust admission.
-	$(CARGO_COMPILE) build -p hidlins-api --offline --locked
-	cd app && HIDLINS_API_LIB="$(HIDLINS_API_LIB)" flutter test --no-pub test_bridge/manual_route_regression_test.dart
-
-.PHONY: app-test-pairing-presentation
-app-test-pairing-presentation: app-deps  ## Verify off-page inbound SAS presentation and confirmation through real loopback Rust pairing.
-	$(CARGO_COMPILE) build -p hidlins-api --offline --locked
-	cd app && HIDLINS_API_LIB="$(HIDLINS_API_LIB)" flutter test --no-pub test_bridge/pairing_presentation_regression_test.dart
-
-.PHONY: app-test-imported-keyfile
-app-test-imported-keyfile: app-deps  ## Verify shipping import/unlock UI with a real keyfile-protected KDBX.
-	$(CARGO_COMPILE) build -p hidlins-api --offline --locked
-	cd app && HIDLINS_API_LIB="$(HIDLINS_API_LIB)" flutter test --no-pub test_bridge/imported_keyfile_regression_test.dart
-
-.PHONY: app-test-touch-actions
-app-test-touch-actions: app-deps  ## Verify shipping touch create/delete/manual-lock actions against a real Rust vault.
-	$(CARGO_COMPILE) build -p hidlins-api --offline --locked
-	cd app && HIDLINS_API_LIB="$(HIDLINS_API_LIB)" flutter test --no-pub test_bridge/touch_actions_regression_test.dart
-
-.PHONY: app-test-vault-password-target
-app-test-vault-password-target: app-deps  ## Verify selected-vault password rotation through the real Dart/Rust management UI.
-	$(CARGO_COMPILE) build -p hidlins-api --offline --locked
-	cd app && HIDLINS_API_LIB="$(HIDLINS_API_LIB)" flutter test --no-pub test_bridge/vault_password_target_regression_test.dart
-
-.PHONY: app-test-vault-management-route
-app-test-vault-management-route: app-deps  ## Verify shipping nonempty-registry management preserves both real KDBX vaults.
-	$(CARGO_COMPILE) build -p hidlins-api --offline --locked
-	cd app && HIDLINS_API_LIB="$(HIDLINS_API_LIB)" flutter test --no-pub test_bridge/vault_management_route_regression_test.dart
-
-.PHONY: app-test-history-access
-app-test-history-access: app-deps  ## Verify shipping edit/history reads the real prior KDBX snapshot and clears it on lock.
-	$(CARGO_COMPILE) build -p hidlins-api --offline --locked
-	cd app && HIDLINS_API_LIB="$(HIDLINS_API_LIB)" flutter test --no-pub test_bridge/history_access_regression_test.dart
-
-.PHONY: app-test-entry-mutation-actions
-app-test-entry-mutation-actions: app-deps  ## Verify shipping move and confirmed purge preserve native identity/history and unrelated vault data.
-	$(CARGO_COMPILE) build -p hidlins-api --offline --locked
-	cd app && HIDLINS_API_LIB="$(HIDLINS_API_LIB)" flutter test --no-pub test_bridge/entry_mutation_actions_regression_test.dart
-
-.PHONY: app-test-expiration-editor
-app-test-expiration-editor: app-deps  ## Verify shipping expiration edits use one native save and retain exact untouched timestamps.
-	$(CARGO_COMPILE) build -p hidlins-api --offline --locked
-	cd app && HIDLINS_API_LIB="$(HIDLINS_API_LIB)" flutter test --no-pub test_bridge/expiration_editor_regression_test.dart
-
-.PHONY: app-test-group-management
-app-test-group-management: app-deps  ## Verify shipping group operations retain UUIDs, recycled data and encrypted reopen.
-	$(CARGO_COMPILE) build -p hidlins-api --offline --locked
-	cd app && HIDLINS_API_LIB="$(HIDLINS_API_LIB)" flutter test --no-pub test_bridge/group_management_regression_test.dart
-
-.PHONY: app-test-attachment-source
-app-test-attachment-source: app-deps  ## Verify shipping source selection keeps attachment bytes in Rust and round-trips the encrypted vault.
-	$(CARGO_COMPILE) build -p hidlins-api --offline --locked
-	cd app && HIDLINS_API_LIB="$(HIDLINS_API_LIB)" flutter test --no-pub test_bridge/attachment_source_regression_test.dart
-
-.PHONY: app-test-linux-attachment-source
-app-test-linux-attachment-source:  ## Exercise actual GTK attachment OPEN/SAVE dialogs on an isolated local display (Linux x64).
-	$(MAKE) -f tools/linux-native/attachment-source.mk test
-
-.PHONY: app-test-macos-attachment-source
-app-test-macos-attachment-source:  ## Exercise native Cocoa attachment OPEN/SAVE handlers and real panel cancellation.
-	$(MAKE) --no-print-directory -f tools/macos-native/attachment-source.mk test
-
-.PHONY: app-test-macos-attachment-selection
-app-test-macos-attachment-selection:  ## Verify native chooser selected-path/results through deterministic Cocoa panel callbacks.
-	$(MAKE) --no-print-directory -f tools/macos-native/selection-tests.mk test
-
-.PHONY: app-test-android-native
-app-test-android-native: app-deps android-gradle-prepare  ## Run Android mechanism regressions, including native lifecycle acknowledgement ownership.
-	# Android artifact staging uses the repository's canonical target directory.
-	CARGO_TARGET_DIR=$(CURDIR)/target $(MAKE) build-android
-	tools/android-native/run_app_tests.sh
-
-.PHONY: app-test-android-saf
-app-test-android-saf:  ## Verify asynchronous SAF ownership and retained native controls on Android 29/36 emulators.
-	$(MAKE) -f tools/android-native/saf-worker-tests.mk test
-
-.PHONY: android-storage-directory-check
-android-storage-directory-check:  ## Verify peer directory creation preserves imports and invalid paths still fail.
-	$(MAKE) -f tools/android-native/storage-directory-tests.mk test
-
-.PHONY: app-test-startup-discovery
-app-test-startup-discovery:  ## Verify Rust startup eligibility and fresh Android 29/36 permission journeys.
-	python3 tools/dev/vendor_cache.py run -- $(MAKE) -f tools/android-native/startup-discovery-tests.mk host
-	$(MAKE) -f tools/android-native/startup-discovery-tests.mk self-test runtime
-
-app-test-integration: app-deps  ## Run real native-bridge desktop lifecycle and CRUD integration tests.
-	$(CARGO_COMPILE) build -p hidlins-api --offline --locked
-	$(CARGO_COMPILE) build -p hidlins-cli --offline --locked
-	cd app && HIDLINS_API_LIB="$(HIDLINS_API_LIB)" flutter test --no-pub test_bridge/real_bridge_integration_test.dart
-	cd app && HIDLINS_API_LIB="$(HIDLINS_API_LIB)" HIDLINS_CLI_BIN="$(CARGO_ARTIFACT_DIR)/debug/hidlins" flutter test --no-pub test_bridge/real_bridge_process_coexistence_integration_test.dart
-	HIDLINS_CLI_BIN="$(CARGO_ARTIFACT_DIR)/debug/hidlins" $(CARGO_COMPILE) test -p hidlins-tui --features process-interop-tests --lib app::tests::tui_session_and_cli_process_share_the_advisory_lock -- --exact
-
-.PHONY: test-broad-search-performance
-test-broad-search-performance:  ## Measure a 5,000-hit search through the optimized native bridge.
-	$(MAKE) --no-print-directory -f Makefile -f tools/dev/broad-search-tests.mk test-broad-search
-
-app-test-integration-performance: app-deps ncsa-boundary-precheck  ## Measure 5,000-entry list/search through the optimized native bridge.
-	$(CARGO_COMPILE) build -p hidlins-api --bin api-test-driver --features test-fixtures --offline --locked
-	$(CARGO_COMPILE) build -p hidlins-api --release --offline --locked
-	@set -e; fixture="$$(mktemp -d)"; log="$$(mktemp)"; \
-	trap 'rm -rf "$$fixture"; rm -f "$$log"' EXIT; \
-	printf '%s\n' 'performance-integration-master-marker' | \
-		"$(CARGO_ARTIFACT_DIR)/debug/api-test-driver" create-search-corpus "$$fixture" performance 5000; \
-	cd app; \
-	HIDLINS_API_LIB="$(HIDLINS_API_RELEASE_LIB)" \
-	HIDLINS_PERF_STATE_DIR="$$fixture" \
-	HIDLINS_FLUTTER_VERSION="$$(cat ../.flutter-version)" \
-	HIDLINS_GIT_REVISION="$$(git -C .. rev-parse HEAD)" \
-	flutter test --reporter expanded --no-pub test_bridge/real_bridge_performance_integration_test.dart 2>&1 | tee "$$log"; \
-	status=$${PIPESTATUS[0]}; test "$$status" -eq 0; \
-	grep -Eo 'HIDLINS_PERF_JSON:\{.*\}' "$$log"
-
-app-deps: android-gradle-prepare  ## Install pub dependencies (offline from the vendored cache).
-	@log="$$(mktemp)"; trap 'rm -f "$$log"' EXIT; \
-	cd app && flutter pub get --offline --enforce-lockfile 2>&1 | tee "$$log"; \
-	status=$${PIPESTATUS[0]}; \
-	if grep -q "doesn't match contents" "$$log"; then \
-		echo "error: vendored pub cache content-hash mismatch — app/vendor-pub/hosted-hashes/ is missing or stale." >&2; \
-		echo "       \`flutter pub get\` reports this but exits 0, so it must be gated here." >&2; \
-		exit 1; \
-	fi; \
-	if [ "$$status" -ne 0 ]; then exit "$$status"; fi; \
-	cd .. && python3 tools/android-native/plugin_registrant.py install
-
-app-run: app-deps  ## Launch the Flutter app on the default device.
-	cd app && flutter run --no-pub
-
-pub-vendor:  ## Re-vendor pub dependencies into app/vendor-pub/. REQUIRES NETWORK.
-	cd app && dart pub get
-	tools/dev/pub-vendor-hash.sh generate
-	@echo "Vendored pub cache updated. Commit app/vendor-pub/ (incl. hosted-hashes/),"
-	@echo "app/pubspec.lock, and tools/dev/pub-vendor.SHA256SUMS."
-
-pub-vendor-hash-test:  ## Exercise pub integrity checks with isolated Git fixtures.
-	python3 -B tools/dev/test_pub_vendor_hash.py
-
-pub-vendor-check: pub-vendor-hash-test  ## Verify both vendored pub caches are up to date and unmodified (CI gate).
-	@# Byte-level integrity first: every file in both committed pub caches
-	@# must match the manifest `make pub-vendor` wrote. pub's own
-	@# content-hash check only compares the lockfile against the *archive*
-	@# hashes in hosted-hashes/ — a modified file inside an extracted
-	@# package tree would execute without it noticing. This is the pub
-	@# equivalent of the .cargo-checksum.json verification cargo performs
-	@# on vendor/ natively.
-	tools/dev/pub-vendor-hash.sh verify
-	@# Then resolution drift: hash rather than `git status`, so the gate
-	@# measures "does an offline re-resolve change anything?" instead of
-	@# "are these files committed yet?". The lockfile is what an unfaithful
-	@# cache actually perturbs; the package listings catch add/remove drift.
-	@# (cache roots mirrored in TREES in tools/dev/pub-vendor-hash.sh)
-	@sig() { \
-		python3 tools/dev/content_fingerprint.py pub-resolution app/pubspec.lock \
-			app/vendor-pub/hosted app/rust_builder/cargokit/build_tool/vendor-pub/hosted; \
-	}; \
-	before="$$(sig)" || exit 1; \
-	$(MAKE) --no-print-directory app-deps >/dev/null || { \
-		echo "error: app-deps failed — the drift comparison below would be vacuous" >&2; exit 1; }; \
-	after="$$(sig)" || exit 1; \
-	if [ "$$before" != "$$after" ]; then \
-		echo "error: pub vendor cache drifted. Run \`make pub-vendor\` and commit the result." >&2; \
-		git --no-pager diff -- app/pubspec.lock >&2 || true; \
-		exit 1; \
-	fi; \
-	echo "  OK: vendored pub caches match the lockfile"
-
-pub-production-check: app-deps  ## Prove device-test-only Dart packages are absent from the shipping graph (CI gate).
-	tools/dev/pub-production-check.sh
-
-flutter-version-check:  ## Assert the installed Flutter matches .flutter-version (CI gate).
-	tools/dev/flutter-version-check.sh --strict
-
-telemetry-check:  ## Assert Dart/Flutter telemetry is disabled — NFR-013 (CI gate).
-	tools/dev/telemetry-check.sh
-
-boundary-check: test-native-harness-allowlist  ## Verify the API boundary is enforced (CI gate).
-	tools/dev/boundary-check.sh
 
 check-macos:  ## Type-check hidlins-security against macOS targets (Level-1 cross-compile gate; no link, no SDK).
 	# `cargo check` does macro expansion + type/borrow checking but
@@ -660,11 +173,9 @@ check-macos:  ## Type-check hidlins-security against macOS targets (Level-1 cros
 	$(CARGO_COMPILE) check --target aarch64-apple-darwin --offline --locked -p hidlins-security --features iokit
 	$(CARGO_COMPILE) check --target x86_64-apple-darwin  --offline --locked -p hidlins-security --features iokit
 
-.PHONY: test-api-lock-features
 test-api-lock-features:  ## Type-check API OS-lock features on Linux and both supported Apple architectures.
 	python3 tools/dev/vendor_cache.py run -- python3 tools/dev/test_api_lock_features.py
 
-.PHONY: test-api-lock-cache
 test-api-lock-cache:  ## Verify API lock, worker ownership and TOTP cache revocation interleavings.
 	$(CARGO_COMPILE) test -p hidlins-api --lib --offline --locked lock_cache_regressions
 
@@ -672,7 +183,6 @@ test-api-lock-cache:  ## Verify API lock, worker ownership and TOTP cache revoca
 # --no-default-features. Compile the real unit harness without dev-dependency
 # activation, then require its native-only case before running it.
 API_NATIVE_UNIT_TEST_BIN = $(CARGO_ARTIFACT_DIR)/debug/deps/hidlins_api
-.PHONY: build-api-native-test-harness test-api-lock-cache-native-ticket test-api-worker-panic-ticket
 build-api-native-test-harness:  ## Build the API unit harness without development-feature unification.
 	$(CARGO_COMPILE) rustc -p hidlins-api --lib --no-default-features --features test-fixtures --offline --locked -- --test
 
@@ -684,58 +194,39 @@ test-api-worker-panic-ticket: build-api-native-test-harness  ## Verify native cl
 	@"$(API_NATIVE_UNIT_TEST_BIN)" --list worker_panic_ticket_regressions | grep -Fq 'caught_panic_revokes_ticket_before_locked_event: test'
 	"$(API_NATIVE_UNIT_TEST_BIN)" worker_panic_ticket_regressions
 
-.PHONY: test-api-inbound-secret-erasure
 test-api-inbound-secret-erasure:  ## Observe API master/keyfile erasure on validation and registration paths.
 	$(CARGO_COMPILE) test -p hidlins-api --features test-fixtures --test inbound_secret_erasure_regressions --offline --locked
 
-.PHONY: test-api-bridge-boundary
-test-api-bridge-boundary:  ## Generate isolated bindings and reject private cache exports.
-	python3 tools/dev/vendor_cache.py run -- python3 tools/dev/test_api_bridge_boundary.py
-
-.PHONY: test-native-harness-allowlist
-test-native-harness-allowlist:  ## Verify exact native-test admission and rejection of unreviewed Dart capabilities.
-	$(MAKE) --no-print-directory -f tools/dev/native-harness-tests.mk test
-
-.PHONY: test-api-server-lifecycle
 test-api-server-lifecycle:  ## Verify API server authority and controls across host ownership loans.
 	$(CARGO_COMPILE) test -p hidlins-api --features test-fixtures --lib --offline --locked server_lifecycle_regressions
 
-.PHONY: test-api-server-unlock
 test-api-server-unlock:  ## Verify a host ownership loan excludes competing vault unlocks.
 	$(CARGO_COMPILE) test -p hidlins-api --features test-fixtures --lib --offline --locked server_unlock_regressions
 
-.PHONY: test-api-server-config-commit
-.PHONY: test-reserved-custom-fields
-test-reserved-custom-fields:  ## Verify standard-field protection across core and app custom-field edits.
+test-reserved-custom-fields:  ## Verify standard-field protection across core and API custom-field edits.
 	$(MAKE) --no-print-directory -k -f tools/dev/reserved-fields-tests.mk test
 
-.PHONY: test-api-create-registry-commit
 test-api-create-registry-commit:  ## Verify vault creation preserves registry rename ownership on errors.
 	$(MAKE) --no-print-directory -f tools/dev/create-registry-tests.mk test
 
 test-api-server-config-commit:  ## Verify server authority follows registry rename commitment on errors.
 	$(CARGO_COMPILE) test -p hidlins-api --features test-fixtures --lib --offline --locked server_config_commit_regressions
 
-.PHONY: test-server-shutdown
 test-server-shutdown:  ## Verify queued and active sync operations respect host shutdown.
 	$(CARGO_COMPILE) test -p hidlins-sync --lib --offline --locked shutdown_regressions
 
-.PHONY: test-api-peer-revocation test-tui-peer-revocation
 test-api-peer-revocation:  ## Verify API peer revocation reconciles committed configuration and runtime trust.
 	$(CARGO_COMPILE) test -p hidlins-api --features test-fixtures --lib --offline --locked revoke_reconciliation_regressions
 
 test-tui-peer-revocation:  ## Verify TUI peer revocation reconciles committed configuration and runtime trust.
 	$(CARGO_COMPILE) test -p hidlins-tui --lib --offline --locked revoke_reconciliation_regressions
 
-.PHONY: test-api-incoming-commit
 test-api-incoming-commit:  ## Verify incoming commits revoke stale secrets and notify providers at the rename boundary.
 	$(CARGO_COMPILE) test -p hidlins-api --features test-fixtures --lib --offline --locked incoming_commit_regressions
 
-.PHONY: test-api-native-publication
 test-api-native-publication:  ## Verify native publication fences, owner independence and consumed-buffer erasure.
 	$(MAKE) --no-print-directory -f Makefile -f tools/dev/native-publication-tests.mk test-native-publication
 
-.PHONY: test-api-copy-origin test-api-copy-origin-native
 test-api-copy-origin:  ## Verify desktop clipboard publication origin and failed-copy erasure.
 	$(CARGO_COMPILE) test -p hidlins-api --features test-fixtures --lib --offline --locked copy_origin_regressions
 
@@ -743,7 +234,6 @@ test-api-copy-origin-native: build-api-native-test-harness  ## Verify actual nat
 	@"$(API_NATIVE_UNIT_TEST_BIN)" --list copy_origin_regressions | grep -Fq 'native_current_ticket_is_single_use: test'
 	"$(API_NATIVE_UNIT_TEST_BIN)" copy_origin_regressions
 
-.PHONY: test-api-generated-copy test-api-generated-copy-native
 test-api-generated-copy:  ## Verify exact generated-result copying, revocation and erasure on desktop.
 	$(CARGO_COMPILE) test -p hidlins-api --features test-fixtures --lib --offline --locked generated_copy_regressions
 
@@ -751,7 +241,6 @@ test-api-generated-copy-native: build-api-native-test-harness  ## Verify generat
 	@"$(API_NATIVE_UNIT_TEST_BIN)" --list generated_copy_regressions | grep -Fq 'native_generated_ticket_is_single_use: test'
 	"$(API_NATIVE_UNIT_TEST_BIN)" generated_copy_regressions
 
-.PHONY: test-api-pairing-lifetime test-api-pairing-lifetime-native
 test-api-pairing-lifetime:  ## Verify pairing/import cancellation, origin and commit lifetimes.
 	$(CARGO_COMPILE) test -p hidlins-api --features test-fixtures --lib --offline --locked pairing_lifetime_regressions
 
@@ -759,26 +248,15 @@ test-api-pairing-lifetime-native: build-api-native-test-harness  ## Verify pairi
 	@"$(API_NATIVE_UNIT_TEST_BIN)" --list pairing_lifetime_regressions | grep -Fq 'native_locked_pair_and_import_control: test'
 	"$(API_NATIVE_UNIT_TEST_BIN)" pairing_lifetime_regressions
 
-.PHONY: test-api-discovery-kind app-test-discovery-kind
 test-api-discovery-kind:  ## Verify typed discovery routes, manual priority and legacy Trusted wrappers.
 	$(CARGO_COMPILE) test -p hidlins-api --features test-fixtures --lib --offline --locked discovery_kind_regressions
 
-app-test-discovery-kind: app-deps  ## Verify typed discovery services through the actual generated bridge.
-	$(CARGO_COMPILE) build -p hidlins-api --offline --locked
-	cd app && HIDLINS_API_LIB="$(HIDLINS_API_LIB)" flutter test --no-pub test_bridge/discovery_kind_regression_test.dart
-
-.PHONY: test-api-discovery-cancel test-api-discovery-stop-controls app-test-discovery-stop
 test-api-discovery-cancel:  ## Verify discovery cannot delay session revocation or publish after shutdown.
 	$(CARGO_COMPILE) test -p hidlins-api --features test-fixtures --lib --offline --locked discovery_cancel_regressions
 
 test-api-discovery-stop-controls:  ## Verify discovery stop, queued polls, restart and cleanup ownership.
 	$(CARGO_COMPILE) test -p hidlins-api --features test-fixtures --lib --offline --locked discovery_stop_controls
 
-app-test-discovery-stop: app-deps  ## Verify discovery stop through the actual generated bridge.
-	$(CARGO_COMPILE) build -p hidlins-api --offline --locked
-	cd app && HIDLINS_API_LIB="$(HIDLINS_API_LIB)" flutter test --no-pub test_bridge/discovery_stop_regression_test.dart
-
-.PHONY: test-api-expiration-save
 test-api-expiration-save:  ## Verify entry fields and expiration share one validated atomic save.
 	$(CARGO_COMPILE) test -p hidlins-api --test expiration_save_regressions --offline --locked
 
@@ -815,29 +293,20 @@ test:  ## Run default-parallel tests with empty pipe stdin (offline, vendored).
 	# Build them here so a clean checkout needs no earlier test-os-events run.
 	printf '' | $(CARGO_COMPILE) test $(CARGO_TEST_FLAGS) $(CARGO_FLAGS)
 
-.PHONY: test-cli-foreground-lock
 test-cli-foreground-lock:  ## Verify foreground CLI lock/sleep shutdown with owned processes/private D-Bus.
 	$(CARGO_COMPILE) test -p hidlins-cli --test cli_foreground_lock_regressions --test cli_foreground_bus_transport_regressions --offline --locked
 
-.PHONY: test-cli-fixture-paths
 test-cli-fixture-paths:  ## Verify shared CLI fixture paths are absolute and physical on Mac and Linux.
 	$(MAKE) --no-print-directory -f tools/dev/cli-fixture-path-tests.mk test
 
-.PHONY: test-sync-fixture-paths
 test-sync-fixture-paths:  ## Verify shared sync fixture paths and cloned ciphertext on Mac and Linux.
 	$(MAKE) --no-print-directory -f tools/dev/sync-fixture-path-tests.mk test
 
-.PHONY: test-sync-listener-readiness
 test-sync-listener-readiness:  ## Repeat real listener recovery and queued-connection regressions with bounded readiness.
 	$(MAKE) --no-print-directory -f tools/dev/listener-readiness-tests.mk test
 
-.PHONY: lock-offline
 lock-offline:  ## Resolve reviewed manifest edges into Cargo.lock using only vendored sources.
 	$(CARGO) metadata --offline --format-version=1 > /dev/null
-
-.PHONY: test-atomic-recovery-matrix
-test-atomic-recovery-matrix:  ## Run atomic recovery regressions on host and real API29/API36 Android (cached SDK/AVDs).
-	python3 tools/android-native/run_rust_tests.py
 
 # These post-MVP observations require a human to trigger real sleep/lock.
 # Keep them in test-os-events, outside the unattended aggregate on macOS.
@@ -859,15 +328,12 @@ test-ignored:  ## Run automated #[ignore]d tests serially (env-mutating + signal
 	printf '' | $(CARGO_COMPILE) test $(CARGO_FLAGS) --features test-binaries -- --ignored --test-threads=1 --skip framework_memory_regressions::render_workload_performance_baseline $(TEST_IGNORED_MANUAL_FLAGS)
 	$(MAKE) bench-tui-render
 
-.PHONY: test-ignored-render-routing
 test-ignored-render-routing:  ## Verify headless ignored tests retain the owned-terminal render benchmark.
 	$(MAKE) -f tools/dev/ignored-render-tests.mk test
 
-.PHONY: test-macos-manual-routing
 test-macos-manual-routing:  ## Verify unattended macOS gates retain automated cases and isolate human sleep/lock observations.
 	$(MAKE) --no-print-directory -f tools/dev/macos-manual-routing-tests.mk test
 
-.PHONY: test-headless-stdin
 test-headless-stdin:  ## Verify headless Rust tests receive an empty pipe and preserve flags, failures and terminal routing.
 	$(MAKE) --no-print-directory -f tools/dev/headless-stdin-tests.mk test
 
@@ -901,11 +367,9 @@ test-clipboard:  ## Run clipboard tests across hidlins-security + hidlins-cli (r
 	$(CARGO_COMPILE) test -p hidlins-security --offline --locked --features clipboard-tests --test us_053_clipboard_autoclear -- --ignored --test-threads=1
 	$(CARGO_COMPILE) test -p hidlins-cli --offline --locked --features clipboard-tests --test cli_clipboard_handoff -- --ignored --test-threads=1
 
-.PHONY: test-sync-preserved-contracts
 test-sync-preserved-contracts:  ## Pin retained sync CAS, KDF, pointer and registry contracts cited by docs.
 	$(CARGO_COMPILE) test -p hidlins-sync --offline --locked --test preserved_contract_characterization --test us_041_fast_replace_open
 
-.PHONY: test-noise-erasure
 test-noise-erasure: vendor-patches  ## Verify actual owned SHA state and scratch erasure used by Noise.
 	python3 tools/noise-erasure-tests/run.py
 
@@ -928,31 +392,6 @@ test-local-sync-integration: vendor-patches  ## Run real-loopback authoritative 
 	$(CARGO_COMPILE) test -p hidlins-api --offline --locked --test us_094_sync_api -- --test-threads=1
 	tools/local-sync-tests/isolated-network.sh
 
-test-local-sync-mobile-harness:  ## Test the fail-closed mobile scenario orchestrator without starting devices.
-	python3 tools/local-sync-tests/mobile_scenario_test.py
-
-test-local-sync-android-lan-discovery: android-emulator-provision android-scenario-boundary-check test-local-sync-mobile-harness  ## Prove shipping Android NSD against a real CLI on shared emulator Wi-Fi.
-	HIDLINS_ANDROID_STRICT=$(HIDLINS_ANDROID_STRICT) python3 tools/android-native/lan_discovery.py
-
-test-local-sync-mobile-scenarios-ios: release test-local-sync-mobile-harness  ## Run expensive iPhone/iPad client scenarios against a CLI authority.
-	HIDLINS_MOBILE_SYNC_SCENARIOS=1 $(MAKE) --no-print-directory app-test-ios-integration
-
-# Provision AVDs separately, matching app-test-android-emulator. This focused
-# gate avoids repeating native/UI journeys when diagnosing real LAN scenarios.
-.PHONY: test-local-sync-android-lan-scenarios
-test-local-sync-android-lan-scenarios: app-build-android test-local-sync-mobile-harness  ## Run only strict Android shared-LAN CLI-authority scenarios on provisioned AVDs.
-	HIDLINS_ANDROID_STRICT=1 python3 tools/android-native/android_mobile_scenario.py
-
-test-local-sync-mobile-scenarios-android: release android-emulator-provision android-scenario-boundary-check test-local-sync-mobile-harness  ## Run expensive Android client scenarios against a CLI authority.
-	HIDLINS_MOBILE_SYNC_SCENARIOS=1 $(MAKE) --no-print-directory app-test-android-emulator
-
-test-local-sync-mobile-scenarios: test-local-sync-mobile-harness  ## Run the isolated expensive iOS+Android simulator client scenario gate (macOS host).
-	@if [[ "$(UNAME_S)" != Darwin ]]; then \
-		echo "error: the aggregate iOS+Android scenario target requires a macOS host" >&2; exit 1; \
-	fi
-	$(MAKE) --no-print-directory test-local-sync-mobile-scenarios-ios
-	$(MAKE) --no-print-directory test-local-sync-mobile-scenarios-android
-
 fuzz-local-sync-corpus: vendor-patches  ## Replay committed local-sync fuzz corpora using stable Rust offline.
 	$(CARGO_COMPILE) test --manifest-path fuzz/Cargo.toml --offline --locked --no-default-features
 
@@ -969,15 +408,12 @@ test-merge-properties:  ## Run the merge-engine property tests with a heavier ca
 	PROPTEST_CASES=$(PROPTEST_CASES) $(CARGO_COMPILE) test -p hidlins-sync --offline --locked --test merge_property_tests
 
 # ---------------------------------------------------------------------------
-.PHONY: test-native-helper-features
 test-native-helper-features:  ## Verify native helper feature unification and unsupported-host rejection.
 	$(MAKE) --no-print-directory -f tools/dev/native-helper-tests.mk test
 
-.PHONY: test-logind-fixture
 test-logind-fixture:  ## Verify prepared and standalone logind regression entry modes on Linux.
 	$(MAKE) --no-print-directory -f tools/dev/logind-fixture-tests.mk test
 
-.PHONY: test-dbus-maintenance
 test-dbus-maintenance:  ## Verify D-Bus codec/patch replay, OS-event consumers and atomic filesystem contracts.
 	$(MAKE) --no-print-directory -f Makefile -f tools/dev/dbus-maintenance-tests.mk test-dbus-characterization
 
@@ -1012,58 +448,45 @@ else
 	$(CARGO_COMPILE) test -p hidlins-security --offline --locked --features test-binaries,logind --test us_052_post_mvp_logind -- --ignored --test-threads=1
 endif
 
-.PHONY: test-tui-formatting test-tui-formatting-host
 test-tui-formatting-host:  ## Verify native fixture invocation and real rustfmt rejection without Linux-specific paths.
 	$(MAKE) --no-print-directory -f tools/dev/tui-format-fixture-host-tests.mk test
 
 test-tui-formatting: test-tui-formatting-host  ## Verify formatting of TUI include! test modules with isolated negative controls.
 	python3 tools/test_tui_formatting.py
 
-.PHONY: test-tui-terminal
 test-tui-terminal:  ## Verify real TUI signal/quit cleanup on owned controlling terminals.
 	$(CARGO_COMPILE) test -p hidlins-cli --test terminal_signal_regressions --offline --locked
 
-.PHONY: test-tui-terminal-backend
 test-tui-terminal-backend:  ## Verify actual macOS controlling-TTY and Linux terminal feature boundaries.
 	python3 tools/dev/test_tui_terminal_backend.py -- $(CARGO)
 
-.PHONY: test-tui-os-events
 test-tui-os-events:  ## Verify TUI native lock/sleep lifetime with owned processes and a private bus.
 	$(CARGO_COMPILE) test -p hidlins-tui --lib --offline --locked native_lock_regressions
 
-.PHONY: test-tui-readonly
 test-tui-readonly:  ## Verify read-only TUI shared locking, writer exclusion and query behavior.
 	$(CARGO_COMPILE) test -p hidlins-tui --lib --offline --locked readonly_lock_regressions
 
-.PHONY: test-tui-password-memory
 test-tui-password-memory:  ## Verify password input erases allocations before growth and release.
 	$(CARGO_COMPILE) test -p hidlins-tui --lib --offline --locked password_memory_regressions
 
-.PHONY: test-tui-note-memory
 test-tui-note-memory:  ## Verify secure-note editor, view and history allocations erase before release.
 	$(CARGO_COMPILE) test -p hidlins-tui --lib --offline --locked note_memory_regressions
 
-.PHONY: test-tui-edit-validation
 test-tui-edit-validation:  ## Verify Edit rejects field collisions, failed generation and implicit disclosure.
 	$(CARGO_COMPILE) test -p hidlins-tui --lib --offline --locked edit_validation_regressions
 
-.PHONY: test-tui-configuration
 test-tui-configuration:  ## Verify effective keyboard dispatch, counted jumps and content-safe warnings.
 	$(CARGO_COMPILE) test -p hidlins-tui --lib --offline --locked configuration_regressions
 
-.PHONY: test-tui-state
 test-tui-state:  ## Verify UI-state merge-on-write, advisory locking and error preservation.
 	$(CARGO_COMPILE) test -p hidlins-tui --lib --offline --locked ui_state_regressions
 
-.PHONY: test-tui-peers
 test-tui-peers:  ## Verify selected peer visibility and matching persisted revocation.
 	$(CARGO_COMPILE) test -p hidlins-tui --lib --offline --locked peers_visibility_regressions
 
-.PHONY: test-tui-render-memory
 test-tui-render-memory:  ## Verify first-party secret render allocations erase before release.
 	$(CARGO_COMPILE) test -p hidlins-tui --lib --offline --locked render_memory_regressions
 
-.PHONY: test-tui-framework-memory test-ratatui-memory-patches bench-tui-render
 test-tui-framework-memory:  ## Verify Ratatui symbol and screen-buffer erasure across allocation lifetimes.
 	$(CARGO_COMPILE) test -p hidlins-tui --lib --offline --locked framework_memory_regressions -- --test-threads=1
 
@@ -1073,22 +496,18 @@ test-ratatui-memory-patches:  ## Verify maintained Ratatui patch guards, checksu
 bench-tui-render:  ## Measure serial release redraw/unchanged-frame work against the existing 20-FPS budget.
 	python3 tools/dev/test_ratatui_memory_patches.py --render-benchmark $(CARGO_COMPILE) test -p hidlins-tui --lib --release --offline --locked framework_memory_regressions::render_workload_performance_baseline -- --exact --ignored --nocapture --test-threads=1
 
-.PHONY: test-tui-output bench-tui-output
 test-tui-output:  ## Verify owned output erasure, batching, partial writes, errors and panic cleanup.
 	$(CARGO_COMPILE) test -p hidlins-tui --lib --offline --locked terminal_output -- --test-threads=1
 
 bench-tui-output:  ## Measure real redirected stdout rendering without recording synthetic payloads.
 	python3 -c 'import subprocess,sys; subprocess.run(sys.argv[1:], stdout=subprocess.DEVNULL, check=True)' $(CARGO_COMPILE) test -p hidlins-tui --lib --release --offline --locked terminal_output::tests::render_ -- --ignored --nocapture --test-threads=1
 
-.PHONY: test-tui-detail-scroll
 test-tui-detail-scroll:  ## Verify wrapped detail reachability and resize bounds on Secrets and pinned tabs.
 	$(CARGO_COMPILE) test -p hidlins-tui --lib --offline --locked detail_scrolling_regressions
 
-.PHONY: test-tui-history-scroll
 test-tui-history-scroll:  ## Verify newest-first history, detail paging, resize and unchanged version navigation.
 	$(CARGO_COMPILE) test -p hidlins-tui --lib --offline --locked history_scrolling_regressions
 
-.PHONY: test-tui-edit-viewport test-tui-paragraph-position test-ratatui-geometry-patch
 test-tui-edit-viewport:  ## Verify editor focus, exact wrapped caret, errors, masking and resize.
 	$(CARGO_COMPILE) test -p hidlins-tui --lib --offline --locked edit_viewport_regressions
 
@@ -1098,11 +517,9 @@ test-tui-paragraph-position:  ## Compare exact span positions with real Paragrap
 test-ratatui-geometry-patch:  ## Verify exact maintained renderer-query replay and drift rejection.
 	python3 tools/dev/test_ratatui_geometry_patch.py
 
-.PHONY: bench-tui-edit
 bench-tui-edit:  ## Measure complete editor focus/caret/error rendering against the existing frame budget.
 	$(CARGO_COMPILE) test -p hidlins-tui --lib --release --offline --locked paragraph_position_regressions::editor_render_budget -- --exact --ignored --nocapture --test-threads=1
 
-.PHONY: test-tui-reserved-bindings
 test-tui-reserved-bindings:  ## Verify unreachable key overrides retain working defaults and editor controls.
 	$(CARGO_COMPILE) test -p hidlins-tui --lib --offline --locked reserved_binding_regressions
 
@@ -1124,22 +541,9 @@ lint-fix:  ## Apply clippy auto-fixes where safe.
 # Full local CI gate — run before pushing.
 # ---------------------------------------------------------------------------
 
-# `check` stays runnable from a clean clone with nothing but rustup. The
-# Flutter/codegen gates live in `app-check` and run under `verify`, matching how
-# the keepassxc-dependent interop targets are already scoped — a contributor
-# making a Rust-only change must not be blocked on installing a 1 GB SDK, and
-# CLAUDE.md/T2.3 commit to exactly that ("generated code is committed so
-# contributors without the Flutter/frb toolchain can still build Rust-only
-# changes"). Note api-gen-check REWRITES the generated files as a side effect,
-# which is another reason it does not belong in the quick loop.
-check: test-headless-stdin ci-toolchain-check build-policy-check fmt-check test-tui-formatting lint build test check-macos check-feature-gates  ## warning policy + fmt-check + lint + build + test + cross/feature-gate checks (Rust-only; no Flutter needed).
+check: test-headless-stdin build-policy-check fmt-check test-tui-formatting lint build test check-macos check-feature-gates  ## Warning policy, formatting, lint, build, tests and feature checks.
 
-# pub-vendor-check runs right after app-deps, BEFORE anything executes
-# vendored Dart (flutter test, build_runner): tampered cache bytes should
-# fail the integrity gate without ever having run.
-app-check: flutter-version-check telemetry-check app-deps pub-vendor-check pub-production-check cargokit-policy-check app-analyze app-fmt-check app-brand-check app-test app-test-bridge api-gen-check  ## Flutter-side gates (requires the Flutter SDK + Rust toolchain).
-
-verify: test-tui-terminal-backend test-macos-manual-routing check asset-license-check app-check acceptance-evidence-check test-ignored doc deny audit interop interop-entry interop-sync test-local-sync-security test-local-sync-discovery test-local-sync-integration fuzz-local-sync-corpus ncsa-boundary-check s3-removal-check boundary-check  ## Full verification gate (Rust + Flutter + interop + acceptance evidence).
+verify: release test-dev-tools test-tui-terminal-backend test-macos-manual-routing check license-check test-ignored doc deny audit interop interop-entry interop-sync test-local-sync-security test-local-sync-discovery test-local-sync-integration fuzz-local-sync-corpus s3-removal-check boundary-check test-console-process-interop  ## Full Rust, tooling, license, interop and sync verification.
 
 asset-license-check:  ## Check the exact EFF asset exception, notices and unchanged code-license policy.
 	python3 -m unittest discover -s tools/dev -p 'test_asset_licenses.py'
@@ -1150,12 +554,6 @@ interop:  ## Run vault-core KeePassXC interop shell tests (requires keepassxc-cl
 	HIDLINS_TEST_DRIVER="$(CARGO_ARTIFACT_DIR)/debug/hidlins-test-driver" sh tools/interop-tests/us_090_rust_to_kpxc.sh
 	HIDLINS_TEST_DRIVER="$(CARGO_ARTIFACT_DIR)/debug/hidlins-test-driver" sh tools/interop-tests/us_091_kpxc_to_rust.sh
 	HIDLINS_TEST_DRIVER="$(CARGO_ARTIFACT_DIR)/debug/hidlins-test-driver" sh tools/interop-tests/us_092_round_trip.sh
-
-interop-app: app-deps  ## Run compiled Flutter-bridge KeePassXC round-trip and merge-history interop.
-	@command -v keepassxc-cli >/dev/null 2>&1 || { echo "error: keepassxc-cli is required" >&2; exit 1; }
-	$(CARGO_COMPILE) build -p hidlins-api --offline --locked
-	cd app && HIDLINS_API_LIB="$(HIDLINS_API_LIB)" flutter test --no-pub test_bridge/real_bridge_keepassxc_integration_test.dart
-	$(MAKE) --no-print-directory interop-sync
 
 interop-sync:  ## Run the transport-neutral KeePassXC merge-interop test (US-044; requires keepassxc-cli).
 	# Builds the test-only merge driver (gated behind `test-helpers` via
@@ -1218,7 +616,6 @@ completions:  ## Re-generate shell-completions/hidlins.{bash,fish} + _hidlins.
 		$(CARGO_COMPILE) run --example gen_completions -p hidlins-cli --offline --locked; \
 	fi
 
-.PHONY: test-nested-completions
 test-nested-completions:  ## Verify nested completion generation and guarded vendor-byte invalidation.
 	$(MAKE) --no-print-directory -f tools/dev/nested-completions-tests.mk test
 
@@ -1272,17 +669,36 @@ s3-removal-check:  ## Reject reintroduction of the retired cloud-object sync sur
 clean:  ## Remove build artifacts (target/).
 	$(CARGO_COMPILE) clean
 
-.PHONY: test-console test-console-features
 test-console:  ## Verify unified console routing, introspection and real terminal cleanup.
 	$(CARGO_COMPILE) test -p hidlins-cli --test console_modes --test console_registry_preferences --test console_keymap_output --test terminal_signal_regressions --test asset_notices --offline --locked
 
-test-console-features:  ## Verify CLI-only authority behavior and Android graphs exclude desktop TUI code.
-	python3 -m py_compile tools/android-native/scenario_boundary.py tools/dev/test_console_features.py
-	# The host CLI-only fixture uses desktop discovery without the TUI.
-	# Type-check the actual Android authority separately: its target-specific
-	# dependency aliases must not be enabled alongside desktop discovery.
+test-api:  ## Verify the reusable Rust application API and DTO contracts.
+	$(CARGO_COMPILE) test -p hidlins-api --offline --locked
+
+test-api-native: build-api-native-test-harness  ## Verify API behavior without desktop feature unification.
+	"$(API_NATIVE_UNIT_TEST_BIN)" --test-threads=1
+
+test-console-features:  ## Verify the standalone CLI without the terminal UI feature.
 	$(CARGO_COMPILE) check -p hidlins-cli --no-default-features --features hidlins-sync/desktop-discovery --offline --locked
 	$(CARGO_COMPILE) test -p hidlins-cli --no-default-features --features hidlins-sync/desktop-discovery --test console_cli_only --offline --locked
-	$(CARGO_COMPILE) check -p hidlins-cli --no-default-features --features android-scenario-authority --target aarch64-linux-android --offline --locked
-	$(CARGO_COMPILE) check -p hidlins-cli --no-default-features --features android-scenario-authority --target x86_64-linux-android --offline --locked
-	python3 tools/dev/test_console_features.py -- $(CARGO)
+
+test-console-process-interop:  ## Verify the TUI and a real CLI process share advisory vault locking.
+	$(CARGO_COMPILE) build -p hidlins-cli --offline --locked
+	HIDLINS_CLI_BIN="$(CARGO_ARTIFACT_DIR)/debug/hidlins" $(CARGO_COMPILE) test -p hidlins-tui --features process-interop-tests --lib --offline --locked app::tests::tui_session_and_cli_process_share_the_advisory_lock -- --exact
+
+test-dev-tools:  ## Run the retained Python developer-tool regression suites.
+	python3 -B -m unittest discover -s tools/dev -p 'test_*.py'
+
+ci-toolchain-check: test-dev-tools  ## Check developer tooling through the same regressions used locally.
+
+boundary-check:  ## Verify Rust API artifact and network dependency boundaries.
+	python3 -B tools/dev/api_boundary_check.py
+
+.PHONY: license-check license-policy-check
+license-policy-check:  ## Verify strict license policies, source inventory and vendored provenance with negative controls.
+	python3 -B -m unittest discover -s tools/dev -p 'test_repository_licenses.py'
+	python3 -B tools/dev/repository_licenses.py
+
+license-check: license-policy-check asset-license-check ncsa-boundary-check  ## Audit all retained feature/target licenses, exact exceptions and compiled asset notices.
+	$(CARGO) deny --all-features --offline --locked check licenses
+	$(CARGO_COMPILE) test -p hidlins-cli --test asset_notices --offline --locked

@@ -202,7 +202,7 @@ payloads, or credentials.
 
 Controls: structured enums with generic codes; peer display names are local
 configuration only; no byte dumps; explicit redaction tests over Rust, CLI JSON,
-TUI/Flutter semantics, native logs, and FFI errors; no telemetry, crash
+TUI semantics and Rust API errors; no telemetry, crash
 reporting, or remote diagnostics.
 
 ### Mobile lifecycle and permissions
@@ -210,7 +210,7 @@ reporting, or remote diagnostics.
 Threat: a mobile listener/background worker violates product policy or a denied
 permission causes unsafe fallback.
 
-Controls: no server DTO/action in mobile UI; Rust server start rejects mobile
+Controls: Rust server start rejects mobile
 targets before binding; native adapters expose only bounded endpoints and
 permission state; denied/restricted/not-found remain distinct; no hostname or
 public-address fallback; sync runs only while the app is foregrounded.
@@ -238,8 +238,7 @@ limits, CAS races, commit crashes, zeroization guards, secret-free diagnostics,
 mobile server absence, and permission adapters. Stateful codecs and message
 ordering are fuzzed; committed minimized corpora replay under stable tests.
 
-Optional human observation remains only for SAS perception, exact physical
-iOS/Android permission presentation, representative-router multicast behavior,
-and assistive-technology speech. These do not weaken or block the automated
-security model: real simulator/emulator application scenarios, process tests,
-namespace tests, and semantics contracts are the acceptance authority.
+Optional human observation covers SAS perception, representative-router
+multicast behavior and terminal assistive-technology speech. Process tests,
+namespace tests and Rust API/TUI semantic contracts establish the automated
+implementation boundaries.

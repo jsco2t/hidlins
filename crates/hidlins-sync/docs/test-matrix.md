@@ -55,15 +55,11 @@ Run the focused retained-contract evidence with
 | `LNS-API-001..099` | typed session/FFI events, lifecycle races, secret-free errors, mobile server refusal | 008 |
 | `LNS-CLI-001..099` | now/serve/pair/import/status/peer commands, Ctrl+C, secure prompts, JSON and exit codes | 009 |
 | `LNS-TUI-001..099` | keyboard/accessibility flows, server toggle and lock behavior, responsive ownership transitions | 010 |
-| `LNS-FLUTTER-001..099` | desktop/mobile flows, no mobile server UI, lifecycle/offline behavior | 011 |
-| `LNS-IOS-001..099` | Bonjour permission states/candidates, foreground-only behavior, no listener, and generation-scoped stop/restart callbacks | 011 |
-| `LNS-ANDROID-001..099` | NSD permission states/candidates, foreground-only behavior, no listener, and generation-scoped stop/restart callbacks | 011 |
 | `LNS-ABSENCE-001..099` | static absence from code/config/API/UI/tests/build/CI/dependencies/docs | 012 |
 | `LNS-FUZZ-001..099` | address/codec/state-machine/pairing fuzz corpus and bounded fuzz execution | 013 |
 | `LNS-PROCESS-001..099` | real client/server processes, adversarial network, concurrency, crash and resource bounds | 013 |
-| `LNS-SECRET-001..099` | redaction across logs/errors/events/CLI/TUI/Flutter/native bridge | 013 |
+| `LNS-SECRET-001..099` | redaction across logs/errors/events/CLI/TUI/Rust API | 013 |
 | `LNS-INTEROP-001..099` | KDBX3 read/KDBX4 write, KeePassXC round trip, merged history | 013 |
-| `LNS-MOBILE-SCENARIO-001..099` | iPhone/iPad simulator and Android phone/tablet emulator application processes against a separate CLI authority: native discovery, reject/accept pairing, import, startup/manual-only bidirectional sync, restart, address-churn reconnect, and revocation | 014, 021, 022 |
 
 Every concrete new test must include one ID from its family in the test name,
 adjacent comment, golden/scenario metadata, or harness case name. A behavior may
@@ -76,60 +72,11 @@ map to several tests, but no automatable DRD behavior may lack an ID and a test.
 live-session and dequeued-commit revocation; real pairing admission limits;
 absolute slow-peer deadlines; guard-owned connection slots; file-backed,
 one-frame-at-a-time fetches; wrong-key-first fallback; actual listener and
-advertisement replacement; Flutter native-discovery-before-startup ordering;
+advertisement replacement;
 and a real ephemeral TUI listener lifecycle. The removal checker owns the final
 case-variant negative control.
 
-The mobile scenario's startup assertion no longer calls the Rust candidate
-injection API. It unlocks, invokes iOS Bonjour or Android NSD through the Dart
-repository, validates returned routes in Rust, and then consumes the startup
-attempt. Android pair/import and trusted reconnect also use only these
-platform-discovered routes. Its API-matched authority emulator runs the real
-CLI; an instrumentation-only registrar publishes the local CLI port without
-choosing an address, while the shipping client resolves and connects directly
-over emulator Wi-Fi. `LNS-DISC-006` separately exercises the real Rust desktop
-publisher/browser pair. Simulator networking does not represent arbitrary
-router multicast behavior; the physical desktop-to-Android observation remains
-optional and non-gating. The current shared-LAN matrix uses API 30 phone and
-API 36 tablet emulators on shared emulator Wi-Fi, retaining platform-default
-cellular state. API 29 remains the product minimum and has separate native/UI
-coverage with API 36; its default image does not provide the required shared-LAN
-backend. Historical API 29 explicit-link results are retained as dated records
-in the release review and do not certify the current shared-LAN matrix.
-
-## Five-finding repair coverage contract (2026-09-10)
-
-The review repairs use the established ID families above. A core helper test is
-supporting evidence only when the escaped defect was in application
-orchestration.
-
-| Finding | Production seam and injected boundary | Observable regression evidence |
-| --- | --- | --- |
-| Pairing durability/recovery | Real `ClientPairingSession::confirm`; authority activates and withholds the final acknowledgement; a new `hidlins sync pair` or `sync import` process loads durable state | `LNS-PROCESS-002/003` require provisional state before restart, no early import file/registration, and active trust after authenticated recovery. `LNS-PAIR-005/006` are explicitly core-protocol support. |
-| Pairing authority restart | A real `hidlins sync serve` process pairs a client, exits cleanly, and restarts from the same sealed registry before the client's first IK sync | `LNS-PROCESS-004` requires the restarted authority to admit the paired client from durable active trust rather than relying on the original process's in-memory authorization registry. |
-| TUI cancellation ownership | `PairingRuntime` owner plus real lock/quit event paths; barrier-held workers and an established socket are canceled | `LNS-TUI-012..015` require join-before-return and capture release; `LNS-PAIR-007` requires live socket interruption. |
-| Temporal discovery fallback | `AppSession::poll_local_discovery` receives separate batches; `LanTransport` sees a wrong first route and valid pinned route later | `LNS-DISCOVERY-006` retains both batches; `LNS-SERVER-006` authenticates only the later pinned authority. |
-| Restarted sole authority transient | `LanTransport` connects to the only platform-discovered route after an authority restart; the first TCP connection drops before IK completes | `LNS-CLIENT-005` requires a second connection to the same route to authenticate and complete through the real server while the original absolute handshake deadline remains enforced by `LNS-CLIENT-001`. |
-| Password/identity rotation | Password-change test process is terminated at each durable phase; a fresh `AppSession` performs startup recovery | `LNS-IDENTITY-004..011` require an openable KDBX, matching unwrapped identity, idempotence, unrelated-record preservation, and fail-closed corrupt/missing artifacts. |
-| Native discovery generations | iOS production service receives retained timer/browser callbacks from attempt A after B starts; Android exercises the token claimed by every guarded callback | `LNS-IOS-012..014` require no cross-generation mutation and exact-once completion. `LNS-ANDROID-012` pins the token invariant and the emulator matrix compiles/runs the callback wiring. |
-
-## Optional non-blocking observation residue
-
-The following IDs are not substitutes for automation and never block acceptance.
-They cover only behavior
-that cannot be represented faithfully without a person, physical device, or
-representative multicast network:
-
-| ID | Observation |
-| --- | --- |
-| `LNS-MANUAL-001` | two humans compare and reject/accept displayed SAS |
-| `LNS-MANUAL-002` | physical iOS local-network permission presentation and recovery |
-| `LNS-MANUAL-003` | physical Android nearby/local-network permission presentation and recovery |
-| `LNS-MANUAL-004` | representative router/Wi-Fi multicast discovery across DHCP change |
-| `LNS-MANUAL-006` | VoiceOver, TalkBack, and terminal assistive-technology output/action reachability |
-
-Task 014 records literal simulator/emulator results in
-`build/verification/mobile-local-sync/`. Foreground/background/termination
-lifecycle is no longer a manual requirement: controlled native, Flutter, and
-real mobile-process scenarios cover it. Missing automated evidence fails the
-scenario target; missing optional observations do not block completion.
+`LNS-DISC-006` exercises the real Rust desktop publisher/browser exchange.
+The Rust API retains candidate validation, permission-state and lifecycle
+contracts for native consumers. See [security-coverage.md](security-coverage.md)
+for the current automated coverage and optional physical observations.

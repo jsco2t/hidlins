@@ -9,7 +9,7 @@
 ```
 
 Hidlins (Scots: _"in secret, in hiding"_, pronounced _HID-linz_) is an offline-first secrets
-manager built on a Rust core with thin cross-platform UIs. Vaults are stored in
+manager built on a Rust core with CLI and terminal interfaces. Vaults are stored in
 the [KDBX (KeePass) format](https://keepass.info/help/kb/kdbx_4.html) via the
 [`keepass-rs`](https://crates.io/crates/keepass) crate, so every Hidlins vault
 is directly interoperable with KeePassXC, KeeWeb, KeePass2, and other
@@ -42,9 +42,12 @@ this project wish to make the following **VERY** clear:
 | `hidlins-genpw`   | Library: random password and diceware passphrase generation        |
 | `hidlins-security`| Library: auto-lock, OS lock events, clipboard, core-dump suppression |
 | `hidlins-sync`    | Library: secure local sync, discovery, trust, and three-way merge  |
+| `hidlins-api`     | Library: reusable sessions, DTOs, secret boundaries and sync orchestration |
 | `hidlins-cli`     | Binary: unified console app (`hidlins`), TUI by default or one-shot CLI |
 | `hidlins-tui`     | Library: interactive terminal UI used by `hidlins`                  |
 | `hidlins-agent`   | Binary: (placeholder) optional long-running unlock agent           |
+
+The [Rust application API](docs/rust-api.md) is available for third-party consumers.
 
 ## Supported platforms
 
@@ -183,10 +186,8 @@ when the user selects **Sync now**. Saving, locking, reconnecting, and timers do
 not trigger another sync.
 
 - The CLI can deliberately keep a server in the foreground; `Ctrl+C` stops it.
-- The TUI and Flutter desktop application can deliberately start a server that
+- The TUI can deliberately start a server that
   remains active only while enabled and while that application is running.
-- iOS and Android are client-only. They sync on foreground launch and manual
-  request, never listen, and do not support background or persistent sync.
 - There is no daemon or shipped `hidlins-agent` sync service.
 
 The non-bypassable address allowlist is IPv4 `10.0.0.0/8`,
@@ -218,9 +219,8 @@ for the security boundary.
 ```sh
 make build              # cargo build --workspace --offline --locked
 make test               # default-parallel tests
-make check              # Rust gate: fmt-check + lint + build + test (no Flutter needed)
-make app-check          # Flutter gates: version/telemetry/pub integrity/analyze/format/test/bridge smoke/codegen drift (needs Flutter SDK + Rust toolchain)
-make verify             # everything: check + app-check + ignored tests + docs + supply-chain + interop + boundary-check
+make check              # formatting, lint, build, test and feature gates
+make verify             # check + ignored tests + docs + licenses + supply-chain + interop
 make interop            # vault-core KeePassXC interop tests; requires keepassxc-cli >= 2.7
 make interop-entry      # entry-management KeePassXC interop tests (TOTP cross-checks with oathtool if present)
 make bench-search-gate  # NFR-002 gate: fails if search exceeds the latency budget
@@ -229,6 +229,8 @@ make test-local-sync-discovery   # discovery policy and desktop adapters
 make test-local-sync-integration # real local sockets and lifecycle
 make fuzz-local-sync-corpus      # deterministic committed parser corpus
 make fuzz-local-sync-ci          # bounded fixed-seed development fuzzing
+make license-check               # policy, vendor inventory, exact asset and fuzz exceptions
+make test-api-native             # Rust API without desktop feature unification
 make ncsa-boundary-check         # keep fuzz-only NCSA code out of applications
 ```
 
@@ -246,8 +248,10 @@ writes, vendored + pinned dependencies, and no telemetry. Production
 dependencies use the general permissive-license allowlist. The sole NCSA
 exception is exact `libfuzzer-sys 0.4.13` inside the isolated fuzz workspace,
 for development/testing only. Fuzz executables are non-distributable, and no
-CLI, TUI, agent, desktop, iOS, Android, or other packaged Hidlins application
-may contain NCSA-licensed code; `make ncsa-boundary-check` enforces this.
+CLI, TUI, agent, or other distributed Hidlins artifact
+may contain NCSA-licensed code; `make ncsa-boundary-check` enforces this, including the reusable API release libraries.
+`make license-check` also verifies all optional feature graphs, first-party MIT
+metadata, registry provenance and the complete locked vendor inventory.
 
 ## AI Coding Policy
 

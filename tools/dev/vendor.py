@@ -151,31 +151,6 @@ mod tests {
 """
 
 
-FRB_ENCODING = """pub(crate) fn encode_lower(input: impl AsRef<[u8]>) -> String {
-    const DIGITS: &[u8; 16] = b"0123456789abcdef";
-
-    let input = input.as_ref();
-    let mut encoded = String::with_capacity(input.len().saturating_mul(2));
-    for byte in input {
-        encoded.push(DIGITS[(byte >> 4) as usize] as char);
-        encoded.push(DIGITS[(byte & 0x0f) as usize] as char);
-    }
-    encoded
-}
-
-#[cfg(test)]
-mod tests {
-    use super::encode_lower;
-
-    #[test]
-    fn matches_macro_metadata_wire_format() {
-        assert_eq!(encode_lower("#[frb(sync)]"), "235b6672622873796e63295d");
-        assert_eq!(encode_lower(""), "");
-    }
-}
-"""
-
-
 HEX_CODEC = """use std::fmt;
 
 #[derive(Clone, Debug, Eq, PartialEq)]
@@ -260,67 +235,6 @@ mod tests {
 }
 """
 
-
-TERM_HEX_DECODER = """#[derive(Clone, Debug, Eq, PartialEq)]
-pub(crate) enum DecodeError {
-    OddLength,
-    InvalidCharacter { byte: u8, index: usize },
-}
-
-pub(crate) fn decode(input: impl AsRef<[u8]>) -> Result<Vec<u8>, DecodeError> {
-    let input = input.as_ref();
-    if input.len() % 2 != 0 {
-        return Err(DecodeError::OddLength);
-    }
-    input
-        .chunks_exact(2)
-        .enumerate()
-        .map(|(pair_index, pair)| {
-            let index = pair_index * 2;
-            let high = nibble(pair[0]).ok_or(DecodeError::InvalidCharacter {
-                byte: pair[0],
-                index,
-            })?;
-            let low = nibble(pair[1]).ok_or(DecodeError::InvalidCharacter {
-                byte: pair[1],
-                index: index + 1,
-            })?;
-            Ok((high << 4) | low)
-        })
-        .collect()
-}
-
-const fn nibble(byte: u8) -> Option<u8> {
-    match byte {
-        b'0'..=b'9' => Some(byte - b'0'),
-        b'a'..=b'f' => Some(byte - b'a' + 10),
-        b'A'..=b'F' => Some(byte - b'A' + 10),
-        _ => None,
-    }
-}
-
-#[cfg(test)]
-mod tests {
-    use super::{decode, DecodeError};
-
-    #[test]
-    fn decodes_all_nibbles_and_mixed_case() {
-        assert_eq!(
-            decode("0123456789aBcDeF").unwrap(),
-            [0x01, 0x23, 0x45, 0x67, 0x89, 0xab, 0xcd, 0xef]
-        );
-    }
-
-    #[test]
-    fn rejects_malformed_input() {
-        assert_eq!(decode("0"), Err(DecodeError::OddLength));
-        assert_eq!(
-            decode("00xz"),
-            Err(DecodeError::InvalidCharacter { byte: b'x', index: 2 })
-        );
-    }
-}
-"""
 
 
 def package_version(crate_dir: Path) -> str:
@@ -1158,43 +1072,6 @@ fn same_entry_properties(a: &Entry, b: &Entry) -> bool {
     refresh_checksum(crate_dir)
 
 
-def patch_flutter_rust_bridge_macros() -> None:
-    crate_dir = VENDOR / "flutter_rust_bridge_macros"
-    require_version(crate_dir, "2.12.0")
-    replace_once(
-        crate_dir / "Cargo.toml",
-        '[dependencies.hex]\nversion = "0.4.3"\n\n',
-        "",
-    )
-    replace_once(crate_dir / "Cargo.toml.orig", 'hex = "0.4.3"\n', "")
-    replace_once(
-        crate_dir / "src/components/mod.rs",
-        "pub(crate) mod converter;\npub(crate) mod encoder;",
-        "pub(crate) mod converter;\npub(crate) mod encoding;\npub(crate) mod encoder;",
-    )
-    replace_once(
-        crate_dir / "src/components/encoder.rs",
-        "use quote::quote;\n\n// This is surely executed",
-        "use quote::quote;\n\nuse super::encoding::encode_lower;\n\n// This is surely executed",
-    )
-    replace_once(
-        crate_dir / "src/components/encoder.rs",
-        'format!(r#"frb_encoded({})"#, hex::encode(data))',
-        'format!(r#"frb_encoded({})"#, encode_lower(data))',
-    )
-    replace_once(
-        crate_dir / "src/components/attr_external.rs",
-        "use syn::{ImplItem, Item, ItemImpl};\n\n// This is surely executed",
-        "use syn::{ImplItem, Item, ItemImpl};\n\nuse super::encoding::encode_lower;\n\n// This is surely executed",
-    )
-    replace_once(
-        crate_dir / "src/components/attr_external.rs",
-        "hex::encode(original_self_ty_string),",
-        "encode_lower(original_self_ty_string),",
-    )
-    ensure_file(crate_dir / "src/components/encoding.rs", FRB_ENCODING)
-    refresh_checksum(crate_dir)
-
 
 def patch_zbus() -> None:
     crate_dir = VENDOR / "zbus"
@@ -1225,28 +1102,6 @@ def patch_zbus() -> None:
     )
     refresh_checksum(crate_dir)
 
-
-def patch_termwiz() -> None:
-    crate_dir = VENDOR / "termwiz"
-    require_version(crate_dir, "0.23.3")
-    replace_once(
-        crate_dir / "Cargo.toml",
-        '[dependencies.hex]\nversion = "0.4"\n\n',
-        "",
-    )
-    replace_once(crate_dir / "Cargo.toml.orig", "hex.workspace = true\n", "")
-    replace_once(
-        crate_dir / "src/lib.rs",
-        "pub mod escape;",
-        "pub mod escape;\nmod hex;",
-    )
-    replace_once(
-        crate_dir / "src/escape/parser/mod.rs",
-        "let decoded = hex::decode(&self.current)",
-        "let decoded = crate::hex::decode(&self.current)",
-    )
-    ensure_file(crate_dir / "src/hex.rs", TERM_HEX_DECODER)
-    refresh_checksum(crate_dir)
 
 
 def patch_snow() -> None:
@@ -2012,9 +1867,7 @@ def patch_vendor() -> None:
     patch_ratatui_memory()
     patch_quick_xml()
     patch_keepass()
-    patch_flutter_rust_bridge_macros()
     patch_zbus()
-    patch_termwiz()
     patch_snow()
 
 

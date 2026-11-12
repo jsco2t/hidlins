@@ -14,20 +14,8 @@
 set -euo pipefail
 
 # --- versions (keep in lock-step with .github/workflows/ci.yml) -----------
-SCRIPT_DIR="$(cd "$(dirname "$0")" && pwd)"
 CARGO_DENY_VERSION="0.19.6"
 CARGO_AUDIT_VERSION="0.22.1"
-# Required by flutter_rust_bridge_codegen: it shells out to `cargo expand` to
-# evaluate cfg attributes, which is how the `#[cfg(feature = "test-fixtures")]`
-# impl block is kept out of the generated bindings.
-CARGO_EXPAND_VERSION="1.0.124"
-# flutter_rust_bridge codegen tool — must match the runtime crate version
-# in crates/hidlins-api/Cargo.toml and the Dart pub package in
-# app/pubspec.yaml. See workspace Cargo.toml for the triple-pin comment.
-FRB_CODEGEN_VERSION="2.12.0"
-# Flutter SDK — pinned in .flutter-version at the repo root.
-FLUTTER_VERSION_FILE="$(cd "$(dirname "$0")/../.." && pwd)/.flutter-version"
-
 # --- output helpers --------------------------------------------------------
 log()  { printf '\033[1;34m==>\033[0m %s\n' "$*"; }
 ok()   { printf '\033[1;32m  ✓\033[0m %s\n' "$*"; }
@@ -143,90 +131,8 @@ else
   esac
 fi
 
-# --------------------------------------------------------------------------
-# 5. Flutter SDK — REQUIRED for app/ development. Not auto-installed;
-#    the developer must install it themselves (mirrors the keepassxc-cli
-#    pattern for missing-but-recommended tools, except Flutter is too
-#    large to auto-install). Warns and continues if missing — Rust-only
-#    development works without Flutter: `make check` is Rust-only by design.
-#    The Flutter gates live in `make app-check` (and `make verify`).
-# --------------------------------------------------------------------------
-log "Flutter SDK (pinned by .flutter-version)"
-# Shared with CI (which runs it --strict). One parser, one source of truth.
-"$SCRIPT_DIR/flutter-version-check.sh" || true
-
-# --------------------------------------------------------------------------
-# 6. flutter_rust_bridge codegen tool — generates the Dart↔Rust bindings.
-#    Installed via cargo install (same pattern as cargo-deny/audit).
-#    Required for `make api-gen`; without it, codegen cannot run.
-# --------------------------------------------------------------------------
-# Unlike cargo-deny/audit, frb codegen version skew is a correctness
-# problem (design §2.6 risk #5 — codegen/runtime/Dart triple must match).
-# The generic cargo_install_global only checks binary presence, not version.
-# This block also verifies the installed version matches the pin.
-cargo_install_global cargo-expand "$CARGO_EXPAND_VERSION"
-
-if have flutter_rust_bridge_codegen; then
-  FRB_INSTALLED="$(flutter_rust_bridge_codegen --version 2>/dev/null | sed -n 's/.*[[:space:]]\([0-9][0-9.]*\).*/\1/p' | head -n1)"
-  if [ "$FRB_INSTALLED" = "$FRB_CODEGEN_VERSION" ]; then
-    ok "flutter_rust_bridge_codegen $FRB_INSTALLED (matches pin)"
-  else
-    warn "flutter_rust_bridge_codegen version mismatch: installed=$FRB_INSTALLED, expected=$FRB_CODEGEN_VERSION"
-    log "Reinstalling flutter_rust_bridge_codegen $FRB_CODEGEN_VERSION (triple-pin requires exact match)"
-    ( cd "${TMPDIR:-/tmp}" && CARGO_NET_OFFLINE=false RUSTUP_TOOLCHAIN="${RUSTUP_TOOLCHAIN:-}" \
-        cargo install --locked --force flutter_rust_bridge_codegen --version "$FRB_CODEGEN_VERSION" )
-  fi
-else
-  cargo_install_global flutter_rust_bridge_codegen "$FRB_CODEGEN_VERSION"
-fi
-
-# --------------------------------------------------------------------------
-# 7. CocoaPods — REQUIRED for macOS Flutter builds. Cargokit hooks into
-#    the macOS build via a CocoaPods script_phase (the podspec at
-#    app/rust_builder/macos/rust_lib_app.podspec). Without `pod`, the
-#    macOS build chain in T2.6 cannot produce a .app bundle. Linux
-#    builds use CMake (no CocoaPods equivalent needed).
-# --------------------------------------------------------------------------
-if [ "$OS" = "Darwin" ]; then
-  log "CocoaPods (macOS Flutter build dependency)"
-  if have pod; then
-    ok "CocoaPods $(pod --version 2>/dev/null | head -n1) already installed"
-  else
-    if have brew; then
-      log "Installing CocoaPods via Homebrew"
-      brew install cocoapods
-      have pod && ok "CocoaPods $(pod --version 2>/dev/null | head -n1) installed"
-    else
-      err "Homebrew not found. Install CocoaPods manually:"
-      err "  brew install cocoapods"
-      err "CocoaPods is required for macOS Flutter builds (Cargokit integration)."
-    fi
-  fi
-fi
-
-# --------------------------------------------------------------------------
-# 8. Flutter analytics — NFR-013: no telemetry. Disable both Flutter and
-#    Dart analytics if Flutter is present. Idempotent and silent if
-#    analytics are already disabled.
-# --------------------------------------------------------------------------
-log "Disabling Flutter/Dart analytics (NFR-013)"
-# Asserts the persisted telemetry config rather than parsing `flutter config`
-# output — on CI, Flutter substitutes NoOpAnalytics and always reports
-# "disabled" regardless of real state, so output-parsing is a tautology there.
-"$SCRIPT_DIR/telemetry-check.sh" --write
-
-# --------------------------------------------------------------------------
-# Done.
-# --------------------------------------------------------------------------
-
 printf '\n'
-log "Toolchain ready. Dependencies are vendored + committed, so you can work offline:"
-printf '      make check      # Rust gate: fmt-check + lint + build + test\n'
-printf '      make app-check  # Flutter gates (needs the Flutter SDK)\n'
-printf '      make verify     # full gate incl. docs, supply-chain, and interop\n'
-printf '\n'
-printf '  Note: only `make vendor` needs network access, and only when ADDING a dependency.\n'
-if ! have flutter; then
-  printf '\n'
-  printf '  Flutter is NOT installed. Install it to work on the Flutter app (app/).\n'
-fi
+log "Toolchain ready. Dependencies are vendored and committed:"
+printf '      make check       # formatting, lint, build, tests and features\n'
+printf '      make license-check # repository license compliance\n'
+printf '      make verify      # full gate including docs and interoperability\n'

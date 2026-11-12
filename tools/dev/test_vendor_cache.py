@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""Real offline compilation and cross-frontend cache invalidation regressions.
+"""Real offline compilation and shared Rust cache invalidation regressions.
 
 Registry packages below are tiny first-party MIT fixtures, never downloaded.
 """
@@ -20,31 +20,7 @@ from unittest import mock
 
 ROOT = Path(__file__).resolve().parents[2]
 CARGO = shutil.which('cargo')
-DART = shutil.which('dart')
-if not DART:
-    flutter = shutil.which('flutter')
-    if flutter:
-        DART = str(Path(flutter).resolve().parent / 'cache/dart-sdk/bin/dart')
 HOST = subprocess.check_output(['rustc', '-vV'], text=True).split('host: ')[1].splitlines()[0]
-
-DRIVER = r'''
-import 'dart:io';
-import 'package:build_tool/src/builder.dart';
-import 'package:build_tool/src/cargo.dart';
-import 'package:build_tool/src/options.dart';
-import 'package:build_tool/src/rustup.dart';
-import 'package:build_tool/src/target.dart';
-Future<void> main(List<String> args) async {
-  final builder = RustBuilder(
-    target: Target.forRustTriple(args[2])!,
-    environment: BuildEnvironment(configuration: BuildConfiguration.debug,
-      crateOptions: CargokitCrateOptions(), targetTempDir: args[1],
-      manifestDir: args[0], crateInfo: CrateInfo.load(args[0]), isAndroid: false));
-  builder.prepare(Rustup());
-  stdout.writeln(await builder.build());
-}
-'''
-
 
 class CacheTests(unittest.TestCase):
     def setUp(self):
@@ -154,7 +130,7 @@ class CacheTests(unittest.TestCase):
                 if mode == 'separate-build-dir':
                     self.env['CARGO_BUILD_BUILD_DIR'] = str(self.root / 'intermediates')
                 self.make_build(); self.value('A|A|A')
-                support = Path(self.metadata()['target_directory']) / 'cargokit/support'
+                support = Path(self.metadata()['target_directory']) / 'native/support'
                 support.mkdir(parents=True); (support / 'sentinel').write_text('KEEP')
                 self.patch()
                 self.make_build(); self.value('B|B|B')
@@ -190,7 +166,7 @@ class CacheTests(unittest.TestCase):
     def test_cleanup_failure_keeps_old_generation_and_retries(self):
         self.make_build()
         target = Path(self.metadata()['target_directory'])
-        support = target / 'cargokit/ndk-toolchain/support'
+        support = target / 'native-toolchain/support'
         support.mkdir(parents=True); (support / 'keep').write_text('KEEP')
         deps = target / 'debug/deps'; saved = target / 'saved-deps'
         deps.rename(saved); deps.symlink_to(saved, target_is_directory=True)
@@ -251,37 +227,6 @@ class CacheTests(unittest.TestCase):
         self.assertEqual(stamp.read_bytes(), old)
         self.make_build(); self.value('B|B|B')
 
-    def test_make_and_dart_share_cache_lock_through_compilation(self):
-        command = self.dart_package()
-        self.env['CARGO_TARGET_DIR'] = str(self.root / 'cargokit-cache')
-        pause = self.root / 'release-build'
-        environment = dict(self.env, CACHE_PAUSE_FILE=str(pause))
-        first = subprocess.Popen(['make', '--no-print-directory', 'build'], cwd=self.root,
-                                 env=environment, stdout=subprocess.PIPE, stderr=subprocess.PIPE, text=True)
-        second = None
-        try:
-            deadline = time.monotonic() + 30
-            while not Path(str(pause) + '.ready').exists() and first.poll() is None and time.monotonic() < deadline:
-                time.sleep(.02)
-            self.assertTrue(Path(str(pause) + '.ready').exists(), 'FIRST_COMPILE_DID_NOT_REACH_BARRIER')
-            policy = self.root / 'tools/dev/vendor_cache.py'
-            if policy.exists(): policy.write_text(policy.read_text() + '\n# concurrency generation control\n')
-            second = subprocess.Popen(command, cwd=self.root, env=self.env,
-                                      stdout=subprocess.PIPE, stderr=subprocess.PIPE, text=True)
-            time.sleep(.4)
-            self.assertIsNone(second.poll(), 'SECOND_FRONTEND_DID_NOT_WAIT')
-            pause.touch()
-            first_out, first_err = first.communicate(timeout=30)
-            second_out, second_err = second.communicate(timeout=30)
-            self.assertEqual(first.returncode, 0, first_out + first_err)
-            self.assertEqual(second.returncode, 0, second_out + second_err)
-            self.value('A|A|A', HOST)
-        finally:
-            pause.touch(exist_ok=True)
-            for process in (first, second):
-                if process is not None and process.poll() is None:
-                    process.kill(); process.communicate()
-
     def test_fuzz_runner_forwards_guarded_explicit_target_to_real_cargo(self):
         # This is a first-party CLI contract driver, not a claim that nightly
         # libFuzzer is installed. The cache backend still executes real Cargo.
@@ -329,53 +274,6 @@ sys.exit(subprocess.run([os.environ['CACHE_REAL_CARGO'],'build','--offline','--l
             self.assertEqual(command[command.index('--target-dir')+1], str(self.root / 'fuzz-output'))
         for seed in (fuzz / 'corpus').rglob('seed'):
             self.assertEqual(seed.read_bytes(), b'original')
-
-    def dart_package(self):
-        self.assertIsNotNone(DART, 'Dart SDK required for Cargokit regressions')
-        runner = ROOT / 'app/rust_builder/cargokit/run_build_tool.sh'
-        bootstrap = self.root / 'dart-bootstrap'
-        env = dict(self.env, CARGOKIT_TOOL_TEMP_DIR=str(bootstrap))
-        env['PATH'] = str(Path(DART).parent) + os.pathsep + env['PATH']
-        self.run_ok(['bash', str(runner), '--help'], env=env)
-        config = bootstrap / '.dart_tool/package_config.json'
-        driver = self.root / 'driver.dart'
-        driver.write_text(DRIVER)
-        return [DART, '--packages=' + str(config), str(driver), str(self.root), str(self.root / 'cargokit-cache'), HOST]
-
-    def test_real_cargokit_explicit_target_compiles_patched_vendor(self):
-        command = self.dart_package()
-        self.env['CARGO_TARGET_DIR'] = str(self.root / 'cargokit-cache')
-        self.run_ok(command); self.value('A|A|A', HOST)
-        self.patch()
-        self.run_ok(command); self.value('B|B|B', HOST)
-
-    def test_dart_kernel_cache_uses_bytes_with_restored_metadata(self):
-        tool = self.root / 'cargokit/build_tool'
-        original = ROOT / 'app/rust_builder/cargokit'
-        shutil.copytree(original / 'build_tool/lib', tool / 'lib')
-        for name in ('pubspec.yaml', 'pubspec.lock'):
-            shutil.copyfile(original / 'build_tool' / name, tool / name)
-        (tool / 'vendor-pub').symlink_to(original / 'build_tool/vendor-pub', target_is_directory=True)
-        runner = tool.parent / 'run_build_tool.sh'
-        shutil.copyfile(original / 'run_build_tool.sh', runner)
-        # New byte helper is first-party policy, copied when implemented.
-        for name in ('build_tool_fingerprint.py',):
-            if (original / name).exists(): shutil.copyfile(original / name, tool.parent / name)
-        env = dict(self.env, CARGOKIT_TOOL_TEMP_DIR=str(self.root / 'kernel-cache'))
-        if DART: env['PATH'] = str(Path(DART).parent) + os.pathsep + env['PATH']
-        command = ['bash', str(runner), '--help']
-        self.assertIn('Build CMake library', self.run_ok(command, env=env).stdout)
-        source = tool / 'lib/src/build_tool.dart'; old = source.stat()
-        text = source.read_text(); self.assertIn('Build CMake library', text)
-        source.write_text(text.replace('Build CMake library', 'Stage CMake library'))
-        os.utime(source, ns=(old.st_atime_ns, old.st_mtime_ns))
-        self.assertIn('Stage CMake library', self.run_ok(command, env=env).stdout,
-                      'DART_KERNEL_MUST_FOLLOW_SOURCE_BYTES')
-        kernel = self.root / 'kernel-cache/bin/build_tool_runner.dill'
-        modified = kernel.stat().st_mtime_ns
-        self.assertIn('Stage CMake library', self.run_ok(command, env=env).stdout)
-        self.assertEqual(kernel.stat().st_mtime_ns, modified, 'UNCHANGED_KERNEL_MUST_STAY_WARM')
-
 
 if __name__ == '__main__':
     unittest.main(verbosity=2)

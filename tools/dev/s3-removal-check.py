@@ -19,8 +19,6 @@ ALLOWED_PREFIXES = (
     ".ai/workflow-archive/",
     ".agents/",
     "vendor/",
-    "app/vendor-pub/",
-    "app/rust_builder/cargokit/build_tool/vendor-pub/",
 )
 ALLOWED_FILES = {
     "crates/hidlins-sync/docs/s3-removal-inventory.md",
@@ -116,7 +114,7 @@ def self_test() -> None:
         "Makefile.fixture": "minio-up:",
         "escaped-uppercase-provider.txt": "MINIO",
         "mixed-case-provider.txt": "mInIo",
-        "generated.dart": "final String accessKeyId;",
+        "generated.rs": "struct Config { accessKeyId: String }",
         "ci.yml.fixture": "integration-s3:",
         "protocol.md": "The response carries an ETag.",
     }

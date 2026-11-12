@@ -30,9 +30,7 @@ asset. This exception permits no replacement bytes or additional assets.
 [EFF-wordlist-NOTICE.txt](EFF-wordlist-NOTICE.txt) preserves attribution to
 Joseph Bonneau and the Electronic Frontier Foundation, the source and license
 links, and the fact that our copy is unmodified. CLI and TUI binaries include
-this notice in their help output. Flutter bundles the identical text and shows
-it under “EFF Large Wordlist” on the existing Open source licenses page on all
-platforms.
+this notice in the console executable help output.
 
 The wordlist is an embedded asset outside Cargo's dependency graph;
 `cargo deny` does not establish its license or check its notices.
@@ -40,7 +38,7 @@ The wordlist is an embedded asset outside Cargo's dependency graph;
 ## Verification
 
 Run `make asset-license-check` to verify the full canonical wordlist digest,
-exact exception, attribution, identical packaged Flutter notice, and
+exact exception, attribution, compiled console notice, and
 exclusion of CC-BY-4.0 from Cargo license allow-lists, including negative controls. `make verify` and
 `make release` include this check. The generator's unit tests also preserve
 word count, ordering endpoints, uniqueness and the supported character profile.

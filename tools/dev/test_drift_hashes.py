@@ -14,7 +14,7 @@ import tempfile
 import unittest
 
 ROOT = Path(__file__).resolve().parents[2]
-TARGETS = ("api-gen-check", "completions-check", "pub-vendor-check")
+TARGETS = ("completions-check",)
 
 
 def recipe(source: str, target: str) -> str:
@@ -63,57 +63,24 @@ class DriftRecipeTests(unittest.TestCase):
                     )
                     control.chmod(0o755)
 
-            outputs = {
-                "api-gen-check": "crates/api/frb_generated.rs",
-                "completions-check": "shell-completions/hidlins.bash",
-                "pub-vendor-check": "app/pubspec.lock",
-            }
-            for name in (
-                *outputs.values(),
-                "app/lib/bridge/bindings.dart",
-                "shell-completions/_hidlins",
-                "shell-completions/hidlins.fish",
-            ):
-                path = root / name
-                path.parent.mkdir(parents=True, exist_ok=True)
+            outputs = {"completions-check": "shell-completions/hidlins.bash"}
+            for name in ("shell-completions/hidlins.bash", "shell-completions/_hidlins", "shell-completions/hidlins.fish"):
+                path = root / name; path.parent.mkdir(parents=True, exist_ok=True)
                 path.write_text("original bytes\n")
-            for name in ("app/vendor-pub/hosted",):
-                (root / name / "pub.dev/package-1.0.0").mkdir(parents=True)
-            # The recipe retains its exact two production cache paths.
-            cache = root / "app/rust_builder/cargokit/build_tool/vendor-pub/hosted"
-            (cache / "pub.dev/package-1.0.0").mkdir(parents=True)
-            tools = root / "tools/dev"
-            tools.mkdir(parents=True)
-            (tools / "pub-vendor-hash.sh").write_text("#!/bin/bash\nexit 0\n")
-            (tools / "pub-vendor-hash.sh").chmod(0o755)
-            helper = ROOT / "tools/dev/content_fingerprint.py"
-            if helper.exists():
-                shutil.copyfile(helper, tools / helper.name)
-
+            tools = root / "tools/dev"; tools.mkdir(parents=True)
+            shutil.copyfile(ROOT / "tools/dev/content_fingerprint.py", tools / "content_fingerprint.py")
             protected = root / outputs[target]
-            if target == "api-gen-check":
-                protected = root / "app/lib/bridge/unreadable.dart"
-                protected.write_text("unchanged\n")
-            elif target == "completions-check":
-                protected = root / "shell-completions/unreadable"
-                protected.write_text("unchanged\n")
+            protected = root / "shell-completions/unreadable"
+            protected.write_text("unchanged\n")
             if mode == "unreadable_before":
                 protected.chmod(0)
             if mode == "unreadable_directory":
-                protected = root / {
-                    "api-gen-check": "app/lib/bridge/hidden",
-                    "completions-check": "shell-completions/hidden",
-                    "pub-vendor-check": "app/vendor-pub/hosted/pub.dev",
-                }[target]
+                protected = root / "shell-completions/hidden"
                 protected.mkdir(exist_ok=True)
                 (protected / "child").write_text("unreadable child\n")
                 protected.chmod(0)
 
-            unusual = root / (
-                "app/lib/bridge/line\nbreak.dart"
-                if target == "api-gen-check"
-                else "shell-completions/line\nbreak"
-            )
+            unusual = root / "shell-completions/line\nbreak"
             if mode == "newline_change":
                 unusual.write_text("before\n")
             generator = root / "generator.py"
@@ -129,15 +96,9 @@ class DriftRecipeTests(unittest.TestCase):
             source = (ROOT / "Makefile").read_text()
             makefile = (
                 "SHELL := /bin/bash\n"
-                "FRB_RUST_OUT := crates/api/frb_generated.rs\n"
-                "FRB_DART_OUT := app/lib/bridge/\n"
                 + recipe(source, target)
-                + "\n.PHONY: api-gen completions app-deps pub-vendor-hash-test\n"
-                + "api-gen completions app-deps:\n"
+                + "\n.PHONY: completions\ncompletions:\n"
                 + f"\t{shlex.quote(sys.executable)} generator.py\n"
-                # Native Make may exec `true` directly instead of using the
-                # shell builtin. Use a tool explicitly present in this PATH.
-                + "pub-vendor-hash-test:\n\t@python3 -c pass\n"
             )
             (root / "Makefile").write_text(makefile)
             environment = dict(os.environ)

@@ -15,7 +15,7 @@ class AssetLicenseTests(unittest.TestCase):
         self.addCleanup(self.scratch.cleanup)
         self.root = Path(self.scratch.name)
         for relative in (
-            policy.WORDLIST, policy.NOTICE, policy.APP_NOTICE, "CLAUDE.md",
+            policy.WORDLIST, policy.NOTICE, policy.NOTICE_SOURCE, "CLAUDE.md",
             "crates/hidlins-genpw/LICENSES/EFF-wordlist.md",
             "deny.toml", "fuzz/deny.toml",
         ):
@@ -64,11 +64,11 @@ class AssetLicenseTests(unittest.TestCase):
                 path.write_text(original)
 
     def test_compiled_notice_must_match_and_be_registered(self):
-        path = self.root / policy.APP_NOTICE
+        path = self.root / policy.NOTICE_SOURCE
         original = path.read_text()
         path.write_text("missing attribution")
-        self.assertTrue(any("Flutter notice differs" in e for e in policy.check(self.root)))
-        path.write_text(original.replace("LicenseRegistry.addLicense", "omitted_registration"))
+        self.assertTrue(any("does not compile" in e for e in policy.check(self.root)))
+        path.write_text(original.replace("after_help = AFTER_HELP", "omitted_registration"))
         self.assertTrue(any("does not register" in e for e in policy.check(self.root)))
 
     def test_creator_attribution_is_required(self):

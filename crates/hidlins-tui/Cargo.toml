@@ -37,25 +37,15 @@ hidlins-genpw = { path = "../hidlins-genpw", version = "0.1" }
 # Pins are the latest stable published ≥30 days as of 2026-06-01 (OQ-1):
 # ratatui 0.30.2 (2026-06-19), crossterm 0.29.0 (2025-04-05),
 # tui-input 0.15.3 (2026-04-18), unicode-width 0.2.2 (2025-10-06).
-# ratatui 0.30's default features include the crossterm 0.29 backend;
-# `crossterm` is declared directly for the raw-mode / alternate-screen calls
-# in `terminal_guard` and the `KeyEvent`/`KeyCode`/`KeyModifiers` types in
-# `keys`. Both resolve to a single crossterm 0.29 in the tree.
-#
-# We use ratatui's default features. Trimming them was evaluated and rejected:
-# the only default that pulls extra crates is `all-widgets` → `widget-calendar`
-# → `time`, but `ratatui-widgets` also pulls `time` via its `std` feature
-# (`std = ["time/local-offset"]`), which any usable build enables — so dropping
-# `all-widgets` removes zero crates (verified: compiled set unchanged). Not
-# worth the `default-features = false` + curated-list fragility for no gain.
-# Use the pinned renderer's own wrap count for scroll bounds, including words
-# and grapheme widths. This exposes an existing API and adds no package.
-ratatui = { version = "=0.30.2", features = ["unstable-rendered-line-info"] }
+# Only the Crossterm backend, layout cache and reviewed wrap-position API
+# are needed. Its backend already enables core underline-color support.
+# Disable facade defaults to avoid unused macros/calendar and optional backend
+# feature forwarding; keep the cache required by redraw performance.
+ratatui = { version = "=0.30.2", default-features = false, features = ["crossterm", "layout-cache", "unstable-rendered-line-info"] }
 crossterm = "0.29"
-# Input-widget primitive for `PasswordInput`, search, and edit fields. The
-# `crossterm` feature enables direct event translation. 0.15.3 targets crossterm 0.29 +
-# ratatui 0.30 + unicode-width 0.2.
-tui-input = { version = "0.15", features = ["crossterm"] }
+# We use only Input state and Crossterm event translation; rendering belongs
+# to our own widgets. The default Ratatui adapter is unnecessary.
+tui-input = { version = "0.15", default-features = false, features = ["crossterm"] }
 # Display-width-correct tab-label and detail truncation.
 unicode-width = "0.2"
 # Entry/group UUIDs — pinned-tab identity (`TabBar.pinned`) and tree/detail

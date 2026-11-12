@@ -7,10 +7,10 @@
 # Run with: cargo deny check
 
 [graph]
-all-features = false
+all-features = true
 no-default-features = false
 # Restrict the analysed dependency graph to the project's target platforms:
-# desktop (macOS aarch64+x86_64, Linux x86_64+aarch64) and the Flutter app's
+# desktop (macOS aarch64+x86_64, Linux x86_64+aarch64) and the native Rust API
 # mobile targets (iOS aarch64+sim, Android aarch64+x86_64). Windows and web
 # are out of scope. Without this, `cargo deny` evaluates every transitive
 # across every triple, including Windows-only deps like `clipboard-win`
@@ -22,9 +22,10 @@ targets = [
     { triple = "aarch64-unknown-linux-gnu" },
     { triple = "x86_64-apple-darwin" },
     { triple = "aarch64-apple-darwin" },
-    # Flutter app mobile targets (D2 iOS + D3 Android):
+    # Native Rust API target graphs:
     { triple = "aarch64-apple-ios" },
     { triple = "aarch64-apple-ios-sim" },
+    { triple = "x86_64-apple-ios" },
     { triple = "aarch64-linux-android" },
     { triple = "x86_64-linux-android" },
 ]

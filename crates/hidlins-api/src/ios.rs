@@ -1,6 +1,6 @@
 //! iOS-only one-shot clipboard handoff.
 //!
-//! Dart receives only an opaque ticket. Swift presents that ticket here and
+//! The application receives an opaque ticket. Native code presents it here and
 //! receives the protected bytes only inside a synchronous callback whose
 //! lifetime is bounded by this function call. The registry removes the value
 //! before calling native code, preserving one-shot semantics on every path.

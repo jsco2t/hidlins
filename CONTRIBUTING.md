@@ -17,30 +17,18 @@ Authoritative source documents (read these for scope):
 
 ## Workspace layout
 
-For Linux Flutter development on Debian/Ubuntu, run `make app-linux-toolchain`
-to install native compiler, CMake, Ninja and GTK3 development prerequisites.
-This explicit setup target uses apt and may require sudo/network access.
-`make app-linux-prereqs` checks the tools without installing anything; CI uses
-the same setup target. Rust and Flutter package builds remain offline.
-
-Use `make app-test APP_TEST_FLAGS='test/features/entry_edit_test.dart'` for a
-focused test run; the default `make app-test` still runs the complete suite.
-Regenerate ARB localizations with `make app-l10n`. Golden updates require Linux
-and explicit `HIDLINS_UPDATE_GOLDENS=1`; inspect every changed raster.
-
 ```
 hidlins/
 ├── Cargo.toml                # workspace manifest, resolver = "2"
 ├── Cargo.lock                # pinned, source of truth, checked in
 ├── rust-toolchain.toml       # pinned channel + cross-compile targets
-├── .flutter-version          # pinned Flutter SDK version
-├── deny.toml                 # cargo-deny config (8 target triples)
+├── deny.toml                 # cargo-deny config (9 Rust target triples)
 ├── .cargo/config.toml        # offline + vendored-sources
 ├── vendor/                   # all Rust dependencies, checked in
 ├── .github/workflows/        # CI
 ├── crates/
 │   ├── hidlins-core/         # library — KDBX I/O, registry, atomic, locking
-│   ├── hidlins-api/          # FFI boundary crate for the Flutter app
+│   ├── hidlins-api/          # reusable Rust application API
 │   ├── hidlins-cli/          # CLI frontend
 │   ├── hidlins-tui/          # TUI frontend
 │   └── hidlins-agent/        # placeholder binary
@@ -80,10 +68,8 @@ make test          # default-parallel tests
 make test-ignored  # serial run of env-mutating / fault-injection tests
 make fmt           # auto-format
 make lint          # clippy with `-D warnings`
-make check         # Rust gate: fmt-check + lint + build + test (no Flutter needed)
-make app-check     # Flutter gates: version/telemetry/pub integrity/analyze/format/test/bridge smoke/codegen drift (needs Flutter SDK + Rust toolchain)
-make acceptance-evidence-check # audit release/CI/PRD evidence, skips, and all 45 July tasks
-make verify        # everything: check + app-check + ignored tests + docs + supply-chain + interop + boundary-check
+make check         # Rust gate: fmt-check + lint + build + test
+make verify        # everything: check + license-check + ignored tests + docs + supply-chain + interop + boundary-check
 make deny          # cargo-deny (license + advisory + bans)
 make vendor        # re-vendor dependencies (the only target that needs network)
 make vendor-patches # verify exact vendored patches and their negative guards
@@ -111,10 +97,10 @@ before changing its version, features, manifests, or patched source. Never edit
 The isolated `fuzz/` workspace has the only NCSA exception: exact
 `libfuzzer-sys 0.4.13`, development/testing only. Its fuzz executables are
 non-distributable. Root `deny.toml` does not allow NCSA, and no CLI, TUI, agent,
-Flutter desktop, iOS, Android, or other application artifact may contain that
+or other application artifact may contain that
 crate or its LLVM libFuzzer code. Run `make ncsa-boundary-check` before any
 release or packaging change; it checks dependency closures, exact policy scope,
-negative controls, packaging hooks, and produced raw/bundle/APK/IPA artifacts.
+negative controls, packaging hooks, and produced Rust release artifacts.
 Do not move a fuzz dependency into the root workspace or reuse a fuzz build
 output in application packaging.
 
@@ -122,44 +108,15 @@ All Rust compilation reached through `make` appends `-D warnings` to any
 caller-supplied `RUSTFLAGS`; rustdoc does the same through `RUSTDOCFLAGS`.
 `make build-policy-check` is part of `make check` and compiles an intentional
 warning fixture to prove the policy remains active and caller flags survive.
-Flutter artifact targets first run fatal Dart analysis. First-party Linux,
-Apple, Android Kotlin, and Android Java runner/app compilation also treats
-warnings as errors; the native settings are deliberately scoped away from
-vendored crates, packages, plugins, and Pods.
+`make release` builds optimized Rust workspace artifacts for the current host.
+The console executable is `target/release/hidlins`; it starts the TUI by default
+and runs one-shot CLI commands when arguments select them. `hidlins-agent` is
+currently a placeholder. The reusable `hidlins-api` library is described in
+[the Rust API guide](docs/rust-api.md).
 
-`make release` builds optimized Rust binaries for the current host only:
-`target/release/hidlins` (TUI by default; CLI for subcommands or `--cli`) and
-`target/release/hidlins-agent`. Flutter artifacts are likewise host/platform
-specific: `make app-build-linux` writes beneath
-`app/build/linux/<architecture>/release/bundle/`, while
-`make app-build-macos` writes `app/build/macos/Build/Products/Release/Hidlins.app`.
-Run the corresponding Flutter target on each supported host; these commands do
-not claim to cross-build every platform from one workstation.
-
-The complete unsigned alpha artifact matrix, Flutter 3.47.2 Android exception,
-automated acceptance map, optional human-observation register, and disposition
-of all 45 July Flutter tasks are documented in
-[`docs/flutter-alpha-release.md`](docs/flutter-alpha-release.md) and its checked
-machine-readable companion. Android CI uses `make android-emulator-provision`
-followed by the same local-sync emulator targets used locally. The hosted
-Linux/KVM runtime job covers API 29/36 native, UI, and real-bridge checks
-and API 30/36 shared-LAN synchronization on x86_64 devices; hosted
-macOS cannot run ARM64 Android emulators because nested virtualization is
-unavailable. Both Android ABIs remain build/artifact gates. Run the same
-acceptance targets on an ARM64 workstation for ARM64 runtime verification.
-`make android-emulator-matrix` prints both selections and their authority AVDs.
-The API 29 default image cannot provide the shared-LAN backend: its native/UI
-coverage remains required, while cross-device sync uses API 30 and API 36.
-The product minimum remains API 29; API 29 cross-device LAN acceptance is not
-claimed by this emulator gate.
-The isolated, expensive `make test-local-sync-mobile-scenarios HIDLINS_ANDROID_STRICT=1`
-target drives real iPhone, iPad, Android phone, and Android tablet applications
-against a separate release CLI authority; use its platform-specific `-ios` and
-`-android` targets while iterating.
-The local Apple Rust plugin is deliberately CocoaPods/Cargokit-only, with
-project-scoped SwiftPM disablement; Flutter's future-migration advisory is a
-tool notice, not a compiler warning. See the release document for the exact
-boundary and migration requirement.
+`make license-check` audits all retained dependency graphs, first-party license
+declarations, vendored provenance/integrity, the EFF asset notice, and the exact
+development-only NCSA exception. Run it before dependency or release changes.
 
 **Adding a new workflow?** If you add a new lint, test category, code-gen
 step, harness, or CI step, add the matching `make` target in the same
@@ -196,10 +153,8 @@ JUnit and EPL-licensed dependencies have no development, testing, build-tool,
 runner, adapter, BOM, or metadata-only exception. Do not add verification hashes
 to admit them; remove the dependency path while preserving test coverage.
 
-`make deny` enforces the Rust license allowlist. `make ci-toolchain-check`
+`make deny` enforces the Rust license allowlist. `make license-check`
 guards the explicit EPL ban and ensures neither Rust policy admits it.
-`make android-dependency-check` enforces JUnit exclusion and its negative controls;
-see [the Android dependency policy](app/android/gradle/README.md).
 
 **Clarification — linked vs. invoked test drivers:** GPL software
 **linked or loaded** into the build (linked as a C library, loaded via
@@ -302,186 +257,6 @@ spoof/DHCP/expiry simulation; `check-feature-gates` proves `mdns-sd` is absent
 from Android and iOS dependency graphs. `make deny` and `make audit` gate the
 complete exact graph.
 
-#### iOS simulator integration runner (flutter-app Task 010, 2026-09-01)
-
-`integration_test` 0.0.0 is the official Flutter SDK device-test runner. It is
-BSD-3-Clause, maintained and released with the exact Flutter SDK pinned in
-`.flutter-version`, and is a development-only dependency. It is the supported
-way to run `flutter_test` journeys inside a real iOS application process; a
-repository implementation would have to reproduce Flutter's VM-service test
-protocol, native test plugin, device installation, and result transport.
-
-The SDK edge adds `flutter_driver` and `fuchsia_remote_debug_protocol` from the
-same pinned BSD-3-Clause Flutter SDK plus four pub.dev packages: `platform`
-3.1.6, `process` 5.0.6, and `sync_http` 0.3.1 are Dart-team BSD-3-Clause
-libraries; `webdriver` 3.1.0 is Dart-team Apache-2.0. All are dev-only driver
-infrastructure. `sync_http` and `webdriver` can make network requests, which is
-required by the SDK's host/device driver protocol; NFR-013 permits them only in
-the development graph. They add no production imports, native binary,
-telemetry, or runtime permission to Hidlins, and `make pub-production-check`
-fails if the runner or any of its seven reviewed packages enters the shipping
-graph. The resolved diff is seven locked packages, of which only those four
-small Dart packages add vendored pub trees. All are mature Dart/Flutter
-ecosystem components maintained by the SDK's own team; no feature reduction
-exists on the SDK dependency. The vendored trees, hosted hashes, lockfile,
-curated allowlist, and byte-integrity manifest were reviewed together;
-`make pub-vendor-check` gates their exact bytes.
-
-#### Flutter app Dart dependencies (flutter-app T2.4, 2026-07-24)
-
-Curated allowlist for `app/pubspec.yaml`. Dependencies are added in the task
-that first **imports** them, not ahead of need — every entry is vendored and
-committed, so an unused package costs repo size, licence-audit surface, and
-(for plugins) native code linked into the binary.
-
-**Standalone Material migration (2026-09-01).** `material_ui` 1.0.0 is the
-official Flutter-team continuation of the now-frozen SDK Material library. It is
-exact-pinned and BSD-3-Clause, published by the verified `flutter.dev` publisher;
-upstream had already shipped 1.1.0 within nineteen days of the initial stable
-release, demonstrating active maintenance. The package has roughly 495k downloads
-and 256 likes at review time. Its only newly resolved transitive is the official
-`cupertino_ui` 1.0.1 package (also BSD-3-Clause and `flutter.dev`-published), which
-`material_ui` requires for adaptive widgets and its complete localization
-delegate set; Hidlins neither declares nor imports `cupertino_ui` directly.
-
-The vendored cost is material: `material_ui` contributes 1,148 files / 25 MB and
-`cupertino_ui` contributes 417 files / 6.2 MB. No package feature can remove the
-Cupertino edge. Continuing on the frozen framework copy would abandon the selected
-Flutter 3.47 forward baseline, while copying or maintaining a partial design
-system in-repository would be substantially larger, less accessible, and harder
-to test than the official packages. All other `material_ui` dependencies were
-already present in the locked Flutter application graph. The vendored diff is
-therefore limited to these two audited package directories, their hosted hashes,
-the lockfile, and the integrity manifest.
-
-| Package | Constraint | License | Maintenance / popularity | Hand-roll assessment |
-| --- | --- | --- | --- | --- |
-| `material_ui` | `1.0.0` (exact) | BSD-3-Clause | Official Flutter team / `flutter.dev`; active 1.1.0 follow-up; ~495k downloads, 256 likes at review | Not viable — this is Flutter's complete maintained Material implementation; an in-repo subset would regress API coverage, accessibility, and maintenance |
-| `cupertino_ui` | `1.0.1` (transitive, lock-pinned) | BSD-3-Clause | Official Flutter team / `flutter.dev`; required by `material_ui` for adaptive widgets and localizations | Not directly selected or imported; no feature exists to remove the required edge, and reimplementing it would be broader than retaining the official transitive |
-| `flutter_rust_bridge` | `2.12.0` (exact) | MIT | The bridge itself; triple-pinned with the Rust crate + codegen CLI | Not viable — generates ~10k lines of FFI glue |
-| `freezed_annotation` | `^3.1.0` | MIT | Flutter-ecosystem standard, actively maintained | Not viable — required *by* frb codegen for the sealed DTO classes |
-
-**Dev-only:** `flutter_lints` (BSD-3-Clause), `freezed` (MIT), `build_runner`
-(BSD-3-Clause) — the frb codegen pipeline; not shipped in the app binary.
-
-**Removed in the T2.x review** as declared-but-never-imported: `file_selector`,
-`flutter_riverpod`, `go_router`, `intl`, `flutter_localizations`,
-`json_serializable`, `json_annotation`. Two concrete costs, not just weight:
-`file_selector` pulled `package:http` into the **production** dependency
-closure (an NFR-013 violation the old denylist gate could not see, because it
-only read direct deps) and linked a native GTK plugin into the Linux binary;
-`flutter_riverpod` dragged 46 MB, of which 45 MB is a prebuilt DevTools web
-bundle. Re-add each in T3.x/T4.x at first use, with its own review row.
-
-**Supply-chain posture.** Two vendored pub caches are committed:
-
-| Cache | Packages | Size | Role |
-| --- | --- | --- | --- |
-| `app/vendor-pub/` | 85 | 135M | the app's own dependencies |
-| `app/rust_builder/cargokit/build_tool/vendor-pub/` | 60 | 80M | Cargokit's build tool — **compiled and executed on every native build** |
-
-`make app-deps` resolves offline from the vendored cache; `PUB_CACHE` is
-exported Makefile-wide so an implicit `pub get` fired by `flutter build` or
-`flutter test` is offline-bound too — and every `flutter build`/`test`/`run`
-recipe additionally passes `--no-pub`, because `PUB_CACHE` redirection alone
-does not disable networking (an implicit resolve could fetch a missing package
-from pub.dev straight into the vendored cache). `make pub-vendor-check` covers
-both caches.
-
-**Byte-level integrity.** Cargo verifies a per-crate `.cargo-checksum.json` on
-every build; pub compares `hosted-hashes/` against `pubspec.lock` and **never
-re-hashes the extracted tree**, so a modified file inside a vendored package
-would execute with every pub gate green. The pub equivalent is project-owned:
-`tools/dev/pub-vendor.SHA256SUMS` records every reviewed Git-tracked file in both caches' `hosted/`
-+ `hosted-hashes/` trees (written by `make pub-vendor`, via
-`tools/dev/pub-vendor-hash.sh generate`), and `make pub-vendor-check` verifies
-it by regenerate-and-diff, so modification and removal fail. A separate Git
-query rejects untracked, nonignored additions. Ignored package-local execution
-artifacts (such as untracked .dart_tool/ files) are excluded; tracked files
-remain protected even if an ignore rule matches them. Symlinks are always
-rejected, including inside ignored directories. Generation includes intentional
-new files and excludes removed files, but verification requires staging those
-input additions/removals as part of the reviewed dependency change.
-The make target pub-vendor-hash-test exercises these rules in disposable Git
-fixtures and runs automatically as a prerequisite of pub-vendor-check.
-Committing `hosted-hashes/` (which we do — excluding it made every fresh clone
-report a content-hash mismatch for every package while still exiting 0)
-additionally preserves pub's own lockfile/cache consistency check. Note also
-that `dart pub get --enforce-lockfile` exits 0 on a hash mismatch, so
-`make app-deps` greps for it and fails explicitly.
-
-#### `hidlins-api` — `flutter_rust_bridge` runtime (flutter-app T2.1, 2026-07-22)
-
-The FFI bridge runtime for the Flutter alpha app. Pinned at exactly `=2.12.0`
-(the latest stable; released 2026-03-29). This is one of the **triple-pin** —
-the Rust runtime crate, the Dart pub package (`app/pubspec.yaml`, T2.4), and
-the codegen CLI tool (`install-toolchain.sh`) must always be the same version.
-
-| Crate | Ver | License | Maintenance / popularity | Notes |
-| --- | --- | --- | --- | --- |
-| `flutter_rust_bridge` | =2.12.0 | MIT | De-facto standard Rust↔Flutter codegen bridge; large active community (~5.8M downloads). | Runtime crate only — codegen output arrives in T2.3. `default-features` used (includes the thread pool, opaque handles, streams, and `allo-isolate` FFI glue). |
-
-**Transitive count:** 52 unique crates in frb's dependency tree (including
-itself). **Vendor footprint:** 30 new directories (424 → 454 total), of which
-~6 are off-target placeholders: `android_logger`, `android_log-sys`, `oslog`
-(mobile logging), `console_error_panic_hook`, `wasm-bindgen-futures`, `web-sys`
-(wasm — never compiled for our targets). The remainder are genuine runtime
-transitive deps: `allo-isolate` (Dart isolate FFI, Apache-2.0), `dart-sys`
-(Dart VM FFI types, MIT), `futures` family (MIT/Apache-2.0), `tokio` (MIT —
-frb's thread pool), `threadpool` (MIT/Apache-2.0), `backtrace` + `addr2line`
-(MIT/Apache-2.0, debug helpers).
-
-**Hand-roll assessment:** not viable. frb generates ~10k lines of FFI glue
-(Dart bindings, Rust codec, type marshalling, isolate dispatch, StreamSink
-plumbing) from annotated Rust source. Reproducing this by hand would be a
-multi-month effort with no maintenance story. The survey
-(`research/rust-flutter-bridge-and-ui-survey.md` §A.1) evaluated manual
-`dart:ffi`, `uniffi-rs-dart`, and `rinf` and selected frb v2 on feature
-coverage + community + type safety.
-
-**Supply-chain notes:**
-- `allo-isolate` declares `license-file = "LICENSE"` (Apache-2.0) instead of
-  the `license` field; `cargo deny` warns but accepts it via confidence
-  threshold.
-- No `build.rs` networking in any new vendored crate.
-- `make deny` green with expanded targets (8 triples: 4 desktop + 4 mobile).
-- `make audit` clean.
-- Banned-crate scan: no `openssl`/`native-tls`/`aws-lc-rs`/`webpki-roots`/
-  `git2`/`libgit2-sys` in the graph.
-
-**Cargokit dependency review** (vendored build-glue source, instantiated by
-`flutter_rust_bridge_codegen integrate` at T2.3). Vendored at
-`app/rust_builder/cargokit/` from the **frb 2.12.0** template. License: MIT
-(matches frb).
-
-The full patch set, the rationale for each, and the upgrade procedure live in
-[`tools/dev/cargokit-patches/`](tools/dev/cargokit-patches/README.md), with a
-generated inventory in `PATCHED-FILES.txt`. **Invariant: every Hidlins edit in
-the vendored tree carries a `Hidlins patch` marker**, so re-applying after a
-template bump is a grep rather than an archaeology exercise. That directory
-exists because one patch (`artifacts_provider.dart`) previously had no marker
-at all and would have been silently dropped on the next re-instantiation —
-along with, in the same class, the `build_pod.dart` fix below.
-
-Two of the eight patches are load-bearing beyond the offline posture:
-- `build_pod.dart` — lipo output must use `libraryName`. It used `packageName`,
-  emitting `libhidlins-api.a` while both podspecs `-force_load libhidlins_api.a`,
-  which broke **every macOS and iOS link**. Invisible to the Linux-only CI job.
-- `build_pod.sh` — a bare `env` dump was removed; it printed the entire
-  environment, including signing credentials and CI tokens, into build logs.
-
-**Open item:** the upstream Cargokit revision is recorded only as "the frb
-2.12.0 template". Design §2.6 asks for an exact upstream revision pin; capture
-the `irondash/cargokit` SHA that template embeds and record it here.
-
-**`deny.toml` target expansion (same change):** added 4 mobile triples
-(`aarch64-apple-ios`, `aarch64-apple-ios-sim`, `aarch64-linux-android`,
-`x86_64-linux-android`). The `webpki-root-certs` (CDLA-Permissive-2.0)
-crate — documented in the Phase-2b entry below as a cfg-gated-out
-`rustls-platform-verifier` fallback — remains excluded from the mobile
-target graphs (iOS uses `security-framework`, Android uses the JNI
-component); no license-allowlist change was needed.
-
 #### `hidlins-tui` — `ratatui` TUI stack (tui-skeleton Phase 1, 2026-06-01)
 
 The reference terminal UI's four direct deps, pinned to the latest stable
@@ -493,9 +268,9 @@ handler) was already vendored.
 
 | Crate | Ver | License | Maintenance / popularity | Notes |
 | --- | --- | --- | --- | --- |
-| `ratatui` | 0.30.2 | MIT | The maintained `tui-rs` successor; the de-facto Rust TUI framework. | Default features (`crossterm`, `all-widgets`, `macros`, `layout-cache`, `underline-color`). 0.30 split into `ratatui-core` / `ratatui-crossterm` / `ratatui-widgets` (all MIT). **Vendor footprint is larger than the original "~10–15" estimate (~60 new dirs)** — ratatui's color/layout tree plus optional/off-target backends that Cargo vendors even when the production crossterm build does not compile them. Task 001 selected 0.30.2 because its component graph resolves the patched `lru 0.18.3`. |
+| `ratatui` | 0.30.2 | MIT | The maintained `tui-rs` successor; the de-facto Rust TUI framework. | Defaults disabled; enables only `crossterm`, `layout-cache`, and `unstable-rendered-line-info`. The backend retains core underline-color support. Unused macros, calendar, and alternate backend feature forwarding are excluded. Task 001 selected 0.30.2 because its component graph resolves the patched `lru 0.18.3`. |
 | `crossterm` | 0.29.0 | MIT | The standard cross-platform terminal backend; ratatui's default. | Declared directly for raw-mode / alternate-screen (`terminal_guard`) and the `KeyEvent` types (`keys`). Single version in the tree (ratatui 0.30 rides crossterm 0.29). |
-| `tui-input` | 0.15.3 | MIT | Small input-widget primitive. | `features = ["crossterm"]` (vendor the full tree once; wired by the Phase-2 `PasswordInput`). 0.15.3 targets crossterm 0.29 + ratatui 0.30 + unicode-width 0.2. |
+| `tui-input` | 0.15.3 | MIT | Small input-widget primitive. | `default-features = false, features = ["crossterm"]`; Hidlins uses Input state and event translation, with its own rendering widgets. The Ratatui input adapter is unnecessary. |
 | `unicode-width` | 0.2.2 | MIT OR Apache-2.0 | Unicode TR-11 display widths; ubiquitous. | Display-width-correct tab-label / detail truncation (Phase-2 T2.4 / OQ-N6). |
 
 **Historical incidental supply-chain fix (separate from the TUI deps):** the re-vendor
@@ -508,6 +283,37 @@ unchanged — verified by `cargo test -p hidlins-core -p hidlins-sync` (incl. th
 `merge_semantics.rs` characterization suite). The current graph supersedes this
 historical stopgap with `keepass 0.13.25` and `aes 0.9.1`; `make deny` and
 `make audit` are green.
+
+#### Dependency reduction audit (2026-11-12)
+
+Every first-party direct dependency was traced through production, test,
+feature-gated and platform-specific Rust source. Removed unused `secrecy`
+declarations from `hidlins-api` and CLI tests, plus redundant API test `toml`
+and sync test `sha2` declarations. `secrecy 0.10.3` (Apache-2.0 OR MIT) remains
+necessary inside `keepass`; its protected-value behavior is unchanged.
+
+`ratatui 0.30.2` and `tui-input 0.15.3` remain MIT dependencies at the same
+reviewed versions. Their established maintenance/adoption basis is recorded
+above; this audit changes no package version or source implementation. The
+narrow feature selection removes 52 registry packages and 23,140,934 bytes of
+vendored source, leaving 340 packages across the production/fuzz lock union.
+Seven packages also leave the compiled Ratatui closure: its unused macro crate
+and six calendar/time helpers. Layout caching, backend behavior, text geometry
+and core underline-color features remain. The obsolete Termwiz-only codec
+patch was deleted; remaining vendored source bytes were unchanged.
+
+The API, CLI and TUI application suites passed before this feature reduction.
+Afterward, `make check test-dev-tools license-check`, `make vendor-patches`,
+and `make deny audit` passed, including the native API feature checks.
+`make lint` with `CLIPPY_FLAGS` selecting the TUI library also passed for both
+macOS architectures (compile checks on Linux, without linking or runtime tests).
+Cargo audit retains the existing allowed yanked warning for the Windows-only
+`clipboard-win 5.4.1`; no dependency or license exception was added.
+A new in-repository renderer/input implementation would
+replace useful maintained behavior and is not justified; disabling unused
+features is sufficient. Platform-specific, fuzz-only and resolver-required
+optional sources remain when Cargo still needs them; an unused host feature is
+not evidence that a locked source can be removed safely.
 
 #### `keepass` `_merge` feature enabled (Phase 4, 2026-05-26)
 
@@ -524,80 +330,6 @@ are pinned by a defensive characterization suite
 (`crates/hidlins-sync/tests/merge_semantics.rs`) that fails CI if a future bump
 changes merge behaviour. **Upgrade rule:** any bump of the keepass pin must
 re-run that suite and review upstream `_merge` changes before landing.
-
-#### `hidlins-sync` — HTTPS transport + pure-Rust send-pack (Phase 2b, 2026-05-26)
-
-ADR-007: gix 0.78 has no push and the mobile ship target rules out a `git`
-subprocess, so **fetch runs over our own `rustls` HTTP backend** and **push is a
-pure-Rust smart-HTTP `send-pack`** on gix plumbing. This adds the TLS stack and
-promotes gix's base `http-client`/pack plumbing to direct deps. The T2b.1 spike
-validated the whole flow against real GitHub (fetch) + a local `git http-backend`
-(send-pack), and `hidlins-sync` `cargo check`s clean for **both** mobile targets
-(`aarch64-apple-ios` via Xcode SDK, `aarch64-linux-android` via NDK clang).
-`make deny` green.
-
-| Crate | Ver | License | Maintenance / popularity | Notes |
-| --- | --- | --- | --- | --- |
-| `rustls` | 0.23 | MIT OR Apache-2.0 OR ISC | `rustls` project; the standard pure-Rust TLS. | `default-features=false` + `ring,std,tls12` — pins the **`ring`** provider, **NOT** the default `aws-lc-rs` (more C; ADR-007). Powers fetch + send-pack over HTTPS. |
-| `ring` | 0.17 | `MIT AND ISC AND OpenSSL` (pre-cleared in `deny.toml [[licenses.clarify]]`) | `briansmith/ring`; the most-deployed Rust crypto provider, incl. iOS/Android. | Transitive via rustls's `ring` feature. Build compiles C/asm → needs the platform C toolchain (Xcode iOS SDK / Android NDK) — both verified to cross-compile. |
-| `rustls-platform-verifier` | 0.5 | MIT OR Apache-2.0 | `rustls/rustls-platform-verifier`. | Native OS trust store (macOS/iOS/Android) + system-CA on Linux. **The linchpin that avoids `webpki-roots` (MPL-2.0, banned).** Pulls `-android` + `jni` on Android (runtime JVM-init = a Phase-2 Flutter-bridge detail). |
-| `gix-transport` | 0.53 | MIT OR Apache-2.0 | gitoxide. | Base `http-client` feature only — the `Http` backend trait + generic smart-HTTP `Transport`, **without** curl/reqwest (C-free). We implement `Http` over rustls and use `connect_http`. |
-| `gix-protocol` | 0.56 | MIT OR Apache-2.0 | gitoxide. | `blocking-client`; handshake / `ls-refs` / fetch. |
-| `gix-pack` | 0.65 | MIT OR Apache-2.0 | gitoxide. | Pack-v2 generation for send-pack (`data::output::Entry::from_data` + `FromEntriesIter`; single-threaded, no `parallel` feature). |
-| `gix-object` / `gix-odb` / `gix-hash` | 0.55 / 0.75 / 0.22 | MIT OR Apache-2.0 | gitoxide. | Object authoring + odb reads feeding pack generation. |
-| `gix-url` | 0.35 | MIT OR Apache-2.0 | gitoxide. | URL parsing for `connect_http`. |
-
-`ureq` was evaluated and **NOT** added: a hand-rolled minimal HTTP/1.1 client over
-the rustls stream suffices, and `ureq` defaults its roots to `webpki-roots`
-(MPL-2.0). SSH auth is **deferred** (FR-045; candidate `russh`).
-
-Banned-crate scan after vendoring: confirmed **no `webpki-roots`,
-`openssl`/`openssl-sys`, `native-tls`, `aws-lc-rs`/`aws-lc-sys`,
-`git2`/`libgit2-sys`, or `curl`** in the graph. (rustls rides `ring`; cert-path
-validation is `rustls-webpki`, Apache-2.0 OR ISC.) **Trust roots per target:**
-macOS/iOS → `security-framework`; Android → `rustls-platform-verifier-android`
-(+ `jni`); Linux → `rustls-native-certs` (+ `openssl-probe`) — all permissive.
-**Note on `vendor/webpki-root-certs/`:** this is *not* the banned `webpki-roots`
-(MPL-2.0) — it is a distinct crate (`CDLA-Permissive-2.0`) that
-`rustls-platform-verifier` declares only as a **fallback for "other" platforms**.
-It is **cfg-gated out of every target we ship** (verified absent from the
-`cargo tree` graphs for macOS-arm64, Linux-x86_64, iOS-arm64 and Android-arm64;
-the trust backend is selected by OS, not architecture, so the x86_64-macOS and
-arm64-Linux siblings resolve identically); it appears under
-`vendor/` solely because `cargo vendor` snapshots the full cfg-union of the lock,
-exactly like the Windows-only `clipboard-win` (BSL-1.0). If a mobile/other triple
-is ever added to `deny.toml`'s `targets`, decide then whether to allowlist
-`CDLA-Permissive-2.0` or disable the fallback.
-
-#### `hidlins-sync` — git sync (Phase 2, 2026-05-25)
-
-The largest single addition so far: the `gix` family pulled the vendored tree
-from 239 → 358 crates (+119). `make deny` is green; no `deny.toml` change was
-needed (all new transitives resolve to a permitted license; the only
-non-permissive licenses in the tree — `BSL-1.0` for `clipboard-win`,
-`LGPL`/`0BSD` offered as an SPDX `OR` branch — are Windows-only (excluded by
-`deny.toml` target scoping) or selectable under a permitted branch).
-
-| Crate | Ver | License | Maintenance / popularity | Notes |
-| --- | --- | --- | --- | --- |
-| `gix` | 0.78 | MIT OR Apache-2.0 | `Byron/gitoxide`, very active; the pure-Rust git impl chosen over `libgit2`/`git2` (CLAUDE.md). | `default-features=false`; only `blocking-network-client` + `revision`. **Spike (T2.2) found gix 0.78 cannot push.** _(The original remedy here — git-CLI shell-out / T3.6 — was **superseded same-day by ADR-007**: push is a pure-Rust smart-HTTP send-pack, and the rustls HTTPS stack landed in Phase 2b above. See that entry.)_ |
-| `argon2` | 0.5 | MIT OR Apache-2.0 | RustCrypto; foundational, widely used. | RST-CRED-1 KDF (design §2.2.3). This remains separate from `rust-argon2`, which is selected by `keepass` for the KDBX KDF; the final dependency review retains both rather than coupling the independent credential-container and KDBX cryptographic implementations. |
-| `chacha20poly1305` | 0.10 | Apache-2.0 OR MIT | RustCrypto; foundational. | RST-CRED-1 AEAD. |
-| `base64` | 0.22 | MIT OR Apache-2.0 | `marshallpierce/rust-base64`; ubiquitous. | Already vendored transitively; now a direct dep for the credential container encoding. |
-| `gethostname` | 1.1 | Apache-2.0 | `swsnr/gethostname`; small, stable, Unix+Windows. | Commit-message host line (design §2.6). |
-| `proptest` (dev) | 1.x | MIT OR Apache-2.0 | `proptest-rs`; the standard Rust property-testing crate. | Merge-engine property tests (Phase 4/6). Dev-only. |
-| `proptest-derive` (dev) | 0.5 | MIT OR Apache-2.0 | `proptest-rs`. | Dev-only. |
-| `arbitrary` (dev) | 1.x | MIT OR Apache-2.0 | `rust-fuzz/arbitrary`; standard for fuzz input. | Fuzz-target structured input (Phase 6). Dev-only. |
-
-Banned-crate scan after vendoring (at Phase-2 add-point): no
-`openssl`/`openssl-sys`/`native-tls`/`git2`/`libgit2-sys`/`curl`. _(Phase 2b
-subsequently added `rustls` + `ring` + `rustls-platform-verifier` for HTTPS —
-still no `openssl`/`native-tls`/`aws-lc-rs`/`webpki-roots`; see the Phase-2b entry
-above.)_
-(Maintenance/popularity above is asserted from ecosystem familiarity; the
-authoritative `vendor/` source-diff review is done by the reviewer per step 4.)
-
----
 
 ## Testing conventions
 

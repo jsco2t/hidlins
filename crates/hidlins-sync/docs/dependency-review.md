@@ -107,8 +107,8 @@ Android cannot resolve or link those two dependencies.
   `deny.toml` rejects NCSA. Only `fuzz/deny.toml` allows exact
   `libfuzzer-sys@0.4.13`. `make ncsa-boundary-check` proves manifest/lock
   isolation, production-closure exclusion, exact exception scope, packaging
-  hook coverage, negative contaminated raw/bundle/APK/IPA controls, and scans
-  produced CLI/TUI/agent/desktop/iOS/Android artifacts. Full details are in
+  hook coverage, negative contaminated Rust binary/library/bundle/archive controls, and scans
+  produced CLI/TUI/agent and reusable API artifacts. Full details are in
   [`../../../fuzz/DEPENDENCIES.md`](../../../fuzz/DEPENDENCIES.md).
 
 ## Removal and policy disposition

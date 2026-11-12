@@ -154,23 +154,9 @@ def guard(source: Path, description: dict, command: list[str], workspace: Path,
         return subprocess.run(command, cwd=workspace, check=False).returncode
 
 
-def verify_parent_locks(roots: list[Path]) -> None:
-    # Dart owns POSIX record locks in its parent process. A child must never
-    # reacquire them blocking, and must not invalidate without that ownership.
-    for root in sorted(set(roots)):
-        name = lock_path(root)
-        fd = os.open(name, os.O_RDWR | os.O_NOFOLLOW)
-        with os.fdopen(fd, 'r+b') as stream:
-            try:
-                fcntl.lockf(stream, fcntl.LOCK_EX | fcntl.LOCK_NB)
-            except BlockingIOError:
-                continue
-            raise ValueError('Caller does not hold the Cargo vendor cache lock')
-
-
 def main() -> int:
     parser = argparse.ArgumentParser(description=__doc__)
-    parser.add_argument('command', choices=['describe', 'invalidate-locked', 'run'])
+    parser.add_argument('command', choices=['describe', 'run'])
     parser.add_argument('--source-root', type=Path, default=ROOT)
     parser.add_argument('--workspace', type=Path, default=ROOT)
     parser.add_argument('--target-dir', type=Path)
@@ -181,13 +167,6 @@ def main() -> int:
     arguments = parser.parse_args(argv[:index])
     tail = argv[index + 1:]
     try:
-        if arguments.command == 'invalidate-locked':
-            if arguments.target_dir is None or arguments.build_dir is None:
-                raise ValueError('Both Cargo cache roots are required')
-            roots = [arguments.target_dir.resolve(), arguments.build_dir.resolve()]
-            verify_parent_locks(roots)
-            invalidate(arguments.source_root, roots)
-            return 0
         data = descriptor(arguments.workspace, tail if arguments.command == 'describe' else ['cargo'], arguments.target_dir)
         if arguments.command == 'describe':
             print(json.dumps(data))

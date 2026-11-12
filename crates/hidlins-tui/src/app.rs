@@ -5171,7 +5171,7 @@ mod tests {
         assert!(app.vault().is_some(), "TUI must own the live vault handle");
 
         let cli = std::env::var("HIDLINS_CLI_BIN")
-            .expect("HIDLINS_CLI_BIN is set by make app-test-integration");
+            .expect("HIDLINS_CLI_BIN is set by make test-console-process-interop");
         let mut child = ProcessCommand::new(cli)
             .args([
                 "--registry",
