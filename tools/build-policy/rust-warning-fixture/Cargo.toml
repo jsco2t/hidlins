@@ -1,0 +1,9 @@
+[package]
+name = "hidlins-build-policy-warning-fixture"
+version = "0.0.0"
+edition = "2024"
+publish = false
+license = "MIT"
+
+# Keep this probe independent from the product workspace and dependency tree.
+[workspace]

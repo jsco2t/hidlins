@@ -1,0 +1,63 @@
+# Cargo
+/target/
+# Shared Rust cache locks live outside roots that cargo clean removes.
+.*.hidlins-vendor.lock
+**/*.rs.bk
+/tools/build-policy/rust-warning-fixture/target/
+
+# Generated verification/build output and interpreter caches
+/build/
+**/__pycache__/
+*.py[cod]
+**/.pytest_cache/
+**/.mypy_cache/
+**/.ruff_cache/
+/vendor/ring/core
+
+# Crash/profiling and transient compiler output outside normal build trees.
+core.[0-9]*
+*.core
+hs_err_pid*.log
+*.profraw
+*.profdata
+*.gcda
+*.gcno
+*.tmp
+*.temp
+*.rej
+
+# Repository-local toolchain/download scratch. This may contain complete Git
+# checkouts and must never become an embedded repo
+# or checked-in dependency.
+/.codex-tmp/
+/fuzz/target/
+/fuzz/artifacts/
+
+# Editor
+*.swp
+*.swo
+*~
+
+# macOS
+.DS_Store
+
+# Local state (vault files, registries — never commit secrets)
+*.kdbx
+*.kdbx.bak
+*.keyfile
+vaults.toml
+
+# Local config overrides (keep .cargo/config.toml committed; ignore user overrides)
+/.cargo/config.toml.local
+
+
+# ignore the demo database lock file
+test-vaults/demo.kdbx.lock
+
+# local agent instructions
+.agent-context.local.md
+
+# Codex feature workflow runtime state
+.ai/workflow/state.json
+.ai/workflow/status.md
+.ai/workflow/evidence/

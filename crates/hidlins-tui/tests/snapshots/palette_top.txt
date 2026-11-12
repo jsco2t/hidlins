@@ -1,0 +1,19 @@
+
+
+
+      ┌Commands — type to filter, Enter to run───────┐
+      │>                                             │
+      │Global                                        │
+      │  quit  [Ctrl+q]                              │
+      │  lock now  [Ctrl+l]                          │
+      │  help  [?]                                   │
+      │  cancel / back  [Esc]                        │
+      │  confirm / open  [Enter]                     │
+      │  add existing vault  [a]                     │
+      │Navigation                                    │
+      │  down  [j / ↓]                               │
+      │  up  [k / ↑]                                 │
+      │  collapse / parent  [h / ←]                  │
+      │  expand / open  [l / →]                      │
+      │  jump back  [Ctrl+o / Alt+←]                 │
+      └──────────────────────────────────────────────┘

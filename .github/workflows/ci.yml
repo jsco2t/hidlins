@@ -1,0 +1,176 @@
+# Hidlins CI.
+#
+# Build, lint, test, docs, supply-chain checks, and KeePassXC interop all run
+# through the top-level Makefile so local and CI workflows stay aligned.
+
+name: ci
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+
+# Least privilege: every job only reads the repo. Nothing here pushes,
+# comments, or publishes; if a future job needs more, grant it per-job.
+permissions:
+  contents: read
+
+env:
+  CARGO_TERM_COLOR: always
+
+jobs:
+  vault-core:
+    name: vault-core (${{ matrix.os }})
+    runs-on: ${{ matrix.os }}
+    strategy:
+      fail-fast: false
+      matrix:
+        os: [ubuntu-latest, macos-latest]
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Install pinned toolchain
+        run: rustup show
+
+      - name: Install KeePassXC CLI (Ubuntu)
+        if: runner.os == 'Linux'
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y keepassxc
+
+      - name: Install KeePassXC CLI (macOS)
+        if: runner.os == 'macOS'
+        run: |
+          brew install --cask keepassxc
+          if ! command -v keepassxc-cli >/dev/null 2>&1; then
+            sudo ln -s /Applications/KeePassXC.app/Contents/MacOS/keepassxc-cli /usr/local/bin/keepassxc-cli
+          fi
+
+      - name: Check KeePassXC CLI
+        run: keepassxc-cli --version
+
+      - name: Install cargo-deny
+        working-directory: /tmp
+        env:
+          CARGO_NET_OFFLINE: "false"
+          RUSTUP_TOOLCHAIN: "1.95.0"
+        run: cargo install --locked cargo-deny --version 0.20.2
+
+      - name: Install cargo-audit
+        working-directory: /tmp
+        env:
+          CARGO_NET_OFFLINE: "false"
+          RUSTUP_TOOLCHAIN: "1.95.0"
+        run: cargo install --locked cargo-audit --version 0.22.1
+
+      - name: Install pinned local-sync fuzz toolchain
+        run: make fuzz-toolchain
+
+      - name: Format check
+        run: make test-dev-tools fmt-check
+
+      - name: Lint
+        run: make lint
+
+      - name: Build
+        run: make build
+
+      - name: Optimized release binaries
+        run: make release
+
+      # Type-check the platform-gated os_events modules (iokit via the
+      # apple cross-targets, natively on the macOS leg) — the drift gate
+      # `make check` bundles locally.
+      - name: macOS os_events drift gate
+        run: make check-macos
+
+      # Compile the feature-gated test suites (clipboard, OS-event
+      # helpers) that no runtime CI sweep builds, so refactors can't
+      # silently break them.
+      - name: Feature-gated test compile gate
+        run: make check-feature-gates
+
+      - name: Shell completions drift gate
+        run: make completions-check
+
+      - name: Unified console modes and terminal cleanup
+        run: make test-console
+
+      - name: Test
+        run: make test
+
+      - name: Isolated logind adapter contracts
+        if: runner.os == 'Linux'
+        run: make test-os-events
+
+      - name: Local-sync security and adversarial tests
+        run: make test-local-sync-security
+
+      - name: Local-sync discovery policy tests
+        run: make test-local-sync-discovery
+
+      - name: Local-sync real-process and isolated-network tests
+        run: make test-local-sync-integration
+
+      - name: Stable local-sync fuzz corpus replay
+        run: make fuzz-local-sync-corpus
+
+      - name: Bounded local-sync fuzz campaigns
+        run: make fuzz-local-sync-ci
+
+      - name: NCSA development-only boundary
+        run: make ncsa-boundary-check
+
+      - name: Retired cloud-object sync surface rejection
+        run: make s3-removal-check
+
+      - name: Ignored tests
+        run: make test-ignored
+
+      - name: API docs
+        run: make doc
+
+      - name: Repository license compliance
+        run: make license-check
+
+      - name: Rust API native contracts
+        run: make test-api-native
+
+      - name: Rust API boundaries
+        run: make boundary-check
+
+      - name: Console process interoperability
+        run: make test-console-process-interop
+
+      - name: Supply-chain policy check
+        run: make deny
+
+      - name: RustSec advisory check
+        run: make audit
+
+      - name: KeePassXC interop (vault-core)
+        run: make interop
+
+      - name: Install oathtool (Ubuntu)
+        if: runner.os == 'Linux'
+        run: sudo apt-get install -y oathtool
+
+      - name: Install oathtool (macOS)
+        if: runner.os == 'macOS'
+        run: brew install oath-toolkit
+
+      - name: KeePassXC interop (entry-management)
+        run: make interop-entry
+
+      - name: KeePassXC interop (sync merge / US-044)
+        run: make interop-sync
+
+      - name: NFR-002 search benchmark gate
+        # Hosted runners gate the median with hardware/noise headroom and
+        # report p99. Controlled local hardware retains the strict p99 gate.
+        run: make bench-search-gate-ci
+
+      - name: Informational benchmark
+        continue-on-error: true
+        run: make bench

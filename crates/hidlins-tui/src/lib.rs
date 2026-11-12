@@ -1,0 +1,259 @@
+//! `hidlins-tui` — the Hidlins reference terminal UI.
+//!
+//! A `ratatui` + `crossterm` keyboard-driven presentation layer over the
+//! Hidlins core crates. All business logic, crypto, and vault I/O live in
+//! `hidlins-core` / `hidlins-security` / `hidlins-sync`; this crate renders and
+//! dispatches keys, holding no vault logic of its own.
+//!
+//! Startup is a shared modal: an empty registry accepts an existing KDBX path,
+//! one registered vault opens its password form directly, and multiple vaults
+//! open an explicit picker before password entry. Successful first-run
+//! authentication persists the registration before entering the persistent
+//! tabbed workspace (Secrets + ≤5 pinned-secret tabs + a Settings/Sync tab).
+//! Action surfaces (search, add/edit, generate, history, sync, command palette)
+//! render as modal overlays over the active tab.
+//!
+//! ## Discoverability & accessibility
+//!
+//! Every keybinding is discoverable at runtime: press `?` to open the command
+//! palette, which is rendered from the command registry (`command::COMMANDS`
+//! paired with the live `Keymap`) so it can never drift from the dispatch
+//! logic. Theming resolves config and CLI/user-theme choices over terminal
+//! capability detection; set `HIDLINS_TUI_THEME=accessible` (or `NO_COLOR`) to force
+//! the monochrome, screen-reader-friendly palette and semantic startup layout
+//! without decorative art. The
+//! chosen palette name is printed to stderr before the alternate screen is
+//! entered, so a theme-detection surprise is visible.
+//!
+//! ## Crate posture
+//!
+//! `deny(unsafe_code)` (the workspace default) with exactly **one** audited
+//! `#[allow(unsafe_code)]` block — the async-signal-safe `SIGHUP`/`SIGTERM`
+//! handler in `terminal_guard` — mirroring `hidlins-security`. No other
+//! `unsafe` is permitted in this crate.
+#![cfg_attr(not(test), deny(unsafe_code))]
+
+pub(crate) mod app;
+pub(crate) mod args;
+pub(crate) mod clipboard;
+pub(crate) mod command;
+pub(crate) mod config;
+pub(crate) mod entry_actions;
+pub(crate) mod error;
+pub(crate) mod event;
+pub(crate) mod jump_history;
+pub(crate) mod native_lock;
+pub(crate) mod overlay;
+pub(crate) mod pairing_runtime;
+pub(crate) mod persistence;
+pub(crate) mod recents;
+pub(crate) mod screens;
+pub(crate) mod server_runtime;
+pub(crate) mod session;
+pub(crate) mod sync_runtime;
+pub(crate) mod tabs;
+pub(crate) mod terminal_guard;
+pub(crate) mod terminal_output;
+pub(crate) mod theme;
+pub(crate) mod user_config;
+pub(crate) mod util;
+pub(crate) mod vault_view;
+pub(crate) mod widgets;
+
+#[cfg(test)]
+mod accessibility_contract_tests;
+#[cfg(test)]
+mod allocation_observer;
+#[cfg(test)]
+mod edit_validation_regressions;
+#[cfg(test)]
+mod framework_memory_regressions;
+#[cfg(test)]
+mod journey_tests;
+#[cfg(test)]
+mod note_memory_regressions;
+#[cfg(test)]
+mod paragraph_position_regressions;
+#[cfg(test)]
+mod password_memory_regressions;
+#[cfg(test)]
+mod render_memory_regressions;
+/// Hand-rolled snapshot harness + tree/detail golden tests (T3.5). In-crate
+/// because the render functions it exercises are `pub(crate)` (the lesson
+/// Phase 1/2 already hit: an integration test in `tests/` can't reach them).
+#[cfg(test)]
+mod snapshot_tests;
+#[cfg(test)]
+mod test_support;
+#[cfg(test)]
+mod ui_state_regressions;
+
+pub use args::{Args, DumpFormat};
+pub use error::TuiError;
+
+use ratatui::backend::CrosstermBackend;
+use ratatui::Terminal;
+
+use hidlins_core::HidlinsPaths;
+
+use crate::app::App;
+use crate::command::Keymap;
+use crate::terminal_guard::TerminalGuard;
+use crate::user_config::UserConfig;
+
+/// Top-level TUI entry point invoked by the console application.
+///
+/// Builds the `App` (registry I/O) before touching the terminal. An empty
+/// registry is a valid first-run state rendered after the alternate screen is
+/// entered; actual startup errors still print on the normal terminal. Then the
+/// terminal guard installs raw mode, alternate screen, and panic/signal
+/// restoration before running the event loop.
+///
+/// # Errors
+///
+/// Returns [`TuiError`] if the registry can't be loaded, `--vault` names an
+/// unknown vault, terminal setup fails, or the event loop fails.
+pub fn run(args: &Args) -> Result<(), TuiError> {
+    run_with(args, hidlins_security::harden_process, run_hardened)
+}
+
+fn run_with<T>(args: &Args, harden: impl FnOnce(), next: impl FnOnce(&Args) -> T) -> T {
+    harden();
+    next(args)
+}
+
+fn run_hardened(args: &Args) -> Result<(), TuiError> {
+    if let Some(message) = args.deferred_option_error() {
+        return Err(TuiError::UnsupportedOption(message));
+    }
+    dispatch_startup(args, |format| dump_keys(args, format), || launch_tui(args))
+}
+
+fn dispatch_startup<T>(
+    args: &Args,
+    dump: impl FnOnce(DumpFormat) -> T,
+    launch: impl FnOnce() -> T,
+) -> T {
+    match args.dump_keys {
+        Some(format) => dump(format),
+        None => launch(),
+    }
+}
+
+fn launch_tui(args: &Args) -> Result<(), TuiError> {
+    let app = App::new(args)?;
+
+    // Surface the detected palette before raw mode / the alternate screen, so a
+    // wrong-palette surprise (R-7) is visible and not swallowed by the TUI.
+    eprintln!("[hidlins-tui] theme: {}", app.theme.name);
+
+    let _guard = TerminalGuard::new(app.mouse_enabled)?;
+    let terminal = Terminal::new(CrosstermBackend::new(terminal_output::stdout_writer()?))?;
+
+    event::run_event_loop(app, terminal)
+}
+
+/// Handle `--dump-keys`: load the effective keymap (config `[keymap]` preset +
+/// patch, honoring `--config`) and print it to stdout. Never touches the
+/// terminal or the vault registry, so it works even with no vaults registered.
+/// An unresolvable home directory falls back to the compiled-default keymap.
+/// Output failures return an error rather than panicking on a closed pipe.
+fn dump_keys(args: &Args, format: DumpFormat) -> Result<(), TuiError> {
+    use std::io::Write;
+    let (cfg, warnings) = load_dump_config(args, args.paths());
+    for warning in warnings {
+        eprintln!("[hidlins-tui] {warning}");
+    }
+    let (keymap, keymap_warnings) = Keymap::from_patch(&cfg.keymap);
+    for warning in keymap_warnings {
+        eprintln!("[hidlins-tui] {}", warning.message);
+    }
+    std::io::stdout()
+        .lock()
+        .write_all(args::dump_keys(&keymap, format).as_bytes())?;
+    Ok(())
+}
+
+fn load_dump_config(
+    args: &Args,
+    default_paths: Result<HidlinsPaths, hidlins_core::VaultError>,
+) -> (UserConfig, Vec<String>) {
+    match args.config.as_deref() {
+        Some(path) => UserConfig::load_from(path),
+        None => match default_paths {
+            Ok(paths) => UserConfig::load(&paths),
+            Err(error) => (
+                UserConfig::default(),
+                vec![format!(
+                    "Could not locate config.toml: {error}; using defaults."
+                )],
+            ),
+        },
+    }
+}
+
+/// Run process hardening, then build the `App` — in that order. Extracted as a
+/// seam so the harden-before-build (and therefore harden-before-any-vault-open)
+/// ordering is unit-testable without a TTY or the real `setrlimit` syscall.
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use std::cell::RefCell;
+
+    // PMF-2 / T2.3: startup must run process hardening BEFORE building the App
+    // (and therefore before any vault can open). Inject spies for both steps and
+    // assert the order — no TTY, no real `setrlimit`.
+    #[test]
+    fn startup_hardens_before_building_app() {
+        let order = RefCell::new(Vec::new());
+        let result: Result<(), TuiError> = run_with(
+            &Args::default(),
+            || order.borrow_mut().push("harden"),
+            |_| {
+                order.borrow_mut().push("build");
+                Err(TuiError::Internal("test seam"))
+            },
+        );
+        assert!(result.is_err(), "the injected build returns the seam error");
+        assert_eq!(*order.borrow(), ["harden", "build"]);
+    }
+
+    #[test]
+    fn dump_route_is_also_hardened_first() {
+        let order = RefCell::new(Vec::new());
+        let args = Args {
+            dump_keys: Some(DumpFormat::Text),
+            ..Args::default()
+        };
+        let route = run_with(
+            &args,
+            || order.borrow_mut().push("harden"),
+            |args| {
+                dispatch_startup(
+                    args,
+                    |format| {
+                        assert_eq!(format, DumpFormat::Text);
+                        order.borrow_mut().push("dump");
+                        "dump"
+                    },
+                    || {
+                        order.borrow_mut().push("launch");
+                        "launch"
+                    },
+                )
+            },
+        );
+        assert_eq!(route, "dump");
+        assert_eq!(*order.borrow(), ["harden", "dump"]);
+    }
+
+    #[test]
+    fn dump_config_reports_path_resolution_failure() {
+        let args = Args::default();
+        let (cfg, warnings) =
+            load_dump_config(&args, Err(hidlins_core::VaultError::HomeUnresolvable));
+        assert_eq!(cfg, UserConfig::default());
+        assert_eq!(warnings.len(), 1);
+        assert!(warnings[0].contains("Could not locate config.toml"));
+    }
+}

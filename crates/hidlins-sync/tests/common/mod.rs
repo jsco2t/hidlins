@@ -1,0 +1,10 @@
+//! Shared synchronization integration-test helpers.
+//!
+//! Compiled independently into each integration test binary that does
+//! `mod common;`. The `dead_code` allow on submodules reflects that any
+//! one test file uses only a subset.
+
+#![allow(dead_code, clippy::doc_markdown)]
+
+pub mod encoding;
+pub mod sync_env;

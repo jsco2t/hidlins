@@ -1,0 +1,658 @@
+# Contributing to Hidlins
+
+Thanks for your interest. Hidlins is a personal/OSS project that values
+**simplicity over cleverness** and treats KDBX interop, durability, and
+supply-chain hygiene as **non-negotiable**. Please read this document — and
+[`CLAUDE.md`](CLAUDE.md) — before opening a PR.
+
+Authoritative source documents (read these for scope):
+
+- **Project PRD** and **engineering plans** live in the external project workspace
+  (paths referenced in [`CLAUDE.md`](CLAUDE.md) — section "Planning docs").
+- **Supply-chain policy:** `$HOME/Developer/sources/personal/projects/hidlins/kb/supply-chain-policy.md`.
+- **Test plan:** the test conventions in this document are the canonical
+  summary of Test Plan §8.1 in the vault-core implementation plan.
+
+---
+
+## Workspace layout
+
+```
+hidlins/
+├── Cargo.toml                # workspace manifest, resolver = "2"
+├── Cargo.lock                # pinned, source of truth, checked in
+├── rust-toolchain.toml       # pinned channel + cross-compile targets
+├── deny.toml                 # cargo-deny config (9 Rust target triples)
+├── .cargo/config.toml        # offline + vendored-sources
+├── vendor/                   # all Rust dependencies, checked in
+├── .github/workflows/        # CI
+├── crates/
+│   ├── hidlins-core/         # library — KDBX I/O, registry, atomic, locking
+│   ├── hidlins-api/          # reusable Rust application API
+│   ├── hidlins-cli/          # CLI frontend
+│   ├── hidlins-tui/          # TUI frontend
+│   └── hidlins-agent/        # placeholder binary
+└── tools/
+    └── interop-tests/        # committed KeePassXC interop harnesses
+```
+
+---
+
+## First-time setup
+
+On a fresh machine (Linux or macOS), install all required tooling with one
+command:
+
+```sh
+make toolchain     # Rust toolchain (via rustup), keepassxc-cli, cargo-deny, cargo-audit
+```
+
+It is cross-platform and idempotent — it uses `rustup` for the pinned Rust
+toolchain (per `rust-toolchain.toml`), the native package manager for
+`keepassxc-cli` (Homebrew on macOS; apt/dnf/pacman/zypper on Linux), and
+`cargo install` for the supply-chain tools, at the same versions CI uses. It
+skips anything already installed. `rustup` itself is the one prerequisite
+(see <https://rustup.rs>). After it finishes, the offline `make` loop below
+works from a clean clone.
+
+## Building and testing
+
+**Everything goes through `make`** — `make` is the build system of record
+(see [`CLAUDE.md`](CLAUDE.md) §"Build system"). Run `make` alone (or
+`make help`) to list every target. The day-to-day loop:
+
+```sh
+make build         # build the workspace (offline, vendored)
+make release       # optimized host CLI, TUI, and agent binaries
+make test          # default-parallel tests
+make test-ignored  # serial run of env-mutating / fault-injection tests
+make fmt           # auto-format
+make lint          # clippy with `-D warnings`
+make check         # Rust gate: fmt-check + lint + build + test
+make verify        # everything: check + license-check + ignored tests + docs + supply-chain + interop + boundary-check
+make deny          # cargo-deny (license + advisory + bans)
+make vendor        # re-vendor dependencies (the only target that needs network)
+make vendor-patches # verify exact vendored patches and their negative guards
+make test-local-sync-security # local-sync crypto and memory-hygiene boundary
+make test-local-sync-discovery # deterministic LAN discovery + desktop adapter boundary
+make test-local-sync-integration # real local sockets, shutdown, and isolation boundary
+make fuzz-local-sync-corpus # deterministic committed parser corpus replay
+make fuzz-local-sync-ci # bounded fixed-seed development fuzzing
+make ncsa-boundary-check # prove fuzz-only NCSA code cannot enter product artifacts
+```
+
+These targets wrap `cargo` with `--workspace --offline --locked`. A clean
+clone produces identical results to CI because `Cargo.lock`, `vendor/`,
+`rust-toolchain.toml`, and the `Makefile` itself are all committed and
+authoritative.
+
+Snow is an exceptional security-sensitive vendored dependency: the repository
+maintains an exact-version zeroization and feature-closure patch until upstream
+provides independently verified equivalent coverage. See
+[`crates/hidlins-sync/docs/snow-dependency.md`](crates/hidlins-sync/docs/snow-dependency.md)
+before changing its version, features, manifests, or patched source. Never edit
+`vendor/snow` without making the same exact-context and digest change in
+`tools/dev/vendor.py`.
+
+The isolated `fuzz/` workspace has the only NCSA exception: exact
+`libfuzzer-sys 0.4.13`, development/testing only. Its fuzz executables are
+non-distributable. Root `deny.toml` does not allow NCSA, and no CLI, TUI, agent,
+or other application artifact may contain that
+crate or its LLVM libFuzzer code. Run `make ncsa-boundary-check` before any
+release or packaging change; it checks dependency closures, exact policy scope,
+negative controls, packaging hooks, and produced Rust release artifacts.
+Do not move a fuzz dependency into the root workspace or reuse a fuzz build
+output in application packaging.
+
+All Rust compilation reached through `make` appends `-D warnings` to any
+caller-supplied `RUSTFLAGS`; rustdoc does the same through `RUSTDOCFLAGS`.
+`make build-policy-check` is part of `make check` and compiles an intentional
+warning fixture to prove the policy remains active and caller flags survive.
+`make release` builds optimized Rust workspace artifacts for the current host.
+The console executable is `target/release/hidlins`; it starts the TUI by default
+and runs one-shot CLI commands when arguments select them. `hidlins-agent` is
+currently a placeholder. The reusable `hidlins-api` library is described in
+[the Rust API guide](docs/rust-api.md).
+
+`make license-check` audits all retained dependency graphs, first-party license
+declarations, vendored provenance/integrity, the EFF asset notice, and the exact
+development-only NCSA exception. Run it before dependency or release changes.
+
+**Adding a new workflow?** If you add a new lint, test category, code-gen
+step, harness, or CI step, add the matching `make` target in the same
+change. This is a project rule — see [`CLAUDE.md`](CLAUDE.md)
+§"Keeping the Makefile up to date" for the rationale.
+
+---
+
+## Adding a dependency
+
+Every new dependency goes through this five-step workflow (from the
+supply-chain policy, Rule 4). Document each step in the PR description.
+
+### 1. License check
+
+Production and distributable application dependencies **must be one of**:
+`MIT`, `Apache-2.0`,
+`BSD-2-Clause`, `BSD-3-Clause`, `ISC`, `Zlib`, `Unicode-3.0`,
+`Unicode-DFS-2016`, `Unlicense`, `CC0-1.0`.
+
+The only development/testing exception is exact `libfuzzer-sys 0.4.13` in the
+isolated `fuzz/` workspace under NCSA. Its fuzz executables are
+non-distributable. Root policy and every product graph continue to reject NCSA;
+`make ncsa-boundary-check` enforces the exception's crate/version, dependency
+closure, packaging hooks, negative controls, and produced artifacts.
+
+The following are **forbidden**, including via transitive deps:
+`GPL-*`, `LGPL-*`, `AGPL-*`, **`EPL-1.0`, `EPL-2.0` (Eclipse Public License,
+including JUnit)**, `SSPL-*`, `Commons Clause`,
+**including GPL-with-linking-exception** (the ambiguity isn't worth it —
+e.g., `libgit2` remains banned).
+
+JUnit and EPL-licensed dependencies have no development, testing, build-tool,
+runner, adapter, BOM, or metadata-only exception. Do not add verification hashes
+to admit them; remove the dependency path while preserving test coverage.
+
+`make deny` enforces the Rust license allowlist. `make license-check`
+guards the explicit EPL ban and ensures neither Rust policy admits it.
+
+**Clarification — linked vs. invoked test drivers:** GPL software
+**linked or loaded** into the build (linked as a C library, loaded via
+FFI, statically included) is forbidden by the rules above. GPL software
+**invoked as a subprocess in tests** (e.g., the `keepassxc-cli` binary
+used for KDBX round-trip verification) is **permitted** — it does not
+enter `Cargo.lock` and is not redistributed with the binary. This is
+documented to avoid future ambiguity.
+
+### 2. Maintenance signal
+
+Confirm the crate is actively maintained: recent commits, recent
+releases, responsive issue tracker, no flood of unaddressed security
+advisories. If the crate is dormant but the code is small and obvious,
+prefer vendoring with patches over depending on a stale upstream.
+
+### 3. Popularity baseline
+
+The crate should be in widespread use within the Rust ecosystem
+(typically: pulled in transitively by `cargo`, `rustup`, popular
+runtimes, or major application crates). Lightly-used crates require
+extra scrutiny in step 5.
+
+### 4. Vendoring + Cargo.lock review
+
+Add the dependency to `Cargo.toml`, then:
+
+```sh
+make vendor   # CARGO_NET_OFFLINE=false cargo vendor — needs network access
+```
+
+Inspect the diff in `vendor/` and `Cargo.lock`:
+
+- Confirm only expected new directories appear.
+- Skim `Cargo.toml` of each new vendored crate — look for `build.rs`
+  scripts that fetch from the network or shell out to external tools.
+  **Build-script networking is forbidden.**
+- Confirm no banned crates (`openssl-sys`, `git2`, `libgit2-sys`,
+  `native-tls`) appear in the dep graph.
+- Run `make deny` locally — it must pass.
+
+### 5. PR description checklist
+
+The PR description must include a checklist of:
+
+- [ ] License of each new (direct + transitive) crate — confirmed
+      permissive
+- [ ] Upstream maintenance status — last release, last commit, issue
+      backlog
+- [ ] Popularity — download count and notable users
+- [ ] Vendored diff reviewed — no surprises
+- [ ] `make deny` clean
+- [ ] `make build` clean from a fresh clone
+
+CI gates merge on `make deny` (license + advisory + bans) and
+`make audit` (RustSec advisories).
+
+### Dependency Review Log
+
+Direct dependencies added through the workflow above, newest first. Each line
+records the review at its add point; transitive crates are covered en masse by
+`make deny` (license + bans) over the four Phase-0 targets.
+
+#### Desktop DNS-SD/mDNS discovery (local-network-sync Task 005, 2026-09-06)
+
+`mdns-sd` is exact-pinned at 0.20.3, optional behind `desktop-discovery`, and
+target-scoped to macOS/Linux. The crates.io archive SHA-256 is
+`86dbb9f00c8c367f75ed3a775d3eb31d0375a72f58275ef64a1bc53c255a2ce2`;
+its embedded provenance identifies upstream `keepsimple1/mdns-sd` commit
+`30432c20738f8efbf373c7333075e4e4532228ff`. The crate is Apache-2.0 OR MIT,
+has no build script, and `#![forbid(unsafe_code)]`. Its default `async` and
+`logging` features are disabled and optional `serde` is not enabled. Hidlins
+uses the synchronous receiver and its own bounded DTOs, errors, and policy.
+
+The applicable added graph is six vendored directories (about 1.9 MiB):
+`mdns-sd` 0.20.3 (Apache-2.0 OR MIT), `flume` 0.12.0 (Apache-2.0/MIT),
+`if-addrs` 0.15.0 (MIT OR BSD-3-Clause), `socket-pktinfo` 0.4.1 (MIT),
+`socket2` 0.6.5 (MIT OR Apache-2.0), and `spin` 0.9.9 (MIT). `fastrand`,
+`mio`, `log`, `lock_api`, `scopeguard`, `libc`, and the off-target Windows
+support were already present; `socket-pktinfo` raises the shared `libc` lock
+from 0.2.186 to 0.2.189. None of the six new crates has a build script.
+The mDNS crate itself is safe Rust; the focused socket/interface wrappers
+contain their expected platform FFI, reviewed as a narrower surface than a
+new in-repository cross-platform socket implementation.
+
+Maintenance and adoption are strong enough for this narrow role: 0.20.3 was
+released 2026-07-26 with a malformed-label panic fix, upstream had 349 commits,
+roughly 220 stars/70 forks, later maintained releases, and public ecosystem
+indexes reported about 4.25 million total and 196,000 weekly downloads at
+review time. A hand-written DNS parser/responder would create a large hostile
+packet parser and protocol-maintenance burden; OS-native-only code would split
+desktop behavior and require Avahi/D-Bus runtime coupling on Linux; broader
+async/native discovery crates add runtimes or platform frameworks. The chosen
+crate uniquely closes desktop browse, advertise, interface-change, TTL, and
+shutdown behavior while Rust still owns address filtering and Noise identity.
+
+The vendored source and lock diff were reviewed before first feature-enabled
+execution. `make test-local-sync-discovery` covers the adapter and deterministic
+spoof/DHCP/expiry simulation; `check-feature-gates` proves `mdns-sd` is absent
+from Android and iOS dependency graphs. `make deny` and `make audit` gate the
+complete exact graph.
+
+#### `hidlins-tui` — `ratatui` TUI stack (tui-skeleton Phase 1, 2026-06-01)
+
+The reference terminal UI's four direct deps, pinned to the latest stable
+published ≥30 days old (impl-plan OQ-1). All MIT / MIT-OR-Apache-2.0 throughout;
+`make deny` (licenses + bans + sources) green; no `build.rs` networking in any
+vendored crate. `hidlins-core` + `hidlins-sync` are workspace path deps (no new
+vendored sources); `libc` (`cfg(unix)`, the async-signal-safe `SIGHUP`/`SIGTERM`
+handler) was already vendored.
+
+| Crate | Ver | License | Maintenance / popularity | Notes |
+| --- | --- | --- | --- | --- |
+| `ratatui` | 0.30.2 | MIT | The maintained `tui-rs` successor; the de-facto Rust TUI framework. | Defaults disabled; enables only `crossterm`, `layout-cache`, and `unstable-rendered-line-info`. The backend retains core underline-color support. Unused macros, calendar, and alternate backend feature forwarding are excluded. Task 001 selected 0.30.2 because its component graph resolves the patched `lru 0.18.3`. |
+| `crossterm` | 0.29.0 | MIT | The standard cross-platform terminal backend; ratatui's default. | Declared directly for raw-mode / alternate-screen (`terminal_guard`) and the `KeyEvent` types (`keys`). Single version in the tree (ratatui 0.30 rides crossterm 0.29). |
+| `tui-input` | 0.15.3 | MIT | Small input-widget primitive. | `default-features = false, features = ["crossterm"]`; Hidlins uses Input state and event translation, with its own rendering widgets. The Ratatui input adapter is unnecessary. |
+| `unicode-width` | 0.2.2 | MIT OR Apache-2.0 | Unicode TR-11 display widths; ubiquitous. | Display-width-correct tab-label / detail truncation (Phase-2 T2.4 / OQ-N6). |
+
+**Historical incidental supply-chain fix (separate from the TUI deps):** the re-vendor
+surfaced that `aes 0.9.0` — a transitive of `keepass 0.12.9` (`hidlins-core`) —
+was **yanked** upstream after its original integration, which
+`deny.toml`'s `yanked = "deny"` rejects. Resolved with the
+registry's intended replacement via `cargo update -p aes --precise 0.9.1`
+(satisfies keepass's `^0.9`; **no keepass change**). KDBX crypto behaviour
+unchanged — verified by `cargo test -p hidlins-core -p hidlins-sync` (incl. the
+`merge_semantics.rs` characterization suite). The current graph supersedes this
+historical stopgap with `keepass 0.13.25` and `aes 0.9.1`; `make deny` and
+`make audit` are green.
+
+#### Dependency reduction audit (2026-11-12)
+
+Every first-party direct dependency was traced through production, test,
+feature-gated and platform-specific Rust source. Removed unused `secrecy`
+declarations from `hidlins-api` and CLI tests, plus redundant API test `toml`
+and sync test `sha2` declarations. `secrecy 0.10.3` (Apache-2.0 OR MIT) remains
+necessary inside `keepass`; its protected-value behavior is unchanged.
+
+`ratatui 0.30.2` and `tui-input 0.15.3` remain MIT dependencies at the same
+reviewed versions. Their established maintenance/adoption basis is recorded
+above; this audit changes no package version or source implementation. The
+narrow feature selection removes 52 registry packages and 23,140,934 bytes of
+vendored source, leaving 340 packages across the production/fuzz lock union.
+Seven packages also leave the compiled Ratatui closure: its unused macro crate
+and six calendar/time helpers. Layout caching, backend behavior, text geometry
+and core underline-color features remain. The obsolete Termwiz-only codec
+patch was deleted; remaining vendored source bytes were unchanged.
+
+The API, CLI and TUI application suites passed before this feature reduction.
+Afterward, `make check test-dev-tools license-check`, `make vendor-patches`,
+and `make deny audit` passed, including the native API feature checks.
+`make lint` with `CLIPPY_FLAGS` selecting the TUI library also passed for both
+macOS architectures (compile checks on Linux, without linking or runtime tests).
+Cargo audit retains the existing allowed yanked warning for the Windows-only
+`clipboard-win 5.4.1`; no dependency or license exception was added.
+A new in-repository renderer/input implementation would
+replace useful maintained behavior and is not justified; disabling unused
+features is sufficient. Platform-specific, fuzz-only and resolver-required
+optional sources remain when Cargo still needs them; an unused host feature is
+not evidence that a locked source can be removed safely.
+
+#### `keepass` `_merge` feature enabled (Phase 4, 2026-05-26)
+
+**No new crate.** A feature flag on the already-vendored, exact-pinned
+`keepass = "=0.13.25"` (in `hidlins-core`): `features = ["save_kdbx4", "_merge"]`.
+`_merge` (an empty feature, `_merge = []`) compiles the crate's UUID-keyed
+two-way `Database::merge`, which the sync layer reuses behind
+`hidlins_sync::merge::reconcile` (design ADR-008). No dependency-graph, license,
+or `cargo deny` impact (verified: `make check` green). It is an **experimental**
+(`_`-prefixed) upstream feature, accepted under the same posture as keepass's
+experimental KDBX4 *write* (KB `keepass-rs-library.md` limitation #1): pinned +
+vendored so it only moves on a deliberate upgrade, and its observable semantics
+are pinned by a defensive characterization suite
+(`crates/hidlins-sync/tests/merge_semantics.rs`) that fails CI if a future bump
+changes merge behaviour. **Upgrade rule:** any bump of the keepass pin must
+re-run that suite and review upstream `_merge` changes before landing.
+
+## Testing conventions
+
+Established by Phase 0 (vault-core T1.4 / T1.5) and inherited by all
+later features.
+
+### Framework
+
+- **Rust standard `#[test]`.** No third-party test framework (no
+  `rstest`, no `cucumber`).
+- **Assertions:** `assert!`, `assert_eq!`, `assert_ne!`, `assert_matches!`
+  (stable Rust 1.82+). No `unwrap()` inside tests — use
+  `expect("clear failure message")` so failures point at the right line.
+  No `?` operator inside tests — let panics print the right location.
+
+### Mocks
+
+- **None.** Vault-core has no mock-worthy boundary; its dependencies
+  are the filesystem and `keepass-rs`. Both are used real, in
+  `tempfile::TempDir`-isolated sandboxes. Tests that need a "second
+  process" (cross-process locking, fault injection) spawn one via
+  `std::process::Command` against a tiny in-repo helper binary.
+
+### Layout
+
+- **Unit tests** live in a `#[cfg(test)] mod tests` block at the bottom
+  of the module file they exercise.
+- **Integration tests** live in `crates/hidlins-core/tests/`, one file
+  per user scenario, named for the US identifier (`us_001_create_vault.rs`,
+  etc.).
+- **Shared helpers** live in `crates/hidlins-core/tests/common/mod.rs`
+  (Cargo convention). Phase 0 establishes [`TestEnv`].
+- **Helper binaries** (`lock_holder`, `fault_helper`, `vault_holder`,
+  `hidlins-test-driver` — Phase 4+) are declared as `[[bin]]` entries
+  in `Cargo.toml`. Tests discover them via
+  `env!("CARGO_BIN_EXE_<name>")` — the standard Rust idiom — not via
+  `cargo run --bin`.
+
+### Table-driven tests
+
+Where multiple inputs exercise the same behavior, use a
+`cases: &[Case]` slice with a loop. Each case has a
+`name: &'static str` field; assertion messages include the case name so
+failures are unambiguous.
+
+### Cleanup
+
+- **Every test that touches the filesystem uses `tempfile::TempDir`**
+  (or `NamedTempFile`); the directory is auto-deleted on drop.
+- **No test writes to `$HOME`, `/tmp` directly, or any path resolved
+  from the user's real environment.** The `TestEnv` helper enforces
+  this by constructing a `HidlinsPaths` whose `state_dir` is inside the
+  tempdir.
+
+### `unsafe` in tests
+
+Two specific test categories require `unsafe`:
+
+1. **Zeroize verification** — `std::ptr::read_volatile` to inspect the
+   underlying buffer of a `MasterPassword` / `Keyfile::Bytes` after
+   calling `.zeroize()`. One test per sensitive type, with a documented
+   block-level SAFETY comment.
+2. **Environment mutation** — `std::env::set_var` / `remove_var` are
+   `unsafe` in Rust 1.85+ due to libc-getenv thread-safety semantics.
+   Tests that mutate env vars use an `EnvGuard` RAII helper that
+   serializes via a module-local `Mutex<()>`.
+
+Production `hidlins-core` uses `#![deny(unsafe_code)]`. Narrow, audited
+allowances cover Unix page-size lookup and `mlock`/`munlock`
+in `secret.rs`, plus Android advisory `flock` in `locking.rs`.
+
+`MasterPassword` already uses a stable allocation with private, page-aligned
+lock ranges. Unix memory locking is best-effort under OS quotas; the password
+bytes are zeroized before unlocking and freeing them. This covers the owned
+password buffer, not key material or Argon2 output allocated inside
+`keepass-rs`. Review the actual `SAFETY` comments and preserve those limits.
+
+---
+
+## Security-behaviours testing conventions
+
+The `hidlins-security` crate carries two test-invocation conventions
+that are not obvious from the `cargo test` defaults.
+
+### Signal-handler test serialization (`SignalGuard`)
+
+Tests that install a `signal-hook::iterator::Signals`, call
+`signal::raise(...)`, send signals to spawned children, or otherwise
+touch process-global signal disposition **must** acquire a shared
+`Mutex<()>` at the top of their body. The shared lock lives at
+`crates/hidlins-security/tests/common/signals.rs` (`SIGNAL_GUARD`) and
+its module docstring documents the contract.
+
+The lock prevents two parallel `cargo test` workers in the same test
+binary from racing each other inside the kernel's process-global
+signal state. Tests that do NOT touch signal disposition do not need
+the guard. The pattern mirrors `hidlins-core`'s `EnvGuard` for `HOME`.
+
+The guard is shared by the shipped signal and OS-lock integration tests so
+every process-global signal mutation follows the same serialization rule.
+
+### Clipboard / OS-events test invocation (`make test-clipboard`, `make test-os-events`)
+
+`hidlins-security`'s clipboard tests need a real display server (X11,
+Wayland, or macOS Pasteboard) so they're `#[ignore]`d by default.
+
+- `make test-clipboard` runs the `#[ignore]`d clipboard tests serially
+  (`--test-threads=1`). On Linux CI, wrap the invocation in
+  `xvfb-run -a make test-clipboard` so an X11-headed display is
+  available. The matching test filter is `us_053_clipboard`.
+- `make test-os-events` runs the shipped `LogindSource` integration on Linux
+  against a private `dbus-daemon` with a fixture that owns the logind service
+  name and emits from that connection. It also checks cancellation during
+  stalled bus authentication. Linux needs `dbus-daemon` on `PATH`, with no
+  root privileges, host bus, policy override, display or active logind session.
+  This tests the production adapter/controller contract; physical host sleep
+  and screensaver delivery still requires observing the native desktop.
+  On macOS the target runs the shipped `IoKitSource` integration and needs
+  native desktop/session services and manual event triggers. The compile-only
+  cross-target coverage remains in `make check`.
+
+Both targets are wrappers over `cargo test`; the actual `#[ignore]`
+filtering happens in code. The Makefile targets exist primarily for
+discoverability via `make help` and for CI workflow parity.
+
+---
+
+## CLI conventions
+
+The `hidlins-cli` crate is the reference scriptable surface (PRD §6.7,
+FR-060..064). Its public behaviour is treated as a stable contract —
+adding subcommands and JSON fields is additive; renames or removals are
+breaking.
+
+### No `--master-password` flag
+
+There is no `--master-password` (or `--password`) flag anywhere in the
+CLI, on any subcommand. The master password is collected *only* via the
+no-echo secure stdin prompt (the in-repository `nix`/termios implementation
+in `crates/hidlins-cli/src/prompt.rs`). A unit test in
+`crates/hidlins-cli/src/cli.rs` walks the entire clap command tree at
+build time and fails the build if any flag with this name appears.
+
+Rationale: command-line flags are visible to anyone on the same host
+via `ps`, are recorded in shell history, and end up in `~/.bash_history`
+on disk.
+
+### `HIDLINS_MASTER_PASSWORD` is reserved and ignored
+
+If the environment variable `HIDLINS_MASTER_PASSWORD` is set when
+`hidlins` starts, the CLI:
+
+1. writes a warning to stderr (without echoing the value), and
+2. calls `std::env::remove_var` to scrub it from the process
+   environment before any subcommand runs.
+
+This is defence-in-depth against `hidlins foo` being invoked from a
+parent shell that already has the variable exported — even by mistake.
+The scrub ensures no subprocess the CLI spawns can inherit the bypass
+attempt.
+
+### Secret-emission discipline
+
+Default output never includes secret material. Subcommands that surface
+secrets (`entry get`, `gen password`, `gen passphrase`) require an
+explicit flag (`--show-password`, `--show-totp`, `--show`) before the
+secret is rendered. This applies to both human and JSON output.
+
+`--copy` is the preferred path: it hands the value to the
+security-behaviors clipboard with an auto-clear timer and blocks
+on the timer's expiry before the CLI exits.
+
+### JSON schemas are a public contract
+
+Per-subcommand `serde::Serialize` view structs live in
+`crates/hidlins-cli/src/views/`. Each is the JSON schema for its
+subcommand. Evolution rules:
+
+- New optional fields are additive — use
+  `#[serde(skip_serializing_if = "Option::is_none")]` so older
+  consumers see no diff.
+- Field renames and type changes are breaking — they require a major
+  version bump.
+- Errors in `--format json` mode go to **stdout** as
+  `{"error":{"code":N,"kind":"...","message":"..."}}` so a single
+  `hidlins ... --format json | jq` pipeline sees JSON regardless of
+  exit status. Human-mode errors continue to go to stderr.
+
+### Exit-code stability promise
+
+The documented `CliExit` table (`crates/hidlins-cli/src/exit.rs`) is
+frozen at MVP merge. Adding a new exit code is non-breaking; reusing
+or reassigning an existing code is breaking.
+
+The codes:
+
+| Code | Meaning                                              |
+| ---- | ---------------------------------------------------- |
+| 0    | Success                                              |
+| 1    | User error (bad flag, missing vault, parse failure)  |
+| 2    | Vault locked / authentication failed / contended     |
+| 3    | Sync conflict requiring user action                  |
+| 10   | Internal / unexpected failure                        |
+| 11   | Known unimplemented surface (slot subcommands)       |
+
+Exhaustive `From<XxxError> for CliExit` impls cover every
+consumed-library error variant. Adding a new variant in
+`hidlins-core`'s `VaultError` (or any sibling crate's error enum)
+fails the build until the new variant is mapped — the design contract.
+
+### CLI dependency policy
+
+The CLI's dep tree is intentionally minimal:
+
+- **Integration tests** use `std::process::Command` with
+  `env!("CARGO_BIN_EXE_hidlins")` directly rather than pulling in
+  `assert_cmd` + `predicates` (which would add roughly fifteen
+  transitive crates for no functional gain).
+- **`clap`'s non-essential features** (`wrap_help`, `color`) are
+  disabled at the manifest to avoid `anstream` / `terminal_size` /
+  `colorchoice` and their transitives.
+- **The secure no-echo prompt** uses `nix::sys::termios` directly
+  (Unix-only, ~2 MB vendored) rather than `rpassword`. `rpassword`'s
+  `cfg(windows)` branch pulls the `windows-sys` family plus seven
+  architecture-stub crates — roughly 93 MB of vendored sources that
+  would never compile on the project's supported macOS + Linux
+  targets. The replacement helper is ~80 LoC in
+  `crates/hidlins-cli/src/prompt.rs` (`read_password_no_echo` plus
+  an `EchoGuard` RAII wrapper); the unsafe stays inside `nix`, so
+  the crate keeps `#![cfg_attr(not(test), forbid(unsafe_code))]`.
+
+New direct deps still go through the five-step "Adding a dependency"
+workflow above.
+
+### Subcommand surface
+
+The complete `hidlins` subcommand tree as of MVP (FR-060). Subcommands
+marked _slot_ parse their flags but return exit 11
+(`not.implemented`); the flag surface is the forward-compat contract
+with the implementing feature, which fills in only the body.
+
+| Subcommand                | Purpose                                                                 | Status                       |
+| ------------------------- | ----------------------------------------------------------------------- | ---------------------------- |
+| `hidlins vault create`    | Create + register a new KDBX vault. Prompts for the master password.    | Implemented                  |
+| `hidlins vault register`  | Authenticate + register an existing KDBX vault without modifying it.    | Implemented                  |
+| `hidlins vault open`      | Probe vault unlock (MVP one-shot; agent caches in post-MVP).            | Implemented                  |
+| `hidlins vault list`      | List registered vaults from `vaults.toml`.                              | Implemented                  |
+| `hidlins vault set-lock`  | Configure or clear the per-vault idle-lock timeout.                     | Implemented                  |
+| `hidlins entry add`       | Add a new entry. `--password-stdin` or `--generate` is required.        | Implemented                  |
+| `hidlins entry get`       | Read an entry by UUID or title. `--copy` hands to the clipboard.        | Implemented                  |
+| `hidlins entry edit`      | Update entry fields and tags.                                            | Implemented                  |
+| `hidlins entry rm`        | Remove an entry (recycle bin by default; `--permanent` skips it).        | Implemented                  |
+| `hidlins entry list`      | List entries with optional tag / expiry filters + pagination.            | Implemented                  |
+| `hidlins entry search`    | Full-text search over titles, usernames, URLs, notes.                    | Implemented                  |
+| `hidlins gen password`    | Generate a random password. `--copy` hands to the clipboard.             | Implemented                  |
+| `hidlins gen passphrase`  | Generate an EFF-large-wordlist diceware passphrase. `--copy` supported.  | Implemented                  |
+| `hidlins sync now`        | Synchronize a paired client vault once.                                  | Implemented                  |
+| `hidlins sync serve`      | Run an authoritative server in the foreground until `Ctrl+C`.            | Implemented                  |
+| `hidlins sync pair`       | Pair an existing vault by discovery or a policy-checked local literal.   | Implemented                  |
+| `hidlins sync import`     | Pair and import an encrypted vault.                                      | Implemented                  |
+| `hidlins sync status`     | Show local role, pairing, and server status.                             | Implemented                  |
+| `hidlins sync peers`      | List, rename, or revoke pinned peers.                                    | Implemented                  |
+| `hidlins ssh add`         | Import an SSH key into a vault.                                          | Slot → `features/ssh-keys/`  |
+| `hidlins ssh load`        | Load an SSH key from a vault into the running `ssh-agent`.               | Slot → `features/ssh-keys/`  |
+| `hidlins ssh generate`    | Generate a new SSH keypair and store it in a vault.                      | Slot → `features/ssh-keys/`  |
+| `hidlins completions`     | Emit a shell completion script (`bash`, `zsh`, `fish`).                  | Implemented                  |
+
+`vault create` / `vault register` / `vault open` and every `entry` verb prompt
+for the master password via the secure stdin path; `gen password` and `gen
+passphrase` never touch the vault and never prompt.
+
+### Shell completions
+
+The CLI ships pre-generated completion scripts for `bash`, `zsh`, and
+`fish` at the workspace root under
+`shell-completions/{hidlins.bash,_hidlins,hidlins.fish}`. They are
+generated by `make completions`, which invokes
+`crates/hidlins-cli/examples/gen_completions.rs` over the same
+`clap_complete` code path that `hidlins completions <shell>` uses at
+runtime — runtime and packaged outputs cannot drift.
+
+CI runs `make completions-check` (a wrapper that calls
+`make completions` and then checks `git status --porcelain --
+shell-completions/`) as a drift gate. Any contributor who adds a
+subcommand or a flag without re-running the target fails the build.
+
+If `make completions-check` fails locally:
+
+```sh
+make completions             # regenerate the three scripts
+git add shell-completions/   # stage the updated outputs
+```
+
+Packaging (Phase 1+) will install the three files to system-standard
+locations (`/usr/share/bash-completion/completions/hidlins`, etc.);
+until then users source the files directly from a clone, e.g.:
+
+```sh
+source shell-completions/hidlins.bash
+```
+
+---
+
+## Style
+
+- `make fmt-check` is enforced by CI (wraps `cargo fmt --all --check`).
+- `make lint` is enforced by CI (wraps
+  `cargo clippy --workspace --all-targets -- -D warnings`). The
+  workspace allows `pedantic` Clippy as a warning baseline; three lint
+  families (`module_name_repetitions`, `must_use_candidate`,
+  `missing_errors_doc`) are allowed because they fire on idiomatic API
+  shapes.
+- Public items in `hidlins-core` have rustdoc comments. CI runs
+  `make doc` (wraps `cargo doc --no-deps --offline`) with warnings as errors.
+
+---
+
+## Related documents
+
+- [`CLAUDE.md`](CLAUDE.md) — non-negotiable rules (security, supply
+  chain, technical constraints).
+- [`README.md`](README.md) — project overview.
+- **PRD** and **engineering plans** — referenced from `CLAUDE.md`.
+- **Supply-chain policy:** `$HOME/Developer/sources/personal/projects/hidlins/kb/supply-chain-policy.md`.
+- **Test plan:** Test Plan §8.1 in
+  `$HOME/Developer/sources/personal/projects/hidlins/features/vault-core/plans/implementation-plan.md`.

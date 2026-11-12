@@ -1,0 +1,43 @@
+[package]
+name = "hidlins-local-sync-fuzz"
+version = "0.0.0"
+publish = false
+edition = "2021"
+license = "MIT"
+
+[package.metadata]
+cargo-fuzz = true
+
+[workspace]
+resolver = "2"
+
+[features]
+fuzzing = ["dep:libfuzzer-sys"]
+
+[dependencies]
+hidlins-sync = { path = "../crates/hidlins-sync" }
+libfuzzer-sys = { version = "=0.4.13", optional = true }
+
+[[bin]]
+name = "local_protocol"
+path = "fuzz_targets/local_protocol.rs"
+test = false
+doc = false
+bench = false
+required-features = ["fuzzing"]
+
+[[bin]]
+name = "local_address"
+path = "fuzz_targets/local_address.rs"
+test = false
+doc = false
+bench = false
+required-features = ["fuzzing"]
+
+[[bin]]
+name = "pairing_state"
+path = "fuzz_targets/pairing_state.rs"
+test = false
+doc = false
+bench = false
+required-features = ["fuzzing"]

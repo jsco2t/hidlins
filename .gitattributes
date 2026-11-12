@@ -1,0 +1,4 @@
+# Preserve upstream CRLF and Markdown hard breaks in audited vendored sources
+# without allowing their intentional whitespace to fail the repository gate.
+vendor/quick-xml/** whitespace=-trailing-space
+vendor/ratatui-widgets/src/canvas/line.rs whitespace=-trailing-space

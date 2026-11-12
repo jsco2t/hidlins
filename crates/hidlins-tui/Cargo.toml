@@ -1,0 +1,95 @@
+[package]
+name = "hidlins-tui"
+autobins = false
+description = "Hidlins keyboard-driven terminal UI for vault, entry, generator, security, and local sync operations."
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+authors.workspace = true
+repository.workspace = true
+rust-version.workspace = true
+
+[lints]
+workspace = true
+
+[features]
+default = []
+# Builds the cross-process App/CLI advisory-lock case only for the Task 006
+# integration target; it adds no dependency and is absent from release builds.
+process-interop-tests = []
+
+[dependencies]
+# First-party (workspace path deps).
+hidlins-core = { path = "../hidlins-core", version = "0.1" }
+# Real sync engine. The TUI consumes `hidlins_sync::Sync` directly (the
+# abandoned `sync-git` placeholder is gone); `TuiError` bridges
+# `hidlins_sync::SyncError` via `#[from]` (design U.5 / ADR-T4).
+hidlins-sync = { path = "../hidlins-sync", version = "0.1", features = ["desktop-discovery"] }
+# Auto-lock + clipboard. `AutoLockController` enforces FR-073 idle locking;
+# `Clipboard`/`AutoClearGuard` protect copy actions.
+hidlins-security = { path = "../hidlins-security", version = "0.1", features = ["logind", "iokit"] }
+# Password / passphrase generation for the Edit→Generate panel.
+# First-party path dep; pulls no new vendored crates (its deps are already in
+# the tree).
+hidlins-genpw = { path = "../hidlins-genpw", version = "0.1" }
+
+# --- TUI framework + terminal backend (tui-skeleton T1.1) ---
+# Pins are the latest stable published ≥30 days as of 2026-06-01 (OQ-1):
+# ratatui 0.30.2 (2026-06-19), crossterm 0.29.0 (2025-04-05),
+# tui-input 0.15.3 (2026-04-18), unicode-width 0.2.2 (2025-10-06).
+# Only the Crossterm backend, layout cache and reviewed wrap-position API
+# are needed. Its backend already enables core underline-color support.
+# Disable facade defaults to avoid unused macros/calendar and optional backend
+# feature forwarding; keep the cache required by redraw performance.
+ratatui = { version = "=0.30.2", default-features = false, features = ["crossterm", "layout-cache", "unstable-rendered-line-info"] }
+crossterm = "0.29"
+# We use only Input state and Crossterm event translation; rendering belongs
+# to our own widgets. The default Ratatui adapter is unnecessary.
+tui-input = { version = "0.15", default-features = false, features = ["crossterm"] }
+# Display-width-correct tab-label and detail truncation.
+unicode-width = "0.2"
+# Entry/group UUIDs — pinned-tab identity (`TabBar.pinned`) and tree/detail
+# selection. Re-uses hidlins-core's exact-pinned uuid. The `serde` feature
+# lets pinned + recents UUIDs round-trip through
+# `tui.toml`; it matches `hidlins-core`'s own `uuid` features, so it adds zero
+# new vendored crates.
+uuid = { version = "1", features = ["serde"] }
+# Timestamps. `hidlins-core`'s public API surfaces `chrono::DateTime<Utc>`
+# (`EntryView::{creation_time,last_modification_time,expires}`), and the detail
+# pane needs `Utc::now()` to call `Vault::is_expired(uuid, now)`.
+# Already vendored as a `hidlins-core` transitive, so this adds zero new crates;
+# `default-features = false, features = ["clock"]` matches core and keeps it lean.
+chrono = { version = "0.4", default-features = false, features = ["clock"] }
+
+# TUI-local persistence (`config.toml`: preferences; `tui.toml`: per-vault
+# pins/recents; ADR-T3). Serialized with `serde` + `toml` (both already vendored workspace-
+# wide via hidlins-core) and written through `hidlins_core::atomic::write_atomic`.
+serde = { version = "1.0", features = ["derive"] }
+toml = "0.8"
+
+# Memory hygiene + error/exit plumbing (already vendored workspace-wide).
+zeroize = { version = "1.8", features = ["derive"] }
+thiserror = "2.0"
+
+# Async-signal-safe SIGHUP/SIGTERM terminal-restore handler (T1.3). Unix-only;
+# the single audited `#[allow(unsafe_code)]` block in this crate — see the
+# "Signals" block in `terminal_guard.rs`. Mirrors the `hidlins-security`
+# posture (`deny(unsafe_code)` crate-wide + one audited module).
+[target.'cfg(unix)'.dependencies]
+libc = "0.2"
+
+[target.'cfg(target_os = "macos")'.dependencies]
+# macOS kqueue cannot register the /dev/tty fallback used with redirected
+# stdin. Crossterm's established select backend supports controlling TTYs.
+# MIT; activates already-vendored filedescriptor/thiserror1 on macOS only.
+crossterm = { version = "=0.29.0", features = ["use-dev-tty"] }
+
+[dev-dependencies]
+# Unlock/lock state-machine tests build a real fast-KDF KDBX fixture in a
+# tempdir and register it in an in-memory `VaultRegistry`. (`toml` for the
+# `RegisteredVault::extra` table is now a regular dependency above.)
+tempfile = "3"
+
+[target.'cfg(target_os = "linux")'.dev-dependencies]
+# Reuse the exact existing MIT private-logind fixture/backend; no new package.
+zbus = { version = "=6.2.1", default-features = false, features = ["default-rt", "proxy", "service"] }
